@@ -87,15 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone docs source
-        uses: actions/checkout@v4
-        with:
-          repository: wyre-technology/msp-claude-plugins
-          path: docs-repo
-
-      - name: Copy docs into build context
-        run: rm -rf docs && cp -r docs-repo/msp-claude-plugins/docs docs
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -122,8 +113,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            DOCS_CACHE_BUST=${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -132,6 +121,6 @@ jobs:
         with:
           context: containers/m365-mcp
           push: true
-          tags: ghcr.io/wyre-technology/m365-mcp:latest
+          tags: ghcr.io/wyre-technology/wyre-mcp-gateway-platform-m365-mcp:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

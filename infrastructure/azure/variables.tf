@@ -398,3 +398,34 @@ variable "alert_email" {
   type        = string
   default     = ""
 }
+
+# -----------------------------------------------------------------------------
+# Branding Configuration
+# -----------------------------------------------------------------------------
+
+variable "brand_name" {
+  description = "Brand name displayed in the platform UI and notifications"
+  type        = string
+  default     = "Wyre Technology"
+}
+
+variable "domain" {
+  description = "Primary domain for the platform (e.g., mcp.wyretechnology.com)"
+  type        = string
+}
+
+# -----------------------------------------------------------------------------
+# Feature Flags
+# -----------------------------------------------------------------------------
+
+variable "feature_dashboard" {
+  description = "Enable the dashboard feature"
+  type        = bool
+  default     = true
+}
+
+variable "feature_prompt_capture" {
+  description = "Enable the prompt capture feature"
+  type        = bool
+  default     = true
+}
