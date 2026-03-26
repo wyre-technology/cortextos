@@ -14,6 +14,9 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     org_id: 'org_1',
     vendor_slug: 'autotask',
     tool_name: 'search_tickets',
+    tool_arguments: null,
+    prompt_context: null,
+    source: null,
     status_code: 200,
     response_time_ms: 142,
     created_at: '2026-02-17T12:00:00Z',
@@ -105,6 +108,9 @@ describe('AuditService', () => {
         orgId: 'org_1',
         vendorSlug: 'autotask',
         toolName: 'search_tickets',
+        toolArguments: null,
+        promptContext: null,
+        source: null,
         statusCode: 200,
         responseTimeMs: 142,
         createdAt: '2026-02-17T12:00:00Z',
@@ -253,7 +259,7 @@ describe('AuditService', () => {
       const lines = csv.split('\n');
 
       expect(lines[0]).toBe(
-        'timestamp,user_id,user_email,org_id,vendor,tool,status,duration_ms',
+        'timestamp,user_id,user_email,org_id,vendor,tool,source,status,duration_ms,tool_arguments,prompt_context',
       );
     });
 
@@ -267,7 +273,7 @@ describe('AuditService', () => {
 
       expect(lines).toHaveLength(2); // header + 1 data row
       expect(lines[1]).toBe(
-        '2026-02-17T12:00:00Z,user_1,user1@example.com,org_1,autotask,search_tickets,200,142',
+        '2026-02-17T12:00:00Z,user_1,user1@example.com,org_1,autotask,search_tickets,,200,142,,',
       );
     });
 
@@ -281,7 +287,7 @@ describe('AuditService', () => {
 
       // org_id and tool_name positions should be empty
       expect(lines[1]).toBe(
-        '2026-02-17T12:00:00Z,user_1,user1@example.com,,autotask,,200,142',
+        '2026-02-17T12:00:00Z,user_1,user1@example.com,,autotask,,,200,142,,',
       );
     });
 
@@ -294,7 +300,7 @@ describe('AuditService', () => {
       const lines = csv.split('\n');
 
       expect(lines[1]).toBe(
-        '2026-02-17T12:00:00Z,user_1,user1@example.com,org_1,autotask,search_tickets,200,',
+        '2026-02-17T12:00:00Z,user_1,user1@example.com,org_1,autotask,search_tickets,,200,,,',
       );
     });
 

@@ -82,7 +82,7 @@ export function cliRoutes(deps: CliRouterDeps) {
     // ---------------------------------------------------------------
     app.post<{
       Params: { vendor: string };
-      Body: { tool: string; args?: Record<string, unknown> };
+      Body: { tool: string; args?: Record<string, unknown>; context?: string };
     }>(
       '/v1/:vendor/cli',
       {
@@ -264,9 +264,18 @@ export function cliRoutes(deps: CliRouterDeps) {
           reply.header('X-Total-Ms', String(t3 - t0));
 
           // --------------- Audit log (fire-and-forget) ---------------
+          const cliToolArgs = body.args ? JSON.stringify(body.args) : null;
+          // Only capture prompt context if the org has it enabled
+          let promptCtx: string | null = null;
+          if (body.context && injection.orgId) {
+            const captureEnabled = await orgService.getPromptCaptureEnabled(injection.orgId);
+            if (captureEnabled) {
+              promptCtx = body.context;
+            }
+          }
           sql`
-            INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-            VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName}, ${200}, ${t3 - t0})
+            INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, prompt_context, source)
+            VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName}, ${200}, ${t3 - t0}, ${cliToolArgs}, ${promptCtx}, ${'cli'})
           `.catch((err) => {
             app.log.warn({ err }, 'Failed to log CLI request');
           });

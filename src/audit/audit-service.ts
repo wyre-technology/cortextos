@@ -16,6 +16,9 @@ export interface AuditEntry {
   orgId: string | null;
   vendorSlug: string;
   toolName: string | null;
+  toolArguments: unknown | null;
+  promptContext: string | null;
+  source: string | null;
   statusCode: number;
   responseTimeMs: number | null;
   createdAt: string;
@@ -39,6 +42,9 @@ interface RequestLogRow {
   org_id: string | null;
   vendor_slug: string;
   tool_name: string | null;
+  tool_arguments: unknown | null;
+  prompt_context: string | null;
+  source: string | null;
   status_code: number;
   response_time_ms: number | null;
   created_at: string;
@@ -60,6 +66,9 @@ export class AuditService {
       orgId: row.org_id,
       vendorSlug: row.vendor_slug,
       toolName: row.tool_name,
+      toolArguments: row.tool_arguments ?? null,
+      promptContext: row.prompt_context ?? null,
+      source: row.source ?? null,
       statusCode: row.status_code,
       responseTimeMs: row.response_time_ms,
       createdAt: row.created_at,
@@ -118,7 +127,7 @@ export class AuditService {
     // Remove pagination for CSV export
     const { entries } = await this.query({ ...params, limit: 10000, offset: 0 });
 
-    const header = 'timestamp,user_id,user_email,org_id,vendor,tool,status,duration_ms';
+    const header = 'timestamp,user_id,user_email,org_id,vendor,tool,source,status,duration_ms,tool_arguments,prompt_context';
     const rows = entries.map((e) =>
       [
         e.createdAt,
@@ -127,8 +136,11 @@ export class AuditService {
         e.orgId ?? '',
         e.vendorSlug,
         e.toolName ?? '',
+        e.source ?? '',
         e.statusCode,
         e.responseTimeMs ?? '',
+        e.toolArguments ? JSON.stringify(e.toolArguments).replace(/,/g, ';') : '',
+        e.promptContext ? e.promptContext.replace(/,/g, ';').replace(/\n/g, ' ') : '',
       ].join(','),
     );
 

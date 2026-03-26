@@ -14,6 +14,7 @@ function makeOrg(overrides: Partial<Organization> = {}): Organization {
     ownerId: 'user-1',
     plan: 'free',
     defaultServerAccess: 'none',
+    promptCaptureEnabled: false,
     stripeCustomerId: null,
     stripeSubscriptionId: null,
     createdAt: new Date().toISOString(),

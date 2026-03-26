@@ -125,5 +125,23 @@ export function orgCrudRoutes(deps: OrgCrudDeps) {
         return reply.code(204).send();
       },
     );
+
+    // PUT /api/orgs/:orgId/settings/prompt-capture — toggle prompt capture (owner-only)
+    app.put<{ Params: { orgId: string }; Body: { enabled: boolean } }>(
+      '/api/orgs/:orgId/settings/prompt-capture',
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        if (!user) return;
+
+        const { enabled } = request.body;
+        if (typeof enabled !== 'boolean') {
+          return reply.code(400).send({ error: '"enabled" must be a boolean' });
+        }
+
+        await orgService.setPromptCaptureEnabled(orgId, enabled);
+        return reply.send({ promptCaptureEnabled: enabled });
+      },
+    );
   };
 }

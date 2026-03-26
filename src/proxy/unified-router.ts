@@ -286,9 +286,10 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               );
 
               const responseTimeMs = Date.now() - startTime;
+              const toolArgs = body?.params?.arguments ? JSON.stringify(body.params.arguments) : null;
               sql`
-                INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-                VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${200}, ${responseTimeMs})
+                INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, source)
+                VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${200}, ${responseTimeMs}, ${toolArgs}, ${'mcp'})
               `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
               if (fromCache) {
@@ -310,9 +311,10 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
             );
 
             const responseTimeMs = Date.now() - startTime;
+            const toolArgsForLog = body?.params?.arguments ? JSON.stringify(body.params.arguments) : null;
             sql`
-              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${vendorRes.status}, ${responseTimeMs})
+              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, source)
+              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${vendorRes.status}, ${responseTimeMs}, ${toolArgsForLog}, ${'mcp'})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
             // Invalidate cache on successful writes

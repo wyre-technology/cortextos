@@ -17,6 +17,7 @@ export interface Organization {
   ownerId: string;
   plan: 'free' | 'pro';
   defaultServerAccess: 'none' | 'all';
+  promptCaptureEnabled: boolean;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   createdAt: string;
@@ -97,6 +98,7 @@ interface OrgRow {
   owner_id: string;
   plan: string;
   default_server_access: string;
+  prompt_capture_enabled: boolean;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   created_at: string;
@@ -245,6 +247,14 @@ export class OrgService {
       CREATE INDEX IF NOT EXISTS idx_request_log_org ON request_log(org_id, created_at)
     `;
 
+    // Migration: prompt capture columns on request_log
+    await this.sql`ALTER TABLE request_log ADD COLUMN IF NOT EXISTS tool_arguments JSONB`;
+    await this.sql`ALTER TABLE request_log ADD COLUMN IF NOT EXISTS prompt_context TEXT`;
+    await this.sql`ALTER TABLE request_log ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'mcp'`;
+
+    // Migration: prompt capture org setting
+    await this.sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS prompt_capture_enabled BOOLEAN DEFAULT false`;
+
     await this.sql`
       CREATE TABLE IF NOT EXISTS org_tool_allowlist (
         id          TEXT PRIMARY KEY,
@@ -342,6 +352,7 @@ export class OrgService {
       ownerId: row.owner_id,
       plan: row.plan as 'free' | 'pro',
       defaultServerAccess: (row.default_server_access as 'none' | 'all') || 'none',
+      promptCaptureEnabled: row.prompt_capture_enabled ?? false,
       stripeCustomerId: row.stripe_customer_id,
       stripeSubscriptionId: row.stripe_subscription_id,
       createdAt: row.created_at,
@@ -635,11 +646,33 @@ export class OrgService {
     toolName?: string;
     statusCode: number;
     responseTimeMs?: number;
+    toolArguments?: unknown;
+    promptContext?: string;
+    source?: string;
   }): Promise<void> {
     const id = nanoid();
+    const toolArgs = entry.toolArguments ? JSON.stringify(entry.toolArguments) : null;
     await this.sql`
-      INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-      VALUES (${id}, ${entry.userId}, ${entry.orgId ?? null}, ${entry.vendorSlug}, ${entry.toolName ?? null}, ${entry.statusCode}, ${entry.responseTimeMs ?? null})
+      INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, prompt_context, source)
+      VALUES (${id}, ${entry.userId}, ${entry.orgId ?? null}, ${entry.vendorSlug}, ${entry.toolName ?? null}, ${entry.statusCode}, ${entry.responseTimeMs ?? null}, ${toolArgs}, ${entry.promptContext ?? null}, ${entry.source ?? 'mcp'})
+    `;
+  }
+
+  // -------------------------------------------------------------------------
+  // Prompt capture settings
+  // -------------------------------------------------------------------------
+
+  async getPromptCaptureEnabled(orgId: string): Promise<boolean> {
+    const rows = await this.sql<{ prompt_capture_enabled: boolean }[]>`
+      SELECT prompt_capture_enabled FROM organizations WHERE id = ${orgId}
+    `;
+    return rows[0]?.prompt_capture_enabled ?? false;
+  }
+
+  async setPromptCaptureEnabled(orgId: string, enabled: boolean): Promise<void> {
+    await this.sql`
+      UPDATE organizations SET prompt_capture_enabled = ${enabled}, updated_at = NOW()
+      WHERE id = ${orgId}
     `;
   }
 

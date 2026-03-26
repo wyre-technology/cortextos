@@ -39,6 +39,8 @@ const TEST_ORG = {
   name: 'Test Org',
   ownerId: 'user-1',
   plan: 'pro' as const,
+  defaultServerAccess: 'none' as const,
+  promptCaptureEnabled: false,
   stripeCustomerId: null,
   stripeSubscriptionId: null,
   createdAt: new Date().toISOString(),
@@ -74,6 +76,8 @@ function createMockOrgService(overrides: Partial<OrgService> = {}): OrgService {
     bulkSetServerAccess: vi.fn(),
     grantAllServerAccess: vi.fn(),
     migrateServerAccessForExistingMembers: vi.fn(),
+    getPromptCaptureEnabled: vi.fn().mockResolvedValue(false),
+    setPromptCaptureEnabled: vi.fn(),
     ...overrides,
   } as unknown as OrgService;
 }
