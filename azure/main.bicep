@@ -52,7 +52,7 @@ param microsoftClientId string = ''
 param microsoftClientSecret string = ''
 
 @description('Public hostname for the gateway')
-param customDomain string = 'mcp.wyretechnology.com'
+param customDomain string = ''
 
 @description('Managed certificate name in the Container Apps environment')
 param managedCertName string = 'mc-mcpgw-prod-env-mcp-wyretechnolo-7568'
@@ -391,7 +391,7 @@ resource mcpServers 'Microsoft.App/containerApps@2024-03-01' = [
 // ---------------------------------------------------------------------------
 
 @description('Email address for alert notifications')
-param alertEmail string = 'engineering@wyretechnology.com'
+param alertEmail string = ''
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
   name: '${prefix}-alerts'

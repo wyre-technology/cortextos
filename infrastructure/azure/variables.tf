@@ -71,7 +71,7 @@ variable "private_endpoints_subnet_cidr" {
 # -----------------------------------------------------------------------------
 
 variable "custom_domain" {
-  description = "Custom domain for the MCP Gateway (e.g., mcp.wyre.ai). Leave empty for Azure-provided domain."
+  description = "Custom domain for the MCP Gateway (e.g., gateway.example.com). Leave empty for Azure-provided domain."
   type        = string
   default     = ""
 }
@@ -284,7 +284,7 @@ variable "session_cookie_secure" {
 }
 
 variable "session_cookie_domain" {
-  description = "Domain for session cookies (e.g., '.wyre.ai' for cross-subdomain)"
+  description = "Domain for session cookies (e.g., '.example.com' for cross-subdomain)"
   type        = string
   default     = ""
 }
@@ -410,7 +410,7 @@ variable "brand_name" {
 }
 
 variable "domain" {
-  description = "Primary domain for the platform (e.g., mcp.wyretechnology.com)"
+  description = "Primary domain for the platform (e.g., gateway.example.com)"
   type        = string
 }
 

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-The Wyre MCP Gateway deploys to Azure Container Apps using Terraform for infrastructure provisioning. This guide covers the full deployment pipeline.
+The MCP Gateway deploys to Azure Container Apps using Terraform for infrastructure provisioning. This guide covers the full deployment pipeline.
 
 ## Infrastructure Overview
 
@@ -32,14 +32,14 @@ The Terraform configuration in `infrastructure/azure/` provisions:
 |---|---|---|
 | `PORT` | No | Server port (default: 8080) |
 | `HOST` | No | Bind address (default: 0.0.0.0) |
-| `BASE_URL` | Yes | Public URL (e.g., `https://mcp.wyre.ai`) |
+| `BASE_URL` | Yes | Public URL (e.g., `https://gateway.example.com`) |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `MASTER_KEY` | Yes | 64 hex chars (32 bytes) for credential encryption |
 | `JWT_SECRET` | Yes | 64 hex chars (32 bytes) for JWT signing |
 | `AUTH0_DOMAIN` | Yes | Auth0 domain (e.g., `wyre.us.auth0.com`) |
 | `AUTH0_CLIENT_ID` | Yes | Auth0 application client ID |
 | `AUTH0_CLIENT_SECRET` | Yes | Auth0 application client secret |
-| `AUTH0_CALLBACK_URL` | Yes | Auth0 callback URL (e.g., `https://mcp.wyre.ai/auth/callback`) |
+| `AUTH0_CALLBACK_URL` | Yes | Auth0 callback URL (e.g., `https://gateway.example.com/auth/callback`) |
 | `STRIPE_SECRET_KEY` | No | Stripe API key for billing |
 | `STRIPE_WEBHOOK_SECRET` | No | Stripe webhook signing secret |
 | `STRIPE_PRO_PRICE_ID` | No | Stripe price ID for Pro plan |
@@ -124,7 +124,7 @@ variable "credential_master_key"  {}  # AES encryption key (auto-generated if em
 ### Custom Domain
 
 ```hcl
-variable "custom_domain"                { default = "" }   # e.g., "mcp.wyre.ai"
+variable "custom_domain"                { default = "" }   # e.g., "gateway.example.com"
 variable "custom_domain_certificate_id" { default = "" }
 ```
 
@@ -189,7 +189,7 @@ Note: Setting an env var to a new value forces a new revision. The env var chang
 az containerapp hostname add \
   --name mcp-gateway-registry \
   --resource-group mcp-gateway-rg \
-  --hostname mcp.wyre.ai
+  --hostname gateway.example.com
 ```
 
 Then configure DNS and SSL certificate validation.

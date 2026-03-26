@@ -17,7 +17,7 @@ export interface TokenData {
 }
 
 export function getGatewayUrl(): string {
-  return process.env.MCPGW_URL ?? 'https://mcp.wyre.ai';
+  return process.env.MCPGW_URL ?? 'http://localhost:8080';
 }
 
 export function loadToken(): TokenData | null {

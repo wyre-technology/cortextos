@@ -1,14 +1,16 @@
 # MSP Customer Onboarding Guide
 
-This document describes the end-to-end flow for onboarding a new Managed Service Provider (MSP) onto the Wyre MCP Gateway platform.
+This document describes the end-to-end flow for onboarding a new Managed Service Provider (MSP) onto the MCP Gateway platform.
 
 ## Phase 1: Discovery
 
 ### Identify Vendor Stack
 
-Work with the MSP to inventory which vendors they use. The gateway supports vendors across these categories:
+Work with the MSP to inventory which vendors they use. The gateway is vendor-agnostic -- the specific vendors configured for each deployment depend on what the customer uses. During discovery, identify all tools in the customer's stack and determine which vendor integrations to enable.
 
-| Category | Vendors |
+Common vendor categories include:
+
+| Category | Examples |
 |---|---|
 | RMM | Datto RMM, Syncro, Atera, SuperOps, ConnectWise Automate, NinjaOne |
 | PSA | Autotask, HaloPSA, ConnectWise PSA |
@@ -21,6 +23,8 @@ Work with the MSP to inventory which vendors they use. The gateway supports vend
 | CRM | HubSpot |
 | Productivity | Microsoft 365 |
 | Marketplace | Sherweb |
+
+> **Note:** The table above lists example vendors. The actual vendors available in your deployment are configured during customer onboarding based on what tools the MSP uses. See `vendor-integration.md` for how to add new vendor integrations.
 
 ### Gather Requirements
 
@@ -132,7 +136,7 @@ Generate invitation links:
 POST /api/orgs/:orgId/invitations
 ```
 
-Returns an invitation URL like `https://mcp.wyre.ai/invite/<token>`. Share with team members. When they visit the link and sign in via Auth0, they join the org as a `member`.
+Returns an invitation URL like `https://gateway.example.com/invite/<token>`. Share with team members. When they visit the link and sign in via Auth0, they join the org as a `member`.
 
 Admins can promote members:
 
@@ -191,7 +195,7 @@ Supported platforms: Loki, Graylog, LogScale.
 {
   "mcpServers": {
     "wyre": {
-      "url": "https://mcp.wyre.ai/v1/mcp"
+      "url": "https://gateway.example.com/v1/mcp"
     }
   }
 }
@@ -199,7 +203,7 @@ Supported platforms: Loki, Graylog, LogScale.
 
 **Claude Code**:
 ```
-claude mcp add wyre https://mcp.wyre.ai/v1/mcp
+claude mcp add wyre https://gateway.example.com/v1/mcp
 ```
 
 On first use, the OAuth flow opens a browser for authentication. After sign-in and credential connection, the JWT is cached and refreshed automatically.

@@ -4,21 +4,26 @@
  * Deploy in Auth0 Dashboard > Actions > Flows > Pre User Registration.
  *
  * Controls who can create an account:
- *   1. @wyretechnology.com emails — always allowed
+ *   1. Emails matching ALLOWED_DOMAINS secret — always allowed
  *   2. Emails listed in the ALLOWED_EMAILS secret — always allowed
  *   3. Everyone else — denied with a friendly message
  *
  * Secrets (configure in Auth0 Action settings):
- *   ALLOWED_EMAILS — comma-separated list of approved emails
- *                     e.g. "alice@example.com,bob@gmail.com"
+ *   ALLOWED_DOMAINS — comma-separated list of approved email domains
+ *                      e.g. "yourcompany.com,partner.com"
+ *   ALLOWED_EMAILS  — comma-separated list of approved emails
+ *                      e.g. "alice@example.com,bob@gmail.com"
  */
 
 exports.onExecutePreUserRegistration = async (event, api) => {
   const email = (event.user.email || '').toLowerCase();
   const domain = email.split('@')[1];
 
-  // 1. Always allow @wyretechnology.com
-  const allowedDomains = ['wyretechnology.com'];
+  // 1. Allow emails from approved domains
+  const allowedDomains = (event.secrets.ALLOWED_DOMAINS || '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
   if (allowedDomains.includes(domain)) {
     return; // allow
   }
@@ -36,6 +41,6 @@ exports.onExecutePreUserRegistration = async (event, api) => {
   // 3. Block everyone else
   api.access.deny(
     'registration_blocked',
-    'Signups are currently invite-only. Join the waitlist at https://mcp.wyretechnology.com/waitlist to get notified when we open up.',
+    'Signups are currently invite-only. Contact your administrator for access.',
   );
 };

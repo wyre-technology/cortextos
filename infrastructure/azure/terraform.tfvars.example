@@ -23,7 +23,7 @@ tags = {
 # -----------------------------------------------------------------------------
 
 # Uncomment and set for custom domain
-# custom_domain = "mcp.wyre.ai"
+# custom_domain = "gateway.example.com"
 # dns_zone_resource_group = "dns-rg"
 
 # -----------------------------------------------------------------------------
@@ -127,4 +127,4 @@ security_analyzers = "yara"
 
 enable_monitoring = true
 log_retention_days = 30
-# alert_email = "ops@wyre.ai"
+# alert_email = "ops@example.com"

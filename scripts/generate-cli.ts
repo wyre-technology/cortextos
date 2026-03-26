@@ -5,7 +5,7 @@
  * and generates TypeScript command files for the mcpgw CLI.
  *
  * Usage:
- *   MCPGW_URL=https://mcp.wyre.ai MCPGW_TOKEN=<jwt> npx tsx scripts/generate-cli.ts
+ *   MCPGW_URL=http://localhost:8080 MCPGW_TOKEN=<jwt> npx tsx scripts/generate-cli.ts
  *
  * Output: packages/cli/src/vendors/<vendor>.ts per vendor
  */
@@ -13,7 +13,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const GATEWAY_URL = process.env.MCPGW_URL ?? 'https://mcp.wyre.ai';
+const GATEWAY_URL = process.env.MCPGW_URL ?? 'http://localhost:8080';
 const TOKEN = process.env.MCPGW_TOKEN;
 const OUTPUT_DIR = join(import.meta.dirname ?? '.', '..', 'packages', 'cli', 'src', 'vendors');
 
@@ -36,12 +36,8 @@ interface SchemaResponse {
   commands: CliCommand[];
 }
 
-// Vendors to generate schemas for (expand as needed)
-const VENDORS = [
-  'autotask',
-  'connectwise-psa',
-  'datto-rmm',
-];
+// Vendors to generate schemas for — configure per deployment
+const VENDORS = (process.env.MCPGW_VENDORS ?? '').split(',').map(v => v.trim()).filter(Boolean);
 
 async function fetchSchema(vendor: string): Promise<SchemaResponse | null> {
   if (!TOKEN) {

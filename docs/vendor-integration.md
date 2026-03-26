@@ -1,6 +1,6 @@
 # Vendor Integration Guide
 
-This document explains how to add a new vendor MCP server to the gateway.
+This document explains how to add a new vendor MCP server to the gateway. Vendors are not pre-bundled -- they are added during customer discovery based on which tools the MSP uses. Each deployment may have a different set of vendor integrations.
 
 ## Overview
 
@@ -282,7 +282,9 @@ Update `src/credentials/vendor-config.test.ts` -- the test hardcodes the vendor 
 | `email-security` | Email Security & Awareness |
 | `marketplace` | Marketplace |
 
-## Supported Vendors (Current)
+## Supported Vendors (Examples)
+
+The following is a reference list of vendor integrations that have been built. The specific vendors enabled in any given deployment depend on the customer's tool stack, configured during the discovery phase.
 
 | Vendor | Slug | Category | Auth Type |
 |---|---|---|---|

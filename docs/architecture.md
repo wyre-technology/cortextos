@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The Wyre MCP Gateway is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between AI clients (Claude Desktop, Claude Code, custom agents) and 30+ vendor MCP servers used by Managed Service Providers.
+The MCP Gateway is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between AI clients (Claude Desktop, Claude Code, custom agents) and vendor MCP servers used by Managed Service Providers. The specific vendors available depend on the customer deployment.
 
 ```
                           +-----------------------+
@@ -45,12 +45,11 @@ The Wyre MCP Gateway is a Fastify/TypeScript application that acts as an OAuth 2
                |Postgres|  |Auth0 | |Stripe| | Vendor MCP       |
                |  (DB)  |  |      | |      | | Containers       |
                +--------+  +------+ +------+ |                  |
-                                              | datto-rmm-mcp   |
-                                              | itglue-mcp      |
-                                              | autotask-mcp    |
-                                              | sentinelone-mcp |
-                                              | connectwise-mcp |
-                                              | ... (30+ more)  |
+                                              | vendor-a-mcp    |
+                                              | vendor-b-mcp    |
+                                              | vendor-c-mcp    |
+                                              | ... (per customer|
+                                              |     deployment)  |
                                               +-----------------+
 ```
 
@@ -182,7 +181,7 @@ Each vendor runs in its own container with `AUTH_MODE=gateway`. Containers trust
 
 ### Tool Name Prefixing (Unified Endpoint)
 
-The unified `/v1/mcp` endpoint prefixes all tool names with `{vendor}__` (e.g., `datto-rmm__list_devices`). This allows a single MCP connection to access tools from all vendors simultaneously, reducing client configuration to a single URL.
+The unified `/v1/mcp` endpoint prefixes all tool names with `{vendor}__` (e.g., `vendor-a__list_items`). This allows a single MCP connection to access tools from all vendors simultaneously, reducing client configuration to a single URL.
 
 ### Session Pooling (CLI Endpoint)
 

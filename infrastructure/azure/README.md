@@ -133,21 +133,21 @@ entra_client_id = "your-client-id"
 
 ## Custom Domain Setup
 
-To use a custom domain (e.g., `mcp.wyre.ai`):
+To use a custom domain (e.g., `gateway.example.com`):
 
 ### 1. Configure DNS
 
 Add a CNAME record pointing to the Container App FQDN:
 
 ```
-mcp.wyre.ai -> your-container-app.azurecontainerapps.io
+gateway.example.com -> your-container-app.azurecontainerapps.io
 ```
 
 ### 2. Update Configuration
 
 ```hcl
-custom_domain = "mcp.wyre.ai"
-session_cookie_domain = ".wyre.ai"
+custom_domain = "gateway.example.com"
+session_cookie_domain = ".example.com"
 ```
 
 ### 3. Managed Certificate

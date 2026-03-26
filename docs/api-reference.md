@@ -2,6 +2,8 @@
 
 All endpoints require authentication unless noted otherwise. Authentication is via Auth0 OIDC session (web UI routes) or Bearer JWT (API/MCP routes).
 
+> **Note:** Examples in this document use vendor names like `datto-rmm`, `itglue`, and `autotask` for illustration. The actual vendors available depend on your deployment configuration.
+
 ## Health & Monitoring
 
 ### GET /health
@@ -243,7 +245,7 @@ Create an invitation link. Rate limited: 10 per hour. Requires Pro plan.
 {
   "id": "...",
   "token": "...",
-  "inviteUrl": "https://mcp.wyre.ai/invite/<token>",
+  "inviteUrl": "https://gateway.example.com/invite/<token>",
   "expiresAt": "...",
   "maxUses": 1,
   "useCount": 0

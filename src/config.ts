@@ -50,7 +50,7 @@ export const config = {
   auth0Domain: process.env.AUTH0_DOMAIN ?? '',       // e.g. "wyre.us.auth0.com"
   auth0ClientId: process.env.AUTH0_CLIENT_ID ?? '',
   auth0ClientSecret: process.env.AUTH0_CLIENT_SECRET ?? '',
-  auth0CallbackUrl: process.env.AUTH0_CALLBACK_URL ?? '',  // e.g. "https://mcp.wyre.ai/auth/callback"
+  auth0CallbackUrl: process.env.AUTH0_CALLBACK_URL ?? '',  // e.g. "https://gateway.example.com/auth/callback"
 
   // Stripe billing
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? '',

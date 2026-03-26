@@ -215,21 +215,23 @@ Example: `X-Auth-Ms: 12, X-Session-Ms: 2, X-Vendor-Ms: 340, X-Total-Ms: 354`
 
 ### Bash / curl
 
+> **Note:** The examples below use specific vendor names (e.g., `datto-rmm`, `itglue`, `autotask`) for illustration. Replace with the vendors configured in your deployment.
+
 ```bash
 TOKEN="eyJ..."
 
 # List Datto RMM devices
-curl -s -X POST https://mcp.wyre.ai/v1/datto-rmm/cli \
+curl -s -X POST https://gateway.example.com/v1/datto-rmm/cli \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"tool": "datto_list_devices"}' | jq '.result'
 
 # Get tool schema
-curl -s https://mcp.wyre.ai/v1/datto-rmm/cli/schema \
+curl -s https://gateway.example.com/v1/datto-rmm/cli/schema \
   -H "Authorization: Bearer $TOKEN" | jq '.commands[].command'
 
 # Search IT Glue configurations
-curl -s -X POST https://mcp.wyre.ai/v1/itglue/cli \
+curl -s -X POST https://gateway.example.com/v1/itglue/cli \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"tool": "search_configurations", "args": {"filter": "hostname:WS-001"}}' | jq
@@ -239,14 +241,14 @@ curl -s -X POST https://mcp.wyre.ai/v1/itglue/cli \
 
 ```bash
 # Get a token via client_credentials grant
-TOKEN=$(curl -s -X POST https://mcp.wyre.ai/oauth/token \
+TOKEN=$(curl -s -X POST https://gateway.example.com/oauth/token \
   -d "grant_type=client_credentials" \
   -d "client_id=svc_abc123" \
   -d "client_secret=xyz789" \
   -d "scope=mcp:all" | jq -r '.access_token')
 
 # Use the token for CLI calls
-curl -s -X POST https://mcp.wyre.ai/v1/autotask/cli \
+curl -s -X POST https://gateway.example.com/v1/autotask/cli \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"tool": "autotask_search_tickets", "args": {"status": "Open"}}'
