@@ -25,6 +25,7 @@ const PERSONAL_NAV: NavItem[] = [
 
 const TEAM_NAV: NavItem[] = [
   { label: 'Overview', href: '/settings/team' },
+  { label: 'Dashboard', href: '/settings/team/dashboard' },
   { label: 'Members', href: '/settings/team/members' },
   { label: 'Invitations', href: '/settings/team/invitations' },
   { label: 'Connections', href: '/settings/team/connections' },

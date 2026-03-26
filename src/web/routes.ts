@@ -34,6 +34,7 @@ import { renderTeamLogShipping, TEAM_LOG_SHIPPING_STYLES } from './templates/tea
 import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templates/team-team-connections.js';
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
+import { renderTeamDashboard } from './templates/team-dashboard.js';
 
 // ---------------------------------------------------------------------------
 // OAuth state management (unchanged)
@@ -706,6 +707,20 @@ export function webRoutes(deps: WebRouteDeps) {
             createdAt: d.createdAt,
           })),
         }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /settings/team/dashboard ----------
+    app.get('/settings/team/dashboard', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const { body, pageStyles, pageScripts } = renderTeamDashboard({ orgId: org.id, orgName: org.name });
+      const html = renderLayout(
+        { user, org, activePath: '/settings/team/dashboard', title: `${org.name} - Dashboard`, pageStyles, pageScripts },
+        body,
       );
       return reply.type('text/html').send(html);
     });

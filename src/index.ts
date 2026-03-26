@@ -47,6 +47,8 @@ import { LogScaleAdapter } from './log-shipping/adapters/logscale.js';
 import { logShippingRoutes } from './log-shipping/routes.js';
 import { profileRoutes } from './profile/routes.js';
 import { VendorMonitor } from './monitoring/vendor-monitor.js';
+import { DashboardService } from './dashboard/dashboard-service.js';
+import { dashboardRoutes } from './dashboard/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -104,6 +106,8 @@ const billingGate = new DefaultBillingGate(orgService);
 const auditService = new AuditService(sql);
 const adminAuditService = new AdminAuditService(sql);
 const toolCache = new ToolCache();
+
+const dashboardService = new DashboardService(sql);
 
 const logShippingService = new LogShippingService(sql);
 await logShippingService.initTables();
@@ -228,6 +232,13 @@ await app.register(logShippingRoutes({
   adminAuditService,
   logShippingService,
   adapters: logShippingAdapters,
+}));
+
+// Dashboard API routes
+await app.register(dashboardRoutes({
+  dashboardService,
+  orgService,
+  billingGate,
 }));
 
 // Admin API: set org plan directly (for managed services contracts)
