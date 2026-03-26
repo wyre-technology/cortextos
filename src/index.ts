@@ -151,18 +151,21 @@ app.get('/health/vendors', async () => ({
   vendors: vendorMonitor.getStatus(),
 }));
 
-// Waitlist (unauthenticated, rate-limited)
-await app.register(waitlistRoutes(sql));
+// Waitlist (conditionally registered if webhook URL configured)
+if (config.features.waitlist) {
+  await app.register(waitlistRoutes(sql));
+}
 
 // Auth0 OIDC (user authentication) — must be registered before all
 // authenticated routes so request.auth0User is available.
 await app.register(auth0Plugin(sql));
 
-// Stripe webhook — MUST be registered before @fastify/static because it
-// needs its own content type parser for raw body verification.
-// Registered as a separate encapsulated plugin so the custom JSON parser
-// doesn't leak to other routes.
-await app.register(stripeWebhookRoutes(orgService));
+// Stripe webhook — conditionally registered if Stripe is configured.
+// MUST be registered before @fastify/static because it needs its own
+// content type parser for raw body verification.
+if (config.features.billing) {
+  await app.register(stripeWebhookRoutes(orgService));
+}
 
 // Static files — serves Astro docs site from public/.
 // Fastify registered routes always take priority over static.
@@ -214,8 +217,10 @@ await app.register(orgRoutes({
 // Tool access API (discover tools, manage allowlists per vendor/role)
 await app.register(toolAccessRoutes({ orgService, credentialService, toolCache }));
 
-// Billing routes (checkout + portal)
-await app.register(billingRoutes(orgService));
+// Billing routes (checkout + portal) — only if Stripe configured
+if (config.features.billing) {
+  await app.register(billingRoutes(orgService));
+}
 
 // Audit log routes
 await app.register(auditRoutes({

@@ -71,4 +71,12 @@ export const config = {
 
   // Webhook URL for waitlist signup notifications (Discord or Slack)
   waitlistNotifyUrl: process.env.WAITLIST_NOTIFY_URL ?? '',
+
+  // Feature flags — derived from config or explicit env vars
+  features: {
+    waitlist: !!process.env.WAITLIST_NOTIFY_URL,
+    billing: !!process.env.STRIPE_SECRET_KEY,
+    dashboard: process.env.FEATURE_DASHBOARD !== 'false',   // on by default
+    promptCapture: process.env.FEATURE_PROMPT_CAPTURE !== 'false', // on by default
+  },
 };
