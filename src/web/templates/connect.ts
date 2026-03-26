@@ -1,7 +1,6 @@
 import type { VendorConfig, VendorField } from '../../credentials/vendor-config.js';
+import { brand } from '../../brand/index.js';
 import { THEME_VARS } from '../styles.js';
-
-const GITHUB_ISSUES_BASE = 'https://github.com/wyre-technology/msp-claude-plugins/issues/new';
 
 /**
  * Escapes a string for safe inclusion in HTML content.
@@ -218,7 +217,7 @@ function buildBugReportUrl(vendorName: string, error: string): string {
     body,
     labels: 'bug,gateway',
   });
-  return `${GITHUB_ISSUES_BASE}?${params.toString()}`;
+  return `${brand.issuesUrl}?${params.toString()}`;
 }
 
 /**
@@ -261,7 +260,7 @@ export function renderConnectPage(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Connect ${escapeHtml(vendor.name)} - Wyre Technology</title>
+  <title>Connect ${escapeHtml(vendor.name)} - ${escapeHtml(brand.name)}</title>
   <script>
     (function() {
       var theme = localStorage.getItem('gateway-theme');
@@ -296,7 +295,7 @@ export function renderConnectPage(
   </button>
   <div class="card">
     <div class="card-header">
-      <div class="brand" style="margin-bottom:0">Wyre Technology</div>
+      <div class="brand" style="margin-bottom:0">${escapeHtml(brand.name)}</div>
       <a href="/settings" class="btn-close" title="Back to settings" aria-label="Close">&times;</a>
     </div>
     <h1 style="margin-top:16px">Connect ${escapeHtml(vendor.name)}</h1>

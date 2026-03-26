@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { nanoid } from 'nanoid';
+import { brand } from '../brand/index.js';
 import { requireAuth0 } from '../auth/auth0.js';
 import type { Auth0User } from '../auth/auth0.js';
 import type { OrgService, OrgRole } from './org-service.js';
@@ -957,10 +958,10 @@ function escapeHtml(s: string): string {
 function renderInvitePage(orgName: string, token: string): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Join ${escapeHtml(orgName)} - Wyre Technology</title>
+<title>Join ${escapeHtml(orgName)} - ${escapeHtml(brand.name)}</title>
 <style>${INVITE_STYLES}</style></head>
 <body><div class="card">
-  <div class="brand">Wyre Technology</div>
+  <div class="brand">${escapeHtml(brand.name)}</div>
   <h1>Join ${escapeHtml(orgName)}</h1>
   <p class="subtitle">You've been invited to join this team. Accept to share vendor connections and collaborate with your team.</p>
   <form method="POST" action="/invite/${escapeHtml(token)}">
@@ -972,10 +973,10 @@ function renderInvitePage(orgName: string, token: string): string {
 function renderInviteErrorPage(message: string): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Invalid Invitation - Wyre Technology</title>
+<title>Invalid Invitation - ${escapeHtml(brand.name)}</title>
 <style>${INVITE_STYLES}</style></head>
 <body><div class="card">
-  <div class="brand">Wyre Technology</div>
+  <div class="brand">${escapeHtml(brand.name)}</div>
   <div class="error-icon">&#10007;</div>
   <h1>Invalid Invitation</h1>
   <p class="subtitle">${escapeHtml(message)}</p>

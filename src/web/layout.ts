@@ -1,5 +1,6 @@
 import type { Auth0User } from '../auth/auth0.js';
 import type { Organization } from '../org/org-service.js';
+import { brand } from '../brand/index.js';
 import { PAGE_STYLES } from './styles.js';
 import { escapeHtml } from './helpers.js';
 
@@ -278,7 +279,7 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)} - Wyre Technology</title>
+  <title>${escapeHtml(title)} - ${escapeHtml(brand.name)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -298,14 +299,14 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   <!-- Mobile top bar -->
   <div class="mobile-bar">
     <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle menu">&#9776;</button>
-    <span class="mobile-brand">Wyre Technology</span>
+    <span class="mobile-brand">${escapeHtml(brand.name)}</span>
   </div>
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
   <div class="layout">
     <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
-      <div class="sidebar-brand">Wyre Technology</div>
+      <div class="sidebar-brand">${escapeHtml(brand.name)}</div>
       <div class="sidebar-email">${userEmail}</div>
 
       <div class="sidebar-section">

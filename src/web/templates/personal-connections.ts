@@ -1,4 +1,5 @@
 import type { Organization } from '../../org/org-service.js';
+import { brand } from '../../brand/index.js';
 import { getVendorsByCategory } from '../../credentials/vendor-config.js';
 import { escapeHtml } from '../helpers.js';
 
@@ -623,9 +624,9 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
     </div>
     ${filterScript}
     <div style="display:flex;justify-content:center;gap:16px;margin-top:32px;font-size:13px;color:var(--text-muted);">
-      <a href="https://github.com/wyre-technology/msp-claude-plugins/issues/new?labels=bug,gateway" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none;">Report a bug</a>
+      <a href="${brand.issuesUrl}?labels=bug,gateway" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none;">Report a bug</a>
       <span style="color:var(--border-primary);">|</span>
-      <a href="https://github.com/wyre-technology/msp-claude-plugins/issues/new?labels=enhancement,gateway&amp;title=[Gateway]+Feature+request:+&amp;body=**Describe+the+feature**%0A%0A**Use+case**%0A" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none;">Suggest a feature</a>
+      <a href="${brand.issuesUrl}?labels=enhancement,gateway&amp;title=[Gateway]+Feature+request:+&amp;body=**Describe+the+feature**%0A%0A**Use+case**%0A" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none;">Suggest a feature</a>
     </div>`;
 
   return { body, pageStyles: CONNECTIONS_PAGE_STYLES };

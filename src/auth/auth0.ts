@@ -19,6 +19,7 @@ import * as oidc from 'openid-client';
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type postgres from 'postgres';
+import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -252,7 +253,7 @@ export function auth0Plugin(sql: postgres.Sql) {
           body: `## Bug Report\n\n**Error:** ${errorDetail}\n**Timestamp:** ${new Date().toISOString()}\n\n## Additional Context\n<!-- Add any other context about the problem here -->`,
           labels: 'bug,gateway',
         });
-        const reportUrl = `https://github.com/wyre-technology/msp-claude-plugins/issues/new?${issueParams.toString()}`;
+        const reportUrl = `${brand.issuesUrl}?${issueParams.toString()}`;
         return reply.code(502).send(
           `Auth0 login failed: ${errorDetail}. Please try again. | <a href="${reportUrl}">Report this issue</a>`,
         );

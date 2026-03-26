@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
 import type postgres from 'postgres';
+import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { sendWebhook } from '../monitoring/webhook.js';
 
@@ -73,7 +74,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Join the Waitlist - MCP Gateway - Wyre Technology</title>
+  <title>Join the Waitlist - MCP Gateway - ${brand.name}</title>
   <meta name="description" content="Get early access to the MCP Gateway — a hosted proxy that connects Claude to your MSP tools securely." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -237,7 +238,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
 </head>
 <body>
   <div class="card">
-    <div class="brand">Wyre Technology</div>
+    <div class="brand">${brand.name}</div>
     <h1>Get Early Access</h1>
     <p class="subtitle">The MCP Gateway connects Claude to your MSP tools — Autotask, Datto RMM, IT Glue, HaloPSA, and more. Sign up to be notified when we open access.</p>
 
@@ -274,7 +275,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
     <div class="links">
       <a href="/">Documentation</a>
       <span style="color:#262626">|</span>
-      <a href="https://github.com/wyre-technology/mspMarketPlace" target="_blank" rel="noopener">GitHub</a>
+      <a href="${brand.issuesUrl}" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
 

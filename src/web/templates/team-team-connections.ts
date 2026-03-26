@@ -1,3 +1,4 @@
+import { brand } from '../../brand/index.js';
 import { getVendorsByCategory, VENDORS } from '../../credentials/vendor-config.js';
 import { escapeHtml } from '../helpers.js';
 
@@ -83,7 +84,7 @@ export function renderTeamTeamConnections(data: TeamTeamConnectionsData): string
     <!-- Connect modal overlay -->
     <div id="connectModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
       <div class="card" style="max-width:420px">
-        <div class="brand">Wyre Technology</div>
+        <div class="brand">${escapeHtml(brand.name)}</div>
         <h1 id="modalTitle"></h1>
         <p class="subtitle">Enter credentials for this sub-team.</p>
         <form id="modalForm" style="display:flex;flex-direction:column;gap:12px">
