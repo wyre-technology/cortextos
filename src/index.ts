@@ -230,6 +230,31 @@ await app.register(logShippingRoutes({
   adapters: logShippingAdapters,
 }));
 
+// Admin API: set org plan directly (for managed services contracts)
+app.post<{
+  Params: { orgId: string };
+  Body: { plan: string };
+}>('/api/admin/orgs/:orgId/plan', async (request, reply) => {
+  const apiKey = request.headers['x-admin-api-key'];
+  if (!config.adminApiKey || apiKey !== config.adminApiKey) {
+    return reply.code(401).send({ error: 'Invalid admin API key' });
+  }
+
+  const { orgId } = request.params;
+  const { plan } = request.body;
+  if (!plan || typeof plan !== 'string') {
+    return reply.code(400).send({ error: 'plan is required' });
+  }
+
+  const org = await orgService.getOrg(orgId);
+  if (!org) {
+    return reply.code(404).send({ error: 'Organization not found' });
+  }
+
+  await orgService.updateOrgPlan(orgId, plan as 'free' | 'pro');
+  return reply.send({ orgId, plan });
+});
+
 // CLI REST endpoint (tool calls as plain JSON, not MCP JSON-RPC)
 await app.register(cliRoutes({
   credentialService,

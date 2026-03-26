@@ -32,6 +32,7 @@ describe('DefaultBillingGate', () => {
   const mockOrgService = {
     getUserOrgs: vi.fn<[string], Organization[]>(),
     getOrg: vi.fn<[string], Organization | null>(),
+    getMembers: vi.fn().mockResolvedValue([]),
   };
 
   beforeEach(() => {
