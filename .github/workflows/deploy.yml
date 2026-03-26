@@ -1,0 +1,73 @@
+name: Deploy to Azure Container Apps
+
+on:
+  workflow_run:
+    workflows: ["Release", "CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Deploy when: manual trigger, Release succeeded, or CI succeeded from a docs-update dispatch
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.name == 'Release' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'repository_dispatch')
+    environment: production
+
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get image SHA
+        id: sha
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Use the head SHA from the workflow that triggered this deploy
+            # (the commit that CI built the Docker image from)
+            FULL_SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            # Manual dispatch — use current HEAD
+            FULL_SHA="$(git rev-parse HEAD)"
+          fi
+          echo "short=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: ./azure/main.bicep
+          parameters: >-
+            gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
+            redeployTrigger=${{ github.run_id }}
+            masterKey=${{ secrets.MASTER_KEY }}
+            jwtSecret=${{ secrets.JWT_SECRET }}
+            pgPassword=${{ secrets.PG_PASSWORD }}
+            ghcrToken=${{ secrets.GHCR_TOKEN }}
+          failOnStdErr: false

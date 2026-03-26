@@ -1,0 +1,13 @@
+node_modules/
+dist/
+public/
+*.db
+*.sqlite
+.env
+.env.local
+coverage/
+logs/
+PLAN-*.md
+azure/*.json
+.claude/worktrees/
+experiments/

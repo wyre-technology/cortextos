@@ -1,0 +1,261 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - BASE_URL=http://localhost:8080
+      - DATABASE_URL=postgres://gateway:gateway@postgres:5432/gateway
+      - MASTER_KEY=${MASTER_KEY:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - AUTH0_DOMAIN=${AUTH0_DOMAIN:-}
+      - AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID:-}
+      - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET:-}
+      - AUTH0_CALLBACK_URL=${AUTH0_CALLBACK_URL:-http://localhost:8080/auth/callback}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - LOG_LEVEL=debug
+      # Vendor container URLs (Docker Compose service names)
+      - VENDOR_URL_DATTO_RMM=http://datto-rmm-mcp:8080
+      - VENDOR_URL_ITGLUE=http://itglue-mcp:8080
+      - VENDOR_URL_AUTOTASK=http://autotask-mcp:8080
+      - VENDOR_URL_SYNCRO=http://syncro-mcp:8080
+      - VENDOR_URL_ATERA=http://atera-mcp:8080
+      - VENDOR_URL_SUPEROPS=http://superops-mcp:8080
+      - VENDOR_URL_HALOPSA=http://halopsa-mcp:8080
+      - VENDOR_URL_CONNECTWISE_MANAGE=http://connectwise-manage-mcp:8080
+      - VENDOR_URL_CONNECTWISE_AUTOMATE=http://connectwise-automate-mcp:8080
+      - VENDOR_URL_NINJAONE=http://ninjaone-mcp:8080
+      - VENDOR_URL_HUDU=http://hudu-mcp:8080
+      - VENDOR_URL_ROCKETCYBER=http://rocketcyber-mcp:8080
+      - VENDOR_URL_SENTINELONE=http://sentinelone-mcp:8080
+      - VENDOR_URL_HUNTRESS=http://huntress-mcp:8080
+      - VENDOR_URL_BLUMIRA=http://blumira-mcp:8080
+      - VENDOR_URL_PAX8=http://pax8-mcp:8080
+      - VENDOR_URL_XERO=http://xero-mcp:8080
+      - VENDOR_URL_QBO=http://qbo-mcp:8080
+      - VENDOR_URL_M365=http://m365-mcp:8080
+      - VENDOR_URL_AVANAN=http://avanan-mcp:8080
+      - VENDOR_URL_PROOFPOINT=http://proofpoint-mcp:8080
+      - VENDOR_URL_KNOWBE4=http://knowbe4-mcp:8080
+      - VENDOR_URL_SHERWEB=http://sherweb-mcp:8080
+      # OAuth vendor app credentials (gateway-level, not per-user)
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      - QBO_CLIENT_ID=${QBO_CLIENT_ID:-}
+      - QBO_CLIENT_SECRET=${QBO_CLIENT_SECRET:-}
+      - HUBSPOT_CLIENT_ID=${HUBSPOT_CLIENT_ID:-}
+      - HUBSPOT_CLIENT_SECRET=${HUBSPOT_CLIENT_SECRET:-}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=gateway
+      - POSTGRES_PASSWORD=gateway
+      - POSTGRES_DB=gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  datto-rmm-mcp:
+    image: ghcr.io/wyre-technology/datto-rmm-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  itglue-mcp:
+    image: ghcr.io/wyre-technology/itglue-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  autotask-mcp:
+    image: ghcr.io/wyre-technology/autotask-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  syncro-mcp:
+    image: ghcr.io/wyre-technology/syncro-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  atera-mcp:
+    image: ghcr.io/wyre-technology/atera-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  superops-mcp:
+    image: ghcr.io/wyre-technology/superops-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  halopsa-mcp:
+    image: ghcr.io/wyre-technology/halopsa-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  connectwise-manage-mcp:
+    image: ghcr.io/wyre-technology/connectwise-manage-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  connectwise-automate-mcp:
+    image: ghcr.io/wyre-technology/connectwise-automate-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  ninjaone-mcp:
+    image: ghcr.io/wyre-technology/ninjaone-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  hudu-mcp:
+    image: ghcr.io/wyre-technology/hudu-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  rocketcyber-mcp:
+    image: ghcr.io/wyre-technology/rocketcyber-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  pax8-mcp:
+    image: ghcr.io/wyre-technology/pax8-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  xero-mcp:
+    image: ghcr.io/wyre-technology/xero-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  qbo-mcp:
+    image: ghcr.io/wyre-technology/qbo-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  m365-mcp:
+    build: ./containers/m365-mcp
+    expose:
+      - "8080"
+
+  sentinelone-mcp:
+    build: ./containers/sentinelone-mcp
+    environment:
+      - AUTH_MODE=gateway
+    expose:
+      - "8080"
+
+  huntress-mcp:
+    image: ghcr.io/wyre-technology/huntress-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  blumira-mcp:
+    image: ghcr.io/wyre-technology/blumira-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  avanan-mcp:
+    image: ghcr.io/wyre-technology/avanan-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  proofpoint-mcp:
+    image: ghcr.io/wyre-technology/proofpoint-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  knowbe4-mcp:
+    image: ghcr.io/wyre-technology/knowbe4-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  sherweb-mcp:
+    image: ghcr.io/wyre-technology/sherweb-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+volumes:
+  pgdata:

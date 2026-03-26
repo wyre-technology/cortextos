@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Semantic Release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+
+      - name: Get release info
+        id: release_info
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+
+            # Fetch the release body and convert to a concise summary for Discord
+            BODY=$(gh release view "$VERSION" --json body --jq '.body' 2>/dev/null || echo "")
+            # Strip the markdown heading and compare link, keep just the changelog items
+            # Truncate to 1800 chars to stay within Discord embed limits (2048)
+            SUMMARY=$(echo "$BODY" | sed '1,2d' | head -30 | cut -c1-1800)
+            # Use EOF delimiter for multiline output
+            {
+              echo "summary<<RELEASE_EOF"
+              echo "$SUMMARY"
+              echo "RELEASE_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Discord release notification
+        if: steps.release_info.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+          BODY=$(gh release view "$VERSION" --json body --jq '.body' 2>/dev/null || echo "")
+          SUMMARY=$(echo "$BODY" | sed '1,2d' | head -30 | cut -c1-1800)
+          DESC="**${{ github.repository }}** — [${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${VERSION})"$'\n'"${SUMMARY}"
+          PAYLOAD=$(jq -n --arg title "New Release: ${VERSION}" --arg desc "$DESC" '{embeds: [{title: $title, description: $desc, color: 5763847}]}')
+          curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: release
+    if: always() && !cancelled() && !failure()
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone docs source
+        uses: actions/checkout@v4
+        with:
+          repository: wyre-technology/msp-claude-plugins
+          path: docs-repo
+
+      - name: Copy docs into build context
+        run: rm -rf docs && cp -r docs-repo/msp-claude-plugins/docs docs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DOCS_CACHE_BUST=${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push m365-mcp
+        uses: docker/build-push-action@v5
+        with:
+          context: containers/m365-mcp
+          push: true
+          tags: ghcr.io/wyre-technology/m365-mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

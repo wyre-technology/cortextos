@@ -1,0 +1,91 @@
+# =============================================================================
+# MCP Gateway - Auto-Redeploy on MCP Server Update
+# =============================================================================
+# Triggered by repository_dispatch from MCP server repos after a new release.
+# Restarts the corresponding container app to pull the updated :latest image.
+#
+# Required Secrets:
+#   - AZURE_CREDENTIALS: Azure service principal credentials (JSON)
+#
+# Trigger payload:
+#   event_type: mcp-server-updated
+#   client_payload:
+#     server: "autotask-mcp" (which server was updated)
+#     version: "2.11.1" (new version number)
+# =============================================================================
+
+name: Redeploy on MCP Server Update
+
+on:
+  repository_dispatch:
+    types: [mcp-server-updated]
+
+env:
+  RESOURCE_GROUP: mcp-gateway-prod
+
+jobs:
+  redeploy:
+    name: Redeploy MCP Server Container
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log dispatch details
+        run: |
+          echo "## MCP Server Update Detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Server | ${{ github.event.client_payload.server }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ github.event.client_payload.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered at | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Derive container app name
+        id: derive
+        run: |
+          SERVER="${{ github.event.client_payload.server }}"
+          # Strip -mcp suffix to get the app name component
+          APP_NAME="mcpgw-prod-${SERVER%-mcp}"
+          IMAGE="ghcr.io/wyre-technology/${SERVER}:latest"
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          echo "Container app: $APP_NAME"
+          echo "Image: $IMAGE"
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Update Container App
+        run: |
+          # Set REDEPLOY_TS env var to force a new revision even if image tag
+          # hasn't changed — Azure won't re-pull :latest without a revision change
+          az containerapp update \
+            --name ${{ steps.derive.outputs.app_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ steps.derive.outputs.image }} \
+            --set-env-vars "REDEPLOY_TS=$(date -u +%Y%m%d%H%M%S)"
+
+      - name: Verify container is running
+        run: |
+          STATUS=$(az containerapp show \
+            --name ${{ steps.derive.outputs.app_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.runningStatus \
+            --output tsv)
+
+          echo "Container status: $STATUS"
+          if [ "$STATUS" != "Running" ]; then
+            echo "::warning::Container is not in Running state: $STATUS"
+          fi
+
+      - name: Post Summary
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Redeploy Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Container App | ${{ steps.derive.outputs.app_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | ${{ steps.derive.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY

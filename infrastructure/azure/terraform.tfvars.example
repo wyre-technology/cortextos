@@ -1,0 +1,130 @@
+# =============================================================================
+# MCP Gateway - Azure Container Apps - Example Configuration
+# =============================================================================
+# Copy this file to terraform.tfvars and update with your values.
+# Never commit real credentials to version control.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Basic Configuration
+# -----------------------------------------------------------------------------
+
+name     = "mcp-gateway"
+location = "eastus"
+
+tags = {
+  environment = "production"
+  project     = "mcp-gateway"
+  team        = "platform"
+}
+
+# -----------------------------------------------------------------------------
+# Custom Domain (optional)
+# -----------------------------------------------------------------------------
+
+# Uncomment and set for custom domain
+# custom_domain = "mcp.wyre.ai"
+# dns_zone_resource_group = "dns-rg"
+
+# -----------------------------------------------------------------------------
+# Container Apps Configuration
+# -----------------------------------------------------------------------------
+
+# Registry container resources
+registry_cpu    = 1.0
+registry_memory = "2Gi"
+
+# Auth server container resources
+auth_server_cpu    = 0.5
+auth_server_memory = "1Gi"
+
+# Scaling configuration
+min_replicas = 1
+max_replicas = 10
+
+# -----------------------------------------------------------------------------
+# PostgreSQL Configuration
+# -----------------------------------------------------------------------------
+
+# SKU options: B_Standard_B1ms (burstable), GP_Standard_D2s_v3 (general purpose)
+postgres_sku_name = "B_Standard_B1ms"
+postgres_storage_mb = 32768
+postgres_version = "16"
+postgres_database_name = "mcp_registry"
+
+# Credentials - set via environment variables or Azure Key Vault
+# postgres_admin_username = "mcpadmin"
+# postgres_admin_password = "your-secure-password"
+
+# -----------------------------------------------------------------------------
+# Redis Configuration
+# -----------------------------------------------------------------------------
+
+# Basic tier is sufficient for development
+# Standard or Premium for production
+redis_sku_name = "Basic"
+redis_family   = "C"
+redis_capacity = 0
+
+# -----------------------------------------------------------------------------
+# Authentication Configuration
+# -----------------------------------------------------------------------------
+
+# Use Microsoft Entra ID for Azure-native authentication
+auth_provider = "entra"
+
+# Entra ID Configuration
+# Get these from Azure Portal > Azure Active Directory > App registrations
+# entra_tenant_id = "your-tenant-id"
+# entra_client_id = "your-client-id"
+# entra_client_secret = "your-client-secret"  # Set via TF_VAR_entra_client_secret
+
+# -----------------------------------------------------------------------------
+# Security Configuration
+# -----------------------------------------------------------------------------
+
+# Admin credentials - set via environment variables
+# admin_user = "admin"
+# admin_password = "your-secure-admin-password"  # Set via TF_VAR_admin_password
+
+# Session cookie settings
+session_cookie_secure = true
+session_cookie_domain = ""  # Leave empty for single domain
+
+# -----------------------------------------------------------------------------
+# Storage Backend
+# -----------------------------------------------------------------------------
+
+storage_backend = "mongodb-ce"
+
+# -----------------------------------------------------------------------------
+# Embeddings Configuration
+# -----------------------------------------------------------------------------
+
+embeddings_provider = "sentence-transformers"
+embeddings_model_name = "all-MiniLM-L6-v2"
+embeddings_model_dimensions = 384
+
+# -----------------------------------------------------------------------------
+# Security Scanning
+# -----------------------------------------------------------------------------
+
+security_scan_enabled = true
+security_scan_on_registration = true
+security_block_unsafe_servers = true
+security_analyzers = "yara"
+
+# -----------------------------------------------------------------------------
+# Federation (optional)
+# -----------------------------------------------------------------------------
+
+# registry_id = "wyre-mcp-gateway"
+# federation_static_token_auth_enabled = false
+
+# -----------------------------------------------------------------------------
+# Monitoring
+# -----------------------------------------------------------------------------
+
+enable_monitoring = true
+log_retention_days = 30
+# alert_email = "ops@wyre.ai"
