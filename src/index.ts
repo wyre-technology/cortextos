@@ -92,7 +92,27 @@ const sql = postgres(config.databaseUrl, {
 // Services
 // ---------------------------------------------------------------------------
 
-// Auth plugin creates users + auth_state tables (must be first)
+// Ensure core tables exist before services init (auth plugins may skip if unconfigured)
+await sql`
+  CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    auth0_sub  TEXT UNIQUE,
+    email      TEXT NOT NULL DEFAULT '',
+    name       TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    tenant_id  TEXT
+  )
+`;
+await sql`
+  CREATE TABLE IF NOT EXISTS auth_state (
+    state         TEXT PRIMARY KEY,
+    code_verifier TEXT NOT NULL,
+    return_to     TEXT NOT NULL DEFAULT '/',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`;
+
+// Auth plugin (may be no-op if not configured, but tables above guarantee deps)
 await registerAuthPlugin(app, sql);
 
 // OrgService creates organizations, org_teams, etc. (must be before credentials)
