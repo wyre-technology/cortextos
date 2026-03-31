@@ -46,11 +46,20 @@ export const config = {
     | 'warn'
     | 'error',
 
+  // Auth provider selection: 'auth0' | 'azure-ad'
+  authProvider: (process.env.AUTH_PROVIDER || 'auth0') as 'auth0' | 'azure-ad',
+
   // Auth0 OIDC configuration
   auth0Domain: process.env.AUTH0_DOMAIN ?? '',       // e.g. "wyre.us.auth0.com"
   auth0ClientId: process.env.AUTH0_CLIENT_ID ?? '',
   auth0ClientSecret: process.env.AUTH0_CLIENT_SECRET ?? '',
   auth0CallbackUrl: process.env.AUTH0_CALLBACK_URL ?? '',  // e.g. "https://gateway.example.com/auth/callback"
+
+  // Azure AD OIDC configuration (multi-tenant)
+  azureTenantId: process.env.AZURE_AD_TENANT_ID ?? '',
+  azureClientId: process.env.AZURE_AD_CLIENT_ID ?? '',
+  azureClientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? '',
+  azureCallbackUrl: process.env.AZURE_AD_CALLBACK_URL ?? '',
 
   // Stripe billing
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? '',
