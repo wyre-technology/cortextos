@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maintenance Procedures — Wyre Technology MCP Gateway</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 20px; }
+  .header { background: #1e293b; color: #fff; padding: 20px 30px; margin: -20px -20px 30px -20px; border-bottom: 4px solid #2563eb; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #94a3b8; font-size: 14px; }
+  .header .brand { color: #60a5fa; font-weight: 600; }
+  h2 { color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 36px; }
+  h3 { color: #334155; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #f8fafc; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .toc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px 24px; margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .critical { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  @media print { .header { background: #fff; color: #000; border-bottom: 2px solid #000; } .header .subtitle, .header .brand { color: #666; } pre { background: #f5f5f5; color: #000; border: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">Wyre Technology</div>
+  <h1>Maintenance Procedures</h1>
+  <div class="subtitle">MCP Gateway Platform &mdash; IT Glue Documentation</div>
+</div>
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#ci-cd">CI/CD Pipeline &amp; Deployment</a></li>
+    <li><a href="#database-backups">Database Backups &amp; Restore</a></li>
+    <li><a href="#certificates">Certificate Renewal</a></li>
+    <li><a href="#secrets">Rotating Secrets &amp; Credentials</a></li>
+    <li><a href="#scaling">Scaling Up &amp; Down</a></li>
+    <li><a href="#updates">Updating Vendor MCP Containers</a></li>
+    <li><a href="#cleanup">Data Cleanup &amp; Retention</a></li>
+    <li><a href="#disaster-recovery">Disaster Recovery</a></li>
+  </ul>
+</div>
+
+<h2 id="ci-cd">CI/CD Pipeline &amp; Deployment</h2>
+
+<h3>Deployment Flow</h3>
+<p>The platform uses GitHub Actions for automated deployment. The primary pipeline is:</p>
+
+<table>
+  <tr><th>Step</th><th>Trigger</th><th>What Happens</th></tr>
+  <tr><td>1. CI</td><td>Push to <code>main</code> or PR</td><td>Lint, type-check, run tests</td></tr>
+  <tr><td>2. Release</td><td>Merge to <code>main</code> (semantic-release)</td><td>Version bump, changelog, GitHub release, Docker image build + push to GHCR</td></tr>
+  <tr><td>3. Deploy</td><td>Release or CI completed on <code>main</code>, or manual dispatch</td><td>Azure Bicep deployment with new image tag</td></tr>
+</table>
+
+<h3>Workflow Files</h3>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>.github/workflows/ci.yml</code></td><td>Continuous integration (tests, lint, type-check)</td></tr>
+  <tr><td><code>.github/workflows/release.yml</code></td><td>Semantic release (versioning, changelog, Docker build)</td></tr>
+  <tr><td><code>.github/workflows/deploy.yml</code></td><td>Primary: Bicep deployment to Azure Container Apps</td></tr>
+  <tr><td><code>.github/workflows/deploy-azure.yml</code></td><td>Alternative: Terraform-based deployment (legacy)</td></tr>
+  <tr><td><code>.github/workflows/redeploy-on-server-update.yml</code></td><td>Auto-redeploy when vendor MCP server images update</td></tr>
+</table>
+
+<h3>Manual Deployment</h3>
+<pre><code># Trigger a manual deploy via GitHub CLI
+gh workflow run deploy.yml -f environment=production
+
+# Or deploy directly with Azure CLI + Bicep
+az deployment group create \
+  --resource-group {rg} \
+  --template-file azure/main.bicep \
+  --parameters \
+    gatewayImage=ghcr.io/wyre-technology/mcp-gateway:sha-{commit} \
+    redeployTrigger=$(date +%s) \
+    masterKey={key} \
+    jwtSecret={key} \
+    pgPassword={pass} \
+    ghcrToken={token}</code></pre>
+
+<h3>Rolling Back a Deployment</h3>
+<pre><code># List recent revisions
+az containerapp revision list --name mcpgw-prod-gateway \
+  --resource-group {rg} --query '[].{name:name,active:active,created:createdTime}' -o table
+
+# Activate a previous revision
+az containerapp revision activate --name mcpgw-prod-gateway \
+  --resource-group {rg} --revision {previous-revision-name}
+
+# Deactivate the bad revision
+az containerapp revision deactivate --name mcpgw-prod-gateway \
+  --resource-group {rg} --revision {bad-revision-name}</code></pre>
+
+<h3>Required GitHub Secrets</h3>
+<table>
+  <tr><th>Secret</th><th>Purpose</th></tr>
+  <tr><td><code>AZURE_CLIENT_ID</code></td><td>Azure service principal (federated credentials / OIDC)</td></tr>
+  <tr><td><code>AZURE_TENANT_ID</code></td><td>Azure AD tenant</td></tr>
+  <tr><td><code>AZURE_SUBSCRIPTION_ID</code></td><td>Azure subscription</td></tr>
+  <tr><td><code>MASTER_KEY</code></td><td>64 hex char encryption key</td></tr>
+  <tr><td><code>JWT_SECRET</code></td><td>64 hex char JWT signing key</td></tr>
+  <tr><td><code>PG_PASSWORD</code></td><td>PostgreSQL admin password</td></tr>
+  <tr><td><code>GHCR_TOKEN</code></td><td>GitHub Container Registry PAT (read:packages)</td></tr>
+</table>
+
+<h2 id="database-backups">Database Backups &amp; Restore</h2>
+
+<h3>Automatic Backups</h3>
+<p>Azure PostgreSQL Flexible Server is configured with:</p>
+<table>
+  <tr><th>Setting</th><th>Value</th></tr>
+  <tr><td>Backup retention</td><td>7 days</td></tr>
+  <tr><td>Geo-redundant backup</td><td>Disabled</td></tr>
+  <tr><td>Backup frequency</td><td>Automatic (managed by Azure)</td></tr>
+</table>
+
+<h3>Point-in-Time Restore</h3>
+<pre><code># List available restore points
+az postgres flexible-server show --name mcpgw-prod-pg \
+  --resource-group {rg} --query backup
+
+# Restore to a point in time (creates a NEW server)
+az postgres flexible-server restore \
+  --name mcpgw-prod-pg-restored \
+  --resource-group {rg} \
+  --source-server mcpgw-prod-pg \
+  --restore-time "2026-03-30T12:00:00Z"</code></pre>
+
+<div class="warning">
+  <strong>Important:</strong> Point-in-time restore creates a <em>new</em> PostgreSQL server. After verifying the restored data, update the gateway's <code>DATABASE_URL</code> to point to the new server and redeploy.
+</div>
+
+<h3>Manual Backup (pg_dump)</h3>
+<pre><code># Connect and dump
+pg_dump "postgres://gatewayadmin:{password}@mcpgw-prod-pg.postgres.database.azure.com:5432/gateway?sslmode=require" \
+  --format=custom --file=gateway-backup-$(date +%Y%m%d).dump
+
+# Restore from dump
+pg_restore --dbname="postgres://..." --clean --if-exists gateway-backup-20260330.dump</code></pre>
+
+<h2 id="certificates">Certificate Renewal</h2>
+
+<h3>TLS Certificate (Azure Managed)</h3>
+<p>The gateway uses Azure Container Apps managed certificates. These are <strong>automatically renewed</strong> by Azure before expiry. No manual intervention is needed.</p>
+
+<h3>Verification</h3>
+<pre><code># Check certificate status
+az containerapp env certificate list \
+  --name mcpgw-prod-env --resource-group {rg} \
+  --query '[].{name:name,expiration:expirationDate,thumbprint:thumbprint}' -o table</code></pre>
+
+<h3>Auth0 Signing Certificate</h3>
+<p>Auth0 manages its own signing keys. If Auth0 rotates keys, existing JWTs from Auth0 may fail verification. The gateway uses Auth0 OIDC discovery to automatically fetch current keys.</p>
+
+<h2 id="secrets">Rotating Secrets &amp; Credentials</h2>
+
+<h3>Rotating MASTER_KEY</h3>
+<div class="critical">
+  <strong>WARNING: Rotating the MASTER_KEY invalidates ALL stored encrypted credentials.</strong> Every customer will need to re-enter their vendor API keys. Plan this as a scheduled maintenance event.
+</div>
+<ol>
+  <li>Generate a new 32-byte hex key: <code>openssl rand -hex 32</code></li>
+  <li>Update the GitHub secret <code>MASTER_KEY</code></li>
+  <li>Redeploy via the CI/CD pipeline</li>
+  <li>Notify all customers to re-enter vendor credentials</li>
+</ol>
+
+<h3>Rotating JWT_SECRET</h3>
+<div class="warning">
+  <strong>Rotating the JWT_SECRET invalidates all active access and refresh tokens.</strong> All users must re-authenticate.
+</div>
+<ol>
+  <li>Generate a new 32-byte hex key: <code>openssl rand -hex 32</code></li>
+  <li>Update the GitHub secret <code>JWT_SECRET</code></li>
+  <li>Redeploy</li>
+  <li>Users will be prompted to re-authenticate on next API call</li>
+</ol>
+
+<h3>Rotating Auth0 Secrets</h3>
+<ol>
+  <li>Rotate the client secret in Auth0 Dashboard</li>
+  <li>Update the Key Vault secret:
+<pre><code>az keyvault secret set --vault-name mcpgw-prod-kv \
+  --name auth0-client-secret --value "{new-secret}"</code></pre>
+  </li>
+  <li>Restart the gateway container to pick up the new Key Vault secret value</li>
+</ol>
+
+<h3>Rotating Stripe Secrets</h3>
+<ol>
+  <li>Generate new keys in Stripe Dashboard</li>
+  <li>Update Key Vault:
+<pre><code>az keyvault secret set --vault-name mcpgw-prod-kv \
+  --name stripe-secret-key --value "{new-key}"
+az keyvault secret set --vault-name mcpgw-prod-kv \
+  --name stripe-webhook-secret --value "{new-secret}"</code></pre>
+  </li>
+  <li>Restart the gateway container</li>
+</ol>
+
+<h3>Rotating GHCR Token</h3>
+<ol>
+  <li>Generate a new GitHub PAT with <code>read:packages</code> scope</li>
+  <li>Update GitHub secret <code>GHCR_TOKEN</code></li>
+  <li>Redeploy (the token is passed to the Bicep deployment for container registry auth)</li>
+</ol>
+
+<h3>Rotating PostgreSQL Password</h3>
+<ol>
+  <li>Change the password on the PostgreSQL server:
+<pre><code>az postgres flexible-server update --name mcpgw-prod-pg \
+  --resource-group {rg} --admin-password "{new-password}"</code></pre>
+  </li>
+  <li>Update the GitHub secret <code>PG_PASSWORD</code></li>
+  <li>Redeploy (the DATABASE_URL secret is rebuilt from the new password during Bicep deployment)</li>
+</ol>
+
+<h2 id="scaling">Scaling Up &amp; Down</h2>
+
+<h3>Gateway Horizontal Scaling</h3>
+<pre><code># Scale to more replicas
+az containerapp update --name mcpgw-prod-gateway \
+  --resource-group {rg} \
+  --min-replicas 2 --max-replicas 5
+
+# Scale back down
+az containerapp update --name mcpgw-prod-gateway \
+  --resource-group {rg} \
+  --min-replicas 1 --max-replicas 3</code></pre>
+
+<h3>Gateway Vertical Scaling</h3>
+<pre><code># Increase CPU/memory
+az containerapp update --name mcpgw-prod-gateway \
+  --resource-group {rg} \
+  --cpu 1.0 --memory 2Gi</code></pre>
+
+<h3>PostgreSQL Scaling</h3>
+<pre><code># Scale up the tier
+az postgres flexible-server update --name mcpgw-prod-pg \
+  --resource-group {rg} --sku-name Standard_B2ms
+
+# Increase storage
+az postgres flexible-server update --name mcpgw-prod-pg \
+  --resource-group {rg} --storage-size 64</code></pre>
+
+<h3>Vendor Container Scaling</h3>
+<p>Vendor containers are configured with 1 replica by default. For high-traffic vendors:</p>
+<pre><code>az containerapp update --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} \
+  --min-replicas 1 --max-replicas 3</code></pre>
+
+<h2 id="updates">Updating Vendor MCP Containers</h2>
+
+<h3>Updating a Single Vendor Image</h3>
+<pre><code># Pull and deploy the latest image for a specific vendor
+az containerapp update --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} \
+  --image ghcr.io/wyre-technology/{vendor-slug}-mcp:latest</code></pre>
+
+<h3>Updating All Vendors via Bicep</h3>
+<p>Update the <code>vendors</code> parameter in the Bicep deployment to change images or add/remove vendors, then redeploy.</p>
+
+<h3>Adding a New Vendor</h3>
+<ol>
+  <li>Add the vendor to the <code>vendors</code> array in <code>azure/main.bicep</code></li>
+  <li>Add the <code>VENDOR_URL_{SLUG}</code> environment variable to the gateway container</li>
+  <li>Configure the vendor in <code>src/credentials/vendor-config.ts</code></li>
+  <li>Redeploy</li>
+</ol>
+
+<h2 id="cleanup">Data Cleanup &amp; Retention</h2>
+
+<h3>Automatic Cleanup</h3>
+<table>
+  <tr><th>Data</th><th>Retention</th><th>Mechanism</th></tr>
+  <tr><td>Request log entries</td><td>90 days</td><td>Gateway runs <code>orgService.cleanupRequestLog(90)</code> on startup</td></tr>
+  <tr><td>Log shipping errors</td><td>Last 50 per destination</td><td>Ring buffer pruned on each new error</td></tr>
+  <tr><td>Container logs</td><td>30 days</td><td>Log Analytics workspace retention setting</td></tr>
+  <tr><td>PostgreSQL backups</td><td>7 days</td><td>Azure Flexible Server backup retention</td></tr>
+</table>
+
+<h3>Manual Cleanup</h3>
+<pre><code># Connect to PostgreSQL and manually clean old data
+psql "postgres://gatewayadmin:{password}@mcpgw-prod-pg.postgres.database.azure.com:5432/gateway?sslmode=require"
+
+-- Delete request log entries older than 60 days
+DELETE FROM request_log WHERE created_at &lt; NOW() - INTERVAL '60 days';
+
+-- Check table sizes
+SELECT relname, pg_size_pretty(pg_total_relation_size(relid))
+FROM pg_catalog.pg_statio_user_tables
+ORDER BY pg_total_relation_size(relid) DESC;</code></pre>
+
+<h2 id="disaster-recovery">Disaster Recovery</h2>
+
+<h3>Recovery Time Objectives</h3>
+<table>
+  <tr><th>Scenario</th><th>RTO</th><th>RPO</th><th>Procedure</th></tr>
+  <tr><td>Gateway container crash</td><td>&lt; 5 min</td><td>0 (stateless)</td><td>Automatic restart by Container Apps</td></tr>
+  <tr><td>Vendor container crash</td><td>&lt; 5 min</td><td>0 (stateless)</td><td>Automatic restart by Container Apps</td></tr>
+  <tr><td>Database corruption</td><td>30-60 min</td><td>Up to 5 min (continuous backup)</td><td>Point-in-time restore</td></tr>
+  <tr><td>Region outage</td><td>2-4 hours</td><td>Up to 24 hours</td><td>Redeploy to alternate region</td></tr>
+  <tr><td>MASTER_KEY compromised</td><td>1-2 hours</td><td>N/A</td><td>Rotate key, notify customers</td></tr>
+</table>
+
+<h3>Full Region Recovery Procedure</h3>
+<ol>
+  <li>Create a new resource group in an alternate region</li>
+  <li>Restore PostgreSQL from the most recent backup (if geo-redundant backup is enabled) or from a manual pg_dump</li>
+  <li>Deploy the Bicep template to the new resource group:
+<pre><code>az deployment group create \
+  --resource-group {new-rg} \
+  --template-file azure/main.bicep \
+  --parameters location={new-region} env=prod \
+    masterKey={key} jwtSecret={key} pgPassword={pass} ghcrToken={token}</code></pre>
+  </li>
+  <li>Update DNS to point to the new gateway FQDN</li>
+  <li>Update Auth0 callback URL to the new domain</li>
+  <li>Verify <code>/health</code> and <code>/health/vendors</code> return healthy</li>
+  <li>Notify customers if credential re-entry is required</li>
+</ol>
+
+<h3>Backup Checklist</h3>
+<table>
+  <tr><th>Item</th><th>Frequency</th><th>Location</th><th>Verified By</th></tr>
+  <tr><td>PostgreSQL automatic backup</td><td>Continuous</td><td>Azure (7-day retention)</td><td>Azure Backup status</td></tr>
+  <tr><td>Key Vault secrets backup</td><td>Monthly or on change</td><td>Secure offline storage</td><td>Manual verification</td></tr>
+  <tr><td>GitHub repository</td><td>Every push</td><td>GitHub (remote)</td><td>Git log</td></tr>
+  <tr><td>Docker images</td><td>Every release</td><td>GHCR</td><td>Image tag list</td></tr>
+  <tr><td>Auth0 configuration</td><td>Monthly</td><td>Auth0 Dashboard export</td><td>Manual verification</td></tr>
+  <tr><td>Stripe configuration</td><td>On change</td><td>Stripe Dashboard</td><td>Manual verification</td></tr>
+</table>
+
+<div class="note">
+  <strong>Recommendation:</strong> Enable geo-redundant backup on PostgreSQL Flexible Server for production workloads to improve RPO for regional disasters. This can be enabled via:
+  <pre><code>az postgres flexible-server update --name mcpgw-prod-pg \
+  --resource-group {rg} --geo-redundant-backup Enabled</code></pre>
+</div>
+
+</body>
+</html>

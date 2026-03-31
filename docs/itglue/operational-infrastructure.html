@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operational Infrastructure Overview — Wyre Technology MCP Gateway</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 20px; }
+  .header { background: #1e293b; color: #fff; padding: 20px 30px; margin: -20px -20px 30px -20px; border-bottom: 4px solid #2563eb; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #94a3b8; font-size: 14px; }
+  .header .brand { color: #60a5fa; font-weight: 600; }
+  h2 { color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 36px; }
+  h3 { color: #334155; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #f8fafc; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .toc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px 24px; margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .diagram { background: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4; white-space: pre; overflow-x: auto; }
+  @media print { .header { background: #fff; color: #000; border-bottom: 2px solid #000; } .header .subtitle, .header .brand { color: #666; } pre { background: #f5f5f5; color: #000; border: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">Wyre Technology</div>
+  <h1>Operational Infrastructure Overview</h1>
+  <div class="subtitle">MCP Gateway Platform &mdash; IT Glue Documentation</div>
+</div>
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#architecture">Architecture Overview</a></li>
+    <li><a href="#components">Platform Components</a></li>
+    <li><a href="#network">Network Topology</a></li>
+    <li><a href="#azure">Azure Resources (Bicep Deployment)</a></li>
+    <li><a href="#containers">Container Orchestration</a></li>
+    <li><a href="#dns">DNS &amp; Domain Configuration</a></li>
+    <li><a href="#tls">SSL/TLS Certificate Management</a></li>
+    <li><a href="#envvars">Environment Variables Reference</a></li>
+    <li><a href="#vendors">Vendor MCP Server Containers</a></li>
+  </ul>
+</div>
+
+<h2 id="architecture">Architecture Overview</h2>
+
+<p>The MCP Gateway is a white-label, multi-tenant AI tool gateway for managed service providers. It sits between MCP clients (Claude Desktop, Claude Code) and vendor API MCP servers, handling OAuth 2.1 authentication, credential encryption, RBAC, audit logging, and request proxying.</p>
+
+<div class="diagram">
+Claude Desktop / Claude Code
+        |
+        | (1) OAuth 2.1 + PKCE Authentication
+        v
++-------------------------------+       +-------------------+
+|   MCP Gateway (Fastify)       |&lt;-----&gt;|   PostgreSQL 16   |
+|   - OAuth 2.1 Server          |       |   (Flexible Svr)  |
+|   - Credential Encryption     |       +-------------------+
+|   - JWT Token Management      |
+|   - RBAC &amp; Billing Gate      |       +-------------------+
+|   - Audit Logging             |&lt;-----&gt;|   Azure Key Vault |
+|   - Log Shipping              |       |   (Auth0 secrets) |
+|   - Vendor Health Monitor     |       +-------------------+
+|   - Usage Dashboard           |
++-------------------------------+       +-------------------+
+        |                               | Log Analytics     |
+        | (2) Reverse Proxy             | Workspace         |
+        |     (injected credentials)    +-------------------+
+        v
++-------+-------+-------+-------+
+| Datto | ITGlue| Auto- | Syncro| ...  (15+ vendor MCP containers)
+| RMM   |       | task  |       |
++-------+-------+-------+-------+
+  Internal-only container apps (port 8080, AUTH_MODE=gateway)
+</div>
+
+<h2 id="components">Platform Components</h2>
+
+<table>
+  <tr><th>Component</th><th>Technology</th><th>Purpose</th></tr>
+  <tr><td>API Server</td><td>Fastify (Node.js 20)</td><td>OAuth server, credential management, reverse proxy, web UI, REST API</td></tr>
+  <tr><td>Database</td><td>PostgreSQL 16 (Azure Flexible Server)</td><td>Users, orgs, credentials (AES-256-GCM encrypted), audit logs, tokens</td></tr>
+  <tr><td>Secret Store</td><td>Azure Key Vault</td><td>Auth0 secrets, Stripe keys, alpha invite codes (accessed via managed identity)</td></tr>
+  <tr><td>Identity Provider</td><td>Auth0 OIDC</td><td>User authentication (login/callback/logout)</td></tr>
+  <tr><td>Billing</td><td>Stripe (optional)</td><td>Subscription management, checkout, webhook processing</td></tr>
+  <tr><td>Vendor MCP Servers</td><td>Docker containers (GHCR images)</td><td>Per-vendor API adapters, internal-only networking</td></tr>
+  <tr><td>Monitoring</td><td>Azure Log Analytics + custom VendorMonitor</td><td>Container logs, metric alerts, vendor health probes</td></tr>
+  <tr><td>Log Shipping</td><td>Built-in adapters</td><td>Forward audit logs to Loki, Graylog, or LogScale</td></tr>
+</table>
+
+<h3>Source Code Layout</h3>
+<table>
+  <tr><th>Directory</th><th>Description</th></tr>
+  <tr><td><code>src/index.ts</code></td><td>Fastify entry point, plugin registration, graceful shutdown</td></tr>
+  <tr><td><code>src/config.ts</code></td><td>Environment configuration, feature flags, key validation</td></tr>
+  <tr><td><code>src/auth/</code></td><td>Auth0 OIDC login/callback/logout</td></tr>
+  <tr><td><code>src/oauth/</code></td><td>OAuth 2.1 authorization server (PKCE, tokens, metadata)</td></tr>
+  <tr><td><code>src/credentials/</code></td><td>Vendor config, encrypted credential CRUD (personal/team/org/service-client)</td></tr>
+  <tr><td><code>src/proxy/</code></td><td>MCP reverse proxy, CLI router, unified endpoint, credential injection</td></tr>
+  <tr><td><code>src/org/</code></td><td>Organizations, teams, members, RBAC, invitations, server access</td></tr>
+  <tr><td><code>src/audit/</code></td><td>Request audit logging, admin audit logging</td></tr>
+  <tr><td><code>src/billing/</code></td><td>Plan catalog, billing gate, Stripe checkout/webhook</td></tr>
+  <tr><td><code>src/log-shipping/</code></td><td>Log shipping service, Loki/Graylog/LogScale adapters</td></tr>
+  <tr><td><code>src/monitoring/</code></td><td>Vendor health monitor, webhook alerting</td></tr>
+  <tr><td><code>src/dashboard/</code></td><td>Usage analytics, per-vendor breakdown, token savings</td></tr>
+  <tr><td><code>src/brand/</code></td><td>White-label brand configuration</td></tr>
+  <tr><td><code>src/web/</code></td><td>Settings UI templates, layout</td></tr>
+  <tr><td><code>src/waitlist/</code></td><td>Waitlist signup (optional feature)</td></tr>
+  <tr><td><code>src/profile/</code></td><td>User profile management</td></tr>
+</table>
+
+<h2 id="network">Network Topology</h2>
+
+<h3>Azure Container Apps Environment</h3>
+<p>All containers run within a single Azure Container Apps managed environment. The gateway is the only container with <strong>external ingress</strong>. All vendor MCP server containers use <strong>internal-only ingress</strong> and are not accessible from the public internet.</p>
+
+<div class="diagram">
+Internet
+   |
+   | HTTPS (port 443, TLS terminated by Azure)
+   v
++------------------------------------------+
+|  Azure Container Apps Environment        |
+|                                          |
+|  [Gateway]  &lt;-- external ingress         |
+|     |  port 8080                         |
+|     |                                    |
+|     +--&gt; [datto-rmm-mcp]   (internal)   |
+|     +--&gt; [itglue-mcp]      (internal)   |
+|     +--&gt; [autotask-mcp]    (internal)   |
+|     +--&gt; [syncro-mcp]      (internal)   |
+|     +--&gt; [ninjaone-mcp]    (internal)   |
+|     +--&gt; [halopsa-mcp]     (internal)   |
+|     +--&gt; [hudu-mcp]        (internal)   |
+|     +--&gt; ... (15+ vendor containers)    |
+|                                          |
++------------------------------------------+
+   |
+   | Private connection (Azure backbone)
+   v
++------------------------------------------+
+|  PostgreSQL Flexible Server              |
+|  (Standard_B1ms, 32 GB, SSL required)   |
++------------------------------------------+
+</div>
+
+<h3>Internal Communication</h3>
+<table>
+  <tr><th>From</th><th>To</th><th>Protocol</th><th>Port</th></tr>
+  <tr><td>Gateway</td><td>Vendor MCP containers</td><td>HTTP (JSON-RPC / streamable HTTP)</td><td>8080</td></tr>
+  <tr><td>Gateway</td><td>PostgreSQL</td><td>PostgreSQL (SSL required)</td><td>5432</td></tr>
+  <tr><td>Gateway</td><td>Azure Key Vault</td><td>HTTPS (managed identity)</td><td>443</td></tr>
+  <tr><td>Gateway</td><td>Auth0</td><td>HTTPS (OIDC)</td><td>443</td></tr>
+  <tr><td>Gateway</td><td>Stripe</td><td>HTTPS (API + webhooks)</td><td>443</td></tr>
+  <tr><td>Gateway</td><td>External SIEM</td><td>HTTPS (Loki/Graylog/LogScale)</td><td>443</td></tr>
+</table>
+
+<h2 id="azure">Azure Resources (Bicep Deployment)</h2>
+
+<p>Infrastructure is defined in <code>azure/main.bicep</code> and deployed via GitHub Actions using the <code>azure/arm-deploy</code> action.</p>
+
+<table>
+  <tr><th>Resource</th><th>Azure Service</th><th>Naming Convention</th><th>Details</th></tr>
+  <tr><td>Key Vault</td><td>Microsoft.KeyVault/vaults</td><td><code>mcpgw-{env}-kv</code></td><td>RBAC-enabled, stores Auth0 + Stripe secrets</td></tr>
+  <tr><td>Log Analytics Workspace</td><td>Microsoft.OperationalInsights/workspaces</td><td><code>mcpgw-{env}-logs</code></td><td>PerGB2018 SKU, 30-day retention</td></tr>
+  <tr><td>Container Apps Environment</td><td>Microsoft.App/managedEnvironments</td><td><code>mcpgw-{env}-env</code></td><td>Log Analytics integration</td></tr>
+  <tr><td>PostgreSQL</td><td>Microsoft.DBforPostgreSQL/flexibleServers</td><td><code>mcpgw-{env}-pg</code></td><td>v16, Standard_B1ms (Burstable), 32 GB, 7-day backup retention</td></tr>
+  <tr><td>Gateway Container App</td><td>Microsoft.App/containerApps</td><td><code>mcpgw-{env}-gateway</code></td><td>External ingress, 0.5 CPU / 1 GiB RAM, 1-3 replicas, system-assigned identity</td></tr>
+  <tr><td>Vendor Container Apps</td><td>Microsoft.App/containerApps</td><td><code>mcpgw-{env}-{vendor-slug}</code></td><td>Internal ingress, 0.25 CPU / 0.5 GiB RAM, 1 replica each</td></tr>
+  <tr><td>Alert Action Group</td><td>Microsoft.Insights/actionGroups</td><td><code>mcpgw-{env}-alerts</code></td><td>Email notifications to engineering team</td></tr>
+</table>
+
+<h3>Bicep Parameters (Deployment Inputs)</h3>
+<table>
+  <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>location</code></td><td>string</td><td>No (default: RG location)</td><td>Azure region</td></tr>
+  <tr><td><code>env</code></td><td>prod/staging/dev</td><td>No (default: prod)</td><td>Environment suffix</td></tr>
+  <tr><td><code>gatewayImage</code></td><td>string</td><td>No</td><td>Gateway Docker image tag</td></tr>
+  <tr><td><code>masterKey</code></td><td>secure string</td><td>Yes</td><td>64 hex chars, AES-256-GCM master key</td></tr>
+  <tr><td><code>jwtSecret</code></td><td>secure string</td><td>Yes</td><td>64 hex chars, JWT signing secret</td></tr>
+  <tr><td><code>pgPassword</code></td><td>secure string</td><td>Yes</td><td>PostgreSQL admin password</td></tr>
+  <tr><td><code>ghcrToken</code></td><td>secure string</td><td>Yes</td><td>GitHub Container Registry PAT (read:packages)</td></tr>
+  <tr><td><code>customDomain</code></td><td>string</td><td>No</td><td>Public hostname for gateway</td></tr>
+  <tr><td><code>vendors</code></td><td>array</td><td>No</td><td>Vendor slugs + images to deploy</td></tr>
+  <tr><td><code>alertEmail</code></td><td>string</td><td>No</td><td>Email for alert notifications</td></tr>
+</table>
+
+<h2 id="containers">Container Orchestration</h2>
+
+<h3>Docker Image (Gateway)</h3>
+<p>Multi-stage build defined in <code>Dockerfile</code>:</p>
+<table>
+  <tr><th>Stage</th><th>Base Image</th><th>Purpose</th></tr>
+  <tr><td>builder</td><td><code>node:20-alpine</code></td><td>Install deps, compile TypeScript</td></tr>
+  <tr><td>runner</td><td><code>node:20-alpine</code></td><td>Production runtime, non-root user (<code>gateway:1001</code>)</td></tr>
+</table>
+
+<p>Health check built into the image:</p>
+<pre><code>HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1</code></pre>
+
+<h3>Docker Compose (Local Development)</h3>
+<p>The <code>docker-compose.yml</code> defines the full stack for local development:</p>
+<ul>
+  <li><strong>gateway</strong> &mdash; The main API server, ports 8080:8080</li>
+  <li><strong>postgres</strong> &mdash; PostgreSQL 16 Alpine, ports 5432:5432, with named volume <code>pgdata</code></li>
+  <li><strong>22 vendor MCP containers</strong> &mdash; Each exposed internally on port 8080 with <code>AUTH_MODE=gateway</code></li>
+</ul>
+
+<h3>Container Health Probes (Azure)</h3>
+<table>
+  <tr><th>Probe</th><th>Path</th><th>Interval</th><th>Initial Delay</th><th>Target</th></tr>
+  <tr><td>Liveness (Gateway)</td><td><code>/health</code></td><td>30s</td><td>5s</td><td>Gateway</td></tr>
+  <tr><td>Readiness (Gateway)</td><td><code>/health</code></td><td>10s</td><td>3s</td><td>Gateway</td></tr>
+  <tr><td>Liveness (Vendors)</td><td><code>/health</code></td><td>30s</td><td>10s</td><td>Each vendor container</td></tr>
+</table>
+
+<h3>Scaling Configuration</h3>
+<table>
+  <tr><th>Container</th><th>Min Replicas</th><th>Max Replicas</th><th>CPU</th><th>Memory</th></tr>
+  <tr><td>Gateway</td><td>1</td><td>3</td><td>0.5 vCPU</td><td>1 GiB</td></tr>
+  <tr><td>Vendor MCP Servers</td><td>1</td><td>1</td><td>0.25 vCPU</td><td>0.5 GiB</td></tr>
+</table>
+
+<h2 id="dns">DNS &amp; Domain Configuration</h2>
+
+<p>The gateway uses a custom domain configured via the <code>customDomain</code> Bicep parameter. Azure Container Apps provides an automatic FQDN (e.g., <code>mcpgw-prod-gateway.*.azurecontainerapps.io</code>) plus the custom domain binding.</p>
+
+<table>
+  <tr><th>Record</th><th>Type</th><th>Target</th><th>Purpose</th></tr>
+  <tr><td><code>mcp.wyretechnology.com</code> (example)</td><td>CNAME</td><td>Azure Container Apps FQDN</td><td>Public gateway endpoint</td></tr>
+</table>
+
+<div class="note">
+  <strong>Note:</strong> The <code>BASE_URL</code> environment variable and <code>AUTH0_CALLBACK_URL</code> must match the custom domain. Auth0 application settings must also list the callback URL.
+</div>
+
+<h2 id="tls">SSL/TLS Certificate Management</h2>
+
+<p>TLS is handled by Azure Container Apps managed certificates. The Bicep template references a managed certificate by name:</p>
+
+<pre><code>customDomains: [{
+  name: customDomain
+  certificateId: '${containerEnv.id}/managedCertificates/${managedCertName}'
+  bindingType: 'SniEnabled'
+}]</code></pre>
+
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>Provider</td><td>Azure Managed Certificates (free, auto-renewed)</td></tr>
+  <tr><td>Binding</td><td>SNI-based TLS</td></tr>
+  <tr><td>Renewal</td><td>Automatic (Azure handles expiry)</td></tr>
+  <tr><td>Internal traffic</td><td>HTTP (within Container Apps environment, not exposed externally)</td></tr>
+  <tr><td>Database</td><td>SSL required (<code>?sslmode=require</code> in connection string)</td></tr>
+</table>
+
+<h2 id="envvars">Environment Variables Reference</h2>
+
+<h3>Required (Production)</h3>
+<table>
+  <tr><th>Variable</th><th>Format</th><th>Description</th></tr>
+  <tr><td><code>MASTER_KEY</code></td><td>64 hex chars</td><td>AES-256-GCM master encryption key for all stored credentials</td></tr>
+  <tr><td><code>JWT_SECRET</code></td><td>64 hex chars</td><td>HS256 JWT signing key (separate from encryption key)</td></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>PostgreSQL URI</td><td><code>postgres://user:pass@host:5432/gateway?sslmode=require</code></td></tr>
+  <tr><td><code>AUTH0_DOMAIN</code></td><td>hostname</td><td>Auth0 tenant domain (e.g., <code>wyre.us.auth0.com</code>)</td></tr>
+  <tr><td><code>AUTH0_CLIENT_ID</code></td><td>string</td><td>Auth0 application client ID</td></tr>
+  <tr><td><code>AUTH0_CLIENT_SECRET</code></td><td>string</td><td>Auth0 application client secret</td></tr>
+  <tr><td><code>AUTH0_CALLBACK_URL</code></td><td>URL</td><td>OAuth callback URL (must match Auth0 app settings)</td></tr>
+</table>
+
+<h3>Server</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>PORT</code></td><td><code>8080</code></td><td>Listening port</td></tr>
+  <tr><td><code>HOST</code></td><td><code>0.0.0.0</code></td><td>Bind address</td></tr>
+  <tr><td><code>BASE_URL</code></td><td><code>http://localhost:8080</code></td><td>Public-facing URL (used in OAuth redirects)</td></tr>
+  <tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td><code>debug</code> | <code>info</code> | <code>warn</code> | <code>error</code></td></tr>
+</table>
+
+<h3>Token Lifetimes</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>ACCESS_TOKEN_TTL</code></td><td><code>3600</code> (1 hour)</td><td>Access token lifetime in seconds</td></tr>
+  <tr><td><code>REFRESH_TOKEN_TTL</code></td><td><code>2592000</code> (30 days)</td><td>Refresh token lifetime in seconds</td></tr>
+  <tr><td><code>AUTH_CODE_TTL</code></td><td><code>300</code> (5 min)</td><td>Authorization code lifetime in seconds</td></tr>
+</table>
+
+<h3>Billing (Optional)</h3>
+<table>
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>STRIPE_SECRET_KEY</code></td><td>Enables Stripe billing when set</td></tr>
+  <tr><td><code>STRIPE_WEBHOOK_SECRET</code></td><td>Stripe webhook endpoint signing secret</td></tr>
+  <tr><td><code>STRIPE_PRO_PRICE_ID</code></td><td>Stripe Price ID for Pro plan checkout</td></tr>
+</table>
+
+<h3>Monitoring &amp; Admin</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>MONITOR_WEBHOOK_URL</code></td><td>(empty)</td><td>Discord/Slack webhook for vendor health alerts</td></tr>
+  <tr><td><code>MONITOR_INTERVAL_MS</code></td><td><code>60000</code></td><td>Vendor health probe interval (ms)</td></tr>
+  <tr><td><code>ADMIN_API_KEY</code></td><td>(empty)</td><td>Protects admin-only endpoints</td></tr>
+  <tr><td><code>ALPHA_INVITE_CODES</code></td><td>(empty)</td><td>Comma-separated codes that grant Pro plan</td></tr>
+  <tr><td><code>WAITLIST_NOTIFY_URL</code></td><td>(empty)</td><td>Webhook for new waitlist signups (enables waitlist feature)</td></tr>
+</table>
+
+<h3>White-Label Branding</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>BRAND_NAME</code></td><td><code>Wyre Technology</code></td><td>Company name in UI</td></tr>
+  <tr><td><code>BRAND_TAGLINE</code></td><td><code>MCP Gateway for MSPs</code></td><td>Tagline text</td></tr>
+  <tr><td><code>BRAND_LOGO_URL</code></td><td><code>/assets/logo.svg</code></td><td>Logo image URL</td></tr>
+  <tr><td><code>BRAND_PRIMARY_COLOR</code></td><td><code>#2563eb</code></td><td>Accent color</td></tr>
+  <tr><td><code>BRAND_ISSUES_URL</code></td><td>GitHub issues</td><td>Support/bug report URL</td></tr>
+  <tr><td><code>BRAND_SUPPORT_URL</code></td><td>(empty)</td><td>Support page URL</td></tr>
+  <tr><td><code>BRAND_DOCS_URL</code></td><td><code>/</code></td><td>Documentation URL</td></tr>
+  <tr><td><code>BRAND_DOMAIN</code></td><td>Derived from BASE_URL</td><td>Domain for display</td></tr>
+</table>
+
+<h3>Feature Flags</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>FEATURE_DASHBOARD</code></td><td><code>true</code></td><td>Usage analytics dashboard</td></tr>
+  <tr><td><code>FEATURE_PROMPT_CAPTURE</code></td><td><code>true</code></td><td>Prompt/argument capture in audit logs</td></tr>
+</table>
+
+<h3>Vendor Container URLs</h3>
+<p>Each vendor requires a <code>VENDOR_URL_{SLUG}</code> environment variable pointing to its container. In Docker Compose, these use Docker service names. In Azure, they resolve via Container Apps internal DNS.</p>
+
+<h2 id="vendors">Vendor MCP Server Containers</h2>
+
+<table>
+  <tr><th>Vendor</th><th>Container Image</th><th>Env Var</th></tr>
+  <tr><td>Datto RMM</td><td><code>ghcr.io/wyre-technology/datto-rmm-mcp:latest</code></td><td><code>VENDOR_URL_DATTO_RMM</code></td></tr>
+  <tr><td>IT Glue</td><td><code>ghcr.io/wyre-technology/itglue-mcp:latest</code></td><td><code>VENDOR_URL_ITGLUE</code></td></tr>
+  <tr><td>Autotask</td><td><code>ghcr.io/wyre-technology/autotask-mcp:latest</code></td><td><code>VENDOR_URL_AUTOTASK</code></td></tr>
+  <tr><td>Syncro</td><td><code>ghcr.io/wyre-technology/syncro-mcp:latest</code></td><td><code>VENDOR_URL_SYNCRO</code></td></tr>
+  <tr><td>Atera</td><td><code>ghcr.io/wyre-technology/atera-mcp:latest</code></td><td><code>VENDOR_URL_ATERA</code></td></tr>
+  <tr><td>SuperOps</td><td><code>ghcr.io/wyre-technology/superops-mcp:latest</code></td><td><code>VENDOR_URL_SUPEROPS</code></td></tr>
+  <tr><td>HaloPSA</td><td><code>ghcr.io/wyre-technology/halopsa-mcp:latest</code></td><td><code>VENDOR_URL_HALOPSA</code></td></tr>
+  <tr><td>ConnectWise Manage</td><td><code>ghcr.io/wyre-technology/connectwise-manage-mcp:latest</code></td><td><code>VENDOR_URL_CONNECTWISE_MANAGE</code></td></tr>
+  <tr><td>ConnectWise Automate</td><td><code>ghcr.io/wyre-technology/connectwise-automate-mcp:latest</code></td><td><code>VENDOR_URL_CONNECTWISE_AUTOMATE</code></td></tr>
+  <tr><td>NinjaOne</td><td><code>ghcr.io/wyre-technology/ninjaone-mcp:latest</code></td><td><code>VENDOR_URL_NINJAONE</code></td></tr>
+  <tr><td>Hudu</td><td><code>ghcr.io/wyre-technology/hudu-mcp:latest</code></td><td><code>VENDOR_URL_HUDU</code></td></tr>
+  <tr><td>RocketCyber</td><td><code>ghcr.io/wyre-technology/rocketcyber-mcp:latest</code></td><td><code>VENDOR_URL_ROCKETCYBER</code></td></tr>
+  <tr><td>SentinelOne</td><td>Custom build (<code>./containers/sentinelone-mcp</code>)</td><td><code>VENDOR_URL_SENTINELONE</code></td></tr>
+  <tr><td>Huntress</td><td><code>ghcr.io/wyre-technology/huntress-mcp:latest</code></td><td><code>VENDOR_URL_HUNTRESS</code></td></tr>
+  <tr><td>Blumira</td><td><code>ghcr.io/wyre-technology/blumira-mcp:latest</code></td><td><code>VENDOR_URL_BLUMIRA</code></td></tr>
+  <tr><td>Pax8</td><td><code>ghcr.io/wyre-technology/pax8-mcp:latest</code></td><td><code>VENDOR_URL_PAX8</code></td></tr>
+  <tr><td>Xero</td><td><code>ghcr.io/wyre-technology/xero-mcp:latest</code></td><td><code>VENDOR_URL_XERO</code></td></tr>
+  <tr><td>QuickBooks Online</td><td><code>ghcr.io/wyre-technology/qbo-mcp:latest</code></td><td><code>VENDOR_URL_QBO</code></td></tr>
+  <tr><td>Microsoft 365</td><td>Custom build (<code>./containers/m365-mcp</code>)</td><td><code>VENDOR_URL_M365</code></td></tr>
+  <tr><td>Avanan</td><td><code>ghcr.io/wyre-technology/avanan-mcp:latest</code></td><td><code>VENDOR_URL_AVANAN</code></td></tr>
+  <tr><td>Proofpoint</td><td><code>ghcr.io/wyre-technology/proofpoint-mcp:latest</code></td><td><code>VENDOR_URL_PROOFPOINT</code></td></tr>
+  <tr><td>KnowBe4</td><td><code>ghcr.io/wyre-technology/knowbe4-mcp:latest</code></td><td><code>VENDOR_URL_KNOWBE4</code></td></tr>
+  <tr><td>Sherweb</td><td><code>ghcr.io/wyre-technology/sherweb-mcp:latest</code></td><td><code>VENDOR_URL_SHERWEB</code></td></tr>
+</table>
+
+<div class="note">
+  <strong>All vendor containers</strong> run with <code>AUTH_MODE=gateway</code>, meaning they trust the gateway to handle authentication and expect credentials injected via HTTP headers. They are never exposed to the public internet.
+</div>
+
+</body>
+</html>

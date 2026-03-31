@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring &amp; Alerting — Wyre Technology MCP Gateway</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 20px; }
+  .header { background: #1e293b; color: #fff; padding: 20px 30px; margin: -20px -20px 30px -20px; border-bottom: 4px solid #2563eb; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #94a3b8; font-size: 14px; }
+  .header .brand { color: #60a5fa; font-weight: 600; }
+  h2 { color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 36px; }
+  h3 { color: #334155; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #f8fafc; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .toc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px 24px; margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .critical { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  @media print { .header { background: #fff; color: #000; border-bottom: 2px solid #000; } .header .subtitle, .header .brand { color: #666; } pre { background: #f5f5f5; color: #000; border: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">Wyre Technology</div>
+  <h1>Monitoring &amp; Alerting</h1>
+  <div class="subtitle">MCP Gateway Platform &mdash; IT Glue Documentation</div>
+</div>
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#health-endpoints">Health Check Endpoints</a></li>
+    <li><a href="#vendor-monitor">Vendor Health Monitoring</a></li>
+    <li><a href="#azure-alerts">Azure Monitor Alert Rules</a></li>
+    <li><a href="#log-analytics">Log Analytics Queries</a></li>
+    <li><a href="#log-shipping">Log Shipping to External SIEM</a></li>
+    <li><a href="#audit-logs">Audit Log Monitoring</a></li>
+    <li><a href="#dashboards">Dashboard Recommendations</a></li>
+    <li><a href="#escalation">Escalation Paths</a></li>
+  </ul>
+</div>
+
+<h2 id="health-endpoints">Health Check Endpoints</h2>
+
+<table>
+  <tr><th>Endpoint</th><th>Auth Required</th><th>Purpose</th><th>Expected Response</th></tr>
+  <tr>
+    <td><code>GET /health</code></td>
+    <td>No</td>
+    <td>Gateway liveness check</td>
+    <td><code>{"status":"ok","timestamp":"..."}</code></td>
+  </tr>
+  <tr>
+    <td><code>GET /health/vendors</code></td>
+    <td>No</td>
+    <td>All vendor container health status</td>
+    <td><code>{"timestamp":"...","vendors":{...}}</code></td>
+  </tr>
+</table>
+
+<h3>Vendor Health Response Format</h3>
+<p>Each vendor entry in <code>/health/vendors</code> includes:</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>status</code></td><td><code>"up" | "down" | "unknown"</code></td><td>Current health state</td></tr>
+  <tr><td><code>version</code></td><td>string or null</td><td>MCP server version from initialize response</td></tr>
+  <tr><td><code>responseMs</code></td><td>number</td><td>Last probe response time in milliseconds</td></tr>
+  <tr><td><code>lastChecked</code></td><td>ISO datetime</td><td>When the last probe ran</td></tr>
+  <tr><td><code>lastStateChange</code></td><td>ISO datetime</td><td>When the state last changed (up-to-down or down-to-up)</td></tr>
+  <tr><td><code>consecutiveFailures</code></td><td>number</td><td>Number of consecutive probe failures</td></tr>
+  <tr><td><code>lastError</code></td><td>string or null</td><td>Last error message (if any)</td></tr>
+</table>
+
+<h2 id="vendor-monitor">Vendor Health Monitoring</h2>
+
+<p>The gateway includes a built-in <code>VendorMonitor</code> service that probes every configured vendor MCP container on a regular interval.</p>
+
+<h3>How It Works</h3>
+<ol>
+  <li>Sends a JSON-RPC <code>initialize</code> request to each vendor's MCP endpoint every 60 seconds (configurable via <code>MONITOR_INTERVAL_MS</code>)</li>
+  <li>Tracks consecutive failures per vendor</li>
+  <li>After <strong>3 consecutive failures</strong>, marks the vendor as <strong>DOWN</strong> and sends a webhook alert</li>
+  <li>When a vendor recovers, sends a <strong>RECOVERED</strong> alert with downtime duration</li>
+</ol>
+
+<h3>Webhook Alerts</h3>
+<p>Configure <code>MONITOR_WEBHOOK_URL</code> with a Discord or Slack webhook URL. Alert messages:</p>
+<table>
+  <tr><th>Event</th><th>Message Format</th></tr>
+  <tr><td>Vendor goes down</td><td><code>Vendor DOWN: {slug} -- {error} after 3 consecutive failures</code></td></tr>
+  <tr><td>Vendor recovers</td><td><code>Vendor RECOVERED: {slug} -- back up after {duration}</code></td></tr>
+</table>
+
+<h2 id="azure-alerts">Azure Monitor Alert Rules</h2>
+
+<p>The Bicep deployment creates the following alert rules, all routed to the <code>mcpgw-{env}-alerts</code> action group.</p>
+
+<h3>Tier 1 &mdash; Critical (Severity 0-1)</h3>
+
+<table>
+  <tr><th>Alert</th><th>Condition</th><th>Severity</th><th>Window</th><th>Frequency</th></tr>
+  <tr>
+    <td><strong>Gateway Restarts</strong></td>
+    <td>&gt; 2 container restarts in 5 minutes</td>
+    <td>1 (Error)</td>
+    <td>5 min</td>
+    <td>1 min</td>
+  </tr>
+  <tr>
+    <td><strong>5xx Error Rate</strong></td>
+    <td>&gt; 10 server errors in a 5-minute window</td>
+    <td>1 (Error)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+  <tr>
+    <td><strong>Health Probe Failures</strong></td>
+    <td>3+ health probe failures in 5 minutes</td>
+    <td>0 (Critical)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+  <tr>
+    <td><strong>Database Connectivity</strong></td>
+    <td>3+ PostgreSQL connection errors in 5 minutes (ECONNREFUSED, timeout, too many connections)</td>
+    <td>1 (Error)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+</table>
+
+<h3>Tier 2 &mdash; Warning (Severity 2)</h3>
+
+<table>
+  <tr><th>Alert</th><th>Condition</th><th>Severity</th><th>Window</th><th>Frequency</th></tr>
+  <tr>
+    <td><strong>High Latency</strong></td>
+    <td>P95 response time &gt; 5 seconds</td>
+    <td>2 (Warning)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+  <tr>
+    <td><strong>MCP Server Restarts</strong></td>
+    <td>Any vendor container &gt; 2 restarts in 5 minutes</td>
+    <td>2 (Warning)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+  <tr>
+    <td><strong>Rate Limit Exhaustion</strong></td>
+    <td>&gt; 50 HTTP 429 responses in 1 hour</td>
+    <td>2 (Warning)</td>
+    <td>1 hour</td>
+    <td>15 min</td>
+  </tr>
+  <tr>
+    <td><strong>Auth Failure Spike</strong></td>
+    <td>&gt; 20 HTTP 401/403 in 5 minutes</td>
+    <td>2 (Warning)</td>
+    <td>5 min</td>
+    <td>5 min</td>
+  </tr>
+</table>
+
+<h3>Alert Action Group</h3>
+<table>
+  <tr><th>Channel</th><th>Configuration</th></tr>
+  <tr><td>Email</td><td>Configured via <code>alertEmail</code> Bicep parameter (sent to engineering team)</td></tr>
+  <tr><td>Vendor Webhook</td><td>Discord/Slack via <code>MONITOR_WEBHOOK_URL</code> env var (vendor-level health only)</td></tr>
+</table>
+
+<div class="note">
+  <strong>Recommended:</strong> Add additional action group receivers (PagerDuty, OpsGenie, SMS) via the Azure Portal for on-call rotation.
+</div>
+
+<h2 id="log-analytics">Log Analytics Queries</h2>
+
+<h3>Useful KQL Queries</h3>
+
+<p><strong>Recent 5xx errors:</strong></p>
+<pre><code>ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'mcpgw-prod-gateway'
+| where Log_s has '"statusCode":5' or Log_s has '"res":{"statusCode":5'
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc
+| take 50</code></pre>
+
+<p><strong>Auth failures (401/403):</strong></p>
+<pre><code>ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'mcpgw-prod-gateway'
+| where Log_s has '"statusCode":401' or Log_s has '"statusCode":403'
+| summarize count() by bin(TimeGenerated, 15m)
+| render timechart</code></pre>
+
+<p><strong>Response time percentiles:</strong></p>
+<pre><code>ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'mcpgw-prod-gateway'
+| where Log_s has '"responseTime"'
+| extend parsed = parse_json(Log_s)
+| extend responseTime = todouble(parsed.responseTime)
+| where isnotnull(responseTime)
+| summarize p50=percentile(responseTime,50), p95=percentile(responseTime,95), p99=percentile(responseTime,99) by bin(TimeGenerated, 5m)
+| render timechart</code></pre>
+
+<p><strong>Container restarts (all apps):</strong></p>
+<pre><code>ContainerAppSystemLogs_CL
+| where ContainerAppName_s startswith 'mcpgw-prod-'
+| where Reason_s == 'BackOff' or Reason_s == 'CrashLoopBackOff' or Reason_s has 'restart'
+| summarize restarts=count() by ContainerAppName_s, bin(TimeGenerated, 1h)
+| order by TimeGenerated desc</code></pre>
+
+<p><strong>Database connection errors:</strong></p>
+<pre><code>ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'mcpgw-prod-gateway'
+| where Log_s has 'ECONNREFUSED' or Log_s has 'connection terminated' or Log_s has 'connect_timeout'
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc</code></pre>
+
+<h2 id="log-shipping">Log Shipping to External SIEM</h2>
+
+<p>The gateway supports forwarding audit logs to external SIEM platforms. This is configured per-organization via the API or web UI.</p>
+
+<h3>Supported Platforms</h3>
+<table>
+  <tr><th>Platform</th><th>Adapter</th><th>Endpoint Format</th><th>Auth</th></tr>
+  <tr><td>Grafana Loki</td><td><code>LokiAdapter</code></td><td><code>https://loki.example.com/loki/api/v1/push</code></td><td>Basic auth (username/password in config)</td></tr>
+  <tr><td>Graylog</td><td><code>GraylogAdapter</code></td><td>GELF HTTP input URL</td><td>Token or Basic auth</td></tr>
+  <tr><td>LogScale (Humio)</td><td><code>LogScaleAdapter</code></td><td><code>https://cloud.humio.com/api/v1/ingest/json</code></td><td>Ingest token in config</td></tr>
+</table>
+
+<h3>Data Shipped</h3>
+<p>Two log sources are shipped per organization:</p>
+<table>
+  <tr><th>Source</th><th>Table</th><th>Contents</th></tr>
+  <tr><td>Request Log</td><td><code>request_log</code></td><td>Every MCP tool call: user, vendor, tool name, status code, response time</td></tr>
+  <tr><td>Admin Audit Log</td><td><code>admin_audit_log</code></td><td>Admin actions: member changes, role updates, credential operations, settings</td></tr>
+</table>
+
+<h3>Shipping Mechanism</h3>
+<ul>
+  <li>The <code>LogShipper</code> service runs on a background interval</li>
+  <li>Uses cursor-based pagination (tracks <code>last_shipped_at</code> per destination per source)</li>
+  <li>Ships in batches of 500 events</li>
+  <li>Errors are recorded in a ring buffer (last 50 per destination)</li>
+  <li>Errors are viewable via the API: <code>GET /api/orgs/:orgId/log-shipping/:destId/errors</code></li>
+</ul>
+
+<h3>Configuration API</h3>
+<pre><code># Create a log shipping destination
+POST /api/orgs/:orgId/log-shipping
+{
+  "label": "Production Loki",
+  "platform": "loki",
+  "endpointUrl": "https://loki.internal.example.com/loki/api/v1/push",
+  "config": { "username": "...", "password": "..." }
+}
+
+# List destinations
+GET /api/orgs/:orgId/log-shipping
+
+# Enable/disable
+PATCH /api/orgs/:orgId/log-shipping/:destId/enabled
+{ "enabled": false }
+
+# View recent shipping errors
+GET /api/orgs/:orgId/log-shipping/:destId/errors</code></pre>
+
+<h2 id="audit-logs">Audit Log Monitoring</h2>
+
+<h3>What Is Logged</h3>
+<table>
+  <tr><th>Event Type</th><th>Log Table</th><th>Details Captured</th></tr>
+  <tr><td>MCP tool call</td><td><code>request_log</code></td><td>User ID, org ID, vendor slug, tool name, HTTP status, response time (ms), optional prompt/arguments</td></tr>
+  <tr><td>Admin action</td><td><code>admin_audit_log</code></td><td>Actor ID, target ID, event type, metadata, org ID</td></tr>
+</table>
+
+<h3>Querying Audit Logs</h3>
+<pre><code># Request audit log (with filters)
+GET /api/audit?vendor=datto-rmm&amp;from=2026-03-01&amp;to=2026-03-31&amp;format=json
+
+# Export as CSV
+GET /api/audit?format=csv
+
+# Admin audit log
+GET /api/audit/admin?event_type=member.role_changed</code></pre>
+
+<h3>Key Events to Monitor</h3>
+<table>
+  <tr><th>Concern</th><th>What to Watch</th><th>Query/Check</th></tr>
+  <tr><td>Credential abuse</td><td>Unusually high request volume from a single user</td><td>Group <code>request_log</code> by <code>user_id</code>, alert on outliers</td></tr>
+  <tr><td>Failed auth attempts</td><td>Repeated 401/403 from same IP or user</td><td>Log Analytics 401/403 query (see above)</td></tr>
+  <tr><td>Unauthorized role changes</td><td>Admin audit log: <code>member.role_changed</code></td><td><code>GET /api/audit/admin?event_type=member.role_changed</code></td></tr>
+  <tr><td>Credential rotation</td><td>Admin audit log: credential update events</td><td><code>GET /api/audit/admin?event_type=credential.*</code></td></tr>
+</table>
+
+<h2 id="dashboards">Dashboard Recommendations</h2>
+
+<h3>Azure Portal Workbook</h3>
+<p>Create an Azure Monitor Workbook with the following panels:</p>
+
+<table>
+  <tr><th>Panel</th><th>Visualization</th><th>Data Source</th></tr>
+  <tr><td>Gateway Health Status</td><td>Status tile (green/red)</td><td><code>GET /health</code> availability test</td></tr>
+  <tr><td>Request Volume</td><td>Time chart</td><td>Log Analytics: count requests per 5 min</td></tr>
+  <tr><td>Error Rate (5xx)</td><td>Time chart with threshold line</td><td>Log Analytics: 5xx query</td></tr>
+  <tr><td>Response Time (P50/P95/P99)</td><td>Time chart</td><td>Log Analytics: percentile query</td></tr>
+  <tr><td>Auth Failures</td><td>Time chart</td><td>Log Analytics: 401/403 query</td></tr>
+  <tr><td>Vendor Health Grid</td><td>Table with status indicators</td><td><code>GET /health/vendors</code></td></tr>
+  <tr><td>Container Restarts</td><td>Bar chart per container</td><td>Container Apps system logs</td></tr>
+  <tr><td>Active Organizations</td><td>Count tile</td><td>Application-level dashboard API</td></tr>
+  <tr><td>Rate Limit 429s</td><td>Time chart</td><td>Log Analytics: 429 query</td></tr>
+  <tr><td>Database Connections</td><td>Gauge</td><td>PostgreSQL Flexible Server metrics</td></tr>
+</table>
+
+<h3>Built-in Usage Dashboard</h3>
+<p>The gateway includes a usage analytics dashboard accessible via the web UI at <code>/settings/dashboard</code> (when <code>FEATURE_DASHBOARD=true</code>). It provides:</p>
+<ul>
+  <li>Per-vendor request breakdown</li>
+  <li>Token savings from CLI wrapper usage</li>
+  <li>Request volume over time</li>
+  <li>Per-user activity</li>
+</ul>
+
+<h2 id="escalation">Escalation Paths</h2>
+
+<table>
+  <tr><th>Severity</th><th>Response Time</th><th>Escalation</th><th>Examples</th></tr>
+  <tr>
+    <td><strong>Critical (Sev 0)</strong></td>
+    <td>Immediate (15 min)</td>
+    <td>On-call engineer &rarr; Engineering lead &rarr; CTO</td>
+    <td>Gateway completely down, health probes failing, database unreachable</td>
+  </tr>
+  <tr>
+    <td><strong>High (Sev 1)</strong></td>
+    <td>30 minutes</td>
+    <td>On-call engineer &rarr; Engineering lead</td>
+    <td>Gateway restarts, high 5xx rate, database connection errors</td>
+  </tr>
+  <tr>
+    <td><strong>Medium (Sev 2)</strong></td>
+    <td>2 hours</td>
+    <td>Engineering team during business hours</td>
+    <td>High latency, vendor container restarts, rate limit exhaustion, auth failure spike</td>
+  </tr>
+  <tr>
+    <td><strong>Low (Sev 3)</strong></td>
+    <td>Next business day</td>
+    <td>Engineering backlog</td>
+    <td>Single vendor intermittently slow, non-critical log shipping errors</td>
+  </tr>
+</table>
+
+<div class="warning">
+  <strong>Action Required:</strong> Fill in the <code>alertEmail</code> parameter in the Bicep deployment and configure additional notification channels (PagerDuty, OpsGenie, phone) in the Azure Portal action group for production on-call coverage.
+</div>
+
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customer Onboarding Runbook — Wyre Technology MCP Gateway</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 20px; }
+  .header { background: #1e293b; color: #fff; padding: 20px 30px; margin: -20px -20px 30px -20px; border-bottom: 4px solid #2563eb; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #94a3b8; font-size: 14px; }
+  .header .brand { color: #60a5fa; font-weight: 600; }
+  h2 { color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 36px; }
+  h3 { color: #334155; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #f8fafc; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .toc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px 24px; margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding: 4px 0 4px 28px; position: relative; }
+  .checklist li::before { content: "\2610"; position: absolute; left: 4px; font-size: 16px; }
+  .step-num { display: inline-block; background: #2563eb; color: #fff; width: 28px; height: 28px; text-align: center; line-height: 28px; border-radius: 50%; font-size: 14px; font-weight: 600; margin-right: 8px; }
+  @media print { .header { background: #fff; color: #000; border-bottom: 2px solid #000; } .header .subtitle, .header .brand { color: #666; } pre { background: #f5f5f5; color: #000; border: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">Wyre Technology</div>
+  <h1>Customer Onboarding Runbook</h1>
+  <div class="subtitle">MCP Gateway Platform &mdash; IT Glue Documentation</div>
+</div>
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#overview">Onboarding Overview</a></li>
+    <li><a href="#phase1">Phase 1: Discovery</a></li>
+    <li><a href="#phase2">Phase 2: Organization Setup</a></li>
+    <li><a href="#phase3">Phase 3: Vendor Credentials</a></li>
+    <li><a href="#phase4">Phase 4: Teams &amp; RBAC</a></li>
+    <li><a href="#phase5">Phase 5: Client Configuration</a></li>
+    <li><a href="#phase6">Phase 6: Log Shipping &amp; Compliance</a></li>
+    <li><a href="#branding">White-Label Brand Configuration</a></li>
+    <li><a href="#checklist">Go-Live Verification Checklist</a></li>
+    <li><a href="#rollback">Rollback Procedure</a></li>
+  </ul>
+</div>
+
+<h2 id="overview">Onboarding Overview</h2>
+
+<p>Onboarding a new MSP customer onto the MCP Gateway involves creating an organization, connecting their vendor API credentials, configuring team access, and setting up their MCP clients (Claude Desktop / Claude Code). The process typically takes 30-60 minutes for a straightforward deployment.</p>
+
+<h2 id="phase1">Phase 1: Discovery</h2>
+
+<h3><span class="step-num">1</span> Identify Customer Vendor Stack</h3>
+
+<p>Work with the MSP to inventory which vendors they use. The gateway is vendor-agnostic; vendors are enabled per-customer.</p>
+
+<table>
+  <tr><th>Category</th><th>Supported Vendors</th></tr>
+  <tr><td>RMM</td><td>Datto RMM, Syncro, Atera, SuperOps, ConnectWise Automate, NinjaOne</td></tr>
+  <tr><td>PSA</td><td>Autotask, HaloPSA, ConnectWise Manage</td></tr>
+  <tr><td>Documentation</td><td>IT Glue, Hudu</td></tr>
+  <tr><td>Security</td><td>RocketCyber, SentinelOne, Huntress, Blumira</td></tr>
+  <tr><td>Email Security</td><td>Avanan, Proofpoint, KnowBe4</td></tr>
+  <tr><td>Sales / Marketplace</td><td>Pax8, Sherweb</td></tr>
+  <tr><td>Accounting</td><td>Xero, QuickBooks Online</td></tr>
+  <tr><td>Productivity</td><td>Microsoft 365</td></tr>
+</table>
+
+<h3><span class="step-num">2</span> Gather Requirements</h3>
+
+<table>
+  <tr><th>Question</th><th>Purpose</th></tr>
+  <tr><td>How many technicians will use the platform?</td><td>Determines plan (free: 1 member, pro: unlimited)</td></tr>
+  <tr><td>What role structure is needed?</td><td>Owner / admin / member roles, tool allowlists</td></tr>
+  <tr><td>Shared org-level API keys or per-team/per-user?</td><td>Credential hierarchy setup</td></tr>
+  <tr><td>Compliance requirements? (audit log export, SIEM)</td><td>Log shipping configuration</td></tr>
+  <tr><td>Claude Desktop, Claude Code, or M2M automation?</td><td>Client configuration and service client needs</td></tr>
+</table>
+
+<h2 id="phase2">Phase 2: Organization Setup</h2>
+
+<h3><span class="step-num">3</span> Create the Organization</h3>
+
+<p>The MSP owner navigates to the gateway web UI at <code>/settings</code> and creates a new organization, or use the API:</p>
+
+<pre><code>POST /api/orgs
+{
+  "name": "Acme MSP",
+  "invite_code": "&lt;alpha-invite-code&gt;"   // Optional: grants Pro plan immediately
+}</code></pre>
+
+<div class="note">
+  An alpha invite code immediately upgrades the org to Pro. Without one, the org starts on the Free plan (3 vendor connections, 100 req/hour, 1 member).
+</div>
+
+<h3><span class="step-num">4</span> Upgrade to Pro Plan</h3>
+
+<p>If not using an invite code, upgrade via one of these methods:</p>
+
+<table>
+  <tr><th>Method</th><th>API Call</th></tr>
+  <tr><td>Stripe checkout</td><td><code>POST /api/billing/checkout { "org_id": "..." }</code></td></tr>
+  <tr><td>Redeem invite code later</td><td><code>POST /api/orgs/:orgId/redeem-code { "code": "..." }</code></td></tr>
+  <tr><td>Admin direct set (managed contracts)</td><td><code>POST /api/admin/orgs/:orgId/plan { "plan": "pro" }</code> (requires <code>X-Admin-Api-Key</code> header)</td></tr>
+</table>
+
+<h3>Pro Plan Unlocks</h3>
+<ul>
+  <li>Unlimited vendor connections</li>
+  <li>1,000 requests/hour/vendor</li>
+  <li>Team features (members, roles, invitations)</li>
+  <li>Tool allowlists (per-vendor, per-role RBAC)</li>
+  <li>Audit log access and CSV export</li>
+  <li>Log shipping to SIEM (Loki, Graylog, LogScale)</li>
+  <li>Service clients for M2M automation</li>
+  <li>Prompt/argument capture in audit logs</li>
+</ul>
+
+<h2 id="phase3">Phase 3: Vendor Credentials</h2>
+
+<h3><span class="step-num">5</span> Connect Vendor API Credentials</h3>
+
+<p>For each vendor the MSP uses, configure credentials at the org level.</p>
+
+<h4>API-Key Vendors (most vendors)</h4>
+<p>Navigate to <code>/settings/team/connections</code> in the web UI and click "Connect" next to the vendor. Enter the required API keys/secrets. Alternatively, use the API:</p>
+
+<pre><code>POST /api/orgs/:orgId/credentials/:vendor
+{
+  "apiKey": "...",
+  "apiSecret": "..."
+}</code></pre>
+
+<h4>OAuth Vendors (Xero, QuickBooks, HubSpot, M365)</h4>
+<p>Click "Connect" in the web UI and complete the OAuth flow. The gateway handles token exchange and stores refresh tokens for automatic renewal.</p>
+
+<div class="note">
+  <strong>OAuth vendor app credentials</strong> (e.g., <code>XERO_CLIENT_ID</code>, <code>MICROSOFT_CLIENT_ID</code>) are configured at the gateway level via environment variables, not per-customer. These are the Wyre Technology app registrations that customers authorize.
+</div>
+
+<h3><span class="step-num">6</span> Configure Server Access</h3>
+
+<p>By default, new members get access based on the org's <code>defaultServerAccess</code> setting. To control per-member vendor access:</p>
+
+<pre><code># Set which vendors a member can access
+PUT /api/orgs/:orgId/members/:userId/server-access
+{
+  "vendors": ["datto-rmm", "itglue", "autotask"]
+}
+
+# Grant individual vendor access
+PUT /api/orgs/:orgId/members/:userId/server-access/datto-rmm</code></pre>
+
+<h2 id="phase4">Phase 4: Teams &amp; RBAC</h2>
+
+<h3><span class="step-num">7</span> Set Up Teams (Optional)</h3>
+
+<p>For MSPs with distinct groups (e.g., "Tier 1 Support", "Security Team"):</p>
+
+<pre><code>POST /api/orgs/:orgId/teams
+{ "name": "Tier 1 Support" }</code></pre>
+
+<p>Teams can have their own vendor credentials (separate API keys) and their own vendor access grants:</p>
+
+<pre><code>PUT /api/orgs/:orgId/teams/:teamId/server-access/datto-rmm</code></pre>
+
+<h3><span class="step-num">8</span> Configure Tool Allowlists (Optional)</h3>
+
+<p>Restrict which tools a role can access per vendor:</p>
+
+<pre><code>PUT /api/orgs/:orgId/tool-access/datto-rmm/member
+{
+  "tools": ["datto_list_devices", "datto_list_sites", "datto_list_alerts"]
+}</code></pre>
+
+<p>Owners always have full access. Setting no allowlist means all tools are available.</p>
+
+<h3><span class="step-num">9</span> Invite Team Members</h3>
+
+<pre><code>POST /api/orgs/:orgId/invitations</code></pre>
+
+<p>Returns an invitation URL like <code>https://gateway.example.com/invite/&lt;token&gt;</code>. Share with team members. When they visit the link and sign in via Auth0, they join the org as a <code>member</code>.</p>
+
+<p>To promote a member to admin:</p>
+<pre><code>PATCH /api/orgs/:orgId/members/:userId/role
+{ "role": "admin" }</code></pre>
+
+<h3><span class="step-num">10</span> Create Service Clients (Optional)</h3>
+
+<p>For M2M automation (AI agents, scripts, integrations):</p>
+
+<pre><code>POST /api/orgs/:orgId/service-clients
+{
+  "name": "Nightly Ticket Sync",
+  "expires_in_days": 90
+}</code></pre>
+
+<p>Returns <code>client_id</code> and <code>client_secret</code> (shown once). The service client authenticates via <code>client_credentials</code> grant and receives a JWT scoped to the org.</p>
+
+<h2 id="phase5">Phase 5: Client Configuration</h2>
+
+<h3><span class="step-num">11</span> Configure MCP Clients</h3>
+
+<h4>Claude Desktop</h4>
+<p>Add to <code>claude_desktop_config.json</code>:</p>
+<pre><code>{
+  "mcpServers": {
+    "wyre": {
+      "url": "https://gateway.example.com/v1/mcp"
+    }
+  }
+}</code></pre>
+
+<h4>Claude Code</h4>
+<pre><code>claude mcp add wyre https://gateway.example.com/v1/mcp</code></pre>
+
+<p>On first use, the OAuth flow opens a browser for authentication. After sign-in and credential connection, the JWT is cached and refreshed automatically.</p>
+
+<h4>CLI Wrapper (REST)</h4>
+<p>For scripts and automation that do not need the full MCP JSON-RPC protocol:</p>
+<pre><code>POST /api/cli/:vendor/:tool
+Authorization: Bearer &lt;jwt&gt;
+Content-Type: application/json
+
+{ "site_id": "12345" }</code></pre>
+
+<h2 id="phase6">Phase 6: Log Shipping &amp; Compliance</h2>
+
+<h3><span class="step-num">12</span> Configure Log Shipping (Optional)</h3>
+
+<pre><code>POST /api/orgs/:orgId/log-shipping
+{
+  "label": "Production Loki",
+  "platform": "loki",
+  "endpointUrl": "https://loki.internal.example.com/loki/api/v1/push",
+  "config": { "username": "...", "password": "..." }
+}</code></pre>
+
+<p>Supported platforms: <code>loki</code>, <code>graylog</code>, <code>logscale</code>.</p>
+
+<h2 id="branding">White-Label Brand Configuration</h2>
+
+<p>For customers requiring white-label branding, configure the following environment variables on the gateway:</p>
+
+<table>
+  <tr><th>Variable</th><th>Purpose</th><th>Example</th></tr>
+  <tr><td><code>BRAND_NAME</code></td><td>Company name displayed in UI</td><td><code>Acme IT Solutions</code></td></tr>
+  <tr><td><code>BRAND_TAGLINE</code></td><td>Tagline below logo</td><td><code>Your AI-Powered IT Platform</code></td></tr>
+  <tr><td><code>BRAND_LOGO_URL</code></td><td>Logo image URL</td><td><code>https://cdn.example.com/logo.svg</code></td></tr>
+  <tr><td><code>BRAND_PRIMARY_COLOR</code></td><td>Accent color (hex)</td><td><code>#10b981</code></td></tr>
+  <tr><td><code>BRAND_SUPPORT_URL</code></td><td>Support page link</td><td><code>https://support.acme.com</code></td></tr>
+  <tr><td><code>BRAND_DOCS_URL</code></td><td>Documentation link</td><td><code>https://docs.acme.com</code></td></tr>
+  <tr><td><code>BRAND_ISSUES_URL</code></td><td>Bug report link</td><td><code>https://support.acme.com/new</code></td></tr>
+  <tr><td><code>BRAND_DOMAIN</code></td><td>Display domain</td><td><code>tools.acme.com</code></td></tr>
+</table>
+
+<div class="note">
+  <strong>Note:</strong> White-label branding is applied at the gateway deployment level. Each gateway deployment can have its own branding. For multi-customer white-labeling, deploy separate gateway instances or use the <code>BASE_URL</code> / <code>BRAND_*</code> vars per deployment.
+</div>
+
+<h2 id="checklist">Go-Live Verification Checklist</h2>
+
+<ul class="checklist">
+  <li>Organization created and on correct plan (Free or Pro)</li>
+  <li>All required vendor credentials connected and validated (test via <code>/health/vendors</code>)</li>
+  <li>Server access grants configured for each member</li>
+  <li>Tool allowlists set for restricted roles (if applicable)</li>
+  <li>Team members invited and have accepted invitations</li>
+  <li>Claude Desktop or Claude Code configured with the gateway MCP server URL</li>
+  <li>Service clients created for any automation workflows (if applicable)</li>
+  <li>Test tool call made and verified in audit log (<code>GET /api/audit</code>)</li>
+  <li>Log shipping configured and tested (if applicable)</li>
+  <li>MSP owner has verified Stripe billing portal access (if using Stripe)</li>
+  <li>White-label branding verified (if configured)</li>
+  <li>Customer has received documentation on how to manage their org via the web UI</li>
+</ul>
+
+<h2 id="rollback">Rollback Procedure</h2>
+
+<p>If onboarding fails or the customer needs to be removed:</p>
+
+<h3>Step 1: Disable Vendor Access</h3>
+<pre><code># Remove all vendor access for the org's members
+PUT /api/orgs/:orgId/members/:userId/server-access
+{ "vendors": [] }</code></pre>
+
+<h3>Step 2: Revoke Service Clients</h3>
+<pre><code># Delete any service clients
+DELETE /api/orgs/:orgId/service-clients/:clientId</code></pre>
+
+<h3>Step 3: Remove Credentials</h3>
+<pre><code># Delete vendor credentials (they are encrypted; deletion removes them from the database)
+DELETE /api/orgs/:orgId/credentials/:vendor</code></pre>
+
+<h3>Step 4: Remove Members</h3>
+<pre><code># Remove all non-owner members
+DELETE /api/orgs/:orgId/members/:userId</code></pre>
+
+<h3>Step 5: Delete Organization</h3>
+<pre><code># This cascades to all related data (credentials, audit logs, log shipping, teams)
+DELETE /api/orgs/:orgId</code></pre>
+
+<h3>Step 6: Cancel Billing</h3>
+<p>If Stripe is configured, cancel the subscription via the Stripe dashboard or API. The billing portal is accessible at <code>POST /api/billing/portal</code>.</p>
+
+<div class="warning">
+  <strong>Important:</strong> Organization deletion is permanent. All encrypted credentials, audit logs, and team data will be removed. Export audit logs before deletion if needed for compliance.
+</div>
+
+</body>
+</html>

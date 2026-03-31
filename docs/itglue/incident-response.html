@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Incident Response — Wyre Technology MCP Gateway</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 20px; }
+  .header { background: #1e293b; color: #fff; padding: 20px 30px; margin: -20px -20px 30px -20px; border-bottom: 4px solid #2563eb; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #94a3b8; font-size: 14px; }
+  .header .brand { color: #60a5fa; font-weight: 600; }
+  h2 { color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 36px; }
+  h3 { color: #334155; margin-top: 24px; }
+  h4 { color: #475569; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #f8fafc; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .toc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px 24px; margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: #2563eb; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .critical { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+  .issue-block { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .issue-block h4 { margin-top: 0; color: #1e293b; }
+  @media print { .header { background: #fff; color: #000; border-bottom: 2px solid #000; } .header .subtitle, .header .brand { color: #666; } pre { background: #f5f5f5; color: #000; border: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">Wyre Technology</div>
+  <h1>Incident Response</h1>
+  <div class="subtitle">MCP Gateway Platform &mdash; IT Glue Documentation</div>
+</div>
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#quick-diagnosis">Quick Diagnosis</a></li>
+    <li><a href="#auth-failures">Authentication Failures</a></li>
+    <li><a href="#proxy-failures">API Proxy Failures</a></li>
+    <li><a href="#database">Database Connectivity Issues</a></li>
+    <li><a href="#vendor-health">Vendor Container Health Issues</a></li>
+    <li><a href="#container-restart">Container Restart Procedures</a></li>
+    <li><a href="#logs">Log Locations &amp; Access</a></li>
+    <li><a href="#escalation">Escalation Contacts</a></li>
+  </ul>
+</div>
+
+<h2 id="quick-diagnosis">Quick Diagnosis</h2>
+
+<p>Start here to triage the issue quickly.</p>
+
+<table>
+  <tr><th>Symptom</th><th>Likely Cause</th><th>Jump To</th></tr>
+  <tr><td>Users cannot log in</td><td>Auth0 down, callback URL mismatch, Auth0 secrets expired</td><td><a href="#auth-failures">Auth Failures</a></td></tr>
+  <tr><td>401 Unauthorized on tool calls</td><td>JWT expired, JWT_SECRET changed, token store corrupted</td><td><a href="#auth-jwt">JWT Issues</a></td></tr>
+  <tr><td>403 Forbidden on tool calls</td><td>User lacks vendor access, tool allowlist blocking, plan limit</td><td><a href="#auth-rbac">RBAC Issues</a></td></tr>
+  <tr><td>502/504 on MCP requests</td><td>Vendor container down, network issue, container crash-looping</td><td><a href="#proxy-failures">Proxy Failures</a></td></tr>
+  <tr><td>500 Internal Server Error</td><td>Database unreachable, unhandled exception, missing env var</td><td><a href="#database">Database Issues</a></td></tr>
+  <tr><td>Gateway completely unreachable</td><td>Container crash, health probe failure, Azure outage</td><td><a href="#container-restart">Container Restart</a></td></tr>
+  <tr><td>Slow responses</td><td>Database connection pool exhausted, vendor API slow, high load</td><td><a href="#database">Database Issues</a></td></tr>
+  <tr><td>Vendor tool calls fail but gateway is up</td><td>Vendor credentials expired, vendor API down, vendor container crashed</td><td><a href="#vendor-health">Vendor Health</a></td></tr>
+</table>
+
+<h2 id="auth-failures">Authentication Failures</h2>
+
+<div class="issue-block">
+<h4>Issue: Users Cannot Log In (Auth0)</h4>
+<p><strong>Symptoms:</strong> Redirect to Auth0 fails, callback returns error, "invalid_grant" or "unauthorized_client" errors.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Check Auth0 status page: <a href="https://status.auth0.com">https://status.auth0.com</a></li>
+  <li>Verify Auth0 secrets in Key Vault are current:
+<pre><code>az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-domain
+az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-client-id
+az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-client-secret</code></pre>
+  </li>
+  <li>Verify <code>AUTH0_CALLBACK_URL</code> matches the callback URL configured in Auth0 dashboard</li>
+  <li>Check gateway logs for Auth0-related errors (see <a href="#logs">Log Locations</a>)</li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>If Auth0 secrets rotated: update Key Vault secrets and restart the gateway container to pick up new values</li>
+  <li>If callback URL mismatch: update either the <code>AUTH0_CALLBACK_URL</code> env var or the Auth0 application settings</li>
+  <li>If Auth0 is down: wait for Auth0 to recover; existing JWT tokens will continue to work until they expire</li>
+</ul>
+</div>
+
+<div class="issue-block" id="auth-jwt">
+<h4>Issue: JWT Token Expired or Invalid (401)</h4>
+<p><strong>Symptoms:</strong> <code>{"error":"invalid_token"}</code> or <code>{"error":"token_expired"}</code> on API calls.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Decode the JWT (jwt.io) and check the <code>exp</code> claim</li>
+  <li>Verify the <code>JWT_SECRET</code> has not changed since the token was issued</li>
+  <li>Check if the user's refresh token is still valid (30-day TTL by default)</li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Token expired: client should automatically refresh via the refresh token grant. If refresh also fails, user must re-authenticate</li>
+  <li>JWT_SECRET changed: <strong>all existing tokens are invalidated</strong>. All users must re-authenticate. This is expected if MASTER_KEY or JWT_SECRET is rotated</li>
+</ul>
+</div>
+
+<div class="critical">
+  <strong>WARNING:</strong> If <code>MASTER_KEY</code> or <code>JWT_SECRET</code> are not set in production, the gateway generates random keys on startup. This means all tokens and encrypted credentials are invalidated on every restart. Always set these in production.
+</div>
+
+<div class="issue-block" id="auth-rbac">
+<h4>Issue: User Gets 403 Forbidden</h4>
+<p><strong>Symptoms:</strong> User is authenticated but specific tool calls or vendor requests return 403.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Check user's server access grants: <code>GET /api/orgs/:orgId/members/:userId/server-access</code></li>
+  <li>Check tool allowlists for the user's role: <code>GET /api/orgs/:orgId/tool-access/:vendor/:role</code></li>
+  <li>Check if org has hit plan limits (vendor count, rate limit):
+    <ul>
+      <li>Free: 3 vendors, 100 req/hour</li>
+      <li>Pro: unlimited vendors, 1,000 req/hour</li>
+    </ul>
+  </li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Missing vendor access: <code>PUT /api/orgs/:orgId/members/:userId/server-access/:vendor</code></li>
+  <li>Tool allowlist blocking: update allowlist or remove restrictions</li>
+  <li>Plan limit: upgrade to Pro or wait for rate limit window to reset (1 hour)</li>
+</ul>
+</div>
+
+<h2 id="proxy-failures">API Proxy Failures</h2>
+
+<div class="issue-block">
+<h4>Issue: 502/504 on MCP Tool Calls</h4>
+<p><strong>Symptoms:</strong> Tool calls timeout or return 502 Bad Gateway / 504 Gateway Timeout.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Check vendor container health: <code>GET /health/vendors</code></li>
+  <li>Check if the vendor container is running:
+<pre><code>az containerapp show --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} --query properties.runningStatus</code></pre>
+  </li>
+  <li>Check vendor container logs:
+<pre><code>az containerapp logs show --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} --tail 50</code></pre>
+  </li>
+  <li>Verify the <code>VENDOR_URL_{SLUG}</code> environment variable resolves correctly</li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Vendor container crashed: restart the container (see <a href="#container-restart">Container Restart</a>)</li>
+  <li>Vendor API is down (upstream): check the vendor's status page. The gateway will continue to proxy requests; the vendor's API will return errors</li>
+  <li>Network resolution failure: verify the container app name matches the expected internal FQDN</li>
+</ul>
+</div>
+
+<div class="issue-block">
+<h4>Issue: Vendor Credentials Not Working</h4>
+<p><strong>Symptoms:</strong> Tool calls reach the vendor but return auth errors (401/403 from the vendor API).</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Verify credentials are stored: check the web UI at <code>/settings/team/connections</code></li>
+  <li>Check credential scope resolution order: Personal &rarr; Team &rarr; Org. The most specific scope wins</li>
+  <li>For OAuth vendors: check if the refresh token has expired or been revoked</li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>API key expired/rotated: update credentials at the appropriate scope (org, team, or personal)</li>
+  <li>OAuth token revoked: re-authorize via the web UI "Connect" button</li>
+  <li>Wrong scope: verify the credential exists at the expected scope level</li>
+</ul>
+</div>
+
+<h2 id="database">Database Connectivity Issues</h2>
+
+<div class="issue-block">
+<h4>Issue: PostgreSQL Connection Errors</h4>
+<p><strong>Symptoms:</strong> 500 errors, <code>ECONNREFUSED</code>, <code>connection terminated</code>, <code>connect_timeout</code>, or <code>too many connections</code> in logs.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Check PostgreSQL server status:
+<pre><code>az postgres flexible-server show --name mcpgw-prod-pg \
+  --resource-group {rg} --query state</code></pre>
+  </li>
+  <li>Check if connection limit is reached:
+<pre><code>az postgres flexible-server parameter show \
+  --server-name mcpgw-prod-pg --resource-group {rg} \
+  --name max_connections</code></pre>
+  </li>
+  <li>Check firewall rules allow Azure services:
+<pre><code>az postgres flexible-server firewall-rule list \
+  --name mcpgw-prod-pg --resource-group {rg}</code></pre>
+  </li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Server stopped: start it via the Azure Portal or CLI</li>
+  <li>Connection limit reached: the gateway uses a pool of 10 connections with 20s idle timeout. If exceeded, consider scaling up the PostgreSQL tier</li>
+  <li>Firewall blocking: ensure the "AllowAzureServices" rule exists (0.0.0.0 - 0.0.0.0)</li>
+  <li>Password changed: update the <code>DATABASE_URL</code> secret in the container app and restart</li>
+</ul>
+</div>
+
+<div class="issue-block">
+<h4>Issue: Slow Database Queries</h4>
+<p><strong>Symptoms:</strong> High P95 response times, requests timing out.</p>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Check PostgreSQL metrics in Azure Portal (CPU, memory, IOPS, connections)</li>
+  <li>The gateway runs a cleanup of request_log entries older than 90 days on startup. If the table is very large, consider running manual cleanup</li>
+  <li>Consider scaling up from Standard_B1ms to a higher tier if sustained load is high</li>
+</ul>
+</div>
+
+<h2 id="vendor-health">Vendor Container Health Issues</h2>
+
+<div class="issue-block">
+<h4>Issue: Vendor Marked as DOWN</h4>
+<p><strong>Symptoms:</strong> <code>/health/vendors</code> shows a vendor with <code>"status": "down"</code>, webhook alert received.</p>
+<p><strong>Diagnosis:</strong></p>
+<ol>
+  <li>Check the <code>lastError</code> and <code>consecutiveFailures</code> fields from <code>/health/vendors</code></li>
+  <li>Check vendor container logs:
+<pre><code>az containerapp logs show --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} --tail 100</code></pre>
+  </li>
+  <li>Check if the vendor container image exists and is pullable:
+<pre><code>docker pull ghcr.io/wyre-technology/{vendor-slug}-mcp:latest</code></pre>
+  </li>
+</ol>
+<p><strong>Resolution:</strong></p>
+<ul>
+  <li>Container crash-looping: check logs for the root cause, then restart</li>
+  <li>Image pull failure: verify GHCR token is valid and the image tag exists</li>
+  <li>The vendor monitor will automatically detect recovery and send a "RECOVERED" alert</li>
+</ul>
+</div>
+
+<h2 id="container-restart">Container Restart Procedures</h2>
+
+<h3>Restart the Gateway</h3>
+<pre><code># Create a new revision (restarts the container)
+az containerapp revision restart \
+  --name mcpgw-prod-gateway \
+  --resource-group {rg} \
+  --revision $(az containerapp revision list --name mcpgw-prod-gateway \
+    --resource-group {rg} --query '[0].name' -o tsv)</code></pre>
+
+<h3>Restart a Vendor Container</h3>
+<pre><code># Replace {vendor-slug} with the vendor name (e.g., datto-rmm)
+az containerapp revision restart \
+  --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} \
+  --revision $(az containerapp revision list --name mcpgw-prod-{vendor-slug} \
+    --resource-group {rg} --query '[0].name' -o tsv)</code></pre>
+
+<h3>Force Redeploy (New Revision)</h3>
+<p>If a restart does not resolve the issue, trigger a new revision deployment:</p>
+<pre><code># Gateway
+az containerapp update --name mcpgw-prod-gateway \
+  --resource-group {rg} \
+  --set-env-vars "REDEPLOY_TRIGGER=$(date +%s)"
+
+# Vendor container
+az containerapp update --name mcpgw-prod-{vendor-slug} \
+  --resource-group {rg} \
+  --set-env-vars "REDEPLOY_TRIGGER=$(date +%s)"</code></pre>
+
+<h3>Local Development (Docker Compose)</h3>
+<pre><code># Restart all services
+docker compose restart
+
+# Restart specific service
+docker compose restart gateway
+docker compose restart datto-rmm-mcp
+
+# Rebuild and restart
+docker compose up --build -d gateway
+
+# View logs
+docker compose logs -f gateway --tail 100</code></pre>
+
+<h2 id="logs">Log Locations &amp; Access</h2>
+
+<table>
+  <tr><th>Log Source</th><th>Location</th><th>How to Access</th></tr>
+  <tr>
+    <td>Gateway application logs</td>
+    <td>Azure Log Analytics</td>
+    <td>
+      <code>ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'mcpgw-prod-gateway'</code>
+    </td>
+  </tr>
+  <tr>
+    <td>Gateway system logs</td>
+    <td>Azure Log Analytics</td>
+    <td>
+      <code>ContainerAppSystemLogs_CL | where ContainerAppName_s == 'mcpgw-prod-gateway'</code>
+    </td>
+  </tr>
+  <tr>
+    <td>Vendor container logs</td>
+    <td>Azure Log Analytics</td>
+    <td>
+      <code>ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'mcpgw-prod-{slug}'</code>
+    </td>
+  </tr>
+  <tr>
+    <td>Request audit log</td>
+    <td>PostgreSQL <code>request_log</code> table</td>
+    <td><code>GET /api/audit</code> or direct DB query</td>
+  </tr>
+  <tr>
+    <td>Admin audit log</td>
+    <td>PostgreSQL <code>admin_audit_log</code> table</td>
+    <td><code>GET /api/audit/admin</code> or direct DB query</td>
+  </tr>
+  <tr>
+    <td>Log shipping errors</td>
+    <td>PostgreSQL <code>log_shipping_errors</code> table</td>
+    <td><code>GET /api/orgs/:orgId/log-shipping/:destId/errors</code></td>
+  </tr>
+</table>
+
+<h3>Quick Log Access via Azure CLI</h3>
+<pre><code># Real-time gateway logs
+az containerapp logs show --name mcpgw-prod-gateway \
+  --resource-group {rg} --follow --tail 50
+
+# Vendor container logs
+az containerapp logs show --name mcpgw-prod-datto-rmm \
+  --resource-group {rg} --tail 100
+
+# Log Analytics query (last hour of errors)
+az monitor log-analytics query --workspace mcpgw-prod-logs \
+  --analytics-query "ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'mcpgw-prod-gateway' | where Log_s has 'error' | order by TimeGenerated desc | take 20" \
+  --timespan PT1H</code></pre>
+
+<h2 id="escalation">Escalation Contacts</h2>
+
+<div class="warning">
+  <strong>Action Required:</strong> Fill in the contact details below with your team's actual information.
+</div>
+
+<table>
+  <tr><th>Role</th><th>Name</th><th>Contact</th><th>Availability</th></tr>
+  <tr><td>On-Call Engineer</td><td><em>[Name]</em></td><td><em>[Phone / Slack / PagerDuty]</em></td><td>24/7</td></tr>
+  <tr><td>Engineering Lead</td><td><em>[Name]</em></td><td><em>[Phone / Email]</em></td><td>Business hours + on-call</td></tr>
+  <tr><td>CTO</td><td><em>[Name]</em></td><td><em>[Phone / Email]</em></td><td>Critical incidents only</td></tr>
+  <tr><td>Azure Account Rep</td><td><em>[Name]</em></td><td><em>[Support ticket / Phone]</em></td><td>Business hours</td></tr>
+  <tr><td>Auth0 Support</td><td>N/A</td><td><a href="https://support.auth0.com">support.auth0.com</a></td><td>Per SLA</td></tr>
+  <tr><td>Stripe Support</td><td>N/A</td><td><a href="https://support.stripe.com">support.stripe.com</a></td><td>Per SLA</td></tr>
+</table>
+
+</body>
+</html>
