@@ -35,11 +35,11 @@ describe('brand config', () => {
     const b = await loadBrand();
     expect(b.name).toBe('Wyre Technology');
     expect(b.tagline).toBe('MCP Gateway for MSPs');
-    expect(b.logoUrl).toBe('/assets/logo.svg');
+    expect(b.logoUrl).toBe('https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp');
     expect(b.supportUrl).toBe('');
     expect(b.docsUrl).toBe('/');
     expect(b.issuesUrl).toContain('github.com/wyre-technology');
-    expect(b.primaryColor).toBe('#2563eb');
+    expect(b.primaryColor).toBe('#EDE947');
   });
 
   it('exports BrandConfig type', async () => {
