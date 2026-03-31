@@ -92,6 +92,14 @@ const sql = postgres(config.databaseUrl, {
 // Services
 // ---------------------------------------------------------------------------
 
+// Auth plugin creates users + auth_state tables (must be first)
+await registerAuthPlugin(app, sql);
+
+// OrgService creates organizations, org_teams, etc. (must be before credentials)
+const orgService = new OrgService(sql);
+await orgService.initTables();
+
+// CredentialService references org_teams + users (must be after auth + org)
 const credentialService = new CredentialService(sql);
 await credentialService.initTables();
 await credentialService.initTeamCredentialTables();
@@ -99,9 +107,6 @@ await credentialService.initServiceClientCredentialTables();
 
 const tokenStore = new TokenStore(sql);
 await tokenStore.initTables();
-
-const orgService = new OrgService(sql);
-await orgService.initTables();
 
 const billingGate = new DefaultBillingGate(orgService);
 const auditService = new AuditService(sql);
@@ -157,10 +162,7 @@ if (config.features.waitlist) {
   await app.register(waitlistRoutes(sql));
 }
 
-// OIDC user authentication (Auth0 or Azure AD based on AUTH_PROVIDER) —
-// must be registered before all authenticated routes so request.auth0User
-// is available.
-await registerAuthPlugin(app, sql);
+// Auth plugin already registered above (before service init for table ordering)
 
 // Landing page (public) — must be after auth plugin so auth0User is available
 await app.register(landingRoutes());
