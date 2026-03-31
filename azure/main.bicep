@@ -217,7 +217,7 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'http'
         allowInsecure: false
-        customDomains: [
+        customDomains: empty(customDomain) ? [] : [
           {
             name: customDomain
             certificateId: '${containerEnv.id}/managedCertificates/${managedCertName}'
@@ -286,7 +286,7 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           env: concat([
             { name: 'PORT', value: '8080' }
             { name: 'HOST', value: '0.0.0.0' }
-            { name: 'BASE_URL', value: 'https://${customDomain}' }
+            { name: 'BASE_URL', value: empty(customDomain) ? 'https://${prefix}-gateway.${containerEnv.properties.defaultDomain}' : 'https://${customDomain}' }
             { name: 'MASTER_KEY', secretRef: 'master-key' }
             { name: 'JWT_SECRET', secretRef: 'jwt-secret' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
@@ -294,7 +294,7 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AUTH0_DOMAIN', secretRef: 'auth0-domain' }
             { name: 'AUTH0_CLIENT_ID', secretRef: 'auth0-client-id' }
             { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
-            { name: 'AUTH0_CALLBACK_URL', value: 'https://${customDomain}/auth/callback' }
+            { name: 'AUTH0_CALLBACK_URL', value: empty(customDomain) ? 'https://${prefix}-gateway.${containerEnv.properties.defaultDomain}/auth/callback' : 'https://${customDomain}/auth/callback' }
             { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
             { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
             { name: 'STRIPE_PRO_PRICE_ID', secretRef: 'stripe-pro-price-id' }
