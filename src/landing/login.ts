@@ -3,12 +3,35 @@
  *
  * Renders a clean, centered login card with provider-specific sign-in
  * buttons. The button shown depends on the AUTH_PROVIDER config value.
+ *
+ * Accepts an optional BrandConfig + pathPrefix for customer-branded pages.
  */
 
 import { brand } from '../brand/index.js';
+import type { BrandConfig } from '../brand/types.js';
 import { config } from '../config.js';
 
-export function renderLoginPage(): string {
+/**
+ * Extract bare font family names and build a Google Fonts link tag.
+ */
+function googleFontsLink(cfg: BrandConfig): string {
+  const raw = [cfg.headingFont, cfg.bodyFont];
+  const families = new Set<string>();
+  for (const value of raw) {
+    const first = value.split(',')[0].trim().replace(/'/g, '');
+    if (!['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(first.toLowerCase())) {
+      families.add(first);
+    }
+  }
+  if (families.size === 0) return '';
+  const params = [...families].map(f => `family=${f.replace(/ /g, '+')}:wght@400;600;700`).join('&');
+  return `<link href="https://fonts.googleapis.com/css2?${params}&display=swap" rel="stylesheet" />`;
+}
+
+export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string): string {
+  const b = overrideBrand ?? brand;
+  const homePath = pathPrefix || '/';
+
   const showAzure = config.authProvider === 'azure-ad';
   const showAuth0 = config.authProvider === 'auth0';
 
@@ -17,15 +40,15 @@ export function renderLoginPage(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sign In &mdash; ${brand.name} MCP Gateway</title>
-  <link rel="icon" href="${brand.logoUrl}" />
+  <title>Sign In &mdash; ${b.name} MCP Gateway</title>
+  <link rel="icon" href="${b.logoUrl}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  ${googleFontsLink(b)}
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'Nunito Sans', sans-serif;
+      font-family: ${b.bodyFont};
       color: #333333;
       background: #F5F5F5;
       min-height: 100vh;
@@ -36,7 +59,7 @@ export function renderLoginPage(): string {
     }
     .login-card {
       background: #FFFFFF;
-      border-radius: 2px;
+      border-radius: ${b.borderRadius};
       box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
       padding: 48px 40px;
       max-width: 420px;
@@ -44,14 +67,14 @@ export function renderLoginPage(): string {
       text-align: center;
     }
     .login-card__logo {
-      width: 64px;
-      height: 64px;
-      border-radius: 2px;
+      max-width: 180px;
+      max-height: 64px;
+      border-radius: ${b.borderRadius};
       margin: 0 auto 24px;
       object-fit: contain;
     }
     .login-card__heading {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 1.5rem;
       margin-bottom: 8px;
@@ -70,8 +93,8 @@ export function renderLoginPage(): string {
       width: 100%;
       padding: 14px 24px;
       border: none;
-      border-radius: 2px;
-      font-family: 'Nunito Sans', sans-serif;
+      border-radius: ${b.borderRadius};
+      font-family: ${b.bodyFont};
       font-weight: 700;
       font-size: 1rem;
       cursor: pointer;
@@ -86,8 +109,8 @@ export function renderLoginPage(): string {
       color: #FFFFFF;
     }
     .login-btn--auth0 {
-      background: #EDE947;
-      color: #333333;
+      background: ${b.primaryColor};
+      color: #FFFFFF;
     }
     .login-btn__icon {
       width: 20px;
@@ -98,17 +121,17 @@ export function renderLoginPage(): string {
       display: inline-block;
       margin-top: 24px;
       font-size: 0.85rem;
-      color: #00C9DB;
+      color: ${b.accentColor};
     }
   </style>
 </head>
 <body>
   <div class="login-card">
-    <img src="https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp"
-         alt="${brand.name} logo"
+    <img src="${b.logoUrl}"
+         alt="${b.name} logo"
          class="login-card__logo" />
     <h1 class="login-card__heading">Sign in to MCP Gateway</h1>
-    <p class="login-card__sub">Securely access your AI-powered IT operations hub.</p>
+    <p class="login-card__sub">Securely access your AI-powered operations hub.</p>
 
     ${showAzure ? `
     <a href="/auth/login" class="login-btn login-btn--microsoft">
@@ -126,7 +149,7 @@ export function renderLoginPage(): string {
       Sign in with Auth0
     </a>` : ''}
 
-    <a href="/" class="login-card__back">&larr; Back to home</a>
+    <a href="${homePath}" class="login-card__back">&larr; Back to home</a>
   </div>
 </body>
 </html>`;

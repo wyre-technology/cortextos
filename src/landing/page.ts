@@ -2,24 +2,59 @@
  * Landing page HTML generator
  *
  * Returns a complete, self-contained HTML string for the public-facing
- * WYRE MCP Gateway landing page. All CSS is inline (no external stylesheets
- * beyond Google Fonts). No JS frameworks — only CSS animations.
+ * landing page. All CSS is inline (no external stylesheets beyond Google
+ * Fonts). No JS frameworks — only CSS animations.
+ *
+ * Accepts an optional BrandConfig + pathPrefix for customer-branded pages.
  */
 
 import { brand } from '../brand/index.js';
+import type { BrandConfig } from '../brand/types.js';
 
-export function renderLandingPage(): string {
+/**
+ * Extract bare font family names from a CSS font-family string so we can
+ * build a Google Fonts URL.  E.g. "'Prompt', Arial, sans-serif" -> ["Prompt"]
+ */
+function googleFontFamilies(cfg: BrandConfig): string[] {
+  const raw = [cfg.headingFont, cfg.bodyFont];
+  const families = new Set<string>();
+  for (const value of raw) {
+    const first = value.split(',')[0].trim().replace(/'/g, '');
+    if (!['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(first.toLowerCase())) {
+      families.add(first);
+    }
+  }
+  return [...families];
+}
+
+function googleFontsLink(cfg: BrandConfig): string {
+  const families = googleFontFamilies(cfg);
+  if (families.length === 0) return '';
+  const params = families.map(f => `family=${f.replace(/ /g, '+')}:wght@400;500;600;700`).join('&');
+  return `<link href="https://fonts.googleapis.com/css2?${params}&display=swap" rel="stylesheet" />`;
+}
+
+export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: string): string {
+  const b = overrideBrand ?? brand;
+  const isCustomer = !!overrideBrand;
+  const loginPath = isCustomer ? `${pathPrefix}/login` : '/auth/login';
+  const homePath = pathPrefix || '/';
+  const heroHeadline = isCustomer ? 'Your AI-Powered Operations Hub' : 'Your AI-Powered IT Operations Hub';
+  const heroSubtitle = isCustomer
+    ? 'Connect your tools to AI agents securely. One gateway, every vendor, zero complexity.'
+    : 'Connect your MSP tools to AI agents securely. One gateway, every vendor, zero complexity.';
+
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${brand.name} — ${brand.tagline}</title>
-  <meta name="description" content="${brand.tagline}" />
-  <link rel="icon" href="${brand.logoUrl}" />
+  <title>${b.name} — ${b.tagline}</title>
+  <meta name="description" content="${b.tagline}" />
+  <link rel="icon" href="${b.logoUrl}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  ${googleFontsLink(b)}
   <style>
     /* ------------------------------------------------------------------ */
     /* Reset & base                                                       */
@@ -27,13 +62,13 @@ export function renderLandingPage(): string {
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font-family: 'Nunito Sans', sans-serif;
+      font-family: ${b.bodyFont};
       color: #333333;
       background: #FFFFFF;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
-    a { color: #00C9DB; text-decoration: none; transition: opacity 0.2s; }
+    a { color: ${b.accentColor}; text-decoration: none; transition: opacity 0.2s; }
     a:hover { opacity: 0.8; }
     img { max-width: 100%; display: block; }
 
@@ -77,12 +112,11 @@ export function renderLandingPage(): string {
     }
     .site-header__logo {
       height: 40px;
-      width: 40px;
-      border-radius: 2px;
+      border-radius: ${b.borderRadius};
       object-fit: contain;
     }
     .site-header__title {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 1.25rem;
       color: #333333;
@@ -98,12 +132,12 @@ export function renderLandingPage(): string {
       font-size: 0.95rem;
       color: #333333;
     }
-    .site-header__nav a:hover { color: #00C9DB; }
+    .site-header__nav a:hover { color: ${b.accentColor}; }
     .site-header__nav .btn-signin {
-      background: #EDE947;
-      color: #333333;
+      background: ${b.primaryColor};
+      color: #FFFFFF;
       padding: 8px 20px;
-      border-radius: 2px;
+      border-radius: ${b.borderRadius};
       font-weight: 700;
     }
     .site-header__nav .btn-signin:hover { opacity: 0.85; }
@@ -125,7 +159,7 @@ export function renderLandingPage(): string {
         right: 24px;
         background: #fff;
         border: 1px solid #eee;
-        border-radius: 2px;
+        border-radius: ${b.borderRadius};
         padding: 16px 24px;
         gap: 16px;
         box-shadow: 0 4px 16px rgba(0,0,0,0.08);
@@ -143,7 +177,7 @@ export function renderLandingPage(): string {
       padding: 100px 24px 80px;
     }
     .hero__headline {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 700;
       font-size: clamp(2rem, 5vw, 3.25rem);
       color: #333333;
@@ -164,7 +198,7 @@ export function renderLandingPage(): string {
     .btn {
       display: inline-block;
       padding: 14px 32px;
-      border-radius: 2px;
+      border-radius: ${b.borderRadius};
       font-weight: 700;
       font-size: 1rem;
       cursor: pointer;
@@ -172,13 +206,13 @@ export function renderLandingPage(): string {
     }
     .btn:hover { transform: translateY(-1px); }
     .btn--primary {
-      background: #EDE947;
-      color: #333333;
+      background: ${b.primaryColor};
+      color: #FFFFFF;
     }
     .btn--outline {
       background: transparent;
-      border: 2px solid #00C9DB;
-      color: #00C9DB;
+      border: 2px solid ${b.accentColor};
+      color: ${b.accentColor};
     }
 
     /* ------------------------------------------------------------------ */
@@ -186,12 +220,12 @@ export function renderLandingPage(): string {
     /* ------------------------------------------------------------------ */
     .features { background: #FAFAFA; }
     .features__heading {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 2rem;
       text-align: center;
       margin-bottom: 48px;
-      color: #00C9DB;
+      color: ${b.accentColor};
     }
     .features__grid {
       display: grid;
@@ -201,7 +235,7 @@ export function renderLandingPage(): string {
     .feature-card {
       background: #FFFFFF;
       border: 1px solid #eee;
-      border-radius: 2px;
+      border-radius: ${b.borderRadius};
       padding: 32px 24px;
       transition: box-shadow 0.3s;
     }
@@ -211,8 +245,8 @@ export function renderLandingPage(): string {
     .feature-card__icon {
       width: 48px;
       height: 48px;
-      background: #EDE947;
-      border-radius: 2px;
+      background: ${b.accentColor};
+      border-radius: ${b.borderRadius};
       display: flex;
       align-items: center;
       justify-content: center;
@@ -220,7 +254,7 @@ export function renderLandingPage(): string {
       margin-bottom: 16px;
     }
     .feature-card__title {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 1.15rem;
       margin-bottom: 8px;
@@ -235,12 +269,12 @@ export function renderLandingPage(): string {
     /* How It Works                                                        */
     /* ------------------------------------------------------------------ */
     .how__heading {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 2rem;
       text-align: center;
       margin-bottom: 48px;
-      color: #00C9DB;
+      color: ${b.accentColor};
     }
     .steps {
       display: grid;
@@ -259,15 +293,15 @@ export function renderLandingPage(): string {
       width: 48px;
       height: 48px;
       border-radius: 50%;
-      background: #EDE947;
-      font-family: 'Oswald', sans-serif;
+      background: ${b.accentColor};
+      font-family: ${b.headingFont};
       font-weight: 700;
       font-size: 1.25rem;
-      color: #333;
+      color: #fff;
       margin-bottom: 16px;
     }
     .step__title {
-      font-family: 'Oswald', sans-serif;
+      font-family: ${b.headingFont};
       font-weight: 600;
       font-size: 1.05rem;
       margin-bottom: 8px;
@@ -304,21 +338,21 @@ export function renderLandingPage(): string {
       list-style: none;
     }
     .site-footer__links a { color: #ccc; font-size: 0.85rem; }
-    .site-footer__links a:hover { color: #EDE947; }
+    .site-footer__links a:hover { color: ${b.primaryColor}; }
     .site-footer__social a {
       color: #ccc;
       font-size: 0.85rem;
     }
-    .site-footer__social a:hover { color: #00C9DB; }
+    .site-footer__social a:hover { color: ${b.accentColor}; }
   </style>
 </head>
 <body>
 
   <!-- Header -->
   <header class="site-header">
-    <a href="/" class="site-header__brand">
-      <img src="https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp"
-           alt="${brand.name} logo"
+    <a href="${homePath}" class="site-header__brand">
+      <img src="${b.logoUrl}"
+           alt="${b.name} logo"
            class="site-header__logo" />
       <span class="site-header__title">MCP Gateway</span>
     </a>
@@ -332,8 +366,8 @@ export function renderLandingPage(): string {
       <ul class="site-header__nav">
         <li><a href="#features">Features</a></li>
         <li><a href="#how-it-works">How It Works</a></li>
-        <li><a href="${brand.docsUrl}">Docs</a></li>
-        <li><a href="/auth/login" class="btn-signin">Sign In</a></li>
+        <li><a href="${b.docsUrl}">Docs</a></li>
+        <li><a href="${loginPath}" class="btn-signin">Sign In</a></li>
       </ul>
     </nav>
   </header>
@@ -341,13 +375,12 @@ export function renderLandingPage(): string {
   <!-- Hero -->
   <section class="hero">
     <div class="container">
-      <h1 class="hero__headline reveal">Your AI-Powered IT Operations Hub</h1>
+      <h1 class="hero__headline reveal">${heroHeadline}</h1>
       <p class="hero__subtitle reveal reveal-d1">
-        Connect your MSP tools to AI agents securely.
-        One gateway, every vendor, zero complexity.
+        ${heroSubtitle}
       </p>
       <div class="hero__ctas reveal reveal-d2">
-        <a href="/auth/login" class="btn btn--primary">Get Started</a>
+        <a href="${loginPath}" class="btn btn--primary">Get Started</a>
         <a href="#features" class="btn btn--outline">Learn More</a>
       </div>
     </div>
@@ -405,7 +438,7 @@ export function renderLandingPage(): string {
         <div class="step reveal reveal-d4">
           <div class="step__number">4</div>
           <h3 class="step__title">Go Live</h3>
-          <p class="step__desc">Your AI agent securely accesses your MSP tools through the gateway. Done.</p>
+          <p class="step__desc">Your AI agent securely accesses your tools through the gateway. Done.</p>
         </div>
       </div>
     </div>
@@ -415,16 +448,13 @@ export function renderLandingPage(): string {
   <footer class="site-footer">
     <div class="site-footer__inner">
       <div class="site-footer__copy">
-        &copy; ${new Date().getFullYear()} ${brand.name}. All rights reserved.
+        &copy; ${new Date().getFullYear()} ${b.name}. All rights reserved.
       </div>
       <ul class="site-footer__links">
         <li><a href="/privacy">Privacy</a></li>
         <li><a href="/terms">Terms</a></li>
-        <li><a href="${brand.supportUrl || '/support'}">Support</a></li>
+        <li><a href="${b.supportUrl || '/support'}">Support</a></li>
       </ul>
-      <div class="site-footer__social">
-        <a href="https://facebook.com/WYRETech" target="_blank" rel="noopener noreferrer">Facebook</a>
-      </div>
     </div>
   </footer>
 

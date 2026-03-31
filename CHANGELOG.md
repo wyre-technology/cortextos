@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Lubing USA customer brand with path-based routing (`/lubing` landing, `/lubing/login`)
+- Customer brand registry (`src/brand/customers.ts`) for multi-tenant white-label deployments
+- Dynamic Google Fonts loading based on per-brand font configuration
+- Landing page and login page now accept `BrandConfig` override for customer branding
 - Branded landing page with WYRE brand kit (Oswald/Nunito Sans fonts, #EDE947/#00C9DB palette)
 - Login chooser page with provider-specific sign-in buttons (Microsoft or Auth0)
 - Extended `BrandConfig` with `accentColor`, `headingFont`, `bodyFont`, `borderRadius`
