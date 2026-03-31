@@ -34,6 +34,7 @@ import { billingRoutes } from './billing/checkout.js';
 import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
 import { auditRoutes } from './audit/routes.js';
 import { registerAuthPlugin } from './auth/index.js';
+import { landingRoutes } from './landing/index.js';
 import { waitlistRoutes } from './waitlist/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
 import { unifiedProxyRoutes } from './proxy/unified-router.js';
@@ -160,6 +161,9 @@ if (config.features.waitlist) {
 // must be registered before all authenticated routes so request.auth0User
 // is available.
 await registerAuthPlugin(app, sql);
+
+// Landing page (public) — must be after auth plugin so auth0User is available
+await app.register(landingRoutes());
 
 // Stripe webhook — conditionally registered if Stripe is configured.
 // MUST be registered before @fastify/static because it needs its own
