@@ -39,10 +39,8 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
   const isCustomer = !!overrideBrand;
   const loginPath = isCustomer ? `${pathPrefix}/login` : '/auth/login';
   const homePath = pathPrefix || '/';
-  const heroHeadline = isCustomer ? 'Your AI-Powered Operations Hub' : 'Your AI-Powered IT Operations Hub';
-  const heroSubtitle = isCustomer
-    ? 'Connect your tools to AI agents securely. One gateway, every vendor, zero complexity.'
-    : 'Connect your MSP tools to AI agents securely. One gateway, every vendor, zero complexity.';
+  const heroHeadline = isCustomer ? 'Your AI-Powered Operations Hub' : 'Your AI-Powered Operations Hub';
+  const heroSubtitle = 'Connect all your tools to AI agents securely. One gateway, zero complexity.';
 
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -354,7 +352,7 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
       <img src="${b.logoUrl}"
            alt="${b.name} logo"
            class="site-header__logo" />
-      <span class="site-header__title">MCP Gateway</span>
+      <span class="site-header__title">Connect</span>
     </a>
 
     <button class="nav-toggle" aria-label="Toggle navigation"
@@ -389,27 +387,27 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
   <!-- Features -->
   <section id="features" class="section features">
     <div class="container">
-      <h2 class="features__heading reveal">Why MCP Gateway?</h2>
+      <h2 class="features__heading reveal">Why Connect?</h2>
       <div class="features__grid">
         <div class="feature-card reveal reveal-d1">
           <div class="feature-card__icon">&#128274;</div>
-          <h3 class="feature-card__title">Secure MCP Proxy</h3>
+          <h3 class="feature-card__title">Secure Connections</h3>
           <p class="feature-card__desc">Route AI agent requests through authenticated, audited connections. Every call is logged and traceable.</p>
         </div>
         <div class="feature-card reveal reveal-d2">
           <div class="feature-card__icon">&#128279;</div>
-          <h3 class="feature-card__title">Multi-Vendor</h3>
-          <p class="feature-card__desc">Connect Autotask, IT Glue, Datto RMM, Pax8, and more from one platform. No per-vendor setup headaches.</p>
+          <h3 class="feature-card__title">All Your Tools</h3>
+          <p class="feature-card__desc">Connect all the tools your team already uses from one platform. No per-tool setup headaches.</p>
         </div>
         <div class="feature-card reveal reveal-d3">
           <div class="feature-card__icon">&#128101;</div>
           <h3 class="feature-card__title">Team Management</h3>
-          <p class="feature-card__desc">Role-based access, API keys, and usage billing per organization. Control who accesses what.</p>
+          <p class="feature-card__desc">Role-based access, API keys, and usage tracking per organization. Control who accesses what.</p>
         </div>
         <div class="feature-card reveal reveal-d4">
           <div class="feature-card__icon">&#127912;</div>
-          <h3 class="feature-card__title">White-Label Ready</h3>
-          <p class="feature-card__desc">Your brand, your domain, your customers' trust. Fully customizable for your MSP practice.</p>
+          <h3 class="feature-card__title">Your Brand</h3>
+          <p class="feature-card__desc">Your brand, your domain, your team's trust. Fully customizable to match your organization.</p>
         </div>
       </div>
     </div>
@@ -427,13 +425,13 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
         </div>
         <div class="step reveal reveal-d2">
           <div class="step__number">2</div>
-          <h3 class="step__title">Connect Vendors</h3>
-          <p class="step__desc">Add your vendor credentials &mdash; Autotask, IT Glue, Datto RMM, and more.</p>
+          <h3 class="step__title">Connect Your Tools</h3>
+          <p class="step__desc">Add your credentials for the tools your team uses every day.</p>
         </div>
         <div class="step reveal reveal-d3">
           <div class="step__number">3</div>
           <h3 class="step__title">Configure Your AI</h3>
-          <p class="step__desc">Point your AI agent (Claude, etc.) at your MCP Gateway server URL.</p>
+          <p class="step__desc">Point your AI agent at your Connect server URL.</p>
         </div>
         <div class="step reveal reveal-d4">
           <div class="step__number">4</div>
