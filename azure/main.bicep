@@ -24,6 +24,9 @@ param env string = 'prod'
 @description('Resource name prefix (overrides default mcpgw-{env})')
 param namePrefix string = ''
 
+@description('Key Vault name override (KV names are globally unique)')
+param kvName string = ''
+
 @description('Gateway Docker image')
 param gatewayImage string = 'ghcr.io/wyre-technology/mcp-gateway:latest'
 
