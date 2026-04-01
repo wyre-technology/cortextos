@@ -21,6 +21,9 @@ param location string = resourceGroup().location
 @allowed(['prod', 'staging', 'dev'])
 param env string = 'prod'
 
+@description('Resource name prefix (overrides default mcpgw-{env})')
+param namePrefix string = ''
+
 @description('Gateway Docker image')
 param gatewayImage string = 'ghcr.io/wyre-technology/mcp-gateway:latest'
 
@@ -80,7 +83,7 @@ param vendors array = [
 // Naming
 // ---------------------------------------------------------------------------
 
-var prefix = 'mcpgw-${env}'
+var prefix = empty(namePrefix) ? 'mcpgw-${env}' : namePrefix
 var pgServerName = '${prefix}-pg'
 var pgDbName = 'gateway'
 var pgUser = 'gatewayadmin'
