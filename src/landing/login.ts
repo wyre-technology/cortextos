@@ -40,7 +40,7 @@ export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sign In &mdash; ${b.name} MCP Gateway</title>
+  <title>Sign In &mdash; ${b.name} Connect</title>
   <link rel="icon" href="${b.logoUrl}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -130,7 +130,7 @@ export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string
     <img src="${b.logoUrl}"
          alt="${b.name} logo"
          class="login-card__logo" />
-    <h1 class="login-card__heading">Sign in to MCP Gateway</h1>
+    <h1 class="login-card__heading">Sign in to Connect</h1>
     <p class="login-card__sub">Securely access your AI-powered operations hub.</p>
 
     ${showAzure ? `

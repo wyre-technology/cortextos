@@ -10,7 +10,7 @@ function domainFromBaseUrl(): string {
 
 export const brand: BrandConfig = {
   name: process.env.BRAND_NAME ?? 'Wyre Technology',
-  tagline: process.env.BRAND_TAGLINE ?? 'MCP Gateway for MSPs',
+  tagline: process.env.BRAND_TAGLINE ?? 'Customer MCP Gateway',
   logoUrl: process.env.BRAND_LOGO_URL ?? 'https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp',
   supportUrl: process.env.BRAND_SUPPORT_URL ?? '',
   docsUrl: process.env.BRAND_DOCS_URL ?? '/',
