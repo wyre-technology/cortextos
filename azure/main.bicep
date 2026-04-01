@@ -98,7 +98,7 @@ var vendorEnvVars = [for vendor in vendors: {
 // ---------------------------------------------------------------------------
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: '${prefix}-kv'
+  name: empty(kvName) ? '${prefix}-kv' : kvName
   location: location
   properties: {
     tenantId: subscription().tenantId
