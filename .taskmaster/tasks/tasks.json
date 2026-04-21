@@ -694,7 +694,7 @@
           "8",
           "9"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -754,7 +754,8 @@
             "testStrategy": "Integration test: Paginated list, verify filtering by reseller_id, correct offsets and totals.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:21:00.163Z"
       },
       {
         "id": "11",
@@ -1513,9 +1514,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:14:26.912Z",
+      "lastModified": "2026-04-21T04:21:00.163Z",
       "taskCount": 20,
-      "completedCount": 10,
+      "completedCount": 11,
       "tags": [
         "reseller-tenancy"
       ]
@@ -4250,7 +4251,7 @@
           "1",
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -4310,7 +4311,8 @@
             "testStrategy": "Integration test: full happy path timings <50ms, error paths log correctly, metrics emit all labels, TypeScript compiles cleanly",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:21:03.605Z"
       },
       {
         "id": "4",
@@ -5356,9 +5358,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:05:45.595Z",
+      "lastModified": "2026-04-21T04:21:03.605Z",
       "taskCount": 17,
-      "completedCount": 2,
+      "completedCount": 3,
       "tags": [
         "white-label"
       ]
