@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Full history required so gitleaks can scan past commits.
           fetch-depth: 0
