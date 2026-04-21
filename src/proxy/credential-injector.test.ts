@@ -11,6 +11,7 @@ describe('injectCredentials', () => {
   const mockCredentialService = {
     get: vi.fn(),
     getOrgCredential: vi.fn(),
+    resolveForOrgAndVendor: vi.fn(),
     getTeamCredential: vi.fn(),
     getServiceClientCredential: vi.fn(),
     store: vi.fn(),
@@ -68,6 +69,7 @@ describe('injectCredentials', () => {
     vi.stubEnv('BASE_URL', baseUrl);
     mockCredentialService.get.mockReset();
     mockCredentialService.getOrgCredential.mockReset();
+    mockCredentialService.resolveForOrgAndVendor.mockReset();
     mockCredentialService.getTeamCredential.mockReset();
     mockCredentialService.getServiceClientCredential.mockReset();
     mockCredentialService.storeOrgCredential.mockReset();
@@ -175,10 +177,16 @@ describe('injectCredentials', () => {
       mockOrgService.getUserOrgs.mockResolvedValue([
         { id: 'org-42', name: 'Acme Corp', ownerId: 'owner-1', plan: 'pro' },
       ]);
-      mockCredentialService.getOrgCredential.mockResolvedValue({
-        apiKey: 'org-key',
-        apiSecret: 'org-secret',
-        platform: 'concord',
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue({
+        data: {
+          apiKey: 'org-key',
+          apiSecret: 'org-secret',
+          platform: 'concord',
+        },
+        vendorSlug: 'datto-rmm',
+        ownerOrgId: 'org-42',
+        source: 'customer',
+        grantId: null,
       });
       mockOrgService.hasServerAccess.mockResolvedValue(true);
 
@@ -200,7 +208,7 @@ describe('injectCredentials', () => {
       });
       expect(mockCredentialService.get).toHaveBeenCalledWith('user789', 'datto-rmm');
       expect(mockOrgService.getUserOrgs).toHaveBeenCalledWith('user789');
-      expect(mockCredentialService.getOrgCredential).toHaveBeenCalledWith('org-42', 'datto-rmm');
+      expect(mockCredentialService.resolveForOrgAndVendor).toHaveBeenCalledWith('org-42', 'datto-rmm');
     });
 
     it('throws AuthError when user has no personal creds and no org creds exist', async () => {
@@ -208,7 +216,7 @@ describe('injectCredentials', () => {
       mockOrgService.getUserOrgs.mockResolvedValue([
         { id: 'org-42', name: 'Acme Corp', ownerId: 'owner-1', plan: 'pro' },
       ]);
-      mockCredentialService.getOrgCredential.mockResolvedValue(null);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue(null);
 
       const token = await makeToken('user789', 'datto-rmm');
 
@@ -246,12 +254,18 @@ describe('injectCredentials', () => {
         { id: 'org-1', name: 'First Org', ownerId: 'owner-1', plan: 'free' },
         { id: 'org-2', name: 'Second Org', ownerId: 'owner-2', plan: 'pro' },
       ]);
-      mockCredentialService.getOrgCredential
+      mockCredentialService.resolveForOrgAndVendor
         .mockResolvedValueOnce(null) // org-1 has no creds
         .mockResolvedValueOnce({     // org-2 has creds
-          apiKey: 'org2-key',
-          apiSecret: 'org2-secret',
-          platform: 'concord',
+          data: {
+            apiKey: 'org2-key',
+            apiSecret: 'org2-secret',
+            platform: 'concord',
+          },
+          vendorSlug: 'datto-rmm',
+          ownerOrgId: 'org-2',
+          source: 'customer',
+          grantId: null,
         });
       mockOrgService.hasServerAccess.mockResolvedValue(true);
 
@@ -265,9 +279,9 @@ describe('injectCredentials', () => {
 
       expect(result.orgId).toBe('org-2');
       expect(result.headers['X-Datto-API-Key']).toBe('org2-key');
-      expect(mockCredentialService.getOrgCredential).toHaveBeenCalledTimes(2);
-      expect(mockCredentialService.getOrgCredential).toHaveBeenCalledWith('org-1', 'datto-rmm');
-      expect(mockCredentialService.getOrgCredential).toHaveBeenCalledWith('org-2', 'datto-rmm');
+      expect(mockCredentialService.resolveForOrgAndVendor).toHaveBeenCalledTimes(2);
+      expect(mockCredentialService.resolveForOrgAndVendor).toHaveBeenCalledWith('org-1', 'datto-rmm');
+      expect(mockCredentialService.resolveForOrgAndVendor).toHaveBeenCalledWith('org-2', 'datto-rmm');
     });
 
     it('skips org when user has no server access', async () => {
@@ -275,10 +289,16 @@ describe('injectCredentials', () => {
       mockOrgService.getUserOrgs.mockResolvedValue([
         { id: 'org-42', name: 'Acme Corp', ownerId: 'owner-1', plan: 'pro' },
       ]);
-      mockCredentialService.getOrgCredential.mockResolvedValue({
-        apiKey: 'org-key',
-        apiSecret: 'org-secret',
-        platform: 'concord',
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue({
+        data: {
+          apiKey: 'org-key',
+          apiSecret: 'org-secret',
+          platform: 'concord',
+        },
+        vendorSlug: 'datto-rmm',
+        ownerOrgId: 'org-42',
+        source: 'customer',
+        grantId: null,
       });
       mockOrgService.hasServerAccess.mockResolvedValue(false);
 
@@ -302,9 +322,21 @@ describe('injectCredentials', () => {
         { id: 'org-1', name: 'No Access Org', ownerId: 'owner-1', plan: 'pro' },
         { id: 'org-2', name: 'Has Access Org', ownerId: 'owner-2', plan: 'pro' },
       ]);
-      mockCredentialService.getOrgCredential
-        .mockResolvedValueOnce({ apiKey: 'org1-key', apiSecret: 'org1-secret', platform: 'concord' })
-        .mockResolvedValueOnce({ apiKey: 'org2-key', apiSecret: 'org2-secret', platform: 'concord' });
+      mockCredentialService.resolveForOrgAndVendor
+        .mockResolvedValueOnce({
+          data: { apiKey: 'org1-key', apiSecret: 'org1-secret', platform: 'concord' },
+          vendorSlug: 'datto-rmm',
+          ownerOrgId: 'org-1',
+          source: 'customer',
+          grantId: null,
+        })
+        .mockResolvedValueOnce({
+          data: { apiKey: 'org2-key', apiSecret: 'org2-secret', platform: 'concord' },
+          vendorSlug: 'datto-rmm',
+          ownerOrgId: 'org-2',
+          source: 'customer',
+          grantId: null,
+        });
       mockOrgService.hasServerAccess
         .mockResolvedValueOnce(false) // no access to org-1
         .mockResolvedValueOnce(true);  // has access to org-2
@@ -363,7 +395,134 @@ describe('injectCredentials', () => {
       expect(result.headers['X-Datto-API-Key']).toBe('personal-key');
       // orgService should never be consulted if personal creds exist
       expect(mockOrgService.getUserOrgs).not.toHaveBeenCalled();
-      expect(mockCredentialService.getOrgCredential).not.toHaveBeenCalled();
+      expect(mockCredentialService.resolveForOrgAndVendor).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reseller-shared credential fallback
+  // -------------------------------------------------------------------------
+
+  describe('reseller-shared credential fallback', () => {
+    it('injects reseller-granted credentials when the customer org has none of its own', async () => {
+      mockCredentialService.get.mockResolvedValue(null);
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'customer-org', name: 'Customer', ownerId: 'owner-c', plan: 'pro' },
+      ]);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue({
+        data: {
+          apiKey: 'reseller-key',
+          apiSecret: 'reseller-secret',
+          platform: 'concord',
+        },
+        vendorSlug: 'datto-rmm',
+        ownerOrgId: 'reseller-org',
+        source: 'reseller_grant',
+        grantId: 'grant-abc',
+      });
+      mockOrgService.hasServerAccess.mockResolvedValue(true);
+
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+      const token = await makeToken('user-c', 'datto-rmm');
+      const result = await injectCredentials(
+        `Bearer ${token}`,
+        'datto-rmm',
+        mockCredentialService as never,
+        mockOrgService as never,
+      );
+
+      expect(result.orgId).toBe('customer-org');
+      expect(result.headers['X-Datto-API-Key']).toBe('reseller-key');
+
+      // Audit trail: info-level log captures grant provenance
+      expect(infoSpy).toHaveBeenCalledWith(
+        'credential-injector: reseller-grant resolution',
+        expect.objectContaining({
+          grantId: 'grant-abc',
+          resellerOrgId: 'reseller-org',
+          customerOrgId: 'customer-org',
+          vendorSlug: 'datto-rmm',
+        }),
+      );
+
+      infoSpy.mockRestore();
+    });
+
+    it('does not log reseller-grant audit entry when credential source is the customer itself', async () => {
+      mockCredentialService.get.mockResolvedValue(null);
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'customer-org', name: 'Customer', ownerId: 'owner-c', plan: 'pro' },
+      ]);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue({
+        data: { apiKey: 'own-key', apiSecret: 'own-secret', platform: 'concord' },
+        vendorSlug: 'datto-rmm',
+        ownerOrgId: 'customer-org',
+        source: 'customer',
+        grantId: null,
+      });
+      mockOrgService.hasServerAccess.mockResolvedValue(true);
+
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+      const token = await makeToken('user-c', 'datto-rmm');
+      await injectCredentials(
+        `Bearer ${token}`,
+        'datto-rmm',
+        mockCredentialService as never,
+        mockOrgService as never,
+      );
+
+      expect(infoSpy).not.toHaveBeenCalledWith(
+        'credential-injector: reseller-grant resolution',
+        expect.anything(),
+      );
+
+      infoSpy.mockRestore();
+    });
+
+    it('falls through with no regression when no grant exists and customer has no own credential', async () => {
+      mockCredentialService.get.mockResolvedValue(null);
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'customer-org', name: 'Customer', ownerId: 'owner-c', plan: 'pro' },
+      ]);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue(null);
+
+      const token = await makeToken('user-c', 'datto-rmm');
+
+      await expect(
+        injectCredentials(
+          `Bearer ${token}`,
+          'datto-rmm',
+          mockCredentialService as never,
+          mockOrgService as never,
+        ),
+      ).rejects.toThrow('No stored credentials');
+    });
+
+    it('enforces hasServerAccess even for reseller-granted credentials', async () => {
+      mockCredentialService.get.mockResolvedValue(null);
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'customer-org', name: 'Customer', ownerId: 'owner-c', plan: 'pro' },
+      ]);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue({
+        data: { apiKey: 'reseller-key', apiSecret: 'reseller-secret', platform: 'concord' },
+        vendorSlug: 'datto-rmm',
+        ownerOrgId: 'reseller-org',
+        source: 'reseller_grant',
+        grantId: 'grant-abc',
+      });
+      mockOrgService.hasServerAccess.mockResolvedValue(false);
+
+      const token = await makeToken('user-c', 'datto-rmm');
+      await expect(
+        injectCredentials(
+          `Bearer ${token}`,
+          'datto-rmm',
+          mockCredentialService as never,
+          mockOrgService as never,
+        ),
+      ).rejects.toThrow('No stored credentials');
     });
   });
 

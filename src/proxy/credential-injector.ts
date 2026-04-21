@@ -47,7 +47,12 @@ export async function resolveUserId(authHeader: string | undefined): Promise<str
  * Credential resolution order:
  *   1. Personal credentials
  *   2. Team credentials (if user is in exactly 1 team with creds for this vendor)
- *   3. Org-level credentials
+ *   3. Org-level credentials — resolved via
+ *      {@link CredentialService.resolveForOrgAndVendor}, which itself tries:
+ *        a. The customer org's own org_credentials row, then
+ *        b. A reseller-shared grant (reseller_shared_vendor_grants) pointing
+ *           at the reseller's org_credentials row for the same vendor.
+ *      When (b) is used, the resolution is logged for audit.
  *   4. Throw AuthError if none found
  *
  * Service accounts (svc:<orgId>:<clientId>): service client creds → org creds
@@ -146,13 +151,25 @@ export async function injectCredentials(
           // 0 or >1 matching teams → fall through to org tier
         }
 
-        const orgCreds = await credentialService.getOrgCredential(org.id, vendorSlug);
-        if (orgCreds) {
+        // Org tier: customer org's own credential, falling back to any
+        // enabled reseller-shared grant for this (customer_org, vendor).
+        const resolved = await credentialService.resolveForOrgAndVendor(org.id, vendorSlug);
+        if (resolved) {
           const hasAccess = await orgService.hasServerAccess(org.id, userId, vendorSlug);
           if (!hasAccess) {
             continue;
           }
-          creds = orgCreds;
+          if (resolved.source === 'reseller_grant') {
+            // Audit trail hook: cross-org credential usage via reseller grant.
+            // eslint-disable-next-line no-console
+            console.info('credential-injector: reseller-grant resolution', {
+              grantId: resolved.grantId,
+              resellerOrgId: resolved.ownerOrgId,
+              customerOrgId: org.id,
+              vendorSlug,
+            });
+          }
+          creds = resolved.data;
           orgId = org.id;
           break;
         }
