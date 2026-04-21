@@ -36,7 +36,7 @@
     "fastify-plugin": "^5.1.0",
     "jose": "^6.0.8",
     "nanoid": "^5.1.2",
-    "openid-client": "^6.8.2",
+    "openid-client": "^6.8.3",
     "postgres": "^3.4.5",
     "stripe": "^20.3.1"
   },
