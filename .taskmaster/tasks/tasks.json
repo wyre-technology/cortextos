@@ -9,7 +9,7 @@
         "testStrategy": "Verify migration idempotent, reversible, existing orgs get type='standalone' and parent_org_id=NULL. Test trigger rejects invalid hierarchy states. Acceptance #1-4.",
         "priority": "high",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -71,7 +71,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2026-04-21T03:18:38.764Z"
+        "updatedAt": "2026-04-21T03:40:12.019Z"
       },
       {
         "id": "2",
@@ -83,7 +83,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -146,7 +146,8 @@
             "testStrategy": "Delete parent organization/user and verify child records cascade delete. Run migration twice to confirm idempotency.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:12.026Z"
       },
       {
         "id": "3",
@@ -158,7 +159,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -220,7 +221,8 @@
             "testStrategy": "Execute full migration on test DB. Verify all constraints, indexes, and parent-child relationships. Run acceptance tests for uniqueness and lookups.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:12.031Z"
       },
       {
         "id": "4",
@@ -232,7 +234,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -297,7 +299,8 @@
             "testStrategy": "Apply UP then DOWN; verify original schema state restored. Test acceptance criteria #16-19.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:12.036Z"
       },
       {
         "id": "5",
@@ -309,7 +312,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -372,7 +375,8 @@
             "testStrategy": "Test full migration up/down cycle preserves data integrity. Verify existing queries unaffected via EXPLAIN ANALYZE on key audit queries",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:12.042Z"
       },
       {
         "id": "6",
@@ -388,7 +392,7 @@
           "4",
           "5"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -449,7 +453,8 @@
             "testStrategy": "Run migration, verify Acceptance #23-26 criteria. Test full rollback restores prior state.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:12.047Z"
       },
       {
         "id": "7",
@@ -1504,9 +1509,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:18:38.764Z",
+      "lastModified": "2026-04-21T03:40:12.047Z",
       "taskCount": 20,
-      "completedCount": 0,
+      "completedCount": 6,
       "tags": [
         "reseller-tenancy"
       ]
@@ -6444,7 +6449,7 @@
         "testStrategy": "Run ./scripts/upstream-sync.sh --dry-run locally, verify git log output shows upstream commits correctly, test gh pr create with dry-run mode, validate git remote -v shows both origin and upstream (A1, A2)",
         "priority": "high",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6505,7 +6510,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2026-04-21T03:18:35.311Z"
+        "updatedAt": "2026-04-21T03:40:20.607Z"
       },
       {
         "id": "2",
@@ -6591,7 +6596,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6654,7 +6659,8 @@
             "testStrategy": "Test sync PR body generation includes correct git log output; validate post-merge CHANGELOG.md structure preserved; confirm release workflow processes both Conduit-specific and Inherited sections correctly (A5).",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:20.615Z"
       },
       {
         "id": "4",
@@ -6666,7 +6672,7 @@
         "dependencies": [
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6727,7 +6733,8 @@
             "testStrategy": "Manually inspect GitHub repo: tags, releases tab, file diffs in package.json/CHANGELOG.md, workflow run logs show success.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:20.621Z"
       },
       {
         "id": "5",
@@ -6739,7 +6746,7 @@
         "dependencies": [
           "4"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6800,7 +6807,8 @@
             "testStrategy": "Push to main shows only sha/main tags; manual release shows vX.Y.Z/vMAJOR/vMAJOR.MINOR/latest; verify GHCR tags match expected strategy (A6)",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:20.627Z"
       },
       {
         "id": "6",
@@ -7756,9 +7764,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:23:13.620Z",
+      "lastModified": "2026-04-21T03:40:20.627Z",
       "taskCount": 18,
-      "completedCount": 1,
+      "completedCount": 5,
       "tags": [
         "platform-ops"
       ]
@@ -7767,14 +7775,14 @@
   "docs": {
     "tasks": [
       {
-        "id": 1,
+        "id": "1",
         "title": "Choose docs-site framework and stand up the shell",
         "description": "Decide on Starlight (Astro) as recommended framework and create docs-site/ directory with build, local preview, and deploy configuration.",
         "details": "Use Starlight (Astro) per recommendation in Section 5.1. Initialize `docs-site/` at repo root with `npm create starlight@latest docs-site`, configure sidebar for doc inventory, set up Netlify/Vercel preview deploys via GitHub integration. Remove stub `mcp-gateway/docs/package.json`. Add scripts: `npm run dev`, `npm run build`, `npm run preview`. Ensure MDX/Mermaid support.",
         "testStrategy": "Verify local preview at http://localhost:4321, check PR preview URL deploys successfully, confirm build outputs to `dist/` with index.html containing navigation.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7783,7 +7791,8 @@
             "dependencies": [],
             "details": "Run `npm create starlight@latest docs-site` in the repo root to scaffold the full Starlight (Astro) project structure including astro.config.mjs, content collections, and default pages.",
             "status": "pending",
-            "testStrategy": "Verify docs-site/ directory created with src/ content folder, astro.config.mjs present, and no errors in package.json."
+            "testStrategy": "Verify docs-site/ directory created with src/ content folder, astro.config.mjs present, and no errors in package.json.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -7794,7 +7803,8 @@
             ],
             "details": "Edit config/ sidebar.ts to define initial doc sections; update astro.config.mjs integrations for @astrojs/mdx and mermaid support via remark/rehype plugins as per Starlight docs.",
             "status": "pending",
-            "testStrategy": "Check sidebar renders correctly in dev server; test sample MDX page with Mermaid diagram renders without errors."
+            "testStrategy": "Check sidebar renders correctly in dev server; test sample MDX page with Mermaid diagram renders without errors.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -7805,7 +7815,8 @@
             ],
             "details": "Add to root package.json: 'dev': 'cd docs-site && npm run dev', 'build': 'cd docs-site && npm run build', 'preview': 'cd docs-site && npm run preview'. Ensure docs-site/package.json scripts align.",
             "status": "pending",
-            "testStrategy": "Run `npm run dev` starts server at http://localhost:4321; `npm run build` outputs to docs-site/dist/ with index.html."
+            "testStrategy": "Run `npm run dev` starts server at http://localhost:4321; `npm run build` outputs to docs-site/dist/ with index.html.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -7816,7 +7827,8 @@
             ],
             "details": "Delete mcp-gateway/docs/package.json stub file; ensure docs-site/ is at repo root and no conflicting doc directories exist.",
             "status": "pending",
-            "testStrategy": "Confirm stub file removed via git status; repo root shows clean docs-site/ directory without duplicates."
+            "testStrategy": "Confirm stub file removed via git status; repo root shows clean docs-site/ directory without duplicates.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -7827,19 +7839,21 @@
             ],
             "details": "Connect repo to Netlify/Vercel, set build command to `npm run build`, publish directory to `docs-site/dist`, auto-deploy PR previews with custom domain if available.",
             "status": "pending",
-            "testStrategy": "Create test PR, verify preview URL deploys successfully with navigation and http://localhost:4321 parity."
+            "testStrategy": "Create test PR, verify preview URL deploys successfully with navigation and http://localhost:4321 parity.",
+            "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:40:24.079Z"
       },
       {
-        "id": 2,
+        "id": "2",
         "title": "Author style guide and terminology lexicon [D27]",
         "description": "Create style guide locking terminology from Section 6 and voice/tone guidelines.",
         "details": "Place at `docs-site/docs/style-guide.md`. Copy terminology table from Section 6. Define voice: second person, active, concrete, avoid 'simply/just/easy'. Configure `vale` linter with custom rules for 10 locked terms (MSP, customer, etc.). Add `.vale.ini` and vocabulary file. Wire into CI via `vale --config .vale.ini .`.",
         "testStrategy": "Run `vale .` locally and in CI, confirm 0 violations on seed docs. Verify terminology enforced (e.g., no 'reseller' instead of 'MSP'). Product/DevRel sign-off.",
         "priority": "high",
         "dependencies": [
-          1
+          "1"
         ],
         "status": "pending",
         "subtasks": [
@@ -7850,7 +7864,8 @@
             "dependencies": [],
             "details": "Create `docs-site/docs/style-guide.md`. Copy the terminology table from Section 6 exactly as-is, format as Markdown table. Add front-matter if needed for docs-site rendering.",
             "status": "pending",
-            "testStrategy": "Verify file exists, table renders correctly in local preview (`npm run dev`), no formatting errors."
+            "testStrategy": "Verify file exists, table renders correctly in local preview (`npm run dev`), no formatting errors.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -7861,7 +7876,8 @@
             ],
             "details": "In `style-guide.md`, add section defining voice: second person (use 'you'), active voice, concrete language. Explicitly list words to avoid: 'simply', 'just', 'easy'. Provide 2-3 examples of good vs bad usage.",
             "status": "pending",
-            "testStrategy": "Review section for clarity, ensure examples demonstrate rules, manual check against guidelines."
+            "testStrategy": "Review section for clarity, ensure examples demonstrate rules, manual check against guidelines.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -7872,7 +7888,8 @@
             ],
             "details": "Review Section 6 terminology, select top 10 terms (e.g., MSP instead of reseller, customer). Create a plain text list or initial vocabulary file with correct spellings and forbidden alternatives.",
             "status": "pending",
-            "testStrategy": "Confirm list matches Section 6, includes examples like MSP/customer, no duplicates."
+            "testStrategy": "Confirm list matches Section 6, includes examples like MSP/customer, no duplicates.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -7883,7 +7900,8 @@
             ],
             "details": "Create `.vale.ini` with [Vale] StylesPath = .vale/styles, enable necessary styles. Add vocabulary file in `.vale/vocabulary/` with 10 terms as 'Accept' and alternatives as 'Reject'. Test config with `vale --config .vale.ini .`.",
             "status": "pending",
-            "testStrategy": "Run `vale --config .vale.ini test-file.md` with sample violations, confirm 0 errors on compliant text."
+            "testStrategy": "Run `vale --config .vale.ini test-file.md` with sample violations, confirm 0 errors on compliant text.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -7894,20 +7912,21 @@
             ],
             "details": "Update CI config (GitHub Actions/YAML) to run `vale --config .vale.ini .` in docs lint step. Fail build on violations. Ensure it runs on `docs-site/` and seed docs pass.",
             "status": "pending",
-            "testStrategy": "Trigger CI on dummy PR with violation (fails) and fix (passes). Confirm 0 violations on existing seed docs. Get Product/DevRel sign-off."
+            "testStrategy": "Trigger CI on dummy PR with violation (fails) and fix (passes). Confirm 0 violations on existing seed docs. Get Product/DevRel sign-off.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 3,
+        "id": "3",
         "title": "Author docs contributor guide [D28]",
         "description": "Write end-to-end guide for adding/editing docs pages.",
         "details": "Place at `docs-site/docs/contribute.md`. Cover: add page to sidebar, local preview (`npm run dev`), link checker (`npx linkinator dist/`), spellcheck (`vale`), PR workflow, preview deploys. Test with non-docs engineer adding a dummy page.",
         "testStrategy": "Have external contributor follow guide to add test page, merge PR, verify preview/deploy/link-check passes.",
         "priority": "high",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -7918,7 +7937,8 @@
             "dependencies": [],
             "details": "Review project context, Microsoft contributor guide examples[1], and list sections: prerequisites, adding pages to sidebar, local preview, link checking, spellcheck, PR workflow, preview deploys. Create Markdown outline in notes.",
             "status": "pending",
-            "testStrategy": "Validate outline covers all required topics from parent task details"
+            "testStrategy": "Validate outline covers all required topics from parent task details",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -7929,7 +7949,8 @@
             ],
             "details": "Write clear step-by-step instructions with code snippets and expected outputs. Include screenshots of sidebar config and terminal outputs. Ensure second-person active voice per style guide.",
             "status": "pending",
-            "testStrategy": "Follow written steps locally to confirm they enable successful preview and checks"
+            "testStrategy": "Follow written steps locally to confirm they enable successful preview and checks",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -7940,7 +7961,8 @@
             ],
             "details": "Cover fork repo, branch creation, PR submission, required checks (linkinator, vale), preview URL access. Reference CI configuration and common pitfalls like unresolved links.",
             "status": "pending",
-            "testStrategy": "Submit test PR following guide to verify preview deploys correctly"
+            "testStrategy": "Submit test PR following guide to verify preview deploys correctly",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -7952,7 +7974,8 @@
             ],
             "details": "Merge outline and drafts, add navigation to sidebar.yml, include call-to-action for contributions, ensure consistent terminology. Run local `npm run dev` to verify rendering.",
             "status": "pending",
-            "testStrategy": "Confirm page renders correctly in local dev server and appears in sidebar navigation"
+            "testStrategy": "Confirm page renders correctly in local dev server and appears in sidebar navigation",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -7963,21 +7986,22 @@
             ],
             "details": "Provide test instructions, monitor their process, document any guide improvements needed. Merge test PR after checks pass (linkinator, vale, preview). Update guide based on feedback.",
             "status": "pending",
-            "testStrategy": "Verify external contributor completes dummy page addition, PR merges successfully, all automated checks pass, and production deploy succeeds"
+            "testStrategy": "Verify external contributor completes dummy page addition, PR merges successfully, all automated checks pass, and production deploy succeeds",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 4,
+        "id": "4",
         "title": "Migrate and rebrand getting-started guide [D06]",
         "description": "Merge and adapt mcp-gateway/docs/getting-started.md + conduit/docs/onboarding-guide.md for MSP onboarding.",
         "details": "Create `docs-site/docs/getting-started-msp.md`. Rewrite for MSP flow: sign up, first login, create org, connect vendor, invite customer. Add `upstream: mcp-gateway/docs/getting-started.md` and `upstream_sha` front-matter. Apply style guide terminology.",
         "testStrategy": "Review for MSP-specific steps, validate links, run vale/linkinator, confirm no Wyre branding.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3
+          "1",
+          "2",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -7988,7 +8012,8 @@
             "dependencies": [],
             "details": "Clone repositories if needed, read both Markdown files completely, note key sections like setup, login, org creation from each source for accurate merging.",
             "status": "pending",
-            "testStrategy": "Verify both files exist and are accessible, confirm content extraction covers all relevant MSP onboarding steps."
+            "testStrategy": "Verify both files exist and are accessible, confirm content extraction covers all relevant MSP onboarding steps.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -7999,7 +8024,8 @@
             ],
             "details": "Use Markdown front-matter YAML with 'upstream: mcp-gateway/docs/getting-started.md' and 'upstream_sha: <commit-sha>'; structure file with standard headers for MSP guide.",
             "status": "pending",
-            "testStrategy": "Check front-matter parses correctly in docs-site build, confirm upstream values match source repository commit."
+            "testStrategy": "Check front-matter parses correctly in docs-site build, confirm upstream values match source repository commit.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8011,7 +8037,8 @@
             ],
             "details": "Outline 5-step MSP flow, integrate relevant content from both sources, remove non-MSP elements, ensure logical progression with screenshots/commands if present in sources.",
             "status": "pending",
-            "testStrategy": "Review rewritten flow matches exact MSP steps, ensure no orphaned references from original docs."
+            "testStrategy": "Review rewritten flow matches exact MSP steps, ensure no orphaned references from original docs.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8022,7 +8049,8 @@
             ],
             "details": "Run terminology replacement pass (e.g., via find/replace or linter), verify terms like 'org', 'vendor', 'customer' are consistently used per style guide.",
             "status": "pending",
-            "testStrategy": "Use vale linter for terminology compliance, manual spot-check for contextually correct replacements."
+            "testStrategy": "Use vale linter for terminology compliance, manual spot-check for contextually correct replacements.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8033,22 +8061,23 @@
             ],
             "details": "Execute vale for style/terminology, linkinator for broken links, confirm all MSP steps are actionable and complete.",
             "status": "pending",
-            "testStrategy": "Docs-site build succeeds, no linting errors, all internal/external links resolve, content validated against MSP flow checklist."
+            "testStrategy": "Docs-site build succeeds, no linting errors, all internal/external links resolve, content validated against MSP flow checklist.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 5,
+        "id": "5",
         "title": "Write customer provisioning guide [D07]",
         "description": "Create net-new guide for MSP admins on customer tenant management.",
         "details": "Place at `docs-site/docs/customer-provisioning.md`. Cover: create tenant/customer, invite users, assign vendor connections, revoke access. Use screenshots from UI, reference onboarding PRD flows.",
         "testStrategy": "Cross-check against actual UI flows, validate steps reproducible in staging, link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3,
-          4
+          "1",
+          "2",
+          "3",
+          "4"
         ],
         "status": "pending",
         "subtasks": [
@@ -8059,7 +8088,8 @@
             "dependencies": [],
             "details": "Identify key UI screens from PRD flows, take high-resolution screenshots showing each step, organize them by section (create tenant, invite users, etc.), ensure screenshots are annotated with step numbers.",
             "status": "pending",
-            "testStrategy": "Verify screenshots match current staging UI, check readability and annotations for clarity"
+            "testStrategy": "Verify screenshots match current staging UI, check readability and annotations for clarity",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8070,7 +8100,8 @@
             ],
             "details": "Structure with H1/H2 headers, include placeholders for screenshots, add front-matter with title/authors/upstream references, ensure MSP admin perspective throughout, plan for sidebar navigation integration.",
             "status": "pending",
-            "testStrategy": "Review outline against PRD flows and task requirements for completeness"
+            "testStrategy": "Review outline against PRD flows and task requirements for completeness",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8082,7 +8113,8 @@
             ],
             "details": "Use numbered steps with bolded actions, include prerequisites/warnings, embed screenshots inline using markdown image syntax, write in clear imperative voice for MSP admins.",
             "status": "pending",
-            "testStrategy": "Cross-check steps against staging UI for accuracy and reproducibility"
+            "testStrategy": "Cross-check steps against staging UI for accuracy and reproducibility",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8095,7 +8127,8 @@
             ],
             "details": "Cover vendor assignment workflow with permissions, detail revocation steps with confirmation dialogs, include troubleshooting tips, ensure screenshots show MSP-specific views.",
             "status": "pending",
-            "testStrategy": "Validate vendor assignment flow in staging, test revocation steps end-to-end"
+            "testStrategy": "Validate vendor assignment flow in staging, test revocation steps end-to-end",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8109,21 +8142,22 @@
             ],
             "details": "Include upstream references to PRD, add table of contents, optimize images for web, run link-checker and vale linter, configure Starlight sidebar entry, preview locally and on PR deploy.",
             "status": "pending",
-            "testStrategy": "Confirm build success, verify local preview navigation, check all links/screenshots render correctly, validate against UI in staging environment"
+            "testStrategy": "Confirm build success, verify local preview navigation, check all links/screenshots render correctly, validate against UI in staging environment",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 6,
+        "id": "6",
         "title": "Author white-label setup guide and templates [D18, D19]",
         "description": "Rewrite white-label.md and create MSP customer-facing templates.",
         "details": "Rewrite `docs-site/docs/white-label-setup.md` from `conduit/docs/white-label.md`, reference `src/brand/customers.ts` and CHANGELOG. Create `docs-site/templates/` with 4 MD templates (onboarding, OAuth consent, revocation, security) using tokens like `{{msp.name}}`.",
         "testStrategy": "Verify templates render with sample MSP brand data, check cross-refs to CHANGELOG/src, link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3
+          "1",
+          "2",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -8134,7 +8168,8 @@
             "dependencies": [],
             "details": "Read `conduit/docs/white-label.md` for core setup instructions, extract MSP customer data from `src/brand/customers.ts`, note relevant changes from CHANGELOG. List key sections like branding, tokens, and customer-specific features.",
             "status": "pending",
-            "testStrategy": "Verify all key elements from sources are documented in notes for completeness."
+            "testStrategy": "Verify all key elements from sources are documented in notes for completeness.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8145,7 +8180,8 @@
             ],
             "details": "Adapt content from `conduit/docs/white-label.md` to docs-site format, integrate cross-references to `src/brand/customers.ts` and CHANGELOG entries. Ensure clear steps for MSP setup using tokens like {{msp.name}}.",
             "status": "pending",
-            "testStrategy": "Local preview with `npm run dev`, run link checker `npx linkinator dist/`, confirm references resolve correctly."
+            "testStrategy": "Local preview with `npm run dev`, run link checker `npx linkinator dist/`, confirm references resolve correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8156,7 +8192,8 @@
             ],
             "details": "Create a base template skeleton with sections for headers, footers, branding placeholders ({{msp.name}}, {{msp.logo}}), and content areas. Ensure responsive design and consistency across all 4 templates.",
             "status": "pending",
-            "testStrategy": "Render base template with sample data to verify token replacement and layout integrity."
+            "testStrategy": "Render base template with sample data to verify token replacement and layout integrity.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8168,7 +8205,8 @@
             ],
             "details": "Onboarding: Welcome and setup guide; OAuth consent: Permissions screen; Revocation: Access removal; Security: Best practices. Use tokens for dynamic MSP branding, reference white-label-setup.md.",
             "status": "pending",
-            "testStrategy": "Substitute sample MSP data from customers.ts, preview renders, check for broken links or formatting issues."
+            "testStrategy": "Substitute sample MSP data from customers.ts, preview renders, check for broken links or formatting issues.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8180,21 +8218,22 @@
             ],
             "details": "Use sample MSP brand data to render guide and templates, run `npx linkinator dist/`, cross-check against CHANGELOG/src references. Update sidebar links if needed.",
             "status": "pending",
-            "testStrategy": "Confirm templates render correctly, all links valid, no terminology violations per style guide, ready for PR."
+            "testStrategy": "Confirm templates render correctly, all links valid, no terminology violations per style guide, ready for PR.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 7,
+        "id": "7",
         "title": "Fork and split agents reference [D17]",
         "description": "Fork mcp-gateway/docs/agents.md into public concepts and internal implementation.",
         "details": "Create `docs-site/docs/agents-concepts.md` (public) and `docs-site/internal/agents-impl.md`. Add upstream front-matter to both. Split: public=concepts for MSPs, internal=impl details. Apply terminology pass.",
         "testStrategy": "Confirm split covers full upstream content, no drift, vale passes, appropriate sections public/internal.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3
+          "1",
+          "2",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -8205,7 +8244,8 @@
             "dependencies": [],
             "details": "Copy full content of mcp-gateway/docs/agents.md to docs-site/docs/agents-concepts.md and docs-site/internal/agents-impl.md. Preserve all markdown formatting, code blocks, and structure during initial copy.",
             "status": "pending",
-            "testStrategy": "Verify both new files contain identical full content to upstream source via diff check."
+            "testStrategy": "Verify both new files contain identical full content to upstream source via diff check.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8216,7 +8256,8 @@
             ],
             "details": "Add front-matter block at top of each file: upstream: mcp-gateway/docs/agents.md and upstream_sha: <current SHA>. Ensure valid YAML syntax and no content disruption.",
             "status": "pending",
-            "testStrategy": "Confirm front-matter parses correctly and matches upstream path/SHA in both files."
+            "testStrategy": "Confirm front-matter parses correctly and matches upstream path/SHA in both files.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8228,7 +8269,8 @@
             ],
             "details": "Public (agents-concepts.md): High-level concepts, MSP usage patterns, architecture overview. Internal (agents-impl.md): Code details, config options, deployment internals, troubleshooting. Remove redundant sections.",
             "status": "pending",
-            "testStrategy": "Ensure no content loss: combined files cover 100% of original agents.md. Public file understandable without internal knowledge."
+            "testStrategy": "Ensure no content loss: combined files cover 100% of original agents.md. Public file understandable without internal knowledge.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8239,7 +8281,8 @@
             ],
             "details": "Run terminology replacement: Wyre→Conduit, internal→MSP-appropriate terms. Ensure consistent voice: public=approachable, internal=technical. Fix any markdown inconsistencies introduced during split.",
             "status": "pending",
-            "testStrategy": "Run vale linter on both files (0 warnings), manual spot-check 5 key terms per file for consistency."
+            "testStrategy": "Run vale linter on both files (0 warnings), manual spot-check 5 key terms per file for consistency.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8250,22 +8293,23 @@
             ],
             "details": "Diff both files against original to confirm no drift/missing sections. Run linkinator, vale, cspell on docs-site/. Commit with clear split summary in message.",
             "status": "pending",
-            "testStrategy": "CI passes: 0 broken links, vale clean, spelling OK. Manual review confirms public/internal sections appropriately split per AC."
+            "testStrategy": "CI passes: 0 broken links, vale clean, spelling OK. Manual review confirms public/internal sections appropriately split per AC.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 8,
+        "id": "8",
         "title": "Fork plugins, teams-orgs, security docs [D16, D22, D20]",
         "description": "Fork and rebrand three upstream docs with MSP framing.",
         "details": "Fork to: `docs-site/docs/plugins.md`, `docs-site/docs/teams-orgs.md`, `docs-site/docs/security.md`. Add upstream front-matter. Security: expand with MSP data residency/isolation. Terminology pass on all.",
         "testStrategy": "Verify rebranding complete, upstream metadata present, MSP-specific additions in security, CI linters pass.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3,
-          7
+          "1",
+          "2",
+          "3",
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -8276,7 +8320,8 @@
             "dependencies": [],
             "details": "Locate upstream plugins.md source, create docs-site/docs/plugins.md, add front-matter with upstream source URL and current SHA hash for tracking changes.",
             "status": "pending",
-            "testStrategy": "Verify file exists at correct path, front-matter is properly formatted and contains upstream metadata, content matches upstream."
+            "testStrategy": "Verify file exists at correct path, front-matter is properly formatted and contains upstream metadata, content matches upstream.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8285,7 +8330,8 @@
             "dependencies": [],
             "details": "Locate upstream teams-orgs.md source (likely from mcp-gateway or conduit repos), create docs-site/docs/teams-orgs.md, add front-matter with upstream source URL and SHA hash.",
             "status": "pending",
-            "testStrategy": "Confirm file creation at docs-site/docs/teams-orgs.md, validate front-matter structure, ensure initial content sync with upstream."
+            "testStrategy": "Confirm file creation at docs-site/docs/teams-orgs.md, validate front-matter structure, ensure initial content sync with upstream.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8294,7 +8340,8 @@
             "dependencies": [],
             "details": "Create docs-site/docs/security.md from upstream source, add front-matter, insert new sections covering MSP data residency requirements, customer isolation policies, and compliance standards.",
             "status": "pending",
-            "testStrategy": "Verify base content forked correctly, confirm MSP-specific sections added with relevant details, check front-matter presence."
+            "testStrategy": "Verify base content forked correctly, confirm MSP-specific sections added with relevant details, check front-matter presence.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8307,7 +8354,8 @@
             ],
             "details": "Apply style guide from Task 2: replace terms like 'reseller'→'MSP', 'customer'→appropriate MSP context, ensure active voice and consistent framing. Run vale linter to validate.",
             "status": "pending",
-            "testStrategy": "Run vale linter on all three files (0 violations), manual review confirms MSP terminology applied consistently, no upstream-specific branding remains."
+            "testStrategy": "Run vale linter on all three files (0 violations), manual review confirms MSP terminology applied consistently, no upstream-specific branding remains.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8318,20 +8366,21 @@
             ],
             "details": "Run full CI pipeline including vale/linkinator, verify upstream front-matter intact, confirm MSP framing complete, commit with message referencing D16/D22/D20 and parent Task 8.",
             "status": "pending",
-            "testStrategy": "CI passes with 0 linter violations, all links resolve, manual review confirms complete rebranding and MSP-specific security additions present."
+            "testStrategy": "CI passes with 0 linter violations, all links resolve, manual review confirms complete rebranding and MSP-specific security additions present.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 9,
+        "id": "9",
         "title": "Build OpenAPI-driven API reference [D10]",
         "description": "Integrate OpenAPI spec rendering into docs site.",
         "details": "Use Redocly or @stoplight/elements (decide OQ6, default Redocly). Embed `/openapi.json` at `docs-site/docs/api-reference.mdx`. Add CI script to fail build if spec misses `src/` routes (use spectral or custom validator). Document auth per endpoint.",
         "testStrategy": "Confirm all non-health endpoints rendered with auth docs, CI fails on missing spec endpoints, link-check.",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -8342,7 +8391,8 @@
             "dependencies": [],
             "details": "Review documentation for Redocly (default) and @stoplight/elements. Consider factors like MDX integration, customization options, bundle size, and Starlight/Astro compatibility. Document decision in task comments with OQ6 reference.",
             "status": "pending",
-            "testStrategy": "Confirm selected tool renders sample OpenAPI spec correctly in a test MDX page."
+            "testStrategy": "Confirm selected tool renders sample OpenAPI spec correctly in a test MDX page.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8353,7 +8403,8 @@
             ],
             "details": "Install chosen tool via npm in docs-site. Add MDX component embedding /openapi.json endpoint. Ensure responsive design and proper sidebar navigation entry. Handle loading states and errors gracefully.",
             "status": "pending",
-            "testStrategy": "Verify spec renders all endpoints at localhost:4321/docs/api-reference, check mobile responsiveness."
+            "testStrategy": "Verify spec renders all endpoints at localhost:4321/docs/api-reference, check mobile responsiveness.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8364,7 +8415,8 @@
             ],
             "details": "Choose Spectral or build custom validator. Parse src/ route files (Express/Fastify?) and compare against openapi.json paths. Add as GitHub Actions step in docs-site/.github/workflows. Use Spectral linter if possible for OAS validation.",
             "status": "pending",
-            "testStrategy": "Run CI locally; confirm fails when removing a src/ route from spec, passes when complete."
+            "testStrategy": "Run CI locally; confirm fails when removing a src/ route from spec, passes when complete.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8375,7 +8427,8 @@
             ],
             "details": "Add securitySchemes (Bearer/JWT?) to global components. Reference schemes in operation security arrays. Include auth flows, required scopes/roles per endpoint. Use x- extensions if needed for custom auth details.",
             "status": "pending",
-            "testStrategy": "Confirm auth info visible in rendered docs for all non-health endpoints; validate spec with Spectral."
+            "testStrategy": "Confirm auth info visible in rendered docs for all non-health endpoints; validate spec with Spectral.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8388,21 +8441,22 @@
             ],
             "details": "Execute linkinator on built site. Test all non-health endpoints render with auth docs. Trigger CI failures by modifying spec. Deploy to preview and validate production-like rendering.",
             "status": "pending",
-            "testStrategy": "CI passes with full spec; fails on missing endpoints; all links work; auth docs visible and accurate."
+            "testStrategy": "CI passes with full spec; fails on missing endpoints; all links work; auth docs visible and accurate.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 10,
+        "id": "10",
         "title": "Author architecture overview and diagrams [D11, D12]",
         "description": "Fork architecture.md and add integration diagram.",
         "details": "Fork `conduit/docs/architecture.md` to `docs-site/docs/architecture.md` with upstream front-matter. Add Mermaid diagram in `docs-site/docs/integration-diagram.md` for MSP→Conduit→vendors→agents flow.",
         "testStrategy": "Render Mermaid diagrams in preview, validate diagram accuracy against code, link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3
+          "1",
+          "2",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -8413,7 +8467,8 @@
             "dependencies": [],
             "details": "Execute `cp conduit/docs/architecture.md docs-site/docs/architecture.md`, verify upstream front-matter (title, description, sidebar placement) is intact, check file permissions and encoding match.",
             "status": "pending",
-            "testStrategy": "Diff original vs copied file, confirm front-matter parses correctly in preview (`npm run dev`)."
+            "testStrategy": "Diff original vs copied file, confirm front-matter parses correctly in preview (`npm run dev`).",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8424,7 +8479,8 @@
             ],
             "details": "Scan content for conduit-specific references, apply style guide terms (MSP/customer), add cross-links to integration diagram and vendor guides, ensure Markdown renders cleanly.",
             "status": "pending",
-            "testStrategy": "Local preview renders without errors, `vale .` passes, link-checker (`npx linkinator`) confirms no broken links."
+            "testStrategy": "Local preview renders without errors, `vale .` passes, link-checker (`npx linkinator`) confirms no broken links.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8435,7 +8491,8 @@
             ],
             "details": "Create `docs-site/docs/integration-diagram.md` with sidebar front-matter linking from architecture page, add basic Mermaid sequenceDiagram structure for MSP→Conduit→vendors→agents flow.",
             "status": "pending",
-            "testStrategy": "File renders in `npm run dev` with Mermaid diagram visible (even if empty), front-matter correctly places in sidebar."
+            "testStrategy": "File renders in `npm run dev` with Mermaid diagram visible (even if empty), front-matter correctly places in sidebar.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8446,7 +8503,8 @@
             ],
             "details": "Use sequenceDiagram notation: participant MSP, Conduit, Vendor, Agent; map key interactions (auth, config push, telemetry pull, agent orchestration) based on conduit/containers code structure.",
             "status": "pending",
-            "testStrategy": "Render in preview, validate flow matches actual code paths in conduit/src, get architecture owner review for accuracy."
+            "testStrategy": "Render in preview, validate flow matches actual code paths in conduit/src, get architecture owner review for accuracy.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8458,22 +8516,23 @@
             ],
             "details": "Add bidirectional links between architecture.md and integration-diagram.md, update docs-site sidebar.yaml for proper navigation, run full validation suite (vale, linkinator, Mermaid render).",
             "status": "pending",
-            "testStrategy": "End-to-end preview confirms navigation works, zero violations in linters, external reviewer validates diagram accuracy against running system."
+            "testStrategy": "End-to-end preview confirms navigation works, zero violations in linters, external reviewer validates diagram accuracy against running system.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 11,
+        "id": "11",
         "title": "Author vendor connection guides [D13]",
         "description": "Create template and guides for ~30 vendors, flesh out existing ones.",
         "details": "Create `docs-site/templates/vendor-guide.md`. Generate skeletons for all vendors from `conduit/containers/`. Detail `m365-mcp`, `sentinelone-mcp` with screenshots/scopes/troubleshooting. Link from sidebar.",
         "testStrategy": "Confirm one guide per container/vendor, detailed guides complete, skeletons flagged 'draft', link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3,
-          10
+          "1",
+          "2",
+          "3",
+          "10"
         ],
         "status": "pending",
         "subtasks": [
@@ -8484,7 +8543,8 @@
             "dependencies": [],
             "details": "Create `docs-site/templates/vendor-guide.md` with placeholders for vendor-specific details such as API scopes, authentication flows, common errors, and integration screenshots. Ensure consistent structure across all guides.",
             "status": "pending",
-            "testStrategy": "Validate template renders correctly in docs preview, check for all required sections, ensure Markdown syntax is valid."
+            "testStrategy": "Validate template renders correctly in docs preview, check for all required sections, ensure Markdown syntax is valid.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8495,7 +8555,8 @@
             ],
             "details": "Script or manually generate one skeleton MD file per container/vendor in `docs-site/guides/` directory, populate basic metadata (name, version), mark as 'DRAFT' status, include template sections with TODO notes.",
             "status": "pending",
-            "testStrategy": "Confirm exactly one guide per container (count files matches directory), all skeletons flagged 'draft', no broken links in skeletons."
+            "testStrategy": "Confirm exactly one guide per container (count files matches directory), all skeletons flagged 'draft', no broken links in skeletons.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8507,7 +8568,8 @@
             ],
             "details": "Update `docs-site/guides/m365-mcp.md` with exact API scopes required, step-by-step connection instructions, 4-6 annotated screenshots of OAuth flow and dashboard, troubleshooting for common auth/permission issues.",
             "status": "pending",
-            "testStrategy": "Verify guide completeness (all sections filled), screenshots render correctly, test connection steps in staging environment, link-check passes."
+            "testStrategy": "Verify guide completeness (all sections filled), screenshots render correctly, test connection steps in staging environment, link-check passes.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8519,7 +8581,8 @@
             ],
             "details": "Populate `docs-site/guides/sentinelone-mcp.md` with API token scopes, agent deployment steps, screenshots of console integration and agent status, troubleshooting for connectivity and permission errors.",
             "status": "pending",
-            "testStrategy": "Check all detailed sections complete, screenshots accurate and visible, validate steps against live SentinelOne instance, ensure no dead links."
+            "testStrategy": "Check all detailed sections complete, screenshots accurate and visible, validate steps against live SentinelOne instance, ensure no dead links.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8532,20 +8595,21 @@
             ],
             "details": "Update docs-site sidebar config to include 'Vendor Connection Guides' section linking to template, detailed guides (m365-mcp, sentinelone-mcp), and draft skeletons grouped by category if applicable. Run linkinator to verify all links.",
             "status": "pending",
-            "testStrategy": "Confirm sidebar renders with all ~30+ links (drafts included), click-test 5 random links including drafts, link-check entire section passes with 0 errors."
+            "testStrategy": "Confirm sidebar renders with all ~30+ links (drafts included), click-test 5 random links including drafts, link-check entire section passes with 0 errors.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 12,
+        "id": "12",
         "title": "Port IT Glue runbooks to markdown [D26]",
         "description": "Convert 5 HTML runbooks to markdown under internal section.",
         "details": "Convert `conduit/docs/itglue/*.html` to `docs-site/internal/runbooks/*.md` (customer-onboarding, incident-response, etc.). Add SLA placeholders. Configure SSO gate for `/internal/` via Starlight auth plugin or Netlify Identity.",
         "testStrategy": "Verify content fidelity post-conversion, SSO blocks public access, add to internal nav.",
         "priority": "medium",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -8556,7 +8620,8 @@
             "dependencies": [],
             "details": "Scan directory conduit/docs/itglue/, create inventory list with filenames and brief content summary for each of the 5 files to convert.",
             "status": "pending",
-            "testStrategy": "Verify exactly 5 HTML files identified matching expected runbooks like customer-onboarding.html, incident-response.html."
+            "testStrategy": "Verify exactly 5 HTML files identified matching expected runbooks like customer-onboarding.html, incident-response.html.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8567,7 +8632,8 @@
             ],
             "details": "Use HTML-to-Markdown tools or manual editing; output to docs-site/internal/runbooks/[name].md; ensure headings, tables, links intact.",
             "status": "pending",
-            "testStrategy": "Side-by-side comparison of original HTML and new MD rendered in Starlight preview for content fidelity."
+            "testStrategy": "Side-by-side comparison of original HTML and new MD rendered in Starlight preview for content fidelity.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8579,7 +8645,8 @@
             ],
             "details": "Placeholders like '## SLA: [Uptime/Response Time] - TBD'; consistent formatting across all files in docs-site/internal/runbooks/*.md.",
             "status": "pending",
-            "testStrategy": "Confirm all 5 MD files exist with identical SLA placeholder structure; render check for readability."
+            "testStrategy": "Confirm all 5 MD files exist with identical SLA placeholder structure; render check for readability.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8590,7 +8657,8 @@
             ],
             "details": "Research and integrate Starlight auth or Netlify Identity; configure route guard for /internal/*; test login/logout flows.",
             "status": "pending",
-            "testStrategy": "Verify unauthenticated users redirected/blocked from /internal/runbooks/; authenticated access granted."
+            "testStrategy": "Verify unauthenticated users redirected/blocked from /internal/runbooks/; authenticated access granted.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8603,20 +8671,21 @@
             ],
             "details": "Add sidebar entry under internal section; run linkinator on dist/, vale checks, local preview; update any broken links.",
             "status": "pending",
-            "testStrategy": "Confirm nav links work, SSO blocks public, content matches originals, zero link errors, internal nav visible to auth users."
+            "testStrategy": "Confirm nav links work, SSO blocks public, content matches originals, zero link errors, internal nav visible to auth users.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 13,
+        "id": "13",
         "title": "Author marketing copy: landing, features, FAQ [D01, D02, D04]",
         "description": "Create top-of-funnel marketing docs.",
         "details": "Write `docs-site/docs/marketing/landing.md`, `features.md`, `faq.md`. Hero, value props, vendor matrix, reseller economics. Use MDX for tables/CTA. Pricing as placeholder.",
         "testStrategy": "Review for A1 audience fit, apply style guide, link-check, confirm nav prominence.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -8627,7 +8696,8 @@
             "dependencies": [],
             "details": "Review style guide (Task 2), architecture (Task 10), and vendor guides (Task 11). Structure: hero headline/subheadline, 3-5 value props with benefits, MDX table for vendor matrix comparing Conduit to competitors, placeholder pricing table. Use second-person active voice per style guide.",
             "status": "pending",
-            "testStrategy": "Validate outline aligns with A1 audience (MSPs), matches top-of-funnel goals, incorporates urgency and message match principles."
+            "testStrategy": "Validate outline aligns with A1 audience (MSPs), matches top-of-funnel goals, incorporates urgency and message match principles.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8638,7 +8708,8 @@
             ],
             "details": "Implement outline: compelling hero (attention-grabbing headline + subheadline), benefit-focused value props addressing objections, vendor matrix MDX table, reseller economics section with ROI examples, single prominent CTA button (e.g., 'Start Free Trial'), placeholder pricing tiers. Ensure SEO optimization and brand personality.",
             "status": "pending",
-            "testStrategy": "Apply style guide checks (vale linter), review for A1 fit, confirm one clear CTA, link-check internal refs."
+            "testStrategy": "Apply style guide checks (vale linter), review for A1 fit, confirm one clear CTA, link-check internal refs.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8650,7 +8721,8 @@
             ],
             "details": "List 4-6 key features (e.g., vendor integrations, white-label, reseller economics) from architecture/vendor contexts. For each: bold header, concise description with benefit callback to hero value prop, optional objection handling or expanders. Use MDX for any tables/diagrams linking to integration-diagram.md.",
             "status": "pending",
-            "testStrategy": "Verify features narrative supports landing value prop, check terminology enforcement, test readability for non-technical MSP audience."
+            "testStrategy": "Verify features narrative supports landing value prop, check terminology enforcement, test readability for non-technical MSP audience.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8661,7 +8733,8 @@
             ],
             "details": "Anticipate questions on pricing, setup, integrations, reseller margins, white-labeling, security (ref Tasks 6,10,11). Format: 1-sentence questions + brief detailed answers. Position as trust-building post-main content. Use MDX for any links or tables.",
             "status": "pending",
-            "testStrategy": "Ensure answers proactive/reassuring, cross-reference other docs, run link-checker and vale for style compliance."
+            "testStrategy": "Ensure answers proactive/reassuring, cross-reference other docs, run link-checker and vale for style compliance.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8674,21 +8747,22 @@
             ],
             "details": "Integrate into docs-site sidebar under marketing section. Add front-matter for upstream sync if needed. Confirm MDX renders tables/CTAs correctly via npm run dev. Update any cross-links between landing/features/FAQ.",
             "status": "pending",
-            "testStrategy": "Full review for A1 audience fit and style guide adherence (vale .), linkinator dist/, spellcheck, nav visibility check, Product/DevRel sign-off simulation."
+            "testStrategy": "Full review for A1 audience fit and style guide adherence (vale .), linkinator dist/, spellcheck, nav visibility check, Product/DevRel sign-off simulation.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 14,
+        "id": "14",
         "title": "Author support playbook and billing guide [D09, D08]",
         "description": "Create MSP support and billing docs with placeholders.",
         "details": "Write `docs-site/docs/support-playbook.md` (SLA, tickets, responsibilities). `billing-guide.md` as placeholder pending billing PRD. Reference status-page URL.",
         "testStrategy": "Validate against ops flows, flag placeholders, link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          5
+          "1",
+          "2",
+          "5"
         ],
         "status": "pending",
         "subtasks": [
@@ -8699,7 +8773,8 @@
             "dependencies": [],
             "details": "Create `docs-site/docs/support-playbook.md` with H1 title, table of contents, and top-level H2 headings: SLA, Ticket Management, Team Responsibilities. Add front-matter for upstream sync if applicable.",
             "status": "pending",
-            "testStrategy": "Verify file exists with correct structure and headings render properly in local preview (`npm run dev`)."
+            "testStrategy": "Verify file exists with correct structure and headings render properly in local preview (`npm run dev`).",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8710,7 +8785,8 @@
             ],
             "details": "Populate SLA H2 section with MSP support tiers (e.g., response times: P1<1hr, P2<4hr), uptime guarantees (99.9%), escalation paths, and reference to status-page URL. Use tables for clarity.",
             "status": "pending",
-            "testStrategy": "Cross-check SLA details against ops flows; ensure status-page URL links correctly via `npx linkinator dist/`."
+            "testStrategy": "Cross-check SLA details against ops flows; ensure status-page URL links correctly via `npx linkinator dist/`.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8721,7 +8797,8 @@
             ],
             "details": "Add content under Ticket Management: creation via portal/Zendesk, prioritization, resolution workflows. Under Responsibilities: MSP duties (initial triage), customer expectations, handoff protocols.",
             "status": "pending",
-            "testStrategy": "Validate workflows match current ops; flag any assumptions as placeholders for review."
+            "testStrategy": "Validate workflows match current ops; flag any assumptions as placeholders for review.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8732,7 +8809,8 @@
             ],
             "details": "Create `docs-site/docs/billing-guide.md` with H1 title, note 'Placeholder - pending billing PRD approval', sidebar link stub, and TODO list for future sections (pricing, invoicing, disputes).",
             "status": "pending",
-            "testStrategy": "Confirm placeholder renders with clear flags; run link-check to ensure no broken internal links."
+            "testStrategy": "Confirm placeholder renders with clear flags; run link-check to ensure no broken internal links.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8745,22 +8823,23 @@
             ],
             "details": "Update `docs-site/sidebar.json` or equivalent to link support-playbook.md and billing-guide.md. Run `npm run dev`, `npx linkinator dist/`, `vale .` for validation. Flag placeholders.",
             "status": "pending",
-            "testStrategy": "Test local preview/deploy; verify links, spellcheck passes, placeholders highlighted; simulate ops flow walkthrough."
+            "testStrategy": "Test local preview/deploy; verify links, spellcheck passes, placeholders highlighted; simulate ops flow walkthrough.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 15,
+        "id": "15",
         "title": "Wire up changelog, release notes, and CLI/deployment guides [D24, D25, D14, D15]",
         "description": "Integrate changelog rendering and fork remaining technical guides.",
         "details": "Render `conduit/CHANGELOG.md` at `/changelog`. Create `/releases/` from git tags. Fork `cli-wrapper.md`, `deployment.md` (internal if no self-host). Add upstream front-matter.",
         "testStrategy": "Confirm rendering matches Keep a Changelog format, guides rebranded, link-check.",
         "priority": "medium",
         "dependencies": [
-          1,
-          2,
-          3,
-          8
+          "1",
+          "2",
+          "3",
+          "8"
         ],
         "status": "pending",
         "subtasks": [
@@ -8771,7 +8850,8 @@
             "dependencies": [],
             "details": "Use Starlight MDX to import and display conduit/CHANGELOG.md directly. Add front-matter with title 'Changelog' and sidebar navigation link. Verify structure with Added/Changed/Fixed sections per Keep a Changelog principles.",
             "status": "pending",
-            "testStrategy": "Confirm rendering preserves formatting, links work, and matches source file exactly; visual check against keepachangelog.com format."
+            "testStrategy": "Confirm rendering preserves formatting, links work, and matches source file exactly; visual check against keepachangelog.com format.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8782,7 +8862,8 @@
             ],
             "details": "Implement a script or Starlight component to fetch git tags via Node.js or build-time process. For each tag, extract CHANGELOG section or generate notes. Format with reverse chronological order and categories like Added/Fixed.",
             "status": "pending",
-            "testStrategy": "Verify all tags listed correctly with dates/versions; sample release notes render matching changelog excerpts; link-check all generated links."
+            "testStrategy": "Verify all tags listed correctly with dates/versions; sample release notes render matching changelog excerpts; link-check all generated links.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8793,7 +8874,8 @@
             ],
             "details": "Fork content to docs-site/docs/guides/cli-wrapper.mdx. Update branding, add screenshots if applicable, include front-matter with source URL and last-updated date. Ensure imperative mood and clear bullet points.",
             "status": "pending",
-            "testStrategy": "Confirm rebranding complete (no upstream references), content readable, links functional; compare to original for completeness."
+            "testStrategy": "Confirm rebranding complete (no upstream references), content readable, links functional; compare to original for completeness.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8804,7 +8886,8 @@
             ],
             "details": "Fork to docs-site/docs/guides/deployment.mdx. Replace project-specific details, add conditional badge 'Internal' if self-host absent. Include front-matter linking to upstream source. Use concise categories and user-focused language.",
             "status": "pending",
-            "testStrategy": "Verify rebranding and internal marking if applicable; guide flows logically; link-check and spellcheck pass."
+            "testStrategy": "Verify rebranding and internal marking if applicable; guide flows logically; link-check and spellcheck pass.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8817,23 +8900,24 @@
             ],
             "details": "Update starlight.config.ts sidebar with sections for Changelog, Releases, Guides. Add upstream front-matter consistently across files. Run linkinator, vale, cspell for validation.",
             "status": "pending",
-            "testStrategy": "Confirm sidebar links navigate correctly; 0 broken links/spelling issues; rendering matches Keep a Changelog; all pages indexed for search."
+            "testStrategy": "Confirm sidebar links navigate correctly; 0 broken links/spelling issues; rendering matches Keep a Changelog; all pages indexed for search.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 16,
+        "id": "16",
         "title": "Implement CI tools: search, link-checker, spellcheck, versioning",
         "description": "Set up Pagefind search, linters, link-checker, and basic versioning.",
         "details": "Add Pagefind (OQ5 default) to Starlight config. CI jobs: `linkinator dist/ --recursion-depth 2`, `vale .`, `cspell *.md`. Versioning: `/next/` for main. Internal SSO config.",
         "testStrategy": "Run CI on PRs, confirm 0 broken links/spelling/terminology issues, search indexes all pages, AC-11/12 met.",
         "priority": "high",
         "dependencies": [
-          1,
-          2,
-          3,
-          9,
-          12
+          "1",
+          "2",
+          "3",
+          "9",
+          "12"
         ],
         "status": "pending",
         "subtasks": [
@@ -8844,7 +8928,8 @@
             "dependencies": [],
             "details": "Update astro.config.mjs or Starlight config file to enable Pagefind plugin. Install required npm package if needed: npm install @astrojs/starlight-pagefind. Verify search indexes all MDX pages during build.",
             "status": "pending",
-            "testStrategy": "Run `npm run build` and check dist/ for search index files; test search functionality in local preview."
+            "testStrategy": "Run `npm run build` and check dist/ for search index files; test search functionality in local preview.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8853,7 +8938,8 @@
             "dependencies": [],
             "details": "Add GitHub Actions or CI YAML job: install linkinator via npx, run `linkinator dist/ --recursion-depth 2`. Fail job on broken links. Run on PRs and pushes to main.",
             "status": "pending",
-            "testStrategy": "Trigger CI on test PR with known broken link; confirm job fails. Fix link and confirm passes."
+            "testStrategy": "Trigger CI on test PR with known broken link; confirm job fails. Fix link and confirm passes.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8862,7 +8948,8 @@
             "dependencies": [],
             "details": "Install vale and cspell: npm install -g vale cspell or use npx. Add jobs: `vale .` for terminology/style, `cspell *.md` for spelling. Configure .vale.ini and cspell.json with project style guide.",
             "status": "pending",
-            "testStrategy": "Introduce intentional spelling error and terminology violation in test MD file; verify CI fails job."
+            "testStrategy": "Introduce intentional spelling error and terminology violation in test MD file; verify CI fails job.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8873,7 +8960,8 @@
             ],
             "details": "Update Netlify/Vercel deploy config or Starlight base path to /next/. Create /docs/ for stable versions later. Ensure search and links respect base path.",
             "status": "pending",
-            "testStrategy": "Deploy to preview; verify site accessible at /next/, navigation and search work correctly."
+            "testStrategy": "Deploy to preview; verify site accessible at /next/, navigation and search work correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8886,20 +8974,21 @@
             ],
             "details": "Create unified .github/workflows/docs-ci.yml with stages: build, link-check, spellcheck/lint, deploy-preview. Document Internal SSO config in contributor guide. Ensure 0 failures baseline.",
             "status": "pending",
-            "testStrategy": "Run full CI on PR from Task 3 or 4; confirm all checks pass, search indexes complete, meets AC-11/12."
+            "testStrategy": "Run full CI on PR from Task 3 or 4; confirm all checks pass, search indexes complete, meets AC-11/12.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 17,
+        "id": "17",
         "title": "Build upstream-sync bot",
         "description": "Create script to diff forked docs against mcp-gateway upstream.",
         "details": "Implement `scripts/docs-upstream-diff.ts`: cron/GitHub Action, fetch upstream HEAD for each `upstream:` doc, diff vs `upstream_sha`, open `docs-sync` issue if changed >5%. Handle private repo auth (OQ8).",
         "testStrategy": "Run manually on sample doc, verify issue creation with diff summary.",
         "priority": "low",
         "dependencies": [
-          2,
-          16
+          "2",
+          "16"
         ],
         "status": "pending",
         "subtasks": [
@@ -8910,7 +8999,8 @@
             "dependencies": [],
             "details": "Use `fs` to scan docs for `upstream:` and `upstream_sha` in front-matter. Initialize Octokit with GITHUB_TOKEN. Log discovered docs.",
             "status": "pending",
-            "testStrategy": "Run script with --dry-run, verify logs list sample docs with upstream info."
+            "testStrategy": "Run script with --dry-run, verify logs list sample docs with upstream info.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -8921,7 +9011,8 @@
             ],
             "details": "Use Octokit.graphql or rest API with private token (OQ8). Handle multiple upstream repos per doc. Cache results to avoid rate limits.",
             "status": "pending",
-            "testStrategy": "Mock Octokit responses, verify fetches correct SHA/content for private mcp-gateway repo."
+            "testStrategy": "Mock Octokit responses, verify fetches correct SHA/content for private mcp-gateway repo.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -8933,7 +9024,8 @@
             ],
             "details": "Strip front-matter, use `diff` library or Levenshtein distance. Flag changes if >5% (line/token based). Generate markdown diff summary.",
             "status": "pending",
-            "testStrategy": "Unit test with sample docs: 0%, 3%, 7%, 20% changes. Verify threshold detection."
+            "testStrategy": "Unit test with sample docs: 0%, 3%, 7%, 20% changes. Verify threshold detection.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -8946,7 +9038,8 @@
             ],
             "details": "Use Octokit.issues.create(). Template: doc path, % change, diff snippet, upstream HEAD SHA. Label 'docs-sync', assign docs team. Check existing issues first.",
             "status": "pending",
-            "testStrategy": "Mock issue creation, verify payload has correct title/body/labels. Test duplicate detection."
+            "testStrategy": "Mock issue creation, verify payload has correct title/body/labels. Test duplicate detection.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -8960,31 +9053,32 @@
             ],
             "details": "Cron: daily 00:00 UTC. Run npx tsx scripts/docs-upstream-diff.ts. Use WORKFLOW_TOKEN secret for OQ8 auth. Add inputs for dry-run/manual doc targeting.",
             "status": "pending",
-            "testStrategy": "Trigger manually on sample doc, verify issue creation in test repo. Check cron schedule in Actions tab."
+            "testStrategy": "Trigger manually on sample doc, verify issue creation in test repo. Check cron schedule in Actions tab.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 18,
+        "id": "18",
         "title": "v1 publish: review ACs, sign-offs, deploy",
         "description": "Final task to verify all acceptance criteria and launch.",
         "details": "Checklist AC 1-15: build/deploy, all 28 docs linked, OpenAPI complete, vendor guides, linters, internal gating, etc. Product/DevRel sign-off. Flip DNS to docs.conduit.example.",
         "testStrategy": "Manual audit of site vs ACs, external reviewer feedback via previews.",
         "priority": "high",
         "dependencies": [
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
-          10,
-          11,
-          12,
-          13,
-          14,
-          15,
-          16
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16"
         ],
         "status": "pending",
         "subtasks": [
@@ -8995,7 +9089,8 @@
             "dependencies": [],
             "details": "Review build/deploy pipelines, confirm all 28 docs linked in sidebar, validate OpenAPI spec completeness, check vendor guides presence, run linters (vale/linkinator), verify internal gating mechanisms. Document pass/fail for each AC with evidence links.",
             "status": "pending",
-            "testStrategy": "Manual checklist audit using PR previews and staging site; screenshot evidence for each AC."
+            "testStrategy": "Manual checklist audit using PR previews and staging site; screenshot evidence for each AC.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -9006,7 +9101,8 @@
             ],
             "details": "Run linkinator on built site, count sidebar entries to match 28 docs, validate OpenAPI at /openapi.json endpoint, review vendor guides folder for coverage of key integrations (e.g., AWS, GCP). Fix any broken links or missing files.",
             "status": "pending",
-            "testStrategy": "Automated link checking via `linkinator dist/` and manual navigation test of all sidebar items."
+            "testStrategy": "Automated link checking via `linkinator dist/` and manual navigation test of all sidebar items.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -9018,7 +9114,8 @@
             ],
             "details": "Share staging preview URL (Netlify/Vercel), create sign-off form covering ACs, style guide enforcement, terminology accuracy, and launch readiness. Record approvals in project ticket with reviewer comments.",
             "status": "pending",
-            "testStrategy": "Confirmation emails/slack threads from designated approvers; fallback to recorded video walkthrough if needed."
+            "testStrategy": "Confirmation emails/slack threads from designated approvers; fallback to recorded video walkthrough if needed.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -9030,7 +9127,8 @@
             ],
             "details": "Execute `npm run build`, run `vale .`, `linkinator dist/`, confirm 0 violations. Verify internal gating (security scans, accessibility checks) passes. Tag release as `v1.0.0` and push to main.",
             "status": "pending",
-            "testStrategy": "CI pipeline green status + local build verification matching production output."
+            "testStrategy": "CI pipeline green status + local build verification matching production output.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -9042,15 +9140,20 @@
             ],
             "details": "Deploy via Netlify/Vercel production environment, monitor deploy logs for success, update DNS A/CNAME record for docs.conduit.example to production IP/hostname. Verify site loads at new domain with SSL.",
             "status": "pending",
-            "testStrategy": "Curl/wget test from multiple regions, browser validation on prod domain, SSL certificate check."
+            "testStrategy": "Curl/wget test from multiple regions, browser validation on prod domain, SSL certificate check.",
+            "parentId": "undefined"
           }
         ]
       }
     ],
     "metadata": {
-      "created": "2026-04-18T23:30:03.535Z",
-      "updated": "2026-04-18T23:30:03.535Z",
-      "description": "Tasks for docs context"
+      "version": "1.0.0",
+      "lastModified": "2026-04-21T03:40:24.079Z",
+      "taskCount": 18,
+      "completedCount": 1,
+      "tags": [
+        "docs"
+      ]
     }
   }
 }
