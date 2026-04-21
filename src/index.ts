@@ -142,7 +142,7 @@ const dashboardService = new DashboardService(sql);
 // Reseller (MSP Admin Console) — dark-shipped behind RESELLER_CONSOLE_ENABLED.
 // Tables (`reseller_members` et al.) are owned by migrations 002–007; no
 // initTables() here.
-const resellerService = new ResellerService(sql);
+const resellerService = new ResellerService(sql, orgService);
 const resellerMemberService = new ResellerMemberService(sql);
 
 const logShippingService = new LogShippingService(sql);

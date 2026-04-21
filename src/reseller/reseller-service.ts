@@ -1,13 +1,16 @@
 /**
- * ResellerService — read access to `reseller_members`.
+ * ResellerService — read access to `reseller_members` and reseller-scoped
+ * organization lookups for the MSP Admin Console.
  *
- * This is deliberately the minimum surface needed by the MSP Admin Console
- * scaffold (task msp-admin#1). It does NOT try to replicate the full
- * MemberService / InvitationService shape from `src/org/` — invitation,
- * creation, and role-change flows land in later tasks.
+ * Membership-gated lookups (`getResellerOr404`, `listCustomers`,
+ * `getCustomerOr404`) back the `/admin/reseller/*` console and deliberately
+ * surface a single `NOT_FOUND` error code to external callers to avoid
+ * disclosing whether a reseller org or customer exists when the caller
+ * lacks access.
  */
 
 import type postgres from 'postgres';
+import type { OrgService, Organization } from '../org/org-service.js';
 import type { ResellerMember, ResellerRole } from './types.js';
 import { RESELLER_ROLE_LEVEL } from './types.js';
 
@@ -55,8 +58,39 @@ function rowToMember(row: ResellerMemberRow): ResellerMember | null {
   };
 }
 
+/**
+ * A typed view of an `Organization` guaranteed to be `type='reseller'`.
+ * Exposed separately from `Organization` so callers can encode the invariant
+ * in their own signatures.
+ */
+export type ResellerOrg = Organization & { type: 'reseller' };
+
+/**
+ * Error codes for membership-gated reseller lookups.
+ *
+ * External callers (HTTP handlers) should translate any of these to a generic
+ * `NOT_FOUND` / 404 response — distinguishing `NOT_A_MEMBER` from the org
+ * simply not existing would let a caller probe for the existence of reseller
+ * orgs and customers. The finer-grained codes are retained internally for
+ * logging and debugging.
+ */
+export type ResellerAccessErrorCode = 'NOT_FOUND' | 'NOT_A_RESELLER' | 'NOT_A_MEMBER';
+
+export class ResellerAccessError extends Error {
+  public readonly code: ResellerAccessErrorCode;
+
+  constructor(code: ResellerAccessErrorCode, message?: string) {
+    super(message ?? code);
+    this.name = 'ResellerAccessError';
+    this.code = code;
+  }
+}
+
 export class ResellerService {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly orgService: OrgService,
+  ) {}
 
   /**
    * Return all reseller-org memberships for a given user (identified by
@@ -97,5 +131,53 @@ export class ResellerService {
    */
   roleAtLeast(role: ResellerRole, minRole: ResellerRole): boolean {
     return RESELLER_ROLE_LEVEL[role] >= RESELLER_ROLE_LEVEL[minRole];
+  }
+
+  /**
+   * Resolve a reseller org by id, validating that the caller has a membership
+   * row and that the org actually has `type='reseller'`.
+   *
+   * Throws `ResellerAccessError` for every failure mode. Callers converting
+   * this to HTTP should always surface `404 NOT_FOUND` regardless of the
+   * internal code, to avoid leaking membership existence.
+   */
+  async getResellerOr404(resellerId: string, userId: string): Promise<ResellerOrg> {
+    const membership = await this.getMembership(resellerId, userId);
+    if (!membership) {
+      throw new ResellerAccessError('NOT_A_MEMBER');
+    }
+    const org = await this.orgService.getOrg(resellerId);
+    if (!org) {
+      throw new ResellerAccessError('NOT_FOUND');
+    }
+    if (org.type !== 'reseller') {
+      throw new ResellerAccessError('NOT_A_RESELLER');
+    }
+    return org as ResellerOrg;
+  }
+
+  /**
+   * List customer orgs directly parented to `resellerId`. Thin wrapper over
+   * `OrgService.getCustomersOfReseller` to keep the reseller-service surface
+   * self-contained for route handlers.
+   *
+   * Does NOT validate membership — callers should have already gone through
+   * `getResellerOr404` (or equivalent middleware) before reaching here.
+   */
+  async listCustomers(resellerId: string): Promise<Organization[]> {
+    return this.orgService.getCustomersOfReseller(resellerId);
+  }
+
+  /**
+   * Resolve a customer org by id, validating that it exists, has
+   * `type='customer'`, and is parented to `resellerId`. Throws
+   * `ResellerAccessError('NOT_FOUND')` for every failure mode.
+   */
+  async getCustomerOr404(resellerId: string, customerId: string): Promise<Organization> {
+    const org = await this.orgService.getOrg(customerId);
+    if (!org) throw new ResellerAccessError('NOT_FOUND');
+    if (org.type !== 'customer') throw new ResellerAccessError('NOT_FOUND');
+    if (org.parentOrgId !== resellerId) throw new ResellerAccessError('NOT_FOUND');
+    return org;
   }
 }
