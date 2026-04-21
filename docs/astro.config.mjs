@@ -55,6 +55,13 @@ export default defineConfig({
             { label: 'Upstream Sync', slug: 'operations/upstream-sync' },
           ],
         },
+        {
+          label: 'Contributing',
+          items: [
+            { label: 'Contributing to the Docs', slug: 'contributing/contributing' },
+            { label: 'Style Guide', slug: 'contributing/style-guide' },
+          ],
+        },
       ],
     }),
   ],

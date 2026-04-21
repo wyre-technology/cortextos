@@ -1,0 +1,108 @@
+---
+title: Contributing to the Docs
+description: How to propose a documentation change, preview it locally, and open a PR.
+---
+
+Docs live in the same repo as Conduit itself, under `docs/`. A change
+is a normal pull request — no separate workflow, no doc-only tooling
+to learn beyond this page.
+
+## Before you start
+
+Read the [Style Guide](/contributing/style-guide/). Terminology and
+voice are locked; PRs that drift will get review comments asking you
+to bring them back in line.
+
+## Local preview
+
+You need Node.js 20 or newer.
+
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+The dev server prints a local URL (typically `http://localhost:4321/`).
+It hot-reloads on save, so keep it running while you edit.
+
+To build the production bundle and catch build-time errors:
+
+```bash
+npm run build
+npm run preview
+```
+
+## Add a new page
+
+1. Pick the right section under `docs/src/content/docs/`. The top-level
+   folders mirror the sidebar: `guides/`, `reference/`, `operations/`,
+   `contributing/`.
+2. Create an `.mdx` file. Slug comes from the file path — `guides/
+   adding-customers.mdx` becomes `/guides/adding-customers/`.
+3. Add the required front-matter:
+
+   ```yaml
+   ---
+   title: Short sentence-case title
+   description: One-sentence summary for search and social cards.
+   ---
+   ```
+
+4. Register the page in the sidebar by editing `docs/astro.config.mjs`.
+   Add an entry under the appropriate section with `label` and `slug`
+   (the slug is the path under `src/content/docs/` without extension).
+5. Write the page. Follow the [Style Guide](/contributing/style-guide/).
+6. Preview locally before opening the PR.
+
+## Edit an existing page
+
+Every rendered page has an "Edit this page" link in the footer that
+drops you into the GitHub web editor on the correct file. For anything
+beyond a typo, clone the repo and preview locally — MDX build errors
+do not surface in the GitHub web editor.
+
+## Pull request conventions
+
+- **One logical change per PR.** A new guide is one PR. A terminology
+  sweep across ten pages is one PR. Do not mix the two.
+- **Title format:** `docs: <what changed>`. Example:
+  `docs: add vendor connections guide`.
+- **Body:** describe what changed and why. Link the task or issue if
+  there is one. If the change is user-visible, add a line to
+  [`CHANGELOG.md`](https://github.com/wyre-technology/wyre-mcp-gateway-platform/blob/main/CHANGELOG.md)
+  under the `Unreleased` heading following
+  [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+- **Preview link:** CI posts a preview deploy URL as a PR comment once
+  it is wired up. Paste the URL into the PR body so reviewers can read
+  the rendered output.
+- **Review:** at least one approval from a docs maintainer. For
+  terminology or voice changes, loop in DevRel.
+
+## Commit early, commit often
+
+Small commits on the PR branch are fine; the merge is squashed. Do not
+hold a docs branch for a week to land one "perfect" commit.
+
+## Reporting problems
+
+- **Doc is wrong or missing:** open a GitHub issue on the repo with the
+  `docs` label. Include the URL of the affected page.
+- **Framework or build issue:** ping `#conduit-docs` in Slack, or tag
+  a docs maintainer on the issue.
+- **Terminology debate:** proposals to change a locked term go through
+  an issue first. Do not open a sweeping rename PR without agreement.
+
+## What lives where
+
+| Path | Purpose |
+|---|---|
+| `docs/src/content/docs/` | All page content (`.mdx`). |
+| `docs/astro.config.mjs` | Site config and sidebar navigation. |
+| `docs/src/assets/` | Images, logos, diagrams. |
+| `docs/public/` | Files served as-is (robots.txt, favicons). |
+| `CHANGELOG.md` (repo root) | User-visible change log. |
+
+That is the whole loop: clone, `npm run dev`, edit, preview, PR. If a
+step in this guide tripped you up, fix it in the same PR as your
+first content change — the contributor guide should stay accurate.
