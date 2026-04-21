@@ -1676,7 +1676,7 @@
           "1",
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1741,7 +1741,8 @@
             "testStrategy": "100% coverage: happy path, wrong parent, no membership, role checks; integration verifies isolation.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:30:30.058Z"
       },
       {
         "id": "4",
@@ -2795,9 +2796,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:14:23.447Z",
+      "lastModified": "2026-04-21T04:30:30.058Z",
       "taskCount": 17,
-      "completedCount": 2,
+      "completedCount": 3,
       "tags": [
         "msp-admin"
       ]
