@@ -992,7 +992,7 @@
         "dependencies": [
           "13"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1053,7 +1053,8 @@
             "testStrategy": "Full CI pipeline run. Integration test verification that credential injection works end-to-end with reseller hierarchy from Task 8.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:27:22.601Z"
       },
       {
         "id": "15",
@@ -1514,9 +1515,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:21:00.163Z",
+      "lastModified": "2026-04-21T04:27:22.601Z",
       "taskCount": 20,
-      "completedCount": 11,
+      "completedCount": 12,
       "tags": [
         "reseller-tenancy"
       ]
@@ -5904,7 +5905,7 @@
           "1",
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5966,7 +5967,8 @@
             "testStrategy": "E2E: form submit → Auth0 → DB tx → session set → 308 redirect; verify session contains correct org_id/user_id.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:27:25.995Z"
       },
       {
         "id": "9",
@@ -6716,9 +6718,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:05:48.987Z",
+      "lastModified": "2026-04-21T04:27:25.995Z",
       "taskCount": 18,
-      "completedCount": 3,
+      "completedCount": 4,
       "tags": [
         "onboarding"
       ]
