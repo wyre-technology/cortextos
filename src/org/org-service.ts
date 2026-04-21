@@ -11,6 +11,10 @@ export type { OrgTeam, OrgTeamMember, OrgTeamServerAccess, OrgTeamWithMembers };
 // Types
 // ---------------------------------------------------------------------------
 
+export type OrgType = 'standalone' | 'reseller' | 'customer';
+
+export const ORG_TYPES: readonly OrgType[] = ['standalone', 'reseller', 'customer'] as const;
+
 export interface Organization {
   id: string;
   name: string;
@@ -20,8 +24,33 @@ export interface Organization {
   promptCaptureEnabled: boolean;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
+  type: OrgType;
+  parentOrgId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CreateOrgOptions {
+  type?: OrgType;
+  parentOrgId?: string | null;
+}
+
+export type OrgHierarchyErrorCode =
+  | 'CUSTOMER_REQUIRES_PARENT'
+  | 'STANDALONE_CANNOT_HAVE_PARENT'
+  | 'RESELLER_CANNOT_HAVE_PARENT'
+  | 'PARENT_NOT_FOUND'
+  | 'PARENT_NOT_RESELLER'
+  | 'INVALID_ORG_TYPE';
+
+export class OrgHierarchyError extends Error {
+  public readonly code: OrgHierarchyErrorCode;
+
+  constructor(code: OrgHierarchyErrorCode, message: string) {
+    super(message);
+    this.name = 'OrgHierarchyError';
+    this.code = code;
+  }
 }
 
 export interface OrgServerAccess {
@@ -101,6 +130,8 @@ interface OrgRow {
   prompt_capture_enabled: boolean;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  type: string | null;
+  parent_org_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -215,6 +246,23 @@ export class OrgService {
     `;
     await this.sql`
       ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS use_count INTEGER NOT NULL DEFAULT 0
+    `;
+
+    // Migration 011: SHA-256 hash-at-rest for invitation tokens (PRD §7.1, §8.4).
+    // Dual-write phase — the plaintext `token` column is retained for rollback
+    // safety. A follow-up migration drops it once all outstanding invitations
+    // have aged out and lookups are hash-only.
+    await this.sql`
+      ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS token_hash TEXT
+    `;
+    await this.sql`
+      ALTER TABLE org_invitations
+        ADD COLUMN IF NOT EXISTS token_hash_algo TEXT NOT NULL DEFAULT 'sha256'
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS idx_org_invitations_token_hash
+        ON org_invitations (token_hash)
+        WHERE token_hash IS NOT NULL
     `;
 
     // Migration: allow 'admin' role in org_members
@@ -355,6 +403,8 @@ export class OrgService {
       promptCaptureEnabled: row.prompt_capture_enabled ?? false,
       stripeCustomerId: row.stripe_customer_id,
       stripeSubscriptionId: row.stripe_subscription_id,
+      type: (row.type as OrgType | null) ?? 'standalone',
+      parentOrgId: row.parent_org_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -388,14 +438,67 @@ export class OrgService {
   // Organizations
   // -------------------------------------------------------------------------
 
-  async createOrg(name: string, ownerId: string, plan?: 'free' | 'pro'): Promise<Organization> {
+  async createOrg(
+    name: string,
+    ownerId: string,
+    plan?: 'free' | 'pro',
+    options?: CreateOrgOptions,
+  ): Promise<Organization> {
     const orgId = nanoid();
     const memberId = nanoid();
     const orgPlan = plan ?? 'free';
+    const orgType: OrgType = options?.type ?? 'standalone';
+    const parentOrgId: string | null = options?.parentOrgId ?? null;
+
+    // --- Service-layer hierarchy validation (runs BEFORE the DB trigger fires).
+    //     Mirrors migrations/002_reseller_tenancy_expand.sql invariants so we
+    //     surface a typed error with a clear message instead of a raw DB error.
+    if (!(ORG_TYPES as readonly string[]).includes(orgType)) {
+      throw new OrgHierarchyError(
+        'INVALID_ORG_TYPE',
+        `invalid organizations.type: ${String(orgType)}`,
+      );
+    }
+
+    if (orgType === 'customer') {
+      if (!parentOrgId) {
+        throw new OrgHierarchyError(
+          'CUSTOMER_REQUIRES_PARENT',
+          'customer orgs must have parent_org_id pointing at a reseller',
+        );
+      }
+      const parent = await this.getOrg(parentOrgId);
+      if (!parent) {
+        throw new OrgHierarchyError(
+          'PARENT_NOT_FOUND',
+          `parent_org_id ${parentOrgId} does not exist`,
+        );
+      }
+      if (parent.type !== 'reseller') {
+        throw new OrgHierarchyError(
+          'PARENT_NOT_RESELLER',
+          `customer parent must be a reseller (got ${parent.type})`,
+        );
+      }
+    } else if (orgType === 'standalone') {
+      if (parentOrgId !== null) {
+        throw new OrgHierarchyError(
+          'STANDALONE_CANNOT_HAVE_PARENT',
+          'standalone orgs cannot have a parent_org_id',
+        );
+      }
+    } else if (orgType === 'reseller') {
+      if (parentOrgId !== null) {
+        throw new OrgHierarchyError(
+          'RESELLER_CANNOT_HAVE_PARENT',
+          'reseller orgs cannot have a parent_org_id',
+        );
+      }
+    }
 
     const rows = await this.sql<OrgRow[]>`
-      INSERT INTO organizations (id, name, owner_id, plan)
-      VALUES (${orgId}, ${name}, ${ownerId}, ${orgPlan})
+      INSERT INTO organizations (id, name, owner_id, plan, type, parent_org_id)
+      VALUES (${orgId}, ${name}, ${ownerId}, ${orgPlan}, ${orgType}, ${parentOrgId})
       RETURNING *
     `;
 
@@ -406,6 +509,49 @@ export class OrgService {
     `;
 
     return this.toOrg(rows[0]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Reseller hierarchy helpers (PRD §5.1)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns true if the organization exists and has type = 'reseller'.
+   */
+  async isReseller(orgId: string): Promise<boolean> {
+    const rows = await this.sql<{ type: string }[]>`
+      SELECT type FROM organizations WHERE id = ${orgId}
+    `;
+    return rows[0]?.type === 'reseller';
+  }
+
+  /**
+   * List customer orgs directly parented to the given reseller org.
+   * Excludes standalone orgs and any nested descendants (hierarchy is capped
+   * at depth 2 by the trigger, so a single parent_org_id check is sufficient).
+   */
+  async getCustomersOfReseller(resellerOrgId: string): Promise<Organization[]> {
+    const rows = await this.sql<OrgRow[]>`
+      SELECT * FROM organizations
+      WHERE parent_org_id = ${resellerOrgId}
+        AND type = 'customer'
+      ORDER BY created_at
+    `;
+    return rows.map((r) => this.toOrg(r));
+  }
+
+  /**
+   * Fetch the parent reseller of a customer org. Returns null when the org
+   * has no parent (standalone or reseller at the top of the tree).
+   */
+  async getResellerOfCustomer(customerOrgId: string): Promise<Organization | null> {
+    const rows = await this.sql<OrgRow[]>`
+      SELECT parent.*
+      FROM organizations child
+      JOIN organizations parent ON parent.id = child.parent_org_id
+      WHERE child.id = ${customerOrgId}
+    `;
+    return rows[0] ? this.toOrg(rows[0]) : null;
   }
 
   async getOrg(orgId: string): Promise<Organization | null> {

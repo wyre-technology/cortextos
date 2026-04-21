@@ -41,18 +41,62 @@ describe('OrgService', () => {
         const id = values[0] as string;
         const name = values[1] as string;
         const ownerId = values[2] as string;
+        // plan is values[3]; type/parent_org_id are values[4]/[5] when the
+        // reseller-aware INSERT shape is used.
+        const plan = (values[3] as string | undefined) ?? 'free';
+        const type = (values[4] as string | undefined) ?? 'standalone';
+        const parentOrgId = (values[5] as string | null | undefined) ?? null;
         const row = {
           id,
           name,
           owner_id: ownerId,
-          plan: 'free',
+          plan,
           stripe_customer_id: null,
           stripe_subscription_id: null,
+          type,
+          parent_org_id: parentOrgId,
           created_at: now,
           updated_at: now,
         };
         orgs.set(id, row);
         return Promise.resolve([row]);
+      }
+
+      // getResellerOfCustomer -- JOIN organizations on itself
+      if (
+        query.includes('SELECT') &&
+        query.includes('FROM organizations child') &&
+        query.includes('JOIN organizations parent')
+      ) {
+        const childId = values[0] as string;
+        const child = orgs.get(childId);
+        if (!child || !child.parent_org_id) return Promise.resolve([]);
+        const parent = orgs.get(child.parent_org_id as string);
+        return Promise.resolve(parent ? [parent] : []);
+      }
+
+      // getCustomersOfReseller -- WHERE parent_org_id = ? AND type = 'customer'
+      if (
+        query.includes('SELECT') &&
+        query.includes('FROM organizations') &&
+        query.includes('parent_org_id =') &&
+        query.includes("type = 'customer'")
+      ) {
+        const parentId = values[0] as string;
+        const rows = [...orgs.values()].filter(
+          (o) => o.parent_org_id === parentId && o.type === 'customer',
+        );
+        return Promise.resolve(rows);
+      }
+
+      // isReseller -- SELECT type FROM organizations WHERE id = ?
+      if (
+        query.includes('SELECT type FROM organizations') &&
+        query.includes('WHERE id =')
+      ) {
+        const orgId = values[0] as string;
+        const row = orgs.get(orgId);
+        return Promise.resolve(row ? [{ type: row.type }] : []);
       }
 
       if (query.includes('SELECT') && query.includes('FROM organizations') && !query.includes('JOIN')) {
@@ -186,18 +230,22 @@ describe('OrgService', () => {
       // Invitations
       // ----------------------------------------------------------------------
       if (query.includes('INSERT INTO org_invitations')) {
+        // Dual-write columns (migration 011):
+        //   (id, org_id, invited_by, token, token_hash, expires_at, max_uses, use_count)
         const id = values[0] as string;
         const orgId = values[1] as string;
         const invitedBy = values[2] as string;
         const token = values[3] as string;
-        const expiresAt = values[4] as string;
-        const maxUses = values[5] as number | null;
-        const useCount = values[6] as number;
+        const tokenHash = values[4] as string;
+        const expiresAt = values[5] as string;
+        const maxUses = values[6] as number | null;
+        const useCount = values[7] as number;
         const row = {
           id,
           org_id: orgId,
           invited_by: invitedBy,
           token,
+          token_hash: tokenHash,
           expires_at: expiresAt,
           accepted_by: null,
           accepted_at: null,
@@ -209,16 +257,18 @@ describe('OrgService', () => {
         return Promise.resolve([row]);
       }
 
-      // getInvitationByToken -- SELECT ... WHERE token = ?
+      // getInvitationByToken -- SELECT ... WHERE token_hash = ? OR (legacy token = ?)
       if (
         query.includes('SELECT') &&
         query.includes('org_invitations') &&
-        query.includes('token')
+        query.includes('token_hash')
       ) {
-        const token = values[0] as string;
+        const tokenHash = values[0] as string;
+        const token = values[1] as string;
         const row = [...invitations.values()].find(
           (inv) =>
-            inv.token === token &&
+            (inv.token_hash === tokenHash ||
+              (inv.token_hash == null && inv.token === token)) &&
             (inv.max_uses === null || (inv.use_count as number) < (inv.max_uses as number)) &&
             new Date(inv.expires_at as string) > new Date(),
         );
@@ -434,6 +484,29 @@ describe('OrgService', () => {
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     expect(expiresMs).toBeGreaterThan(sevenDaysMs - 5000);
     expect(expiresMs).toBeLessThanOrEqual(sevenDaysMs);
+  });
+
+  it('createInvitation stores SHA-256 hash, returns plaintext token (PRD §7.1, §8.4)', async () => {
+    const { createHash } = await import('node:crypto');
+    const sql = createMockSql();
+    const service = new OrgService(sql);
+
+    const org = await service.createOrg('Hash Org', 'user_owner');
+    const invitation = await service.createInvitation(org.id, 'user_owner');
+
+    // Callers must receive the raw token once (for the email link).
+    expect(invitation.token).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    // Lookup by the raw token must resolve (hash-first path).
+    const byToken = await service.getInvitationByToken(invitation.token);
+    expect(byToken).not.toBeNull();
+    expect(byToken!.id).toBe(invitation.id);
+
+    // Lookup by the *hash* of the token must NOT resolve — the hash is
+    // what the DB stores, but callers must present the plaintext.
+    const hash = createHash('sha256').update(invitation.token).digest('hex');
+    const byHash = await service.getInvitationByToken(hash);
+    expect(byHash).toBeNull();
   });
 
   it('acceptInvitation creates membership', async () => {
@@ -657,5 +730,211 @@ describe('OrgService', () => {
     // Still cannot remove owner
     const ownerRemoved = await service.removeMember(org.id, 'user_owner');
     expect(ownerRemoved).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Reseller hierarchy (PRD §5.1)
+  // -------------------------------------------------------------------------
+
+  describe('reseller hierarchy helpers', () => {
+    it('isReseller returns true for reseller orgs', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      expect(reseller.type).toBe('reseller');
+      expect(reseller.parentOrgId).toBeNull();
+
+      expect(await service.isReseller(reseller.id)).toBe(true);
+    });
+
+    it('isReseller returns false for standalone orgs', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const standalone = await service.createOrg('Solo Co', 'user_owner');
+      expect(standalone.type).toBe('standalone');
+      expect(await service.isReseller(standalone.id)).toBe(false);
+    });
+
+    it('isReseller returns false for customer orgs', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      const customer = await service.createOrg('Client Corp', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      });
+      expect(await service.isReseller(customer.id)).toBe(false);
+    });
+
+    it('getCustomersOfReseller returns customers and excludes standalone / nested', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      const c1 = await service.createOrg('Client A', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      });
+      const c2 = await service.createOrg('Client B', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      });
+      // Unrelated standalone (should NOT appear)
+      await service.createOrg('Unrelated Solo', 'user_owner');
+      // A second reseller with its own customer (should NOT appear under reseller #1)
+      const otherReseller = await service.createOrg('Other MSP', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      await service.createOrg('Other Client', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: otherReseller.id,
+      });
+
+      const customers = await service.getCustomersOfReseller(reseller.id);
+      expect(customers).toHaveLength(2);
+      const ids = customers.map((c) => c.id).sort();
+      expect(ids).toEqual([c1.id, c2.id].sort());
+      for (const c of customers) {
+        expect(c.type).toBe('customer');
+        expect(c.parentOrgId).toBe(reseller.id);
+      }
+    });
+
+    it('getResellerOfCustomer returns the parent for a customer', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      const customer = await service.createOrg('Client', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      });
+
+      const parent = await service.getResellerOfCustomer(customer.id);
+      expect(parent).not.toBeNull();
+      expect(parent!.id).toBe(reseller.id);
+      expect(parent!.type).toBe('reseller');
+    });
+
+    it('getResellerOfCustomer returns null for a standalone org', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const solo = await service.createOrg('Solo', 'user_owner');
+      expect(await service.getResellerOfCustomer(solo.id)).toBeNull();
+    });
+
+    it('getResellerOfCustomer returns null for a reseller org', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      expect(await service.getResellerOfCustomer(reseller.id)).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reseller-aware createOrg validation
+  // -------------------------------------------------------------------------
+
+  describe('createOrg with hierarchy options', () => {
+    it('creates a reseller with type=reseller and null parent', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+        type: 'reseller',
+        parentOrgId: null,
+      });
+      expect(reseller.type).toBe('reseller');
+      expect(reseller.parentOrgId).toBeNull();
+    });
+
+    it('creates a customer with valid reseller parent', async () => {
+      const sql = createMockSql();
+      const service = new OrgService(sql);
+
+      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      const customer = await service.createOrg('Client', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      });
+      expect(customer.type).toBe('customer');
+      expect(customer.parentOrgId).toBe(reseller.id);
+    });
+
+    it('rejects customer with null parent at the service layer (before DB trigger)', async () => {
+      const sql = createMockSql();
+      const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
+      const service = new Svc(sql);
+
+      await expect(
+        service.createOrg('Client', 'user_owner', 'free', {
+          type: 'customer',
+          parentOrgId: null,
+        }),
+      ).rejects.toBeInstanceOf(OrgHierarchyError);
+    });
+
+    it('rejects customer whose parent is not a reseller', async () => {
+      const sql = createMockSql();
+      const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
+      const service = new Svc(sql);
+
+      const solo = await service.createOrg('Solo', 'user_owner');
+      await expect(
+        service.createOrg('Client', 'user_owner', 'free', {
+          type: 'customer',
+          parentOrgId: solo.id,
+        }),
+      ).rejects.toBeInstanceOf(OrgHierarchyError);
+    });
+
+    it('rejects standalone with a parent at the service layer', async () => {
+      const sql = createMockSql();
+      const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
+      const service = new Svc(sql);
+
+      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      await expect(
+        service.createOrg('Bad Solo', 'user_owner', 'free', {
+          type: 'standalone',
+          parentOrgId: reseller.id,
+        }),
+      ).rejects.toBeInstanceOf(OrgHierarchyError);
+    });
+
+    it('rejects reseller with a parent at the service layer', async () => {
+      const sql = createMockSql();
+      const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
+      const service = new Svc(sql);
+
+      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+        type: 'reseller',
+      });
+      await expect(
+        service.createOrg('Nested MSP', 'user_owner', 'free', {
+          type: 'reseller',
+          parentOrgId: reseller.id,
+        }),
+      ).rejects.toBeInstanceOf(OrgHierarchyError);
+    });
   });
 });
