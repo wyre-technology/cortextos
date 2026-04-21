@@ -616,7 +616,7 @@
         "dependencies": [
           "7"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -679,7 +679,8 @@
             "testStrategy": "Integration tests: real HTTP requests return correct 403/200 status codes. Verify middleware chain order with requireOrgRole(). Test database query performance.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:10:36.933Z"
       },
       {
         "id": "10",
@@ -1511,9 +1512,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:05:42.177Z",
+      "lastModified": "2026-04-21T04:10:36.934Z",
       "taskCount": 20,
-      "completedCount": 8,
+      "completedCount": 9,
       "tags": [
         "reseller-tenancy"
       ]
@@ -7604,7 +7605,7 @@
         "testStrategy": "PR with test secret fails gitleaks, Dependabot creates PRs for updates, zero unresolved security alerts (A16)",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7663,7 +7664,8 @@
             "testStrategy": "Confirm zero unresolved security alerts in Security tab; Dependabot creates update PRs; PR with test secret still fails gitleaks (A16)",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:10:40.226Z"
       },
       {
         "id": "14",
@@ -8045,9 +8047,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:54:12.663Z",
+      "lastModified": "2026-04-21T04:10:40.226Z",
       "taskCount": 18,
-      "completedCount": 6,
+      "completedCount": 7,
       "tags": [
         "platform-ops"
       ]
