@@ -7004,7 +7004,7 @@
         "testStrategy": "az bicep build --file azure/main.bicep succeeds, validate all resources get product=conduit tag, parameter validation works (A7)",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7062,7 +7062,8 @@
             "testStrategy": "Full end-to-end deployment succeeds, az resource list --tag product=conduit returns all resources, parameter validation passes",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:54:12.663Z"
       },
       {
         "id": "7",
@@ -7950,9 +7951,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:40:20.627Z",
+      "lastModified": "2026-04-21T03:54:12.663Z",
       "taskCount": 18,
-      "completedCount": 5,
+      "completedCount": 6,
       "tags": [
         "platform-ops"
       ]
@@ -8191,7 +8192,7 @@
           "2",
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -8252,7 +8253,8 @@
             "testStrategy": "Docs-site build succeeds, no linting errors, all internal/external links resolve, content validated against MSP flow checklist.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:54:16.168Z"
       },
       {
         "id": "5",
@@ -8267,7 +8269,7 @@
           "3",
           "4"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -8333,7 +8335,8 @@
             "testStrategy": "Confirm build success, verify local preview navigation, check all links/screenshots render correctly, validate against UI in staging environment",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:54:16.175Z"
       },
       {
         "id": "6",
@@ -8347,7 +8350,7 @@
           "2",
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -8409,7 +8412,8 @@
             "testStrategy": "Confirm templates render correctly, all links valid, no terminology violations per style guide, ready for PR.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:54:16.180Z"
       },
       {
         "id": "7",
@@ -8423,7 +8427,7 @@
           "2",
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -8484,7 +8488,8 @@
             "testStrategy": "CI passes: 0 broken links, vale clean, spelling OK. Manual review confirms public/internal sections appropriately split per AC.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:54:16.186Z"
       },
       {
         "id": "8",
@@ -9336,9 +9341,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:46:27.660Z",
+      "lastModified": "2026-04-21T03:54:16.186Z",
       "taskCount": 18,
-      "completedCount": 3,
+      "completedCount": 7,
       "tags": [
         "docs"
       ]
