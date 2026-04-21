@@ -36,6 +36,7 @@ import { auditRoutes } from './audit/routes.js';
 import { registerAuthPlugin } from './auth/index.js';
 import { landingRoutes } from './landing/index.js';
 import { waitlistRoutes } from './waitlist/routes.js';
+import { signupRoutes } from './signup/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
 import { unifiedProxyRoutes } from './proxy/unified-router.js';
 import { getUnifiedProtectedResourceMetadata, getUnifiedAuthMetadata } from './oauth/metadata.js';
@@ -189,6 +190,11 @@ app.get('/health/vendors', async () => ({
 // Waitlist (conditionally registered if webhook URL configured)
 if (config.features.waitlist) {
   await app.register(waitlistRoutes(sql));
+}
+
+// Public reseller signup (Funnel A) — dark by default; gated on SIGNUP_ENABLED.
+if (config.features.signup) {
+  await app.register(signupRoutes({ sql }));
 }
 
 // Auth plugin already registered above (before service init for table ordering)

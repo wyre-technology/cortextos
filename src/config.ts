@@ -90,5 +90,8 @@ export const config = {
     // MSP Admin Console — ships dark, opt-in per reseller deploy.
     // See .taskmaster/docs/prd-msp-admin.md.
     resellerConsole: process.env.RESELLER_CONSOLE_ENABLED === 'true',
+    // Public reseller signup (Funnel A, PRD prd-onboarding.md §4).
+    // Dark by default — flip after legal/ops sign off on ToS + DPA links.
+    signup: process.env.SIGNUP_ENABLED === 'true',
   },
 };
