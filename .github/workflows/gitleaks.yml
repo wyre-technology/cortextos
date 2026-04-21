@@ -1,0 +1,51 @@
+name: Secret Scan
+
+# Gitleaks secret scanning.
+#
+#   pull_request → scan the PR diff; catches secrets before merge.
+#   push (main)  → scan commits landing on default branch as a backstop
+#                  (e.g. admin override, direct push).
+#   schedule     → weekly full-history sweep so rules added upstream
+#                  can surface older leaks.
+#
+# Uses gitleaks-action@v2. GITLEAKS_LICENSE is only required for org
+# private repos above the free tier; unset is fine for this repo.
+# Findings are uploaded as SARIF to the Security tab and do NOT hard
+# fail the build (continue-on-error on the scan step). See
+# docs/operations/security-scanning.md for triage.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 07:11 UTC
+    - cron: '11 7 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history required so gitleaks can scan past commits.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        id: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional; unset on public/free-tier repos.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true

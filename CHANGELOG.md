@@ -22,6 +22,11 @@ mcp-gateway CHANGELOG.
 - Taskmaster integration (`.taskmaster/`) for platform-ops planning
 - CODEOWNERS for review routing
 - Operations documentation (`docs/operations/`)
+- Security baseline scanning (platform-ops #13): Dependabot config
+  (`.github/dependabot.yml`), CodeQL workflow, gitleaks workflow,
+  Trivy filesystem + container image workflow, and
+  `docs/operations/security-scanning.md` triage guide. All findings
+  upload as SARIF to the GitHub Security tab; non-blocking by design.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

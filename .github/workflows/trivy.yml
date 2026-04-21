@@ -1,0 +1,86 @@
+name: Trivy Vulnerability Scan
+
+# Trivy scans for known CVEs in two surfaces:
+#
+#   1. Filesystem scan (repo checkout) → lockfile + Dockerfile + IaC.
+#      Runs on PR so a new vulnerable dep shows up inline.
+#   2. Container image scan → the published ghcr.io image that
+#      .github/workflows/release.yml builds. Runs on a weekly schedule
+#      against the :latest tag, and on workflow_dispatch for ad-hoc
+#      re-scans after a fix.
+#
+# Both paths upload SARIF to the Security tab. Non-blocking: alerts
+# surface in code-scanning, they do not fail the build. See
+# docs/operations/security-scanning.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Tuesdays 06:23 UTC — a day after CodeQL so Security-tab noise is spread.
+    - cron: '23 6 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  IMAGE_NAME: ghcr.io/wyre-technology/conduit
+
+jobs:
+  fs-scan:
+    name: Filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (fs)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+          # Always exit 0 — triage in Security tab, don't block PRs.
+          exit-code: '0'
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-fs.sarif'
+          category: 'trivy-fs'
+
+  image-scan:
+    name: Container image scan
+    # Only useful once a released image exists; PR builds don't publish.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (image)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:latest'
+          format: 'sarif'
+          output: 'trivy-image.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image.sarif'
+          category: 'trivy-image'
