@@ -3996,14 +3996,14 @@
   "white-label": {
     "tasks": [
       {
-        "id": 1,
+        "id": "1",
         "title": "Database Schema and Migrations",
         "description": "Create database tables for brand_profiles, custom_domains, brand_assets, brand_font_allowlist, and brand_preview_audit with all specified constraints and indexes",
         "details": "[CROSS-TAG BLOCKER] brand_profiles inheritance depends on reseller-tenancy #1 (organizations.type enum). Must land after.\n\nImplement migration file migrations/00X_brand_profiles.sql exactly matching the schema sketch in PRD section 13. Include all CHECK constraints for colors (^#[0-9a-fA-F]{6}$), tier enums, status enums, and indexes. Seed initial Wyre default brand row with placeholder values and populate brand_font_allowlist with common Google Fonts (Inter, Roboto, Open Sans, etc.). Use existing Postgres gen_random_uuid() and TIMESTAMPTZ defaults.",
         "testStrategy": "Run migration on test DB, verify table structure with schema diff tools, confirm indexes exist, validate seeded Wyre default row exists with is_wyre_default=true, test constraint violations (invalid hex color, invalid tier) return errors",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -4012,7 +4012,8 @@
             "dependencies": [],
             "details": "Use gen_random_uuid() for id, TIMESTAMPTZ defaults for created_at/updated_at. Include CHECK (^#[0-9a-fA-F]{6}$) for color fields, ENUMs for tier and status. Add indexes on org_id, parent_brand_id, is_wyre_default.",
             "status": "pending",
-            "testStrategy": "Verify table creation with \\d+ in psql, test invalid hex color insertion fails, confirm indexes listed in \\di"
+            "testStrategy": "Verify table creation with \\d+ in psql, test invalid hex color insertion fails, confirm indexes listed in \\di",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4023,7 +4024,8 @@
             ],
             "details": "Implement foreign key relationships to brand_profiles where applicable. Add unique constraints on custom_domains.domain, indexes on brand_assets.org_id/sha256, brand_preview_audit.brand_id.",
             "status": "pending",
-            "testStrategy": "Confirm FK constraints prevent invalid references, verify unique constraints reject duplicates, check index existence"
+            "testStrategy": "Confirm FK constraints prevent invalid references, verify unique constraints reject duplicates, check index existence",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4034,7 +4036,8 @@
             ],
             "details": "Use placeholder hex colors (#000000), default tier/status enums, null for optional fields. Set is_wyre_default=true and org_id to Wyre's org_id.",
             "status": "pending",
-            "testStrategy": "Query confirms exactly one row with is_wyre_default=true, verify placeholder values match expected defaults"
+            "testStrategy": "Query confirms exactly one row with is_wyre_default=true, verify placeholder values match expected defaults",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4045,7 +4048,8 @@
             ],
             "details": "INSERT multiple rows with font_family values: 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', etc. Ensure no duplicates via unique constraint.",
             "status": "pending",
-            "testStrategy": "SELECT COUNT(*) shows expected number of fonts, verify specific fonts exist, confirm no duplicate entries"
+            "testStrategy": "SELECT COUNT(*) shows expected number of fonts, verify specific fonts exist, confirm no duplicate entries",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4059,19 +4063,21 @@
             ],
             "details": "Add -- comments explaining each table/constraint purpose. Use BEGIN/COMMIT for atomicity. Number file as migrations/00X_brand_profiles.sql per sequence.",
             "status": "pending",
-            "testStrategy": "Full migration runs without errors, schema diff tools confirm exact match to PRD, all seeded data validates, constraint violation tests pass"
+            "testStrategy": "Full migration runs without errors, schema diff tools confirm exact match to PRD, all seeded data validates, constraint violation tests pass",
+            "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:46:20.840Z"
       },
       {
-        "id": 2,
+        "id": "2",
         "title": "Extend BrandConfig Type Definition",
         "description": "Update src/brand/types.ts with new BrandConfig interface matching PRD section 13 requirements",
         "details": "Extend existing BrandConfig type additively with all new fields: id, orgId, parentBrandId, tier, fromEmailDisplayName, supportEmail, docsUrl, issuesUrl, logoDarkUrl, textPrimary/Secondary, bgPrimary/Secondary, borderColor, headingFont, bodyFont, borderRadius, allowCustomerOverrides, domain, version. Maintain backwards compatibility with existing deployments. Export updated type.",
         "testStrategy": "TypeScript compile check passes, existing brand.test.ts suite unchanged, new unit tests validate all optional fields accept null/undefined where specified",
         "priority": "high",
         "dependencies": [
-          1
+          "1"
         ],
         "status": "pending",
         "subtasks": [
@@ -4082,7 +4088,8 @@
             "dependencies": [],
             "details": "Open src/brand/types.ts, copy the existing BrandConfig definition to a comment block or separate backup file. Verify the file exports the type correctly. Note existing fields to ensure additive extension.",
             "status": "pending",
-            "testStrategy": "Confirm backup exists and original type compiles without errors before changes"
+            "testStrategy": "Confirm backup exists and original type compiles without errors before changes",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4093,7 +4100,8 @@
             ],
             "details": "Convert BrandConfig to interface if not already. Add properties: id?: string, orgId?: string, parentBrandId?: string | null, tier?: 'wyre' | 'msp' | 'customer'. Use union type for tier enum matching PRD.",
             "status": "pending",
-            "testStrategy": "TypeScript compilation passes, existing code accepts old BrandConfig objects"
+            "testStrategy": "TypeScript compilation passes, existing code accepts old BrandConfig objects",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4104,7 +4112,8 @@
             ],
             "details": "Append to interface: fromEmailDisplayName?: string, supportEmail?: string, docsUrl?: string, issuesUrl?: string, logoDarkUrl?: string. Ensure all fields are optional (?) for backwards compatibility.",
             "status": "pending",
-            "testStrategy": "Validate new fields accept strings/null/undefined in type checker"
+            "testStrategy": "Validate new fields accept strings/null/undefined in type checker",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4115,7 +4124,8 @@
             ],
             "details": "Add: textPrimary?: string, textSecondary?: string, bgPrimary?: string, bgSecondary?: string, borderColor?: string, headingFont?: string, bodyFont?: string, borderRadius?: string, allowCustomerOverrides?: boolean, domain?: string, version?: string. Use hex color regex in JSDoc if needed.",
             "status": "pending",
-            "testStrategy": "Type check ensures optional fields don't break existing usages"
+            "testStrategy": "Type check ensures optional fields don't break existing usages",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4128,20 +4138,21 @@
             ],
             "details": "Confirm 'export type { BrandConfig }' or interface declaration is public. Run 'tsc --noEmit' to verify compilation. Execute 'npm test' ensuring brand.test.ts suite passes unchanged. Add JSDoc documenting new optional fields.",
             "status": "pending",
-            "testStrategy": "Full TypeScript build succeeds, existing unit tests pass 100%, new test validates all fields accept null/undefined"
+            "testStrategy": "Full TypeScript build succeeds, existing unit tests pass 100%, new test validates all fields accept null/undefined",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 3,
+        "id": "3",
         "title": "Implement Brand Resolver Core",
         "description": "Create resolveBrand(req) function that implements hierarchical org → parent → wyre-default resolution logic",
         "details": "In src/brand/resolver.ts: 1) Extract target org_id from request context (user's org or sub-org being viewed), 2) Walk org.parent_org_id chain looking up brand_profiles.org_id, 3) Return first found profile or wyre_default, 4) Include version and computed domain field. Handle infinite parent loops with max depth 10. Throw if no fallback found.",
         "testStrategy": "Unit tests for: direct org brand hit, customer→MSP→wyre fallback chain, no brand (wyre default), infinite loop protection, cross-reseller isolation",
         "priority": "high",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -4152,7 +4163,8 @@
             "dependencies": [],
             "details": "Access req.context.org_id or req.user.org_id with fallback to sub-org from query/path params. Add TypeScript types for RequestContext. Log extracted org_id at debug level.",
             "status": "pending",
-            "testStrategy": "Unit test: direct user org extraction, sub-org override from query, missing context throws descriptive error"
+            "testStrategy": "Unit test: direct user org extraction, sub-org override from query, missing context throws descriptive error",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4163,7 +4175,8 @@
             ],
             "details": "Query organizations table by org_id → parent_org_id. Use Set to track visited org_ids for loop detection. Return array of org_ids in hierarchy order. Stop at depth 10 or root (null parent).",
             "status": "pending",
-            "testStrategy": "Unit test: single org chain (3 levels), loop detection (self-parent, cycle), max depth cutoff, root org termination"
+            "testStrategy": "Unit test: single org chain (3 levels), loop detection (self-parent, cycle), max depth cutoff, root org termination",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4174,7 +4187,8 @@
             ],
             "details": "For each org_id in chain, SELECT * FROM brand_profiles WHERE org_id = ? ORDER BY created_at DESC LIMIT 1. Cache individual lookups in Redis (TTL 5min). Handle no matches gracefully.",
             "status": "pending",
-            "testStrategy": "Unit test: hit on org1, miss org1 hit org2, all miss → continue, cache hit bypasses DB, stale cache refresh"
+            "testStrategy": "Unit test: hit on org1, miss org1 hit org2, all miss → continue, cache hit bypasses DB, stale cache refresh",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4185,7 +4199,8 @@
             ],
             "details": "Compute domain from profile.custom_domain or org.fqdn. Set version = profile.updated_at ISO string. Fallback: INSERT/SELECT single wyre_default profile if chain exhausted. Throw BrandNotFoundError otherwise.",
             "status": "pending",
-            "testStrategy": "Unit test: domain computation variants, version timestamp format, wyre-default creation/reuse, no-fallback error thrown"
+            "testStrategy": "Unit test: domain computation variants, version timestamp format, wyre-default creation/reuse, no-fallback error thrown",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4196,20 +4211,21 @@
             ],
             "details": "Add OTel histogram for resolve_ms, cache_hit counter. Structured logging at info/error. Handle DB timeouts → retry 2x. Export as async resolveBrand(req: Request): Promise<BrandConfig>. JSDoc all params/returns.",
             "status": "pending",
-            "testStrategy": "Integration test: full happy path timings <50ms, error paths log correctly, metrics emit all labels, TypeScript compiles cleanly"
+            "testStrategy": "Integration test: full happy path timings <50ms, error paths log correctly, metrics emit all labels, TypeScript compiles cleanly",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 4,
+        "id": "4",
         "title": "Host-Header Resolution Middleware",
         "description": "Implement src/brand/host-resolver.ts middleware for custom domain → org_id → brand resolution",
         "details": "Trust-proxy aware Host header extraction. Lookup custom_domains.active by hostname → org_id. Cache host→brand_profile_id in Redis (TTL 60s). admin.conduit.wyre.io forces wyreDefault. No match → 421 Misdirected Request in strict mode or wyreDefault. Set req.brand = resolved BrandConfig. Publish brand.invalidated on Redis pub/sub.",
         "testStrategy": "Integration tests: custom domain hit→correct org, wyre host→wyreDefault, invalid host→421, cache hit validation, invalidation propagates within 2s",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -4220,7 +4236,8 @@
             "dependencies": [],
             "details": "Use express trust proxy settings to get real IP. Parse req.get('Host') or req.headers.host, validate format (no ports/IPs), strip port if present. Return normalized lowercase hostname. Handle edge cases: missing header, malformed, multiple headers (use first).",
             "status": "pending",
-            "testStrategy": "Unit tests: proxy headers preserved, port stripped, malformed rejected, multiple headers takes first, IPv6 normalized"
+            "testStrategy": "Unit tests: proxy headers preserved, port stripped, malformed rejected, multiple headers takes first, IPv6 normalized",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4229,7 +4246,8 @@
             "dependencies": [],
             "details": "Write async function findOrgByHostname(hostname) using Prisma/TypeORM. Query WHERE hostname = ? AND active = true AND deleted_at IS NULL. Use database index on (hostname, active). Return {org_id, verified} or null. Add query timeout 100ms.",
             "status": "pending",
-            "testStrategy": "Integration tests: exact match found, case-insensitive, inactive domain returns null, unverified domain handled per policy"
+            "testStrategy": "Integration tests: exact match found, case-insensitive, inactive domain returns null, unverified domain handled per policy",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4240,7 +4258,8 @@
             ],
             "details": "Use ioredis client. Key: 'host:brand:{hostname}', value: JSON.stringify({brand_profile_id, org_id, timestamp}). TTL 60s. Check admin.wyre host first → wyreDefault. Cache hit bypasses DB. Serialize/deserialize with validation.",
             "status": "pending",
-            "testStrategy": "Unit tests: cache get/set/expire, admin host bypasses cache/DB, TTL eviction, JSON serialization validation"
+            "testStrategy": "Unit tests: cache get/set/expire, admin host bypasses cache/DB, TTL eviction, JSON serialization validation",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4253,7 +4272,8 @@
             ],
             "details": "If org_id found, call resolveBrand(req, org_id). On success: req.brand = BrandConfig. No org_id/resolve fails → strict mode: res.status(421).send('Misdirected Request'), else wyreDefault. Validate BrandConfig type matches Task 2.",
             "status": "pending",
-            "testStrategy": "Integration tests: valid domain→correct BrandConfig on req, 421 on strict no-match, wyreDefault fallback, type safety"
+            "testStrategy": "Integration tests: valid domain→correct BrandConfig on req, 421 on strict no-match, wyreDefault fallback, type safety",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4267,20 +4287,21 @@
             ],
             "details": "Redis subscriber: on 'brand.invalidated' → del matching host keys (SCAN pattern). Export middleware function. Add structured logging (host, org_id, cache_hit, resolve_ms). Error boundaries prevent blocking. Graceful shutdown cleans subscribers.",
             "status": "pending",
-            "testStrategy": "End-to-end: invalidation message→cache cleared→next request DB hit within 2s, middleware doesn't crash on Redis down, logs parseable"
+            "testStrategy": "End-to-end: invalidation message→cache cleared→next request DB hit within 2s, middleware doesn't crash on Redis down, logs parseable",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 5,
+        "id": "5",
         "title": "Multi-Layer Caching System",
         "description": "Implement LRU in-memory + Redis caching with pub/sub invalidation for brand resolution",
         "details": "1) In-process LRU (lru-cache npm, 5k entries, 60s TTL) keyed by org_id/host. 2) Redis (ioredis) keys 'brand:org:{org_id}', 'brand:host:{host}' TTL 300s. 3) Invalidation: Redis pub/sub brand.invalidated → drop LRU + DEL Redis keys. 4) OTel metrics conduit.brand.resolve_ms by cache_layer (lru/redis/db), cache_hit_ratio gauge. Include brand_profiles.version in cache keys.",
         "testStrategy": "Load test 10k req/s → ≤5ms P95 cache hit, verify invalidation <2s P95 across 3 processes, cold cache ≤25ms P95, metrics emit correctly",
         "priority": "high",
         "dependencies": [
-          3,
-          4
+          "3",
+          "4"
         ],
         "status": "pending",
         "subtasks": [
@@ -4291,7 +4312,8 @@
             "dependencies": [],
             "details": "Install lru-cache, implement get/set methods with composite keys like `brand:org:${org_id}:${version}` and `brand:host:${host}:${version}`, handle JSON serialization/deserialization, configure max: 5000, ttl: 60000ms.",
             "status": "pending",
-            "testStrategy": "Unit test: set/get with TTL expiration, max size eviction, version-specific isolation, JSON roundtrip validation"
+            "testStrategy": "Unit test: set/get with TTL expiration, max size eviction, version-specific isolation, JSON roundtrip validation",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4300,7 +4322,8 @@
             "dependencies": [],
             "details": "Create Redis client instance, implement get/set/delete with TTL 300s using setex, keys must include version suffix, handle JSON parse/stringify, connect to existing Redis config.",
             "status": "pending",
-            "testStrategy": "Integration test: standalone Redis get/set/TTL expiration, key patterns with version, multi-key operations"
+            "testStrategy": "Integration test: standalone Redis get/set/TTL expiration, key patterns with version, multi-key operations",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4312,7 +4335,8 @@
             ],
             "details": "Create resolveBrand(orgIdOrHost: string): Promise<BrandConfig>, check LRU first (60s), miss → Redis (300s), miss → DB query with version, cache both layers, include cache_layer in OTel timing.",
             "status": "pending",
-            "testStrategy": "Unit test cache fallbacks, integration with mock DB, trace cache_layer hits/misses via metrics"
+            "testStrategy": "Unit test cache fallbacks, integration with mock DB, trace cache_layer hits/misses via metrics",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4324,7 +4348,8 @@
             ],
             "details": "Use ioredis pubsub.subscribe('brand.invalidated'), on message: lruCache.clear(), redis.eval Lua script or SCAN/DEL pattern 'brand:*', handle gracefully across multiple processes.",
             "status": "pending",
-            "testStrategy": "Test invalidation propagates <2s across 3 mock processes, verify cache empty post-invalidation"
+            "testStrategy": "Test invalidation propagates <2s across 3 mock processes, verify cache empty post-invalidation",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4335,19 +4360,20 @@
             ],
             "details": "Use existing OTel setup, meter.createHistogram('conduit.brand.resolve_ms', {cache_layer}), increment hit/miss counters, export hit_ratio = hits/(hits+misses), labels: ['lru','redis','db'], emit on every resolve.",
             "status": "pending",
-            "testStrategy": "Load test 10k req/s → verify P95 ≤5ms cache hit, metrics emit correctly, hit_ratio >90% under load"
+            "testStrategy": "Load test 10k req/s → verify P95 ≤5ms cache hit, metrics emit correctly, hit_ratio >90% under load",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 6,
+        "id": "6",
         "title": "Brand Asset Storage System",
         "description": "Implement Azure Blob primary storage with S3/local fallbacks and SVG sanitization",
         "details": "Azure Blob container conduit-brand-assets/{org_id}/{kind}/{sha256}.{ext}. POST /reseller/brand/assets multipart → validate ≤5MB, MIME sniff (image/*, image/svg+xml), SVG sanitize (svg-sanitizer npm: strip script/onload/xlink:href=javascript), compute SHA256, store metadata in brand_assets table, return CDN URL. Config: BRAND_ASSET_STORAGE=azure_blob|s3|local. Soft-delete via deleted_at.",
         "testStrategy": "Upload PNG/SVG/JPG → correct CDN URL, malicious SVG rejected 422, size >5MB rejected 413, metadata persisted, S3/local fallback works",
         "priority": "high",
         "dependencies": [
-          1
+          "1"
         ],
         "status": "pending",
         "subtasks": [
@@ -4358,7 +4384,8 @@
             "dependencies": [],
             "details": "Use @azure/storage-blob for Azure, aws-sdk for S3, fs/promises for local. Support container 'conduit-brand-assets/{org_id}/{kind}/'. Include connection string/env var loading and client health checks.",
             "status": "pending",
-            "testStrategy": "Unit test factory returns correct client type per config; mock env vars and verify client instanceof checks."
+            "testStrategy": "Unit test factory returns correct client type per config; mock env vars and verify client instanceof checks.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4367,7 +4394,8 @@
             "dependencies": [],
             "details": "Use formidable/multer for parsing. Implement file size check (413 response >5MB), content-type sniffing with file-type npm. Reject invalid MIME with 415.",
             "status": "pending",
-            "testStrategy": "Test PNG/JPG/SVG pass, oversized file →413, wrong MIME →415, multiple files →400."
+            "testStrategy": "Test PNG/JPG/SVG pass, oversized file →413, wrong MIME →415, multiple files →400.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4378,7 +4406,8 @@
             ],
             "details": "For image/svg+xml files only: parse with svg-sanitizer, configure to remove dangerous attributes/elements, re-serialize to buffer. Reject if sanitization fails or removes >90% content.",
             "status": "pending",
-            "testStrategy": "Upload malicious SVG (script tag) → sanitized version stored, verify no JS remains; clean SVG unchanged."
+            "testStrategy": "Upload malicious SVG (script tag) → sanitized version stored, verify no JS remains; clean SVG unchanged.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4391,7 +4420,8 @@
             ],
             "details": "Use crypto.createHash('sha256') on buffer. Determine ext from original filename/MIME. DB insert: org_id, kind, sha256, mime_type, size_bytes, cdn_url, created_at. Handle soft-delete with deleted_at NULL.",
             "status": "pending",
-            "testStrategy": "Verify file stored at correct path, SHA256 matches buffer hash, DB row has correct metadata and unique sha256 constraint."
+            "testStrategy": "Verify file stored at correct path, SHA256 matches buffer hash, DB row has correct metadata and unique sha256 constraint.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4402,22 +4432,23 @@
             ],
             "details": "For Azure: generate SAS or use CDN endpoint. S3: CloudFront domain. Local: http://localhost:3000/assets/. Query DB for existing asset by sha256/org_id to avoid duplicates. Return 200 with {cdn_url, id}.",
             "status": "pending",
-            "testStrategy": "Full E2E: upload → get CDN URL works in browser, duplicate upload → reuse existing, soft-delete → CDN still serves but DB filtered out in lists."
+            "testStrategy": "Full E2E: upload → get CDN URL works in browser, duplicate upload → reuse existing, soft-delete → CDN still serves but DB filtered out in lists.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 7,
+        "id": "7",
         "title": "Reseller Brand CRUD API",
         "description": "Implement authenticated /reseller/brand GET/PATCH endpoints with validation and inheritance checks",
         "details": "Require MSP-tier org-admin role. Zod schemas validate hex colors, font∈allowlist, HTTPS support_url (no javascript:). PATCH enforces Wyre-locked fields (fonts/radii?), checks allow_customer_overrides for customer tier. Rate limit 10/min/org. Invalidate cache on update. Return full BrandConfig.",
         "testStrategy": "Auth tests: MSP admin→200, customer→403, invalid hex→400, invalid font→400, cache invalidation works, field-level permission checks",
         "priority": "medium",
         "dependencies": [
-          2,
-          3,
-          5,
-          6
+          "2",
+          "3",
+          "5",
+          "6"
         ],
         "status": "pending",
         "subtasks": [
@@ -4428,7 +4459,8 @@
             "dependencies": [],
             "details": "Extract org_id from JWT claims, validate user role against org_tier='msp' and role='org-admin'. Return 403 Forbidden for unauthorized access. Integrate with existing auth chain.",
             "status": "pending",
-            "testStrategy": "Unit tests: MSP admin→pass, customer→403, non-org-admin→403, invalid JWT→401"
+            "testStrategy": "Unit tests: MSP admin→pass, customer→403, non-org-admin→403, invalid JWT→401",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4437,7 +4469,8 @@
             "dependencies": [],
             "details": "Validate hex colors (^#[0-9a-fA-F]{6}$), fonts against brand_font_allowlist table, support_url as HTTPS (no javascript:). Response schema matches full BrandConfig structure. Coerce types appropriately.",
             "status": "pending",
-            "testStrategy": "Unit tests: invalid hex→ZodError, invalid font→ZodError, javascript: url→ZodError, valid inputs→pass"
+            "testStrategy": "Unit tests: invalid hex→ZodError, invalid font→ZodError, javascript: url→ZodError, valid inputs→pass",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4449,7 +4482,8 @@
             ],
             "details": "Query brand_profiles by org_id, recursively merge parent_brand_profile_id inheritance. Include assets, fonts, custom_domains. Cache resolved BrandConfig in Redis (TTL 60s). Return 200 with full config.",
             "status": "pending",
-            "testStrategy": "Integration tests: org with custom brand→full config, inheritance chain→merged config, no brand→wyreDefault, cache hit→fast response"
+            "testStrategy": "Integration tests: org with custom brand→full config, inheritance chain→merged config, no brand→wyreDefault, cache hit→fast response",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4462,7 +4496,8 @@
             ],
             "details": "Enforce read-only for Wyre-locked fields (fonts/radii) unless is_wyre_default=false. Check allow_customer_overrides for customer tier restrictions. Validate partial input against Zod. Upsert brand_profiles.",
             "status": "pending",
-            "testStrategy": "Integration tests: valid PATCH→200 updated config, Wyre-locked field→400/403, customer override violation→403, partial update→merged config"
+            "testStrategy": "Integration tests: valid PATCH→200 updated config, Wyre-locked field→400/403, customer override violation→403, partial update→merged config",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4474,19 +4509,20 @@
             ],
             "details": "Rate limit 10/min/org using Redis sliding window. On PATCH success: invalidate org brand cache, publish brand.invalidated event. Mount routes under /reseller/brand. Return full BrandConfig on all responses.",
             "status": "pending",
-            "testStrategy": "Integration tests: 11th req/min→429, update→cache miss on next GET, invalidation propagates to host-resolver, E2E auth→validation→rate limit flow"
+            "testStrategy": "Integration tests: 11th req/min→429, update→cache miss on next GET, invalidation propagates to host-resolver, E2E auth→validation→rate limit flow",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 8,
+        "id": "8",
         "title": "Reseller Brand Admin UI",
         "description": "Build reseller-admin UI for brand configuration with live preview",
         "details": "Form with color pickers (primary/accent/text/bg/border), font dropdown (allowlist), asset upload dropzone (logo/favicon/og), support urls, allow_customer_overrides toggle. Live preview pane shows :root CSS variables + logo. Calls /reseller/brand API. Responsive design matching existing admin patterns.",
         "testStrategy": "Cypress E2E: form submission→DB update, live preview reflects changes instantly, asset upload success, error states (invalid color, oversized file)",
         "priority": "medium",
         "dependencies": [
-          7
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -4497,7 +4533,8 @@
             "dependencies": [],
             "details": "Use consistent admin UI components: 5 color pickers (primary/accent/text/bg/border as hex inputs), font dropdown with predefined allowlist, dropzones for logo/favicon/og images with file validation, text inputs for support URLs, boolean toggle for overrides. Ensure form grouping and labeling clarity.",
             "status": "pending",
-            "testStrategy": "Visual regression tests for form layout, component accessibility, responsive breakpoints (mobile/tablet/desktop)."
+            "testStrategy": "Visual regression tests for form layout, component accessibility, responsive breakpoints (mobile/tablet/desktop).",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4508,7 +4545,8 @@
             ],
             "details": "Create iframe or styled div showing admin preview with dynamic CSS injection: map form colors to --primary-color, --accent-color etc., inject logo via background-image or img src. Use ResizeObserver for responsive preview syncing. Debounce updates for performance.",
             "status": "pending",
-            "testStrategy": "Unit tests: color/font/logo changes reflect instantly; Integration: preview matches :root vars; E2E: live updates without page reload."
+            "testStrategy": "Unit tests: color/font/logo changes reflect instantly; Integration: preview matches :root vars; E2E: live updates without page reload.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4520,7 +4558,8 @@
             ],
             "details": "On mount: GET current brand config and populate form. On change/debounce: PATCH updates with Zod-validated payloads. Handle 200/400/403/429 responses with toast notifications. Implement optimistic updates for preview. Add 'Save' button for explicit submission.",
             "status": "pending",
-            "testStrategy": "Cypress: form load→populate, change→PATCH→DB update, error states (invalid hex→400, rate limit→429), auth failure→redirect."
+            "testStrategy": "Cypress: form load→populate, change→PATCH→DB update, error states (invalid hex→400, rate limit→429), auth failure→redirect.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4532,7 +4571,8 @@
             ],
             "details": "Use Zod or Yup: hex #RRGGBB validation, font∈allowlist check, file <5MB PNG/SVG/JPG, HTTPS support_url regex. Disable submit/preview on invalid state. Server error mapping to field-specific messages. Oversized file rejection with dropzone feedback.",
             "status": "pending",
-            "testStrategy": "Unit: invalid hex→error display, valid→submit enable; E2E: file upload success/fail, URL validation blocks submit."
+            "testStrategy": "Unit: invalid hex→error display, valid→submit enable; E2E: file upload success/fail, URL validation blocks submit.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4545,20 +4585,21 @@
             ],
             "details": "Mobile-first: stack form fields vertically <768px, preview 100% width. Match admin sidebar/header/footer patterns. ARIA labels on inputs, keyboard navigation for color pickers/dropzone. Test Safari/Chrome/Firefox. Add loading skeletons and empty states.",
             "status": "pending",
-            "testStrategy": "Cypress responsive: mobile form usability, tablet split-view; Lighthouse: 90+ performance/accessibility; E2E full flow: load→edit→preview→save→verify DB."
+            "testStrategy": "Cypress responsive: mobile form usability, tablet split-view; Lighthouse: 90+ performance/accessibility; E2E full flow: load→edit→preview→save→verify DB.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 9,
+        "id": "9",
         "title": "Customer Brand Override UI + API",
         "description": "Conditional customer /org/:id/brand PATCH + UI only if parent allow_customer_overrides=true",
         "details": "Scoped fields only: name, tagline, logo_url, favicon_url, og_image_url, primary_color, accent_color, support_url. Fonts/radii/support_email/from_email locked. API 403 if parent disallow overrides. UI hidden/locked if disallowed. MSP admin can PATCH child org brands.",
         "testStrategy": "E2E tests: customer→403 when disallowed, customer→200 when allowed, MSP admin→200 always, locked fields rejected 403 field_locked",
         "priority": "medium",
         "dependencies": [
-          7,
-          8
+          "7",
+          "8"
         ],
         "status": "pending",
         "subtasks": [
@@ -4569,7 +4610,8 @@
             "dependencies": [],
             "details": "Check parent org allow_customer_overrides=true for customer requests. Return 403 if disallowed. MSP admin bypasses check. Only allow scoped fields: name, tagline, logo_url, favicon_url, og_image_url, primary_color, accent_color, support_url. Reject locked fields with 403 field_locked.",
             "status": "pending",
-            "testStrategy": "Unit tests: customer→403 when disallowed, customer→200 when allowed, MSP admin→200 always, locked fields rejected 403 field_locked"
+            "testStrategy": "Unit tests: customer→403 when disallowed, customer→200 when allowed, MSP admin→200 always, locked fields rejected 403 field_locked",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4580,7 +4622,8 @@
             ],
             "details": "Query parent org allow_customer_overrides flag. Validate MSP admin role bypasses customer restriction. Validate only scoped fields are modified. Lock fonts/radii/support_email/from_email regardless of permissions.",
             "status": "pending",
-            "testStrategy": "Unit tests verify permission logic: customer with/without parent flag, MSP admin override, field scope validation"
+            "testStrategy": "Unit tests verify permission logic: customer with/without parent flag, MSP admin override, field scope validation",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4591,7 +4634,8 @@
             ],
             "details": "Display form only if parent allow_customer_overrides=true for customers. Hide/lock form if disallowed. MSP admin always sees editable form. Include inputs for name, tagline, logo_url, favicon_url, og_image_url, primary_color, accent_color, support_url. Disable locked fields.",
             "status": "pending",
-            "testStrategy": "Component tests: form renders correctly for customer allowed/disallowed, MSP admin, locked fields disabled"
+            "testStrategy": "Component tests: form renders correctly for customer allowed/disallowed, MSP admin, locked fields disabled",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4603,7 +4647,8 @@
             ],
             "details": "Handle 403 responses for disallowed overrides and locked fields. Show user-friendly error messages. Optimistic updates with rollback on failure. Real-time validation for color hex formats and URLs.",
             "status": "pending",
-            "testStrategy": "Integration tests: successful updates, 403 error handling, locked field rejection, form validation"
+            "testStrategy": "Integration tests: successful updates, 403 error handling, locked field rejection, form validation",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4615,20 +4660,21 @@
             ],
             "details": "E2E scenarios: customer→403 when disallowed, customer→200 when allowed, MSP admin→200 always, locked fields rejected. Update OpenAPI spec for /org/:id/brand PATCH. Document UI permission flows and field restrictions.",
             "status": "pending",
-            "testStrategy": "Verify all E2E test scenarios pass: permission flows, field restrictions, error states, success paths"
+            "testStrategy": "Verify all E2E test scenarios pass: permission flows, field restrictions, error states, success paths",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 10,
+        "id": "10",
         "title": "Custom Domain Management Flow",
         "description": "Implement full custom domain CRUD + DNS verification + ACME TLS",
         "details": "POST /reseller/custom-domains → create pending row, return CNAME target ingress.conduit.wyre.io + DNS-01 instructions. Worker polls DNS every 60s → verifying_tls → acme-client npm Let's Encrypt → Azure Key Vault. Auto-renew 30d before expiry. Status UI with verification instructions. DELETE → revoke.",
         "testStrategy": "Mock DNS/ACME: pending→verifying_dns→verifying_tls→active within 5min, failed state on bad DNS, cert expiry alert, revocation works",
         "priority": "high",
         "dependencies": [
-          1,
-          4
+          "1",
+          "4"
         ],
         "status": "pending",
         "subtasks": [
@@ -4639,7 +4685,8 @@
             "dependencies": [],
             "details": "POST creates pending row, returns CNAME target 'ingress.conduit.wyre.io' + DNS-01 instructions. DELETE triggers revocation logic. Add fields: domain, status (pending/verifying_dns/verifying_tls/active/failed), org_id, created_at, cert_thumbprint, expiry_date.",
             "status": "pending",
-            "testStrategy": "Test POST returns 201 with correct CNAME/instructions, DELETE sets revoked status and cleans cert, 404 on non-existent domain."
+            "testStrategy": "Test POST returns 201 with correct CNAME/instructions, DELETE sets revoked status and cleans cert, 404 on non-existent domain.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4650,7 +4697,8 @@
             ],
             "details": "Use DNS resolver library to check CNAME points to ingress.conduit.wyre.io. Update status: pending → verifying_dns. Exponential backoff on failures, max 50 polls before failed state. Queue-based processing.",
             "status": "pending",
-            "testStrategy": "Mock DNS responses: valid CNAME → status update in <60s, invalid → failed after retries, no infinite loops."
+            "testStrategy": "Mock DNS responses: valid CNAME → status update in <60s, invalid → failed after retries, no infinite loops.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4662,7 +4710,8 @@
             ],
             "details": "Use acme-client library with DNS-01 challenge. Store private key/cert thumbprint in Key Vault. Update domain record with cert_id, expiry_date. Handle rate limits and failures → failed status.",
             "status": "pending",
-            "testStrategy": "Mock ACME client: pending→verifying_dns→verifying_tls→active within 5min, failed state on ACME errors, cert metadata persisted."
+            "testStrategy": "Mock ACME client: pending→verifying_dns→verifying_tls→active within 5min, failed state on ACME errors, cert metadata persisted.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4674,7 +4723,8 @@
             ],
             "details": "Daily cron scans active domains, renew if expiry <30d using same ACME flow. GET lists domains with status-specific instructions (CNAME for pending, none for active). Include progress indicators.",
             "status": "pending",
-            "testStrategy": "Mock expiry dates trigger renewal, GET returns correct instructions per status, renewal updates expiry without downtime."
+            "testStrategy": "Mock expiry dates trigger renewal, GET returns correct instructions per status, renewal updates expiry without downtime.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4688,20 +4738,21 @@
             ],
             "details": "React/Vue table with status badges, expandable instructions panel with CNAME copy button. Include polling for live updates. E2E covers full lifecycle + failure/revocation paths.",
             "status": "pending",
-            "testStrategy": "E2E: full flow pending→active in 5min, bad DNS→failed, cert expiry alert, DELETE revokes cert + DB cleanup, UI updates correctly."
+            "testStrategy": "E2E: full flow pending→active in 5min, bad DNS→failed, cert expiry alert, DELETE revokes cert + DB cleanup, UI updates correctly.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 11,
+        "id": "11",
         "title": "Inject Brand Context Across All Templates",
         "description": "Refactor all web templates to read req.brand instead of global singleton",
         "details": "Update src/web/layout.ts (.sidebar-brand, title `${title} - ${brand.name}`, color tokens), templates/connect.ts, team-connections.ts, org/routes.ts invitations, waitlist/routes.ts (remove MCP Gateway hardcoded), auth0.ts/azure-ad.ts (issuesUrl), helpers.ts success pages. Inject req.brand via middleware. Inline <style>:root {--primary-color: ${brand.primaryColor}; ...}</style>.",
         "testStrategy": "Snapshot tests per template × 3 tiers (wyre/msp/customer), no Wyre strings leak to customer tier, color tokens match brand DB values",
         "priority": "high",
         "dependencies": [
-          3,
-          4
+          "3",
+          "4"
         ],
         "status": "pending",
         "subtasks": [
@@ -4712,7 +4763,8 @@
             "dependencies": [],
             "details": "In src/brand/host-resolver.ts or middleware chain, set req.brand = resolved BrandConfig object with properties like name, primaryColor, etc. Ensure trust-proxy handling and Redis caching integration.",
             "status": "pending",
-            "testStrategy": "Unit test middleware with mock req/res, verify req.brand populated correctly for custom/wyre domains, cache hit/miss scenarios."
+            "testStrategy": "Unit test middleware with mock req/res, verify req.brand populated correctly for custom/wyre domains, cache hit/miss scenarios.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4723,7 +4775,8 @@
             ],
             "details": "Replace .sidebar-brand with req.brand.name/logo, title to `${title} - ${req.brand.name}`, inject color tokens via inline <style>:root {--primary-color: ${req.brand.primaryColor}; --other-tokens...}</style>. Remove all singleton references.",
             "status": "pending",
-            "testStrategy": "Snapshot tests for rendered HTML per brand tier (wyre/msp/customer), verify color vars match DB values, no Wyre leaks."
+            "testStrategy": "Snapshot tests for rendered HTML per brand tier (wyre/msp/customer), verify color vars match DB values, no Wyre leaks.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4735,7 +4788,8 @@
             ],
             "details": "Replace hardcoded brand elements with req.brand.name, colors, logos. Ensure dynamic title, styles, and any brand-specific UI use req.brand. Audit for singleton remnants.",
             "status": "pending",
-            "testStrategy": "DOM snapshot tests ×3 tiers, confirm brand-specific rendering, no global singleton usage."
+            "testStrategy": "DOM snapshot tests ×3 tiers, confirm brand-specific rendering, no global singleton usage.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4746,7 +4800,8 @@
             ],
             "details": "org/routes.ts: invitations use req.brand; waitlist/routes.ts: remove 'MCP Gateway' hardcoded, use req.brand.name; helpers.ts: success pages use req.brand.name/colors. Pass req.brand to templates.",
             "status": "pending",
-            "testStrategy": "Integration tests: render pages per brand, verify no hardcodes, titles/colors match req.brand."
+            "testStrategy": "Integration tests: render pages per brand, verify no hardcodes, titles/colors match req.brand.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4760,19 +4815,20 @@
             ],
             "details": "auth0.ts/azure-ad.ts: set issuesUrl to req.brand.support_url or similar; full audit of all templates for req.brand usage; add inline styles where needed. Run end-to-end verification.",
             "status": "pending",
-            "testStrategy": "Snapshot tests all templates ×3 tiers, no Wyre strings in customer tier, color tokens match brand DB, browser rendering checks."
+            "testStrategy": "Snapshot tests all templates ×3 tiers, no Wyre strings in customer tier, color tokens match brand DB, browser rendering checks.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 12,
+        "id": "12",
         "title": "Favicon, OG Meta, and Browser Meta Tags",
         "description": "Add per-brand favicon, OG image, Twitter meta, browser title formatting",
         "details": "In layout.ts: <link rel=\"icon\" href=\"${brand.faviconUrl}\">, <meta property=\"og:image\" content=\"${brand.ogImageUrl}\">, Twitter cards, apple-touch-icon. Title: `${pageTitle} - ${brand.name}`. Fallback to wyre defaults if null.",
         "testStrategy": "DOM snapshot tests verify correct URLs per brand, browser devtools audit passes, social preview tools render correctly",
         "priority": "medium",
         "dependencies": [
-          11
+          "11"
         ],
         "status": "pending",
         "subtasks": [
@@ -4783,7 +4839,8 @@
             "dependencies": [],
             "details": "Use conditional rendering: href=brand?.faviconUrl || wyreDefaults.faviconUrl. Ensure proper type='image/png' or 'image/x-icon' for browser compatibility. Place in <Head> component.",
             "status": "pending",
-            "testStrategy": "DOM snapshot tests verify correct favicon URL per brand, fallback to Wyre default when null"
+            "testStrategy": "DOM snapshot tests verify correct favicon URL per brand, fallback to Wyre default when null",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4792,7 +4849,8 @@
             "dependencies": [],
             "details": "Set og:title=`${pageTitle} - ${brand?.name || 'Wyre'}`, og:image=brand?.ogImageUrl || wyreDefaults.ogImageUrl, og:description=brand?.tagline || wyreDefaults.tagline. Include og:site_name.",
             "status": "pending",
-            "testStrategy": "Verify OG tags in DOM snapshots match brand data, social preview tools (Facebook debugger) render correctly"
+            "testStrategy": "Verify OG tags in DOM snapshots match brand data, social preview tools (Facebook debugger) render correctly",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4801,7 +4859,8 @@
             "dependencies": [],
             "details": "Use twitter:card='summary_large_image', twitter:image=brand?.ogImageUrl || fallback, twitter:title and twitter:description matching OG equivalents. Ensure proper namespacing.",
             "status": "pending",
-            "testStrategy": "Twitter Card Validator shows correct preview per brand, DOM tests confirm meta tags present with correct values"
+            "testStrategy": "Twitter Card Validator shows correct preview per brand, DOM tests confirm meta tags present with correct values",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4810,7 +4869,8 @@
             "dependencies": [],
             "details": "In layout.tsx, set <title>{`${pageTitle} - ${brand?.name || 'Wyre'}`}</title>. Ensure pageTitle prop is passed correctly from pages. Handle null/undefined brand gracefully.",
             "status": "pending",
-            "testStrategy": "Browser devtools shows correct title format, snapshot tests capture title string per brand"
+            "testStrategy": "Browser devtools shows correct title format, snapshot tests capture title string per brand",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4824,20 +4884,21 @@
             ],
             "details": "Write DOM snapshot tests for each brand scenario (custom vs Wyre default). Run Lighthouse audit for meta tags. Test with Facebook/Twitter debuggers. Ensure no console errors on missing URLs.",
             "status": "pending",
-            "testStrategy": "Full suite: DOM snapshots per brand, Lighthouse SEO audit passes, social preview tools validate, browser devtools audit confirms all tags present"
+            "testStrategy": "Full suite: DOM snapshots per brand, Lighthouse SEO audit passes, social preview tools validate, browser devtools audit confirms all tags present",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 13,
+        "id": "13",
         "title": "Email Template Branding v1",
         "description": "Implement MJML email templates with brand token substitution and v1 From/Reply-To headers",
         "details": "MJML templates src/email/templates/*.mjml (invite, password-reset, billing, audit). Token replace {{brand.name}}, {{brand.logo_url}}, {{brand.primary_color}}. From: \"{brand.name} via Conduit\" <noreply@mail.conduit.wyre.io>, Reply-To: brand.support_email. Render MJML→HTML+text via mjml npm. SPF/DKIM aligned.",
         "testStrategy": "Snapshot test rendered HTML per brand × template, email client render test (Litmus/EmailOnAcid), no Wyre strings, correct From/Reply-To headers",
         "priority": "medium",
         "dependencies": [
-          2,
-          11
+          "2",
+          "11"
         ],
         "status": "pending",
         "subtasks": [
@@ -4848,7 +4909,8 @@
             "dependencies": [],
             "details": "Include {{brand.name}}, {{brand.logo_url}}, {{brand.primary_color}} tokens in appropriate sections like headers, logos, and color styling. Use MJML components (mj-section, mj-column, mj-image, mj-text) for responsive design.",
             "status": "pending",
-            "testStrategy": "Validate MJML syntax with mjml validate command, preview rendered HTML in MJML app for each template."
+            "testStrategy": "Validate MJML syntax with mjml validate command, preview rendered HTML in MJML app for each template.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4859,7 +4921,8 @@
             ],
             "details": "Build tokenReplace(template, brand) that substitutes {{brand.name}}, {{brand.logo_url}}, {{brand.primary_color}} with actual values. Handle missing tokens gracefully and escape special characters for MJML/HTML safety.",
             "status": "pending",
-            "testStrategy": "Unit tests for token replacement with sample brand data, edge cases (missing brand fields, special chars), snapshot comparison before/after substitution."
+            "testStrategy": "Unit tests for token replacement with sample brand data, edge cases (missing brand fields, special chars), snapshot comparison before/after substitution.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4870,7 +4933,8 @@
             ],
             "details": "Create renderEmail(templatePath, brand) function that: 1) loads MJML, 2) substitutes tokens, 3) compiles via mjml2html(), 4) generates plain text version. Cache compiled results per brand+template.",
             "status": "pending",
-            "testStrategy": "Integration tests rendering full pipeline per template x brand, validate HTML structure, test plain text extraction accuracy."
+            "testStrategy": "Integration tests rendering full pipeline per template x brand, validate HTML structure, test plain text extraction accuracy.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4881,7 +4945,8 @@
             ],
             "details": "Format From: '{brand.name} via Conduit' <noreply@mail.conduit.wyre.io>, Reply-To: brand.support_email. Create getEmailHeaders(brand) function returning standardized header object. Ensure fallback to Wyre defaults.",
             "status": "pending",
-            "testStrategy": "Unit tests generating headers for customer/MSP/Wyre brands, validate email address format compliance, test fallback logic."
+            "testStrategy": "Unit tests generating headers for customer/MSP/Wyre brands, validate email address format compliance, test fallback logic.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4893,20 +4958,21 @@
             ],
             "details": "Create snapshot tests for rendered HTML per brand×template combo. Integrate Litmus/EmailOnAcid testing workflow. Validate no Wyre strings leak into customer brands. Test From/Reply-To headers in mock email service.",
             "status": "pending",
-            "testStrategy": "Snapshot tests (100% coverage), Litmus/EmailOnAcid render tests across 30+ clients, regex scans for Wyre strings, header validation tests."
+            "testStrategy": "Snapshot tests (100% coverage), Litmus/EmailOnAcid render tests across 30+ clients, regex scans for Wyre strings, header validation tests.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 14,
+        "id": "14",
         "title": "Wyre Operator Preview Mode",
         "description": "Implement brand preview cookie + banner + audit logging for operators",
         "details": "POST /admin/brand-preview → set HttpOnly SameSite=Strict cookie brand_preview={brand_id} (30min TTL). Middleware checks cookie → overrides resolution. Persistent banner \"Previewing as {brand.name} — [Exit]\". Audit brand_preview_audit table on start/end. admin.conduit.wyre.io hard-pins wyreDefault ignoring cookie.",
         "testStrategy": "E2E: operator→preview→customer view with banner, exit→wyreDefault, audit row written, cookie security headers correct, admin host overrides",
         "priority": "medium",
         "dependencies": [
-          3,
-          11
+          "3",
+          "11"
         ],
         "status": "pending",
         "subtasks": [
@@ -4917,7 +4983,8 @@
             "dependencies": [],
             "details": "In the admin routes file, create POST /admin/brand-preview handler that validates brand_id exists, sets HttpOnly SameSite=Strict cookie 'brand_preview={brand_id}' with 30min TTL, returns success response. Ensure auth middleware protects endpoint.",
             "status": "pending",
-            "testStrategy": "Unit test: valid brand_id sets cookie correctly, invalid brand_id returns 404, unauthorized access returns 401. Verify cookie attributes via response headers."
+            "testStrategy": "Unit test: valid brand_id sets cookie correctly, invalid brand_id returns 404, unauthorized access returns 401. Verify cookie attributes via response headers.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4926,7 +4993,8 @@
             "dependencies": [],
             "details": "In src/brand/preview-middleware.ts, parse brand_preview cookie, validate brand_id exists in DB, override req.brand resolution to use preview brand instead of host/org resolution. Skip for admin.conduit.wyre.io host.",
             "status": "pending",
-            "testStrategy": "Unit tests: cookie present→override resolution, invalid brand_id→ignore cookie, admin host→ignore cookie and use wyreDefault, no cookie→normal resolution."
+            "testStrategy": "Unit tests: cookie present→override resolution, invalid brand_id→ignore cookie, admin host→ignore cookie and use wyreDefault, no cookie→normal resolution.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -4937,7 +5005,8 @@
             ],
             "details": "In frontend components, create BrandPreviewBanner that reads req.brand.isPreview flag, displays 'Previewing as {brand.name} — [Exit]' where Exit clears cookie via POST /admin/brand-preview-exit or similar. Style as persistent yellow bar.",
             "status": "pending",
-            "testStrategy": "Component tests: renders correct brand name, Exit button clears cookie and reloads, persists across page navigation, responsive design."
+            "testStrategy": "Component tests: renders correct brand name, Exit button clears cookie and reloads, persists across page navigation, responsive design.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -4946,7 +5015,8 @@
             "dependencies": [],
             "details": "Add to existing brand migration or create new: brand_preview_audit table with columns id, operator_user_id, brand_id, action(start/end), ip_address, user_agent, created_at. Include indexes on operator_user_id, brand_id, created_at.",
             "status": "pending",
-            "testStrategy": "Migration test: table created with correct schema/constraints, indexes present. Insert test rows validate constraints."
+            "testStrategy": "Migration test: table created with correct schema/constraints, indexes present. Insert test rows validate constraints.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -4958,20 +5028,21 @@
             ],
             "details": "In preview middleware/endpoint: log INSERT to brand_preview_audit on cookie set/clear with operator context, timestamp, IP/UA. In host resolver: hard-pin admin.conduit.wyre.io → wyreDefault regardless of cookie. Add Exit POST endpoint.",
             "status": "pending",
-            "testStrategy": "E2E: operator sets preview→audit row written, views customer site→banner+preview brand, exits→audit end row+wyreDefault, admin host always wyreDefault, cookie security headers validated."
+            "testStrategy": "E2E: operator sets preview→audit row written, views customer site→banner+preview brand, exits→audit end row+wyreDefault, admin host always wyreDefault, cookie security headers validated.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 15,
+        "id": "15",
         "title": "Env-Var to DB Migration Script",
         "description": "Create idempotent scripts/migrate-brand-env-to-db.ts importing BRAND_* + customers.ts",
         "details": "Read process.env BRAND_* → insert/update brand_profiles is_wyre_default=true. Parse src/brand/customers.ts hardcoded registry → import by org slug. Dry-run mode (--dry-run). Idempotent (UPSERT on version check). Docs in README. Handles missing env vars gracefully.",
         "testStrategy": "Run on test env with BRAND_* set → correct DB rows, run twice→no duplicates, missing env→skips gracefully, customers.ts import verified",
         "priority": "high",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -4982,7 +5053,8 @@
             "dependencies": [],
             "details": "Use commander.js or yargs for --dry-run flag. Establish Prisma or pg client connection. Add graceful exit on missing DB_URL. Structure with async main() function handling all phases sequentially.",
             "status": "pending",
-            "testStrategy": "Verify script runs without errors, parses --dry-run correctly, connects to test DB, logs missing env vars appropriately"
+            "testStrategy": "Verify script runs without errors, parses --dry-run correctly, connects to test DB, logs missing env vars appropriately",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -4993,7 +5065,8 @@
             ],
             "details": "Filter env vars starting with 'BRAND_'. Map to brand_profiles columns (name, primary_color, etc.). Use version check for idempotency: UPDATE if version matches, INSERT otherwise. Set is_wyre_default=true. Skip if no BRAND_* vars found.",
             "status": "pending",
-            "testStrategy": "Set test BRAND_* env vars → verify single row created/updated, run twice → no duplicates, version increment works, missing vars → logs skip message"
+            "testStrategy": "Set test BRAND_* env vars → verify single row created/updated, run twice → no duplicates, version increment works, missing vars → logs skip message",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5004,7 +5077,8 @@
             ],
             "details": "Use tsx or esbuild to execute/parse customers.ts safely. Extract org slugs from registry export. For each slug, UPSERT brand_profiles with org_slug, default values, is_wyre_default=false. Use same version-based idempotency logic.",
             "status": "pending",
-            "testStrategy": "Mock customers.ts with 3 orgs → verify 3 rows created, re-run → no duplicates, malformed customers.ts → graceful error handling"
+            "testStrategy": "Mock customers.ts with 3 orgs → verify 3 rows created, re-run → no duplicates, malformed customers.ts → graceful error handling",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5016,7 +5090,8 @@
             ],
             "details": "In dry-run: console.log all generated UPSERT queries instead of execute. Always check existing version before any UPDATE/INSERT. Transaction wrapper for atomicity. Validate hex colors match ^#[0-9a-fA-F]{6}$ before processing.",
             "status": "pending",
-            "testStrategy": "--dry-run → verify SQL logged correctly no DB changes, normal run → DB updated, twice → idempotent no changes second run"
+            "testStrategy": "--dry-run → verify SQL logged correctly no DB changes, normal run → DB updated, twice → idempotent no changes second run",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5027,20 +5102,21 @@
             ],
             "details": "README section: usage, env vars expected, --dry-run behavior, idempotency guarantee, example output. Handle missing env vars with warnings, DB connection failures with retry, customers.ts parse errors with fallback, constraint violations with detailed logs.",
             "status": "pending",
-            "testStrategy": "Missing env vars → warning logs + clean exit(0), DB down → retry then exit(1), invalid hex color → skip with log, full run → README instructions verifiable"
+            "testStrategy": "Missing env vars → warning logs + clean exit(0), DB down → retry then exit(1), invalid hex color → skip with log, full run → README instructions verifiable",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 16,
+        "id": "16",
         "title": "Feature Flag and Backwards Compatibility",
         "description": "Wire FEATURE_DB_BRANDING flag with env-var fallback path",
         "details": "src/brand/index.ts: if !FEATURE_DB_BRANDING || no DB brand → fallback to existing env-var loader + customers.ts registry. DB wins when flag=true. Clean rollback: flag=false restores old behavior exactly. Update all call sites to use new resolveBrand().",
         "testStrategy": "Integration test: flag=false→existing brand.test.ts unchanged, flag=true→DB resolution, mixed mode (some orgs DB, some env), no regressions",
         "priority": "high",
         "dependencies": [
-          3,
-          15
+          "3",
+          "15"
         ],
         "status": "pending",
         "subtasks": [
@@ -5051,7 +5127,8 @@
             "dependencies": [],
             "details": "In src/brand/index.ts, create if statement: if (!FEATURE_DB_BRANDING || !dbBrand) { use existing env-var loader + customers.ts registry }. Ensure DB brand takes precedence when flag=true. Use process.env for flag with boolean coercion.",
             "status": "pending",
-            "testStrategy": "Unit test flag=false → env-var/customers.ts path, flag=true → DB path, no DB brand → fallback correctly"
+            "testStrategy": "Unit test flag=false → env-var/customers.ts path, flag=true → DB path, no DB brand → fallback correctly",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5062,7 +5139,8 @@
             ],
             "details": "Export resolveBrand(req) from src/brand/index.ts that internally calls resolver core or fallback based on flag. Include version and domain computation. Handle edge cases like no brand found.",
             "status": "pending",
-            "testStrategy": "Unit test resolveBrand() covers all paths: DB hit, fallback, wyre-default, ensures clean separation"
+            "testStrategy": "Unit test resolveBrand() covers all paths: DB hit, fallback, wyre-default, ensures clean separation",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5073,7 +5151,8 @@
             ],
             "details": "Grep codebase for env-var loader and customers.ts usage in brand resolution contexts. Replace with resolveBrand(req). Ensure req context provides org_id/host correctly.",
             "status": "pending",
-            "testStrategy": "Integration test: all call sites resolve correctly under flag=false (no behavior change)"
+            "testStrategy": "Integration test: all call sites resolve correctly under flag=false (no behavior change)",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5084,7 +5163,8 @@
             ],
             "details": "Confirm env-var loader + customers.ts unchanged. Add README section: 'Rollback: set FEATURE_DB_BRANDING=false'. Ensure no side effects or data loss on toggle.",
             "status": "pending",
-            "testStrategy": "Full regression: flag=false → existing brand.test.ts passes identically, mixed orgs work"
+            "testStrategy": "Full regression: flag=false → existing brand.test.ts passes identically, mixed orgs work",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5095,21 +5175,22 @@
             ],
             "details": "Extend brand.test.ts: flag=false (unchanged), flag=true (DB wins), mixed (some orgs DB, some env-var), cache invalidation compatibility. Mock env vars and DB.",
             "status": "pending",
-            "testStrategy": "CI tests pass 100%: flag toggle, mixed resolution, performance ≤ existing P95, zero regressions"
+            "testStrategy": "CI tests pass 100%: flag toggle, mixed resolution, performance ≤ existing P95, zero regressions",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 17,
+        "id": "17",
         "title": "Observability, Metrics, and Alerts",
         "description": "Implement all required Prometheus metrics, audit events, and alerting rules",
         "details": "OTel histograms/gauge/counters: conduit.brand.resolve_ms{cache_layer}, cache_hit_ratio, custom_domain.status, brand.asset_upload_bytes. Audit events: brand.profile.{created,updated}, domain.{added,verified,failed}, preview.{started,ended}. Alerts: cert expiry <14d, DNS backlog >50, cache hit <0.9.",
         "testStrategy": "Metrics emit on brand resolve/upload, Grafana dashboard verifies, alerts fire on threshold breach, audit events searchable",
         "priority": "medium",
         "dependencies": [
-          5,
-          10,
-          14
+          "5",
+          "10",
+          "14"
         ],
         "status": "pending",
         "subtasks": [
@@ -5120,7 +5201,8 @@
             "dependencies": [],
             "details": "In src/brand/resolver.ts, instrument resolveBrand() with Histogram.record() for duration_ms {cache_layer='l1|l2|db'} and Gauge.set(1|0) for cache hit ratio. Follow Prometheus naming: base units, single prefix, low cardinality labels[1][3][5]",
             "status": "pending",
-            "testStrategy": "Unit tests verify metrics emit on resolve paths; curl /metrics shows correct labels/values; Grafana query confirms histogram buckets"
+            "testStrategy": "Unit tests verify metrics emit on resolve paths; curl /metrics shows correct labels/values; Grafana query confirms histogram buckets",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5129,7 +5211,8 @@
             "dependencies": [],
             "details": "In host-resolver.ts and asset upload handlers: Gauge.set(0|1|2) for custom_domain_status{status='active|pending|failed'} and Counter.add(bytes) for brand_asset_upload_bytes{org_id}. Use consistent conduit_ prefix and limit label cardinality[3][4]",
             "status": "pending",
-            "testStrategy": "Integration tests: resolve custom domain emits status gauge; upload 1MB asset increments counter; verify no high-cardinality labels in /metrics"
+            "testStrategy": "Integration tests: resolve custom domain emits status gauge; upload 1MB asset increments counter; verify no high-cardinality labels in /metrics",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5141,7 +5224,8 @@
             ],
             "details": "In brand service handlers: emit JSON logs for brand_profile_{created,updated}, domain_{added,verified,failed}, preview_{started,ended} with org_id, user_id, timestamp, metadata. Use structured logger compatible with audit search (ELK/OpenSearch)[1]",
             "status": "pending",
-            "testStrategy": "Trigger events via API; verify structured logs appear in audit index; search/filter by org_id/event_type returns correct records"
+            "testStrategy": "Trigger events via API; verify structured logs appear in audit index; search/filter by org_id/event_type returns correct records",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5153,7 +5237,8 @@
             ],
             "details": "In prometheus/rules/brand_alerts.yaml: for expr=ssl_certificate_expiry_seconds<14*24*3600, dns_queue_length>50, rate(cache_misses[5m])/rate(cache_total[5m])>0.1. Set for=5m, labels={severity='critical|warning'}. Test with promtool[2]",
             "status": "pending",
-            "testStrategy": "promtool check rules verifies syntax; inject test values trigger alerts in Prometheus UI; Grafana alert dashboard shows firing state"
+            "testStrategy": "promtool check rules verifies syntax; inject test values trigger alerts in Prometheus UI; Grafana alert dashboard shows firing state",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5167,28 +5252,33 @@
             ],
             "details": "Build Grafana JSON dashboard with panels for resolve latency P95, cache hit ratio, domain status heatmap, audit event rate, alert status table. Add /metrics healthcheck endpoint. Document verification checklist[1][2]",
             "status": "pending",
-            "testStrategy": "Load test generates traffic; verify all metrics populate correctly; breach thresholds trigger alerts; audit logs searchable; dashboard matches expected values"
+            "testStrategy": "Load test generates traffic; verify all metrics populate correctly; breach thresholds trigger alerts; audit logs searchable; dashboard matches expected values",
+            "parentId": "undefined"
           }
         ]
       }
     ],
     "metadata": {
-      "created": "2026-04-18T23:28:51.506Z",
-      "updated": "2026-04-18T23:28:51.506Z",
-      "description": "Tasks for white-label context"
+      "version": "1.0.0",
+      "lastModified": "2026-04-21T03:46:20.841Z",
+      "taskCount": 17,
+      "completedCount": 1,
+      "tags": [
+        "white-label"
+      ]
     }
   },
   "onboarding": {
     "tasks": [
       {
-        "id": 1,
+        "id": "1",
         "title": "Migration: onboarding_progress table + orgs.kind/trial_ends_at columns",
         "description": "Create migration 002_onboarding_progress.sql to add onboarding_progress table and columns orgs.kind, orgs.review_required, orgs.trial_ends_at as specified in PRD §7.5 and §4.8.",
         "details": "[CROSS-TAG BLOCKER] onboarding_progress + orgs.kind columns must follow reseller-tenancy #1-3 to avoid schema conflicts.\n\nRun `npm run db:migrate:generate 002_onboarding_progress`; implement exact SQL schema from PRD §7.5 including indexes. Add CHECK constraint on funnel column. Update orgs table with ALTER TABLE ADD COLUMN kind TEXT CHECK (kind IN ('reseller','customer')), review_required BOOLEAN DEFAULT false, trial_ends_at TIMESTAMPTZ. Use gen_random_uuid() for id.",
         "testStrategy": "Run migration forward/backward. Verify table schema with `\\d onboarding_progress` and `\\d orgs`. Insert test row and confirm UNIQUE constraint fires on duplicate (user_id, org_id, funnel). Check indexes exist.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5197,7 +5287,8 @@
             "dependencies": [],
             "details": "Execute `npm run db:migrate:generate 002_onboarding_progress` to create the base migration file with up/down functions in the migrations directory.",
             "status": "pending",
-            "testStrategy": "Verify the file is created with correct timestamp prefix and empty up/down functions."
+            "testStrategy": "Verify the file is created with correct timestamp prefix and empty up/down functions.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5208,7 +5299,8 @@
             ],
             "details": "Include UNIQUE constraint on (user_id, org_id, funnel), CHECK constraint on funnel column values, and any other indexes per PRD §7.5. Use TIMESTAMPTZ for timestamps.",
             "status": "pending",
-            "testStrategy": "Run migration forward and use \\d onboarding_progress to verify columns, types, constraints, and indexes match PRD."
+            "testStrategy": "Run migration forward and use \\d onboarding_progress to verify columns, types, constraints, and indexes match PRD.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5219,7 +5311,8 @@
             ],
             "details": "Execute: ALTER TABLE orgs ADD COLUMN kind TEXT CHECK (kind IN ('reseller','customer')); Ensure constraint is named appropriately.",
             "status": "pending",
-            "testStrategy": "After migration, verify column exists with \\d orgs and test INSERT with invalid value to confirm CHECK fires."
+            "testStrategy": "After migration, verify column exists with \\d orgs and test INSERT with invalid value to confirm CHECK fires.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5230,7 +5323,8 @@
             ],
             "details": "Execute: ALTER TABLE orgs ADD COLUMN review_required BOOLEAN DEFAULT false; ALTER TABLE orgs ADD COLUMN trial_ends_at TIMESTAMPTZ; Add to migration up function.",
             "status": "pending",
-            "testStrategy": "Verify columns, types, and default value with \\d orgs; INSERT without values to check default behavior."
+            "testStrategy": "Verify columns, types, and default value with \\d orgs; INSERT without values to check default behavior.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5243,21 +5337,23 @@
             ],
             "details": "Down: DROP TABLE onboarding_progress; ALTER TABLE orgs DROP COLUMN trial_ends_at, DROP COLUMN review_required, DROP COLUMN kind. Test UNIQUE constraint by inserting duplicate (user_id, org_id, funnel).",
             "status": "pending",
-            "testStrategy": "Run migration forward/backward multiple cycles. Use \\d on both tables, insert test rows, confirm UNIQUE fires on duplicates, indexes exist via \\di."
+            "testStrategy": "Run migration forward/backward multiple cycles. Use \\d on both tables, insert test rows, confirm UNIQUE fires on duplicates, indexes exist via \\di.",
+            "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:46:24.213Z"
       },
       {
-        "id": 2,
+        "id": "2",
         "title": "Migration: customer sub-org schema + invitation enhancements",
         "description": "Create migration 003_customer_suborg.sql adding orgs.parent_org_id, org_invitations.intended_role/team_id, and indexes as per PRD §5.8.",
         "details": "[CROSS-TAG BLOCKER] Customer sub-org schema depends on reseller-tenancy #1 (parent_org_id, org type enum).\n\nALTER TABLE orgs ADD COLUMN parent_org_id UUID REFERENCES orgs(id) ON DELETE CASCADE; ALTER TABLE org_invitations ADD COLUMN intended_role TEXT, team_id UUID REFERENCES teams(id); CREATE INDEX on orgs(parent_org_id) WHERE parent_org_id IS NOT NULL; CREATE INDEX on org_invitations(intended_role);",
         "testStrategy": "Migration forward/backward. Verify foreign key constraints with cross-insert test. Confirm indexes with EXPLAIN ANALYZE on parent_org_id queries.",
         "priority": "high",
         "dependencies": [
-          1
+          "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5266,7 +5362,8 @@
             "dependencies": [],
             "details": "Run `npm run db:migrate:generate 003_customer_suborg` to scaffold the migration file with up/down functions in the correct migrations directory.",
             "status": "pending",
-            "testStrategy": "Verify file created with correct timestamp prefix and empty up/down functions using ls migrations/"
+            "testStrategy": "Verify file created with correct timestamp prefix and empty up/down functions using ls migrations/",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5277,7 +5374,8 @@
             ],
             "details": "In up(): ALTER TABLE orgs ADD COLUMN parent_org_id UUID REFERENCES orgs(id) ON DELETE CASCADE; In down(): ALTER TABLE orgs DROP COLUMN parent_org_id;",
             "status": "pending",
-            "testStrategy": null
+            "testStrategy": null,
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5288,7 +5386,8 @@
             ],
             "details": "In up(): ALTER TABLE org_invitations ADD COLUMN intended_role TEXT, ADD COLUMN team_id UUID REFERENCES teams(id); In down(): ALTER TABLE org_invitations DROP COLUMN team_id, DROP COLUMN intended_role;",
             "status": "pending",
-            "testStrategy": null
+            "testStrategy": null,
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5299,7 +5398,8 @@
             ],
             "details": "In up(): CREATE INDEX ON orgs(parent_org_id) WHERE parent_org_id IS NOT NULL; In down(): DROP INDEX IF EXISTS orgs_parent_org_id_idx (use actual generated index name);",
             "status": "pending",
-            "testStrategy": "After migration, run \\di | grep parent_org_id to confirm index exists with WHERE clause."
+            "testStrategy": "After migration, run \\di | grep parent_org_id to confirm index exists with WHERE clause.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5310,20 +5410,22 @@
             ],
             "details": "In up(): CREATE INDEX ON org_invitations(intended_role); In down(): DROP INDEX IF EXISTS org_invitations_intended_role_idx; Test: npm run db:migrate:up 003 && npm run db:migrate:down 003",
             "status": "pending",
-            "testStrategy": "Run migration forward/backward. Verify schema with \\d orgs, \\d org_invitations. Test FK: INSERT orgs(parent_org_id=nonexistent_uuid) fails. Run EXPLAIN ANALYZE SELECT * FROM orgs WHERE parent_org_id=? uses index."
+            "testStrategy": "Run migration forward/backward. Verify schema with \\d orgs, \\d org_invitations. Test FK: INSERT orgs(parent_org_id=nonexistent_uuid) fails. Run EXPLAIN ANALYZE SELECT * FROM orgs WHERE parent_org_id=? uses index.",
+            "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:46:24.220Z"
       },
       {
-        "id": 3,
+        "id": "3",
         "title": "Rebase invitation token hash-at-rest from upstream fix/hash-invitation-tokens",
         "description": "Integrate upstream branch ensuring tokens stored as SHA-256 hashes per PRD §7.1 and §8.4.",
         "details": "[CROSS-TAG BLOCKER] Requires platform-ops #1 (upstream remote configured) before cherry-picking fix/hash-invitation-tokens.\n\nCherry-pick commits from feat/hash-invitation-tokens. Update InvitationService.createInvitation() to hash token immediately after nanoid(32) generation. Modify lookup to hash input and compare. Ensure plaintext returned once to email sender only.",
         "testStrategy": "Unit test createInvitation() - verify DB contains hash not plaintext. Test acceptInvitation() with valid/invalid/expired tokens. Snapshot DB before/after to confirm no plaintext storage.",
         "priority": "high",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -5334,7 +5436,8 @@
             "dependencies": [],
             "details": "Run `git fetch origin`, confirm `git remote -v` shows correct URLs, check SSH key or update HTTPS token if needed. Stash any local changes with `git stash`. Ensure clean working directory.",
             "status": "pending",
-            "testStrategy": "Verify no authentication errors on fetch; confirm upstream branch exists with `git branch -r | grep fix/hash-invitation-tokens`."
+            "testStrategy": "Verify no authentication errors on fetch; confirm upstream branch exists with `git branch -r | grep fix/hash-invitation-tokens`.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5345,7 +5448,8 @@
             ],
             "details": "Use `git log feat/hash-invitation-tokens --oneline` to list commits. Cherry-pick each with `git cherry-pick <commit-hash>`. Resolve any conflicts immediately by editing files and `git add`, then `git cherry-pick --continue`.",
             "status": "pending",
-            "testStrategy": "Run `git log --oneline -10` to confirm cherry-picked commits appear with correct messages and no duplicates."
+            "testStrategy": "Run `git log --oneline -10` to confirm cherry-picked commits appear with correct messages and no duplicates.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5356,7 +5460,8 @@
             ],
             "details": "Import crypto library, generate token = nanoid(32), compute hash = crypto.createHash('sha256').update(token).digest('hex'), save hash to DB. Ensure plaintext is passed to email service but never stored or logged again.",
             "status": "pending",
-            "testStrategy": "Unit test: mock nanoid, call createInvitation(), assert DB contains hash not plaintext, verify email receives plaintext token."
+            "testStrategy": "Unit test: mock nanoid, call createInvitation(), assert DB contains hash not plaintext, verify email receives plaintext token.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5367,7 +5472,8 @@
             ],
             "details": "In acceptInvitation() or lookup functions, take input token, compute hash = crypto.createHash('sha256').update(inputToken).digest('hex'), query DB for matching hash. Handle expired/used tokens by checking timestamps/status.",
             "status": "pending",
-            "testStrategy": "Unit tests: valid token hashes match, invalid/expired don't match, case-sensitive comparison fails correctly."
+            "testStrategy": "Unit tests: valid token hashes match, invalid/expired don't match, case-sensitive comparison fails correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5380,21 +5486,22 @@
             ],
             "details": "Run `git rebase origin/fix/hash-invitation-tokens`, resolve conflicts if any with `git add` and `git rebase --continue`. Run full test suite. Force-push with `git push origin <branch-name> --force-with-lease`.",
             "status": "pending",
-            "testStrategy": "All unit/integration tests pass post-rebase (createInvitation hashes correctly, acceptInvitation validates, no plaintext in DB snapshots). CI pipeline green."
+            "testStrategy": "All unit/integration tests pass post-rebase (createInvitation hashes correctly, acceptInvitation validates, no plaintext in DB snapshots). CI pipeline green.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 4,
+        "id": "4",
         "title": "Server: OrgService.createCustomerSubOrg transaction",
         "description": "Implement atomic transaction in src/org/org-service.ts for Funnel B provisioning per PRD §5.4.",
         "details": "Add createCustomerSubOrg({resellerId, customer_name, primary_admin_email, plan_id, brand_override?, vendor_allowlist?, domain?}) returning new org_id. Steps: 1) INSERT orgs (kind='customer', parent_org_id=resellerId,...), 2) INSERT tool_allowlists seeded from reseller or override, 3) INSERT onboarding_progress(step='customer_admin_pending'), 4) If send_invite_now call InvitationService.createInvitation(intended_role='owner'). Use DB transaction with rollback.",
         "testStrategy": "Unit/integration tests: happy path creates all 4 resources; failure in step 3 rolls back all; email conflict prevents creation; verify tool_allowlists inherits correctly.",
         "priority": "high",
         "dependencies": [
-          1,
-          2,
-          3
+          "1",
+          "2",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -5405,7 +5512,8 @@
             "dependencies": [],
             "details": "Use TypeScript function with params: resellerId (UUID), customer_name (string), primary_admin_email (string), plan_id (UUID), optional brand_override, vendor_allowlist, domain, send_invite_now (boolean). Employ DB transaction API (e.g., pg transaction or ORM equivalent) to ensure atomicity across all steps.",
             "status": "pending",
-            "testStrategy": "Unit test method signature validation; verify transaction starts correctly and rolls back on early exception."
+            "testStrategy": "Unit test method signature validation; verify transaction starts correctly and rolls back on early exception.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5416,7 +5524,8 @@
             ],
             "details": "Capture the generated new org_id from INSERT result. Include fields: name=customer_name, primary_admin_email, plan_id, domain if provided, kind='customer', parent_org_id=resellerId. Handle any unique constraint on email.",
             "status": "pending",
-            "testStrategy": "Verify org created with correct parent_org_id and kind; test email uniqueness conflict rolls back transaction."
+            "testStrategy": "Verify org created with correct parent_org_id and kind; test email uniqueness conflict rolls back transaction.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5428,7 +5537,8 @@
             ],
             "details": "Fetch reseller allowlist via query on org_id=resellerId. If vendor_allowlist provided, use it; else inherit from reseller. INSERT records associating with new org_id, ensuring foreign key integrity within transaction.",
             "status": "pending",
-            "testStrategy": "Test inheritance: no override copies reseller list; override uses provided list; failure in this step rolls back org insert."
+            "testStrategy": "Test inheritance: no override copies reseller list; override uses provided list; failure in this step rolls back org insert.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5441,7 +5551,8 @@
             ],
             "details": "onboarding_progress: org_id=new_org_id, step='customer_admin_pending'. For invitation: pass new_org_id, email=primary_admin_email, role='owner'. Ensure InvitationService call is within transaction or handles rollback.",
             "status": "pending",
-            "testStrategy": "Verify progress inserted; test send_invite_now true creates invitation, false skips it; simulate InvitationService failure for rollback."
+            "testStrategy": "Verify progress inserted; test send_invite_now true creates invitation, false skips it; simulate InvitationService failure for rollback.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5455,19 +5566,20 @@
             ],
             "details": "After all inserts/invitation, commit transaction and return { org_id: new_org_id }. Catch any errors, ensure rollback, re-raise with context (e.g., 'Failed to create customer sub-org').",
             "status": "pending",
-            "testStrategy": "Integration test full happy path creates all 4 resources; inject failures at each step to confirm rollback (no partial state); verify return value."
+            "testStrategy": "Integration test full happy path creates all 4 resources; inject failures at each step to confirm rollback (no partial state); verify return value.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 5,
+        "id": "5",
         "title": "Server: POST /orgs/:resellerId/customers route with guards",
         "description": "Add Fastify route in src/org/routes/org-crud.ts with role/rate-limit per PRD §5.2, §8.1, §8.2.",
         "details": "POST /orgs/:resellerId/customers - require org_members.role IN ('owner','admin') on reseller org. Rate limit 20/hour per reseller_id using @fastify/rate-limit key=resellerId. Validate primary_admin_email not conflicting. Call OrgService.createCustomerSubOrg. Emit audit customer_org.created.",
         "testStrategy": "Auth tests: owner success, admin success, member 403, unauth 401. Rate limit: 21st request 429. Integration: full form validation + transaction rollback simulation.",
         "priority": "high",
         "dependencies": [
-          4
+          "4"
         ],
         "status": "pending",
         "subtasks": [
@@ -5478,7 +5590,8 @@
             "dependencies": [],
             "details": "Use fastify.post('/orgs/:resellerId/customers', handler) following Fastify route declaration patterns. Ensure :resellerId param is properly captured for guards and service calls.",
             "status": "pending",
-            "testStrategy": "Verify route registration by checking Fastify print routes output includes the endpoint."
+            "testStrategy": "Verify route registration by checking Fastify print routes output includes the endpoint.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5489,7 +5602,8 @@
             ],
             "details": "Query org_members table joining on orgs.id = :resellerId and user_id from session. Return 403 if not owner/admin, 401 if unauthenticated. Use existing auth decorators.",
             "status": "pending",
-            "testStrategy": "Unit tests: owner success, admin success, member 403, unauth 401 using mocked DB/session."
+            "testStrategy": "Unit tests: owner success, admin success, member 403, unauth 401 using mocked DB/session.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5500,7 +5614,8 @@
             ],
             "details": "Register rate-limit plugin at route/plugin level with { keyGenerator: (req) => req.params.resellerId, max: 20, timeWindow: '1h' }. Handle 429 responses gracefully.",
             "status": "pending",
-            "testStrategy": "Integration test: 20 successful requests pass, 21st returns 429 with correct headers."
+            "testStrategy": "Integration test: 20 successful requests pass, 21st returns 429 with correct headers.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5511,7 +5626,8 @@
             ],
             "details": "Schema: { customer_name: {type:'string'}, primary_admin_email: {type:'email'}, plan_id: {type:'string'}, ... }. Query for email conflicts across relevant tables before proceeding.",
             "status": "pending",
-            "testStrategy": "Test valid/invalid payloads return 400. Email conflict returns specific 409 error message."
+            "testStrategy": "Test valid/invalid payloads return 400. Email conflict returns specific 409 error message.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5524,20 +5640,21 @@
             ],
             "details": "Pass {resellerId, customer_name, primary_admin_email, plan_id, ...} to service. On success: return 201 with new org_id/details, emit audit event with relevant metadata.",
             "status": "pending",
-            "testStrategy": "Integration test: full happy path creates sub-org and emits audit. Mock service failure returns 500."
+            "testStrategy": "Integration test: full happy path creates sub-org and emits audit. Mock service failure returns 500.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 6,
+        "id": "6",
         "title": "Email: branded customer-admin-invite template",
         "description": "Create src/web/templates/emails/customer-admin-invite.ts per PRD §5.5 using reseller brand.",
         "details": "Template takes brand: BrandConfig, customer_name, reseller_name, invite_url. Use reseller subdomain if verified else default. Add List-Unsubscribe header. Plain-text alternate. Integrate with existing transactional email pipeline from src/org/routes/invitations.ts.",
         "testStrategy": "Render test with mock brand - verify logo/color/from-address. Send test email to self, confirm delivery/branding. Test fallback to platform default brand.",
         "priority": "medium",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -5548,7 +5665,8 @@
             "dependencies": [],
             "details": "Include dynamic placeholders for customer_name, reseller_name, invite_url. Use responsive design compatible with major email clients. Reference PRD §5.5 for content structure and best practices from invitation email templates.",
             "status": "pending",
-            "testStrategy": "Render test with mock BrandConfig - verify logo displays, colors applied, from-address matches brand.email."
+            "testStrategy": "Render test with mock BrandConfig - verify logo displays, colors applied, from-address matches brand.email.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5559,7 +5677,8 @@
             ],
             "details": "Integrate with src/brand/index.ts resolution. Check reseller domain verification status. Handle cases where brand data is missing or incomplete.",
             "status": "pending",
-            "testStrategy": "Unit tests: verified reseller shows custom brand; unverified falls back to default; missing brand uses platform default."
+            "testStrategy": "Unit tests: verified reseller shows custom brand; unverified falls back to default; missing brand uses platform default.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5570,7 +5689,8 @@
             ],
             "details": "Generate plain-text from HTML content. Construct List-Unsubscribe header with unsubscribe URL based on invite_url. Ensure multipart MIME structure.",
             "status": "pending",
-            "testStrategy": "Validate MIME structure parses correctly; confirm List-Unsubscribe header present and formatted per RFC."
+            "testStrategy": "Validate MIME structure parses correctly; confirm List-Unsubscribe header present and formatted per RFC.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5582,7 +5702,8 @@
             ],
             "details": "Interface: { brand: BrandConfig, customer_name: string, reseller_name: string, invite_url: string }. Return { html: string, text: string, headers: Record<string,string> }.",
             "status": "pending",
-            "testStrategy": "TypeScript compile test; runtime render with all params produces valid output object."
+            "testStrategy": "TypeScript compile test; runtime render with all params produces valid output object.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5593,20 +5714,21 @@
             ],
             "details": "In InvitationService.createInvitation(), detect customer admin invites and call new template renderer. Pass resolved brand from org context. Ensure existing email pipeline unchanged for other invite types.",
             "status": "pending",
-            "testStrategy": "Integration test: trigger customer admin invite → verify correct template rendered with proper branding → send test email to self and confirm delivery/appearance."
+            "testStrategy": "Integration test: trigger customer admin invite → verify correct template rendered with proper branding → send test email to self and confirm delivery/appearance.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 7,
+        "id": "7",
         "title": "UI: reseller Add Customer form + confirmation",
         "description": "Build /admin/customers/new form per PRD §5.3 table with server-rendered preview.",
         "details": "Server-rendered form in src/web/templates/onboarding-customer.ts style. Fields per PRD table. Multi-select vendor_allowlist from reseller's allowlist. Live brand preview. POST to /orgs/:resellerId/customers. Success: confirmation screen with customer details + admin invite status.",
         "testStrategy": "Form validation: required fields, email conflict error. Brand inheritance test. E2E: submit → 201 → confirmation renders correctly.",
         "priority": "medium",
         "dependencies": [
-          5,
-          6
+          "5",
+          "6"
         ],
         "status": "pending",
         "subtasks": [
@@ -5617,7 +5739,8 @@
             "dependencies": [],
             "details": "Include form fields per PRD table: customer name, primary_admin_email, vendor_allowlist multi-select. Use reseller context from route params. Add CSRF protection and POST action to /orgs/:resellerId/customers.",
             "status": "pending",
-            "testStrategy": "Render test: verify all form fields present and styled correctly. Check reseller-specific vendor options load from DB."
+            "testStrategy": "Render test: verify all form fields present and styled correctly. Check reseller-specific vendor options load from DB.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5628,7 +5751,8 @@
             ],
             "details": "Query reseller's vendor_allowlist from DB. Use searchable multi-select UI component. Pre-populate with reseller's current vendors. Include validation for at least one vendor selected.",
             "status": "pending",
-            "testStrategy": "Unit test: vendor list fetches correctly for reseller. UI test: select/deselect vendors updates form state correctly."
+            "testStrategy": "Unit test: vendor list fetches correctly for reseller. UI test: select/deselect vendors updates form state correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5639,7 +5763,8 @@
             ],
             "details": "Create preview pane showing customer branding with reseller logo/colors/fonts. Update on customer_name, vendor selection changes. Use server-side preview generation or client-side preview with form state.",
             "status": "pending",
-            "testStrategy": "E2E test: change form fields → verify preview updates instantly with correct brand inheritance."
+            "testStrategy": "E2E test: change form fields → verify preview updates instantly with correct brand inheritance.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5651,7 +5776,8 @@
             ],
             "details": "Client-side: required fields, valid email format. Server-side: check primary_admin_email uniqueness, vendor_allowlist not empty. Display inline errors and global error banner for conflicts.",
             "status": "pending",
-            "testStrategy": "Test invalid email → error message. Test duplicate email → server conflict error displays. Test missing required fields → prevents submission."
+            "testStrategy": "Test invalid email → error message. Test duplicate email → server conflict error displays. Test missing required fields → prevents submission.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5663,20 +5789,21 @@
             ],
             "details": "Redirect to /admin/customers/:customerId/confirmation on 201. Display customer name, email, vendors, brand preview. Show invite status (sent/pending). Include back to customers list link.",
             "status": "pending",
-            "testStrategy": "E2E: complete form submission → verify 201 response → confirmation renders with correct customer details and invite status."
+            "testStrategy": "E2E: complete form submission → verify 201 response → confirmation renders with correct customer details and invite status.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 8,
+        "id": "8",
         "title": "Server: public /signup route with Auth0 + rate limits",
         "description": "Implement src/auth/signup.ts and Fastify plugin src/onboarding/reseller-signup.ts per PRD §4.3.",
         "details": "GET/POST /signup public, rate-limit 10/min IP + 3/min email domain. Three auth paths via Auth0 (email/password, Google, Microsoft). Form: email, password(if needed), organization_name, expected_customer_count, agreed_to_terms. Create Auth0 user → orgs(kind='reseller') → org_members(role='owner') in transaction. Set session, redirect /onboarding/reseller/welcome.",
         "testStrategy": "Rate limit tests. Auth paths: all three create correct records. Transaction rollback on Auth0 failure. Verify email_verified gate bypassed for federated.",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -5687,7 +5814,8 @@
             "dependencies": [],
             "details": "Use @fastify/rate-limit with keyFunction for 'ip' and custom 'email_domain' extraction from body. Configure max=10, timeWindow=60*1000 for IP; max=3 for domain. Apply to both GET and POST handlers before other middleware.",
             "status": "pending",
-            "testStrategy": "Test 11th IP request returns 429; 4th domain request 429. Verify different IPs/domains allowed independently."
+            "testStrategy": "Test 11th IP request returns 429; 4th domain request 429. Verify different IPs/domains allowed independently.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5696,7 +5824,8 @@
             "dependencies": [],
             "details": "In src/auth/signup.ts, define Fastify GET route (no auth). Use Zod schema for form validation. Render server-side template with conditional password field based on auth method selection (email/password, Google, Microsoft).",
             "status": "pending",
-            "testStrategy": "GET returns 200 with form HTML; schema validates all field types/constraints; no auth required."
+            "testStrategy": "GET returns 200 with form HTML; schema validates all field types/constraints; no auth required.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5708,7 +5837,8 @@
             ],
             "details": "In src/auth/signup.ts POST handler: validate form with Zod. Route to Auth0: 1) email/password → Auth0 Database signup; 2) Google/Microsoft → federated OAuth flow. Extract user_id/email from Auth0 callback. Handle rate limits from subtask 1.",
             "status": "pending",
-            "testStrategy": "Mock Auth0 responses: each path succeeds, returns user profile; invalid creds → 400; rate limit triggers 429."
+            "testStrategy": "Mock Auth0 responses: each path succeeds, returns user profile; invalid creds → 400; rate limit triggers 429.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5719,7 +5849,8 @@
             ],
             "details": "After Auth0 success, use DB transaction: 1) INSERT orgs (kind='reseller', name=organization_name, expected_customer_count); 2) INSERT org_members (org_id, user_id from Auth0, role='owner'); Rollback on any failure. Use values from form.",
             "status": "pending",
-            "testStrategy": "Integration: full flow creates 3 records or none (rollback); Auth0 failure → no DB changes; duplicate email → Auth0 error, no DB writes."
+            "testStrategy": "Integration: full flow creates 3 records or none (rollback); Auth0 failure → no DB changes; duplicate email → Auth0 error, no DB writes.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5733,20 +5864,21 @@
             ],
             "details": "Export Fastify plugin registering both GET/POST /signup from src/auth/signup.ts. On success: set fastify session with user/org data, permanent redirect (308) to /onboarding/reseller/welcome. Ensure public route (no auth guard).",
             "status": "pending",
-            "testStrategy": "E2E: form submit → Auth0 → DB tx → session set → 308 redirect; verify session contains correct org_id/user_id."
+            "testStrategy": "E2E: form submit → Auth0 → DB tx → session set → 308 redirect; verify session contains correct org_id/user_id.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 9,
+        "id": "9",
         "title": "Billing: resellerPlans catalog + Stripe checkout",
         "description": "Extend src/billing/plan-catalog.ts and checkout.ts for reseller tiers per PRD §4.5.",
         "details": "Add resellerPlans: Launch/Growth/Scale with Stripe product/price IDs, 14-day trial. Update checkout.ts for reseller plan SKUs. Webhook success: set orgs.trial_ends_at=NOW()+14d. Require email_verified=true before billing screen.",
         "testStrategy": "Unit: plan catalog lookup. Integration: mock Stripe checkout → webhook → trial_ends_at set. Test email_verified gate blocks unverified users.",
         "priority": "high",
         "dependencies": [
-          1,
-          8
+          "1",
+          "8"
         ],
         "status": "pending",
         "subtasks": [
@@ -5757,7 +5889,8 @@
             "dependencies": [],
             "details": "Define resellerPlans array with plan objects containing name, Stripe product ID, price ID, and 14-day trial configuration. Ensure compatibility with existing plan lookup functions.",
             "status": "pending",
-            "testStrategy": "Unit test: verify resellerPlans returns correct tiers and Stripe IDs for each plan type."
+            "testStrategy": "Unit test: verify resellerPlans returns correct tiers and Stripe IDs for each plan type.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5768,7 +5901,8 @@
             ],
             "details": "Add logic to accept reseller plan identifiers, map to Stripe price IDs, create Checkout Sessions with trial_period_days=14, and validate org context.",
             "status": "pending",
-            "testStrategy": "Unit test: mock plan lookup and verify Checkout Session creation with correct price ID and trial period."
+            "testStrategy": "Unit test: mock plan lookup and verify Checkout Session creation with correct price ID and trial period.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5777,7 +5911,8 @@
             "dependencies": [],
             "details": "Check user.email_verified in route handler or before rendering billing page; redirect unverified users to verification flow with clear error message.",
             "status": "pending",
-            "testStrategy": "Integration test: unverified user accessing billing redirects; verified user proceeds to checkout."
+            "testStrategy": "Integration test: unverified user accessing billing redirects; verified user proceeds to checkout.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5788,7 +5923,8 @@
             ],
             "details": "In webhook success path, query org by Stripe customer/session metadata, update trial_ends_at using database transaction, emit audit event.",
             "status": "pending",
-            "testStrategy": "Integration test: mock Stripe webhook → verify trial_ends_at updated correctly in database."
+            "testStrategy": "Integration test: mock Stripe webhook → verify trial_ends_at updated correctly in database.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5802,20 +5938,21 @@
             ],
             "details": "Unit: plan catalog lookup. Integration: full flow with mock Stripe (checkout → webhook → trial set). E2E: email_verified blocks unverified users.",
             "status": "pending",
-            "testStrategy": "Run full test suite: verify 100% coverage for new reseller billing paths, including edge cases like invalid SKUs."
+            "testStrategy": "Run full test suite: verify 100% coverage for new reseller billing paths, including edge cases like invalid SKUs.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 10,
+        "id": "10",
         "title": "Wizard framework + reseller onboarding tour",
         "description": "Build src/web/wizard.ts framework and 3-step reseller tour per PRD §4.6, §7.2.",
         "details": "WizardStep type exactly as PRD code sample. Steps: 1) customer survey → onboarding_progress.payload, 2) vendor allowlist selection → tool_allowlists, 3) brand setup + subdomain queue. Persist progress in onboarding_progress(funnel='reseller'). Server-rendered, form-POST/step. Skippable with analytics.",
         "testStrategy": "Resume test: complete step1, close tab, verify jumps to step2. Skip test emits analytics. Completion updates onboarding_progress.completed_at.",
         "priority": "medium",
         "dependencies": [
-          1,
-          9
+          "1",
+          "9"
         ],
         "status": "pending",
         "subtasks": [
@@ -5826,7 +5963,8 @@
             "dependencies": [],
             "details": "Implement WizardStep interface with required properties per PRD. Build framework handling step progression, persistence to onboarding_progress table (funnel='reseller'), and skippable steps with analytics events.",
             "status": "pending",
-            "testStrategy": "Unit test WizardStep type validation. Verify framework initializes correctly and handles basic step navigation."
+            "testStrategy": "Unit test WizardStep type validation. Verify framework initializes correctly and handles basic step navigation.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5837,7 +5975,8 @@
             ],
             "details": "Create server-rendered form for survey inputs as specified in PRD §4.6. On submit, update onboarding_progress.payload JSON field. Add skip button emitting analytics event.",
             "status": "pending",
-            "testStrategy": "Test form submission updates payload correctly. Resume test: complete step1, close tab, verify jumps to step2 on reload."
+            "testStrategy": "Test form submission updates payload correctly. Resume test: complete step1, close tab, verify jumps to step2 on reload.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5848,7 +5987,8 @@
             ],
             "details": "Server-rendered multi-select form pulling from reseller's available tools. POST updates tool_allowlists with selected vendors. Support skip with analytics and progress persistence.",
             "status": "pending",
-            "testStrategy": "Verify selections save to tool_allowlists. Test skip emits analytics event without saving."
+            "testStrategy": "Verify selections save to tool_allowlists. Test skip emits analytics event without saving.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5859,7 +5999,8 @@
             ],
             "details": "Server-rendered form for brand settings with live preview. On completion, queue subdomain, mark onboarding_progress.completed_at, and show success screen. Fully skippable.",
             "status": "pending",
-            "testStrategy": "E2E test: complete all steps → verify completed_at timestamp set and subdomain queued."
+            "testStrategy": "E2E test: complete all steps → verify completed_at timestamp set and subdomain queued.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5872,20 +6013,21 @@
             ],
             "details": "Implement global skip handler emitting analytics events. Add resume logic checking onboarding_progress for current step. Ensure server-side state consistency on page reloads.",
             "status": "pending",
-            "testStrategy": "Skip test: skip all steps → verify analytics emitted and funnel marked complete. Resume test across browser sessions."
+            "testStrategy": "Skip test: skip all steps → verify analytics emitted and funnel marked complete. Resume test across browser sessions.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 11,
+        "id": "11",
         "title": "UI: first-customer inline launch + dashboard banner",
         "description": "Implement Funnel A→B bridge per PRD §4.7 with dismissible banner.",
         "details": "End of reseller wizard: inline launch /admin/customers/new. Dashboard: query onboarding_progress WHERE funnel='reseller' AND step!='activated' → show banner until dismissed or customer added. Store banner dismissal in payload JSONB.",
         "testStrategy": "E2E: skip first-customer → banner shows → dismiss → banner gone. Add customer → banner gone. Refresh persists state.",
         "priority": "medium",
         "dependencies": [
-          7,
-          10
+          "7",
+          "10"
         ],
         "status": "pending",
         "subtasks": [
@@ -5896,7 +6038,8 @@
             "dependencies": [],
             "details": "Modify wizard completion handler to render /admin/customers/new inline instead of redirect. Ensure seamless transition with shared state from wizard session. Handle responsive layout for embedded customer form.",
             "status": "pending",
-            "testStrategy": "E2E: Complete reseller wizard → verify inline customer form appears without page reload → form pre-populates org context."
+            "testStrategy": "E2E: Complete reseller wizard → verify inline customer form appears without page reload → form pre-populates org context.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5905,7 +6048,8 @@
             "dependencies": [],
             "details": "Write SQL query: SELECT COUNT(*) FROM onboarding_progress WHERE funnel='reseller' AND step!='activated'. Cache result in session or Redis for dashboard loads. Return boolean flag to frontend.",
             "status": "pending",
-            "testStrategy": "Unit: Test query with mock data → returns true when step pending, false when activated. Integration: Verify query executes <50ms with index."
+            "testStrategy": "Unit: Test query with mock data → returns true when step pending, false when activated. Integration: Verify query executes <50ms with index.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5916,7 +6060,8 @@
             ],
             "details": "Design banner with call-to-action linking to /admin/customers/new. Add dismiss handler → POST /api/banner-dismiss with org_id, set payload.dismissed_at timestamp. Style as non-intrusive top banner.",
             "status": "pending",
-            "testStrategy": "Component: Render with show=true/false → verify visibility. Click dismiss → API call with correct payload → banner hides."
+            "testStrategy": "Component: Render with show=true/false → verify visibility. Click dismiss → API call with correct payload → banner hides.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5927,7 +6072,8 @@
             ],
             "details": "POST /api/banner-dismiss: UPDATE orgs SET payload = payload || jsonb_build_object('banner_dismissed_at', NOW()) WHERE id=$1. Modify banner query: AND (payload->>'banner_dismissed_at' IS NULL OR payload->>'banner_dismissed_at' < NOW() - interval '30 days').",
             "status": "pending",
-            "testStrategy": "API: POST dismiss → verify JSONB updated. Query after dismiss → returns false. Add customer → query false independent of dismiss."
+            "testStrategy": "API: POST dismiss → verify JSONB updated. Query after dismiss → returns false. Add customer → query false independent of dismiss.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -5940,20 +6086,21 @@
             ],
             "details": "Test scenarios: 1) Fresh reseller → banner shows → dismiss → refresh → gone. 2) Banner shows → add customer → banner gone. 3) Dismiss + add customer → both conditions clear banner. Use Playwright/Cypress.",
             "status": "pending",
-            "testStrategy": "E2E coverage: 100% pass rate across browsers. Verify DB state post-test matches expectations. Test edge: partial onboarding_progress records."
+            "testStrategy": "E2E coverage: 100% pass rate across browsers. Verify DB state post-test matches expectations. Test edge: partial onboarding_progress records.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 12,
+        "id": "12",
         "title": "Subdomain verification job + brand setup",
         "description": "Async job for custom subdomain verification per PRD §4.6, §7.4.",
         "details": "New reseller_subdomains table (add to migration 002). Queue job on slug selection. Publish CNAME target in UI. Poll DNS until verified. Fallback to conduit.wyre.tld until success. Dashboard shows status + recheck button.",
         "testStrategy": "Mock DNS job: pending→verified→active. Email template test: verified subdomain in From vs fallback.",
         "priority": "medium",
         "dependencies": [
-          1,
-          10
+          "1",
+          "10"
         ],
         "status": "pending",
         "subtasks": [
@@ -5964,7 +6111,8 @@
             "dependencies": [],
             "details": "Include columns: reseller_id (UUID FK to orgs), slug (TEXT unique), cname_target (TEXT), status (ENUM: pending, verified, active, failed), verified_at (TIMESTAMP), created_at/updated_at. Add indexes on reseller_id and slug.",
             "status": "pending",
-            "testStrategy": "Run migration forward/backward. Verify table schema with \\d reseller_subdomains. Test FK constraint by inserting invalid reseller_id."
+            "testStrategy": "Run migration forward/backward. Verify table schema with \\d reseller_subdomains. Test FK constraint by inserting invalid reseller_id.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -5975,7 +6123,8 @@
             ],
             "details": "Job logic: Query DNS for slug.reseller_domain CNAME == cname_target. Update status to 'verified'/'active' on success. Implement exponential backoff polling (every 5min up to 24hrs). Log failures. Fallback routing to conduit.wyre.tld until active.",
             "status": "pending",
-            "testStrategy": "Mock DNS resolver returning pending→verified→active states. Verify job transitions status correctly. Test fallback routing with unverified status."
+            "testStrategy": "Mock DNS resolver returning pending→verified→active states. Verify job transitions status correctly. Test fallback routing with unverified status.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -5987,7 +6136,8 @@
             ],
             "details": "In /orgs/:resellerId/customers POST handler: Validate slug uniqueness, insert to reseller_subdomains with status='pending', dispatch verification job with job_id. Return 202 Accepted with polling endpoint.",
             "status": "pending",
-            "testStrategy": "Submit form with slug → verify DB insert + job queued. Check job_id matches reseller_subdomains record. Test duplicate slug → 409 Conflict."
+            "testStrategy": "Submit form with slug → verify DB insert + job queued. Check job_id matches reseller_subdomains record. Test duplicate slug → 409 Conflict.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -5998,7 +6148,8 @@
             ],
             "details": "Server-rendered table in dashboard: slug, status badge (pending/yellow, verified/green, failed/red), verified_at, actions (recheck button → POST /admin/subdomains/:id/reverify → queue job). Live status polling via SSE/WebSocket.",
             "status": "pending",
-            "testStrategy": "Render dashboard with mock records (pending/verified/failed). Click recheck → verify job re-queued. E2E: status updates in real-time via SSE."
+            "testStrategy": "Render dashboard with mock records (pending/verified/failed). Click recheck → verify job re-queued. E2E: status updates in real-time via SSE.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6010,20 +6161,21 @@
             ],
             "details": "Update BrandConfig resolver: if reseller_subdomains.status='active' then from_domain=slug.reseller_domain else 'conduit.wyre.tld'. Publish CNAME target (e.g., 'cdn.wyre-platform.com') in customer creation UI. Update all brand-dependent components (emails, headers).",
             "status": "pending",
-            "testStrategy": "Mock verification states → verify BrandConfig returns correct from_domain/CNAME. Test email template render with verified vs fallback. Confirm UI displays correct CNAME target."
+            "testStrategy": "Mock verification states → verify BrandConfig returns correct from_domain/CNAME. Test email template render with verified vs fallback. Confirm UI displays correct CNAME target.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 13,
+        "id": "13",
         "title": "Funnel C: branded invite page + welcome interstitial",
         "description": "Extend src/org/routes/invitations.ts for target org branding per PRD §6.1, §6.5.",
         "details": "renderInvitePage(): resolve brand from target org (reseller→customer inheritance). Post-accept: render welcome interstitial before /dashboard. Use src/brand/index.ts resolution.",
         "testStrategy": "GET /invite/<token>: verify customer sub-org shows reseller brand not Wyre. Expired/unknown token: same generic error page. Post-accept flow renders interstitial.",
         "priority": "medium",
         "dependencies": [
-          3,
-          6
+          "3",
+          "6"
         ],
         "status": "pending",
         "subtasks": [
@@ -6034,7 +6186,8 @@
             "dependencies": [],
             "details": "Integrate src/brand/index.ts resolution function. Handle cases: direct customer org brand, inherit from reseller if customer lacks brand, fallback to platform default. Extract target org from invite token.",
             "status": "pending",
-            "testStrategy": "Unit test: mock invite token → verify returns reseller brand for customer sub-org, customer brand for direct org, default for no brand."
+            "testStrategy": "Unit test: mock invite token → verify returns reseller brand for customer sub-org, customer brand for direct org, default for no brand.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6045,7 +6198,8 @@
             ],
             "details": "Pass resolved BrandConfig to template/renderer. Apply brand-specific styles, logo, colors, fonts per PRD §6.1. Ensure responsive design and accessibility.",
             "status": "pending",
-            "testStrategy": "Integration test: GET /invite/<token> → verify HTML includes reseller logo/colors for customer sub-org, not Wyre default."
+            "testStrategy": "Integration test: GET /invite/<token> → verify HTML includes reseller logo/colors for customer sub-org, not Wyre default.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6056,7 +6210,8 @@
             ],
             "details": "Use same brand resolution as invite page (src/brand/index.ts). Include elements like welcome message, next steps, org info per PRD §6.5. Make dismissible with auto-redirect to /dashboard.",
             "status": "pending",
-            "testStrategy": "Render test: mock brand → verify displays correct logo, colors, content. Test auto-redirect timer and manual dismiss button."
+            "testStrategy": "Render test: mock brand → verify displays correct logo, colors, content. Test auto-redirect timer and manual dismiss button.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6068,7 +6223,8 @@
             ],
             "details": "After successful invite acceptance (user creation/org join), intercept /dashboard redirect. Render interstitial with resolved brand, store dismiss state in session/localStorage to prevent re-showing.",
             "status": "pending",
-            "testStrategy": "E2E test: accept invite → verify interstitial shows before dashboard, dismiss → lands on dashboard, refresh dashboard → no interstitial."
+            "testStrategy": "E2E test: accept invite → verify interstitial shows before dashboard, dismiss → lands on dashboard, refresh dashboard → no interstitial.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6079,20 +6235,21 @@
             ],
             "details": "Cover: GET /invite/valid_token (customer shows reseller brand), expired/unknown token (generic error page), post-accept interstitial. Use mocks for brand resolution and DB.",
             "status": "pending",
-            "testStrategy": "Run full suite: verify 100% pass rate. Check console/network for no errors. Test edge cases: no org brand, broken inheritance, session expiry."
+            "testStrategy": "Run full suite: verify 100% pass rate. Check console/network for no errors. Test edge cases: no org brand, broken inheritance, session expiry.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 14,
+        "id": "14",
         "title": "Funnel C: Auth0 connection hint for domain federation",
         "description": "Add src/auth/auth0.ts support for connection hint per PRD §6.3.",
         "details": "In /auth/login?invite=<token>, check invite→org.domain vs user email domain + reseller domain_trust_enabled → append connection hint to /authorize URL. Default to Universal Login otherwise.",
         "testStrategy": "Test domain match → correct connection pre-selected. No match → default login. Verify state param carries invite token across.",
         "priority": "medium",
         "dependencies": [
-          8,
-          13
+          "8",
+          "13"
         ],
         "status": "pending",
         "subtasks": [
@@ -6103,7 +6260,8 @@
             "dependencies": [],
             "details": "In the route handler for /auth/login?invite=<token>, parse the invite parameter, validate it exists and is a valid token format, then fetch the corresponding invite record from the database to retrieve org details.",
             "status": "pending",
-            "testStrategy": "Test with valid/invalid/missing invite token: valid fetches org data, invalid returns error, missing defaults to standard login flow."
+            "testStrategy": "Test with valid/invalid/missing invite token: valid fetches org data, invalid returns error, missing defaults to standard login flow.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6114,7 +6272,8 @@
             ],
             "details": "Write a helper function that takes invite org.domain, extracts domain from user email (or detects from form input), checks reseller.domain_trust_enabled flag, and determines if domain federation applies.",
             "status": "pending",
-            "testStrategy": "Unit tests: matching domains return true, non-matching false, reseller flag off disables match, various email formats parsed correctly."
+            "testStrategy": "Unit tests: matching domains return true, non-matching false, reseller flag off disables match, various email formats parsed correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6125,7 +6284,8 @@
             ],
             "details": "In the Auth0 authorize URL generation, add logic: if domainMatch && reseller.domain_trust_enabled, append ?connection=<org_domain_or_connection_id> to target federated connection; else use default Universal Login.",
             "status": "pending",
-            "testStrategy": "Verify generated URLs: domain match includes connection hint, no match omits it and uses universal login params."
+            "testStrategy": "Verify generated URLs: domain match includes connection hint, no match omits it and uses universal login params.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6136,7 +6296,8 @@
             ],
             "details": "Base64 encode invite token and include in Auth0 state param (state=invite:<encoded_token>|other_state); on callback, decode and validate state carries valid invite token before redirecting.",
             "status": "pending",
-            "testStrategy": "Full flow test: login with invite → state roundtrip preserves token → post-auth callback extracts and validates invite token correctly."
+            "testStrategy": "Full flow test: login with invite → state roundtrip preserves token → post-auth callback extracts and validates invite token correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6147,20 +6308,21 @@
             ],
             "details": "Write integration tests simulating: domain match → federated connection pre-selected; no match → Universal Login; invalid/expired invite → generic error; verify state param integrity across full Auth0 flow.",
             "status": "pending",
-            "testStrategy": "E2E tests with mocked Auth0 responses: correct connection pre-selection on match, default login on mismatch, state param carries invite token, error handling for edge cases."
+            "testStrategy": "E2E tests with mocked Auth0 responses: correct connection pre-selection on match, default login on mismatch, state param carries invite token, error handling for edge cases.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 15,
+        "id": "15",
         "title": "Customer admin tour templates",
         "description": "Create src/web/templates/onboarding-customer.ts for Funnel B admin tour per PRD §5.6.",
         "details": "3 steps: 1) Welcome showing provisioned plan/vendors, 2) Team invite form calling InvitationService, 3) Vendor connect picker filtered by allowlist. Update onboarding_progress.step='activated' on completion. Emit customer.activated.",
         "testStrategy": "Render each step with mock data. E2E: complete tour → step='activated' + analytics event.",
         "priority": "medium",
         "dependencies": [
-          7,
-          13
+          "7",
+          "13"
         ],
         "status": "pending",
         "subtasks": [
@@ -6171,7 +6333,8 @@
             "dependencies": [],
             "details": "Use existing tour template pattern from similar files. Define steps array with placeholders for welcome, invite, and vendor picker. Implement next/prev handlers and completion callback.",
             "status": "pending",
-            "testStrategy": "Unit: verify steps array length=3, navigation doesn't crash on bounds."
+            "testStrategy": "Unit: verify steps array length=3, navigation doesn't crash on bounds.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6182,7 +6345,8 @@
             ],
             "details": "Query customer.provisioned_plan and vendors from backend context. Render branded welcome message, plan tier, and list of pre-provisioned vendors with icons.",
             "status": "pending",
-            "testStrategy": "Render with mock customer data - verify plan name and vendor count display correctly."
+            "testStrategy": "Render with mock customer data - verify plan name and vendor count display correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6193,7 +6357,8 @@
             ],
             "details": "Form fields: emails (multi-input), role selector. On submit, call InvitationService.inviteAdmins() with customer_id. Show success/error messages with loading spinner.",
             "status": "pending",
-            "testStrategy": "Mock InvitationService - test form validation, submit calls service with correct payload."
+            "testStrategy": "Mock InvitationService - test form validation, submit calls service with correct payload.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6204,7 +6369,8 @@
             ],
             "details": "Fetch reseller.vendor_allowlist, filter available vendors. Multi-select picker with search, connect buttons calling vendor integration API. Track selections in tour state.",
             "status": "pending",
-            "testStrategy": "Render with mock allowlist - verify only allowed vendors shown, selection state persists."
+            "testStrategy": "Render with mock allowlist - verify only allowed vendors shown, selection state persists.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6217,20 +6383,21 @@
             ],
             "details": "On final step complete: PATCH /onboarding_progress/{id} with step='activated'. Emit analytics event 'customer.activated' with customer_id, funnel='B'. Redirect to dashboard.",
             "status": "pending",
-            "testStrategy": "E2E: complete all steps → verify DB update to 'activated', event emitted, analytics logged."
+            "testStrategy": "E2E: complete all steps → verify DB update to 'activated', event emitted, analytics logged.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 16,
+        "id": "16",
         "title": "Analytics: emit all 18 onboarding events",
         "description": "Instrument all events from PRD §9.1 table across three funnels using existing audit channel.",
         "details": "Add event emission at each state change: signup.page_viewed, reseller.plan_selected, customer.provisioned, end_user.invite_accepted, etc. Use lightweight Segment-compatible payload. No PII beyond user_id/org_id/email_domain.",
         "testStrategy": "Trigger full A→B→C flow, verify all 18 events emitted with correct properties/timestamps via test sink.",
         "priority": "medium",
         "dependencies": [
-          11,
-          15
+          "11",
+          "15"
         ],
         "status": "pending",
         "subtasks": [
@@ -6241,7 +6408,8 @@
             "dependencies": [],
             "details": "Create a spreadsheet or doc listing each event name, funnel, trigger point (e.g. page_viewed, plan_selected), required properties (user_id/org_id/email_domain), and code location. Verify against examples like signup.page_viewed, reseller.plan_selected.",
             "status": "pending",
-            "testStrategy": "Manual review: cross-check list totals 18 events, covers all funnels, matches PRD exactly."
+            "testStrategy": "Manual review: cross-check list totals 18 events, covers all funnels, matches PRD exactly.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6252,7 +6420,8 @@
             ],
             "details": "Payload format: {event: string, user_id: uuid, org_id: uuid, email_domain?: string, timestamp: ISO, properties: {funnel: string, step: string, ...}}. Create TypeScript interface EventPayload. Document in code comments.",
             "status": "pending",
-            "testStrategy": null
+            "testStrategy": null,
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6264,7 +6433,8 @@
             ],
             "details": "Target frontend/backend handlers for signup flow (e.g. page views, form submits). Use existing audit logger: audit.emit(event, payload). Ensure async/non-blocking. Examples: signup.page_viewed on route enter.",
             "status": "pending",
-            "testStrategy": "Unit tests: mock audit channel, trigger states, assert exact payloads emitted with correct properties."
+            "testStrategy": "Unit tests: mock audit channel, trigger states, assert exact payloads emitted with correct properties.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6277,7 +6447,8 @@
             ],
             "details": "Hook into OrgService.createCustomerSubOrg, InvitationService.createInvitation, plan selection UI. Include org_id inheritance. Events like reseller.plan_selected, customer.provisioned, end_user.invite_accepted.",
             "status": "pending",
-            "testStrategy": "Integration tests: trigger provisioning flow, verify event sequence and properties match schema."
+            "testStrategy": "Integration tests: trigger provisioning flow, verify event sequence and properties match schema.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6291,20 +6462,21 @@
             ],
             "details": "Target wizard completion, team invites, dashboard access. Add global flow test triggering full happy path. Use test sink to capture/verify. Update Task 16 test strategy docs.",
             "status": "pending",
-            "testStrategy": "E2E test: run A→B→C flow via test accounts, query sink for exactly 18 events with correct order/properties/timestamps."
+            "testStrategy": "E2E test: run A→B→C flow via test accounts, query sink for exactly 18 events with correct order/properties/timestamps.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 17,
+        "id": "17",
         "title": "Fraud heuristics + review_required guard",
         "description": "Async job post-signup checking fraud signals, blocks addCustomer if review_required=true per PRD §4.4.",
         "details": "Post-signup job: check burner domains, bad IP ranges, velocity → SET orgs.review_required=true. Guard in createCustomerSubOrg(): if parent.review_required then 403.",
         "testStrategy": "Mock fraud signals → review_required=true → addCustomer 403. Wyre admin clears → success.",
         "priority": "low",
         "dependencies": [
-          4,
-          8
+          "4",
+          "8"
         ],
         "status": "pending",
         "subtasks": [
@@ -6315,7 +6487,8 @@
             "dependencies": [],
             "details": "Use a queue system like Bull or Agenda.js to process jobs. Fetch signup data (email domain, IP, timestamps). Implement checks: burner domain lists (e.g., disposable-email-domains), IP blocklists (e.g., IP2Proxy), velocity (e.g., signups per IP/hour > threshold).",
             "status": "pending",
-            "testStrategy": "Unit tests: mock signup data with burner/bad IP/high velocity → job completes without error. Integration: trigger job → queue processes correctly."
+            "testStrategy": "Unit tests: mock signup data with burner/bad IP/high velocity → job completes without error. Integration: trigger job → queue processes correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6326,7 +6499,8 @@
             ],
             "details": "Create isBurnerDomain(email), isBadIP(ip), checkVelocity(ip, window_hours). Use external lists/APIs for domains/IPs (cache in Redis). Velocity: Redis counters with TTL. Return fraud score or boolean flags.",
             "status": "pending",
-            "testStrategy": "Unit tests: valid burner domains/IPs return true; edge cases like subdomains, IPv6. Velocity: increment counters → threshold breach detected."
+            "testStrategy": "Unit tests: valid burner domains/IPs return true; edge cases like subdomains, IPv6. Velocity: increment counters → threshold breach detected.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6338,7 +6512,8 @@
             ],
             "details": "In job handler: if isBurner || isBadIP || velocityBreach → UPDATE orgs SET review_required=true WHERE org_id = signup_org_id. Use transaction. Log fraud reasons for audit.",
             "status": "pending",
-            "testStrategy": "Integration tests: fraud signals trigger → DB row updated to true. No signals → remains false. Concurrent jobs don't race."
+            "testStrategy": "Integration tests: fraud signals trigger → DB row updated to true. No signals → remains false. Concurrent jobs don't race.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6349,7 +6524,8 @@
             ],
             "details": "In src/org/org-service.ts: before transaction, SELECT review_required FROM orgs WHERE id=resellerId. If true → throw ForbiddenError('Parent org requires review'). Integrate with existing Task 4 transaction logic.",
             "status": "pending",
-            "testStrategy": "Unit tests: parent review_required=true → 403 error. False → proceeds to create. Mock DB query."
+            "testStrategy": "Unit tests: parent review_required=true → 403 error. False → proceeds to create. Mock DB query.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6361,19 +6537,20 @@
             ],
             "details": "E2E: signup with fraud signals → job sets flag → addCustomer 403. Clearance test: admin sets false → success. Doc: README with signal details, config vars for thresholds/lists.",
             "status": "pending",
-            "testStrategy": "Mock entire flow: fraud → flag → block → manual clear → success. Coverage >90%. Load test: 100 concurrent signups."
+            "testStrategy": "Mock entire flow: fraud → flag → block → manual clear → success. Coverage >90%. Load test: 100 concurrent signups.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 18,
+        "id": "18",
         "title": "E2E integration test: full A→B→C happy path",
         "description": "Acceptance test verifying complete funnel per PRD §10.",
         "details": "Playwright/Cypress: signup → billing → wizard → add customer → accept invite → admin tour → team invite → dashboard. Assert all AC 1-20 met. Include rate limit, rollback, brand inheritance scenarios.",
         "testStrategy": "CI green on full flow. Video recording. Fail if any AC unmet (DB queries, event counts, UI text).",
         "priority": "high",
         "dependencies": [
-          16
+          "16"
         ],
         "status": "pending",
         "subtasks": [
@@ -6384,7 +6561,8 @@
             "dependencies": [],
             "details": "Install Playwright via `npx playwright install`; configure playwright.config.ts with video recording, CI support, and baseURL; create tests/e2e/full-funnel.spec.ts with initial page setup and browser context.",
             "status": "pending",
-            "testStrategy": "Verify test runs without errors and video recording captures initial page load."
+            "testStrategy": "Verify test runs without errors and video recording captures initial page load.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -6395,7 +6573,8 @@
             ],
             "details": "Use page.goto('/signup'), fill forms with test data (valid email/password), navigate to billing, add payment method (mock/stripe test card), complete wizard steps; assert successful progression via URL changes and UI elements.",
             "status": "pending",
-            "testStrategy": "Assert billing success message appears and wizard completes; check DB for created org via post-test query."
+            "testStrategy": "Assert billing success message appears and wizard completes; check DB for created org via post-test query.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -6406,7 +6585,8 @@
             ],
             "details": "From dashboard, navigate to add customer; generate invite link/token; switch context to new browser/incognito for invite acceptance; complete admin tour steps; handle Auth0 login with connection hint if domain matches.",
             "status": "pending",
-            "testStrategy": "Verify invite page shows inherited reseller brand; assert tour completion and user lands in correct role."
+            "testStrategy": "Verify invite page shows inherited reseller brand; assert tour completion and user lands in correct role.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -6417,7 +6597,8 @@
             ],
             "details": "Send team invite from admin dashboard; accept in new context; assert dashboard loads with correct data (org kind, trial ends_at, onboarding progress); verify UI text, event counts via network logs.",
             "status": "pending",
-            "testStrategy": "Screenshot dashboard; assert 20 AC via expect() chains (e.g., textContent, visibility, data attributes)."
+            "testStrategy": "Screenshot dashboard; assert 20 AC via expect() chains (e.g., textContent, visibility, data attributes).",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -6428,15 +6609,20 @@
             ],
             "details": "Add test blocks for rate limit (repeated actions → error), rollback (interrupt flow → cleanup), brand inheritance (sub-org shows parent brand); run DB queries post-test for data integrity; update package.json for CI.",
             "status": "pending",
-            "testStrategy": "Fail test if any AC unmet (custom assertions for DB state, event counts); verify video shows full flow."
+            "testStrategy": "Fail test if any AC unmet (custom assertions for DB state, event counts); verify video shows full flow.",
+            "parentId": "undefined"
           }
         ]
       }
     ],
     "metadata": {
-      "created": "2026-04-18T23:29:16.460Z",
-      "updated": "2026-04-18T23:29:16.460Z",
-      "description": "Tasks for onboarding context"
+      "version": "1.0.0",
+      "lastModified": "2026-04-21T03:46:24.220Z",
+      "taskCount": 18,
+      "completedCount": 2,
+      "tags": [
+        "onboarding"
+      ]
     }
   },
   "platform-ops": {
@@ -7855,7 +8041,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7915,7 +8101,8 @@
             "testStrategy": "Trigger CI on dummy PR with violation (fails) and fix (passes). Confirm 0 violations on existing seed docs. Get Product/DevRel sign-off.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:46:27.653Z"
       },
       {
         "id": "3",
@@ -7928,7 +8115,7 @@
           "1",
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7989,7 +8176,8 @@
             "testStrategy": "Verify external contributor completes dummy page addition, PR merges successfully, all automated checks pass, and production deploy succeeds",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T03:46:27.660Z"
       },
       {
         "id": "4",
@@ -9148,9 +9336,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:40:24.079Z",
+      "lastModified": "2026-04-21T03:46:27.660Z",
       "taskCount": 18,
-      "completedCount": 1,
+      "completedCount": 3,
       "tags": [
         "docs"
       ]
