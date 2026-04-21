@@ -34,7 +34,7 @@ describe('brand config', () => {
   it('uses default values when no env vars set', async () => {
     const b = await loadBrand();
     expect(b.name).toBe('Wyre Technology');
-    expect(b.tagline).toBe('MCP Gateway for MSPs');
+    expect(b.tagline).toBe('Customer MCP Gateway');
     expect(b.logoUrl).toBe('https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp');
     expect(b.supportUrl).toBe('');
     expect(b.docsUrl).toBe('/');

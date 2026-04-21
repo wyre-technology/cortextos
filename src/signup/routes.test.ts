@@ -109,7 +109,7 @@ describe('validateEmail', () => {
 
 describe('InMemoryRateLimiter', () => {
   it('allows up to max per window and then blocks', () => {
-    let t = 1_000_000;
+    const t = 1_000_000;
     const limiter = new InMemoryRateLimiter(3, 60_000, () => t);
     expect(limiter.check('ip1').allowed).toBe(true);
     expect(limiter.check('ip1').allowed).toBe(true);
