@@ -38,7 +38,7 @@
     "nanoid": "^5.1.9",
     "openid-client": "^6.8.3",
     "postgres": "^3.4.9",
-    "stripe": "^20.3.1"
+    "stripe": "^22.0.2"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
