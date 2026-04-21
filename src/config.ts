@@ -87,5 +87,8 @@ export const config = {
     billing: !!process.env.STRIPE_SECRET_KEY,
     dashboard: process.env.FEATURE_DASHBOARD !== 'false',   // on by default
     promptCapture: process.env.FEATURE_PROMPT_CAPTURE !== 'false', // on by default
+    // MSP Admin Console — ships dark, opt-in per reseller deploy.
+    // See .taskmaster/docs/prd-msp-admin.md.
+    resellerConsole: process.env.RESELLER_CONSOLE_ENABLED === 'true',
   },
 };

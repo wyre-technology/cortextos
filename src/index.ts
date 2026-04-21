@@ -50,6 +50,8 @@ import { profileRoutes } from './profile/routes.js';
 import { VendorMonitor } from './monitoring/vendor-monitor.js';
 import { DashboardService } from './dashboard/dashboard-service.js';
 import { dashboardRoutes } from './dashboard/routes.js';
+import { ResellerService } from './reseller/reseller-service.js';
+import { resellerRoutes } from './reseller/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -134,6 +136,11 @@ const adminAuditService = new AdminAuditService(sql);
 const toolCache = new ToolCache();
 
 const dashboardService = new DashboardService(sql);
+
+// Reseller (MSP Admin Console) — dark-shipped behind RESELLER_CONSOLE_ENABLED.
+// Tables (`reseller_members` et al.) are owned by migrations 002–007; no
+// initTables() here.
+const resellerService = new ResellerService(sql);
 
 const logShippingService = new LogShippingService(sql);
 await logShippingService.initTables();
@@ -272,6 +279,11 @@ await app.register(dashboardRoutes({
   orgService,
   billingGate,
 }));
+
+// MSP Admin Console (`/admin/reseller/*`) — scaffold, dark by default.
+// The plugin itself also enforces the RESELLER_CONSOLE_ENABLED flag so the
+// surface 404s even if the flag flips at runtime.
+await app.register(resellerRoutes({ resellerService }));
 
 // Admin API: set org plan directly (for managed services contracts)
 app.post<{
