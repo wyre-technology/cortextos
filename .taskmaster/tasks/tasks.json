@@ -918,7 +918,7 @@
         "dependencies": [
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -978,7 +978,8 @@
             "testStrategy": "Achieve 100% branch coverage. Acceptance criteria #13-15: fallback only on grant existence, no reseller plaintext leak.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:14:26.912Z"
       },
       {
         "id": "14",
@@ -1512,9 +1513,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:10:36.934Z",
+      "lastModified": "2026-04-21T04:14:26.912Z",
       "taskCount": 20,
-      "completedCount": 9,
+      "completedCount": 10,
       "tags": [
         "reseller-tenancy"
       ]
@@ -1602,7 +1603,7 @@
         "testStrategy": "Migration up/down tests pass. Verify indexes exist via EXPLAIN ANALYZE. Seed test data and verify row-level isolation: reseller A cannot query reseller B customers.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1659,7 +1660,8 @@
             "testStrategy": "Verify all indexes exist and are usable via EXPLAIN ANALYZE. Test index-only scans where applicable. Confirm migration down removes indexes cleanly.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:14:23.447Z"
       },
       {
         "id": "3",
@@ -2791,9 +2793,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:00:19.535Z",
+      "lastModified": "2026-04-21T04:14:23.447Z",
       "taskCount": 17,
-      "completedCount": 1,
+      "completedCount": 2,
       "tags": [
         "msp-admin"
       ]
