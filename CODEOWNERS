@@ -1,0 +1,25 @@
+# CODEOWNERS for Conduit (wyre-mcp-gateway-platform)
+#
+# GitHub uses the last matching pattern for each changed file, so order
+# matters: put more-specific rules below general ones. Ownership here is
+# enforced for review; it does NOT replace branch protection settings.
+#
+# Update this file via PR. Questions: @asachs01.
+
+# Default — any change needs a platform review.
+*                         @asachs01
+
+# Schema / data layer. Requires a DBA reviewer before merge.
+/migrations/              @asachs01
+
+# Billing subsystem. Conduit-only logic; keep tight review.
+/src/billing/             @asachs01
+
+# Reseller / multi-tenancy subsystem (may not exist yet; safe to list).
+/src/reseller/            @asachs01
+
+# Upstream-sync tooling and runbook.
+/scripts/sync-upstream.sh                    @asachs01
+/.github/workflows/upstream-sync-report.yml  @asachs01
+/docs/operations/upstream-sync.md            @asachs01
+/CODEOWNERS                                  @asachs01

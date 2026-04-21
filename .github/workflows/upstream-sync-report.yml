@@ -1,0 +1,107 @@
+name: Upstream Sync Report
+
+# Weekly dry-run sync check against the mcp-gateway upstream.
+# On Mondays 13:00 UTC (~06:00 PT), fetch upstream, run scripts/sync-upstream.sh
+# in dry-run mode, and post a GitHub issue summarizing new upstream commits.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  UPSTREAM_URL: "https://github.com/wyre-technology/mcp-gateway.git"
+  UPSTREAM_REMOTE: "upstream"
+  UPSTREAM_BRANCH: "main"
+  LOCAL_BRANCH: "main"
+  ISSUE_LABEL: "upstream-sync"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout conduit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure upstream remote
+        run: |
+          set -euo pipefail
+          if ! git remote get-url "${UPSTREAM_REMOTE}" >/dev/null 2>&1; then
+            git remote add "${UPSTREAM_REMOTE}" "${UPSTREAM_URL}"
+          fi
+          git fetch --prune --tags "${UPSTREAM_REMOTE}"
+
+      - name: Run sync-upstream.sh (dry run)
+        id: sync
+        run: |
+          set -euo pipefail
+          chmod +x scripts/sync-upstream.sh
+          REPORT_FILE="$(mktemp)"
+          if ! scripts/sync-upstream.sh | tee "${REPORT_FILE}"; then
+            echo "sync-upstream.sh failed" >&2
+            exit 1
+          fi
+          RANGE="${LOCAL_BRANCH}..${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH}"
+          COUNT="$(git rev-list --count "${RANGE}")"
+          echo "commit_count=${COUNT}" >> "${GITHUB_OUTPUT}"
+          echo "report_file=${REPORT_FILE}" >> "${GITHUB_OUTPUT}"
+          echo "range=${RANGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check for existing open issue
+        id: existing
+        if: steps.sync.outputs.commit_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NUMBER="$(gh issue list \
+            --label "${ISSUE_LABEL}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+          echo "number=${NUMBER}" >> "${GITHUB_OUTPUT}"
+
+      - name: Post / update sync issue
+        if: steps.sync.outputs.commit_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_FILE: ${{ steps.sync.outputs.report_file }}
+          COMMIT_COUNT: ${{ steps.sync.outputs.commit_count }}
+          RANGE: ${{ steps.sync.outputs.range }}
+          EXISTING_NUMBER: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          {
+            echo "Automated weekly upstream sync report."
+            echo
+            echo "- Range: \`${RANGE}\`"
+            echo "- New upstream commits: **${COMMIT_COUNT}**"
+            echo "- Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo '<details><summary>Full dry-run output</summary>'
+            echo
+            echo '```'
+            cat "${REPORT_FILE}"
+            echo '```'
+            echo
+            echo '</details>'
+            echo
+            echo "Runbook: docs/operations/upstream-sync.md"
+          } > "${BODY_FILE}"
+
+          TITLE="Upstream sync report: ${COMMIT_COUNT} new commit(s)"
+          if [[ -n "${EXISTING_NUMBER}" ]]; then
+            gh issue comment "${EXISTING_NUMBER}" --body-file "${BODY_FILE}"
+          else
+            gh issue create \
+              --title "${TITLE}" \
+              --body-file "${BODY_FILE}" \
+              --label "${ISSUE_LABEL}"
+          fi
