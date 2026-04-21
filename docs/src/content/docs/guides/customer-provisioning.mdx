@@ -1,0 +1,191 @@
+---
+title: Customer provisioning
+description: The full workflow for MSP admins to create, configure, and retire customers on Conduit.
+---
+
+This guide is the MSP admin's reference for managing **customers** —
+the end-businesses your MSP serves on Conduit. It covers creation,
+user invites, vendor connection scoping, and access revocation.
+
+For the shorter first-customer flow, start with
+[Getting Started](/getting-started/).
+
+:::note[Status]
+Screenshots of the admin UI are pending. Steps below reference the
+current UI labels; a screenshot pass will land with the v1 brand
+refresh.
+:::
+
+## Concepts
+
+- **Customer** — the end-business your MSP resells Conduit to. Each
+  customer is isolated from every other customer by tenant-scoping at
+  the database layer.
+- **User** — an authenticated individual inside a customer. Users have
+  a role (`admin` or `user`) and may belong to one or more teams.
+- **Team** — an optional grouping inside a customer org, used to scope
+  vendor access and connections.
+- **Connection** — a credential that authorizes Conduit to call a
+  specific vendor on behalf of a customer, team, or user.
+
+## Create a customer
+
+1. Open **Customers → New customer**.
+2. Fill in:
+   - **Display name** — shown on invites, consent pages, and audit
+     logs.
+   - **Slug** — auto-derived from the name; used in URLs and API
+     paths. Override only when collisions occur.
+   - **Primary admin email** — the first user invited. This user gets
+     the `admin` role automatically.
+3. Select which **MSP-scoped vendor integrations** the customer
+   inherits. Only integrations you have connected at the MSP level
+   appear here.
+4. (Optional) Set plan limits. Pro-plan customers unlock unlimited
+   vendor connections and the higher request-per-hour tier.
+5. Click **Create**.
+
+Conduit provisions the customer, scaffolds default roles, and emails
+an invitation to the primary admin.
+
+### Bulk provisioning
+
+For onboarding multiple customers at once, use the API:
+
+```bash
+curl -X POST https://<your-conduit-host>/api/msps/<msp-slug>/customers \
+  -H "Authorization: Bearer <msp-admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "adminEmail": "admin@acme.example",
+    "inheritVendors": ["datto-rmm", "autotask", "itglue"]
+  }'
+```
+
+Loop over your customer list in a script. The endpoint is idempotent
+on `slug`.
+
+## Invite users
+
+1. Open the customer's detail page and click **Users**.
+2. Click **Invite user** and enter the email.
+3. Pick a role:
+   - **admin** — can manage users, connections, and team settings for
+     this customer.
+   - **user** — can call vendor tools they have been granted.
+4. (Optional) Assign to one or more teams.
+5. Send the invite.
+
+Invitees receive an Auth0 invitation link. When they accept, they are
+attached to the customer in the role you selected.
+
+:::tip
+For customers with distinct technician groups (for example "L1
+Support", "Security", "Accounting"), create teams first and assign
+users on invite. Team membership drives which vendor connections and
+tools each user sees.
+:::
+
+### Promote or demote users
+
+On the user detail page, click **Change role**. Role changes take
+effect on the user's next request; no re-login is required.
+
+## Assign vendor connections
+
+A customer gets access to a vendor through a **connection**. A
+connection can live at one of three scopes, searched in this order at
+request time:
+
+1. **User** — personal credential scoped to one user.
+2. **Team** — shared by every user in a team.
+3. **Customer** — shared by every user in the customer org.
+
+If none is found, Conduit falls back to the **MSP-scoped** vendor
+integration credential (set up once by the MSP; inherited by every
+customer that has the vendor enabled).
+
+### Add a customer-scoped connection
+
+1. Open the customer → **Connections**.
+2. Click **Add connection** and pick the vendor.
+3. Enter credentials (API key vendors) or complete OAuth (OAuth
+   vendors).
+4. Save. Conduit runs an immediate health check.
+
+### Scope a connection to a team or user
+
+From the connection's detail page, change **Scope** to `team` or
+`user` and pick the target. The connection re-resolves on the next
+request.
+
+See the [vendor connections guide](/guides/vendor-connections/) for
+OAuth-specific flows and credential rotation.
+
+## Manage tool access
+
+Inside a vendor integration, each tool (for example
+`datto_list_devices`) can be restricted per role.
+
+1. Open the customer → **Access → Tool allowlists**.
+2. Pick the vendor and role.
+3. Add tools to the allowlist. An empty allowlist means **all tools
+   are allowed** for that role.
+
+Admins always have full access; tool allowlists only affect the `user`
+role (and teams within it).
+
+## Revoke access
+
+### Remove one user
+
+1. Open the customer → **Users** → click the user.
+2. Click **Remove user**.
+
+Effect:
+
+- The user's active JWT is invalidated at the next request.
+- Personal connections owned by the user are deleted.
+- Team and customer connections remain intact.
+
+### Disable a customer
+
+1. Open the customer → **Settings → Status**.
+2. Set status to **Disabled**.
+
+Effect:
+
+- All user JWTs for the customer are invalidated.
+- Incoming tool calls return `403`.
+- Connections and audit history are preserved (you can re-enable later).
+
+### Delete a customer
+
+:::danger
+Deletion is irreversible. Audit history is retained for compliance
+retention, but connections, users, and settings are purged.
+:::
+
+1. Disable the customer first (see above).
+2. Open **Settings → Danger zone → Delete customer**.
+3. Type the customer slug to confirm.
+
+## Verification checklist
+
+Before handing a customer off to steady-state, verify:
+
+- [ ] Customer created and on the intended plan.
+- [ ] Primary admin has accepted the invite and can sign in.
+- [ ] At least one successful vendor tool call is visible in the audit
+      log.
+- [ ] Connection health checks are green for every vendor in scope.
+- [ ] Tool allowlists match the customer's agreed-upon access policy.
+- [ ] At least one non-admin user has signed in successfully.
+
+## Related
+
+- [Getting Started](/getting-started/) — first-customer happy path.
+- [Vendor connections](/guides/vendor-connections/) — connection
+  scoping and OAuth details.
+- [Permissions reference](/reference/permissions/) — full role matrix.

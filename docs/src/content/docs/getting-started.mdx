@@ -1,16 +1,160 @@
 ---
 title: Getting Started
-description: Stand up your first Conduit tenant as an MSP.
+description: Stand up a Managed Service Provider (MSP) on Conduit from zero to a working tenant with one connected customer.
+upstream: mcp-gateway/docs/getting-started.md
+upstream_sha: ad19acd090540765cffc3cc21b57d6fb8555207c
 ---
 
-**Coming soon.**
+This guide takes a new Managed Service Provider (MSP) from signup to a
+working Conduit MSP organization with one vendor integration connected
+and one customer onboarded. Expect the end-to-end flow to take 30–60
+minutes the first time.
 
-This page will walk a new MSP from zero to a working Conduit tenant:
+## Before you start
 
-1. Create your MSP account.
-2. Configure branding and custom domain.
-3. Add your first customer.
-4. Connect your first vendor.
-5. Invite a customer admin.
+You need:
 
-Until then, see the [MSP Onboarding guide](/guides/msp-onboarding/).
+- An Auth0-backed login for your MSP (Conduit invites are sent by email
+  during signup).
+- An alpha invite code from your Conduit onboarding contact (unlocks
+  the Pro plan; without it the MSP org starts on the free plan).
+- API credentials for at least one vendor you want to connect (for
+  example a ConnectWise Automate API key pair or a Datto RMM public /
+  secret key).
+- An end-customer name and admin email so you can issue their first
+  invitation.
+
+:::note
+All steps below are shown against the web UI. Every action also has an
+API equivalent — see the [API reference](/reference/api/).
+:::
+
+## 1. Create your MSP organization
+
+1. Visit `https://<your-conduit-host>/signup` and complete the Auth0
+   sign-in.
+2. On first login, Conduit prompts you to create an **MSP organization**.
+   Enter your MSP's legal name; this is what customers see on invite
+   emails and consent screens until you configure white-label branding.
+3. Paste your alpha invite code when prompted. This upgrades the MSP
+   org to the Pro plan immediately.
+
+After creation you land on the MSP dashboard.
+
+## 2. Configure branding (optional but recommended)
+
+White-label settings control the name, logo, and colors shown to your
+customers on invite and connection pages.
+
+1. Open **Settings → Branding**.
+2. Set the display name, logo URL, favicon, and primary color.
+3. Set a support email and support URL — these appear on error pages
+   and the customer consent screen.
+
+See the [white-label setup guide](/guides/white-label-setup/) for the
+full list of knobs and a preview workflow.
+
+## 3. Connect your first vendor integration
+
+A **vendor integration** is Conduit's adapter to a third-party MCP
+server (ConnectWise, Datto RMM, IT Glue, etc.). Connect it once at the
+MSP level so downstream customers can inherit it.
+
+1. Go to **Settings → Vendor integrations**.
+2. Pick the vendor from the list. API-key vendors show a credential
+   form; OAuth vendors (Xero, QuickBooks, HubSpot, Microsoft 365)
+   redirect to the vendor for consent.
+3. Submit. Conduit encrypts the credential and runs a health check.
+   A green status means the vendor integration is ready to be shared
+   with a customer.
+
+:::caution
+Vendor credentials stored at the MSP scope are used by every customer
+that inherits this vendor integration. If a customer needs an isolated
+credential, add the **connection** at the customer scope instead (see
+step 5).
+:::
+
+## 4. Add your first customer
+
+1. Go to **Customers → New customer**.
+2. Enter the customer's display name and primary admin email.
+3. Pick which MSP-scoped vendor integrations the customer inherits.
+   Only integrations you connected in step 3 are available here.
+4. Click **Create**. Conduit provisions the customer and emails an
+   invitation to the admin.
+
+For the full workflow — including bulk provisioning, per-customer
+limits, and offboarding — see the
+[customer provisioning guide](/guides/customer-provisioning/).
+
+## 5. Let the customer connect (or pre-connect for them)
+
+The customer admin clicks the email link, completes Auth0 sign-in, and
+lands on their consent screen. From there they either:
+
+- **Inherit** MSP-level vendor credentials (fastest path, no customer
+  action needed for API-key vendors already connected), or
+- **Supply their own connection** by pasting their own API keys or
+  completing OAuth against their own vendor tenant (required when the
+  customer uses different vendor accounts than the MSP).
+
+If the customer prefers the MSP to drive setup, an MSP admin can open
+the customer from the dashboard and add **connections** on their behalf
+under **Customer → Connections**.
+
+## 6. Invite customer users
+
+From the customer detail page, open **Users → Invite** and enter
+email addresses. Invitees receive an Auth0 invitation and join the
+customer as a `user` role. Promote to `admin` from the user's detail
+page when needed.
+
+See the [permissions reference](/reference/permissions/) for the full
+role matrix.
+
+## 7. Connect an AI client
+
+The customer's users connect Claude Desktop or Claude Code to Conduit's
+MCP endpoint:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "conduit": {
+      "url": "https://<your-conduit-host>/v1/mcp"
+    }
+  }
+}
+```
+
+**Claude Code**:
+
+```bash
+claude mcp add conduit https://<your-conduit-host>/v1/mcp
+```
+
+First use opens a browser for Auth0 sign-in. After sign-in the JWT is
+cached and refreshed automatically.
+
+## 8. Verify the setup
+
+- Make a test tool call from Claude against one of the connected
+  vendors.
+- Open **Audit log** in the MSP dashboard and confirm the call is
+  recorded with the correct user, customer, and vendor.
+- Open **Health → Vendors** and confirm every vendor integration shows
+  green.
+
+## Where to go next
+
+- [MSP onboarding](/guides/msp-onboarding/) — end-to-end discovery,
+  provisioning, and handoff playbook.
+- [Customer provisioning](/guides/customer-provisioning/) — the full
+  admin workflow for managing customers.
+- [Vendor connections](/guides/vendor-connections/) — connection
+  scopes, rotation, and OAuth specifics.
+- [API reference](/reference/api/) — every flow above has an API
+  equivalent.

@@ -1,0 +1,159 @@
+---
+title: Agents — implementation
+description: Internal reference for how Conduit agents are defined, registered, and resolved at runtime. Includes the full per-agent catalog.
+upstream: mcp-gateway/docs/agents.md
+upstream_sha: ad19acd090540765cffc3cc21b57d6fb8555207c
+---
+
+:::caution[Internal]
+This page is internal to the Conduit / Wyre engineering team. It
+describes the implementation of Conduit's agent library — registration
+code paths, per-agent prompt contents, and authoring conventions.
+Customer-facing concepts live in the
+[Agents](/reference/agents-concepts/) reference.
+:::
+
+## Agent model
+
+An agent is an MCP prompt registered against Conduit's prompt server.
+Each agent carries:
+
+- A **name** (kebab-case, unique across the plugin).
+- A **plugin binding** — the vendor integration (or `portfolio`) that
+  owns it.
+- A **trigger phrase set** — human-language triggers surfaced in
+  Claude's prompt picker search.
+- A **system prompt** — embeds the domain knowledge and output
+  contract.
+- A **tool manifest** — declares the vendor tools the agent expects
+  access to so the session can pre-validate authorization.
+- An **output schema** — a shape the model is instructed to produce;
+  used for downstream formatters (PSA ticket creation, PDF export).
+
+Registration lives under `src/agents/<plugin>/<agent-name>.ts` in
+the Conduit repo. The agent index (`src/agents/index.ts`) assembles
+the final prompt list surfaced on the MCP prompts endpoint.
+
+## Resolution at runtime
+
+1. Claude Desktop lists prompts via the MCP `prompts/list` endpoint.
+   Conduit filters the list to agents whose tool manifest is fully
+   satisfied by the caller's tool allowlist — agents the user cannot
+   run are hidden.
+2. The user picks an agent. Claude Desktop sends `prompts/get` with
+   the agent name and any arguments.
+3. Conduit returns the system prompt with arguments interpolated.
+4. Claude begins the session and calls vendor tools through the MCP
+   transport as normal. Every call is audited under the user's
+   identity.
+
+## Authoring conventions
+
+- **Naming.** Kebab-case, verb-first where possible
+  (`ticket-dispatcher`, not `dispatch-tickets`). Plugin-owned agents
+  do not prefix the plugin name; portfolio agents stand alone.
+- **Output contract first.** Write the desired output section
+  headings before the system prompt body. The prompt exists to
+  produce the output, not the other way around.
+- **Vendor-specific knowledge goes in the prompt, not in tool
+  responses.** Example: Autotask Priority 4 = Critical is encoded in
+  the ticket-dispatcher system prompt, not in a tool wrapper.
+- **Trigger phrases cover intent, not jargon.** "fleet health check"
+  and "device audit" are good; "rmm-health-auditor" is redundant.
+- **Example queries are required.** At least three per agent. They
+  calibrate the model and help technicians discover the agent in
+  Claude's search.
+- **Never include Wyre-internal branding.** Output that a customer
+  may see must use the MSP's configured brand tokens, never "Wyre
+  Gateway".
+
+## Per-agent catalog
+
+The canonical per-agent catalog (prompt text, trigger phrases, example
+queries, output structure) lives in the upstream
+[`mcp-gateway/docs/agents.md`](https://github.com/wyre-technology/mcp-gateway/blob/ad19acd090540765cffc3cc21b57d6fb8555207c/docs/agents.md)
+at the pinned SHA above.
+
+As of that SHA, Conduit ships **74 agents across 35 plugins** (34
+vendor plugins + the Wyre Gateway portfolio):
+
+| Category | Plugin | Agents |
+|---|---|---|
+| RMM | Datto RMM | `rmm-health-auditor`, `backup-health-monitor` |
+| RMM | NinjaOne | `device-health-auditor`, `patch-compliance-reporter` |
+| RMM | ConnectWise Automate | `automation-health-checker` |
+| RMM | Atera | `customer-health-scorer`, `msp-ops-assistant` |
+| RMM | SuperOps | `automation-opportunity-finder`, `msp-service-ops` |
+| RMM | Syncro | `billing-auditor`, `msp-service-ops` |
+| PSA | Autotask PSA | `ticket-dispatcher`, `contract-renewal-tracker` |
+| PSA | HaloPSA | `service-desk-ops`, `sla-performance-reporter` |
+| PSA | ConnectWise Manage | `project-tracker`, `service-desk-ops` |
+| Documentation | IT Glue | `asset-documentation-linker`, `documentation-auditor` |
+| Documentation | Hudu | `documentation-auditor`, `runbook-freshness-auditor` |
+| Documentation | Liongard | `change-detective`, `compliance-drift-reporter` |
+| Security | SentinelOne | `endpoint-hardening-auditor`, `threat-hunter` |
+| Security | Huntress | `client-onboarding-validator`, `incident-responder` |
+| Security | RocketCyber | `soc-alert-investigator`, `threat-correlation-analyst` |
+| Security | Blumira | `siem-investigator`, `compliance-reporter` |
+| Security | KnowBe4 | `security-awareness-analyst`, `training-enforcer` |
+| Email Security | Mimecast | `email-threat-investigator`, `email-continuity-checker` |
+| Email Security | Proofpoint | `email-security-auditor`, `vap-reporter` |
+| Email Security | Abnormal | `email-threat-analyst`, `threat-report-generator` |
+| Email Security | IRONSCALES | `phishing-responder`, `crowdsourced-intel-harvester` |
+| Email Security | Avanan | `cloud-email-defender`, `tenant-policy-auditor` |
+| Email Security | SpamTitan | `spam-filter-analyst`, `quarantine-release-reviewer` |
+| Incident Management | PagerDuty | `incident-commander`, `on-call-scheduler` |
+| Incident Management | Rootly | `incident-commander`, `post-mortem-writer` |
+| Monitoring | BetterStack | `sla-uptime-reporter`, `uptime-incident-responder` |
+| CRM | HubSpot | `client-relationship-manager`, `pipeline-health-reporter` |
+| Sales | Salesbuildr | `quote-builder`, `margin-analyzer` |
+| Sales | PandaDoc | `contract-tracker`, `template-standardizer` |
+| Marketplace | Pax8 | `license-optimizer`, `renewal-calendar` |
+| Marketplace | Sherweb | `license-manager`, `billing-reconciler` |
+| Accounting | Xero | `billing-reconciler`, `cash-flow-analyzer` |
+| Accounting | QuickBooks Online | `billing-reconciler`, `profitability-reporter` |
+| Productivity | Microsoft 365 | `identity-auditor`, `license-auditor` |
+| Portfolio | Wyre Gateway | `client-360-briefer`, `compliance-evidence-packager`, `gateway-ops`, `incident-war-room-coordinator`, `onboarding-completeness-checker`, `qbr-prep-agent`, `renewal-risk-analyzer`, `security-posture-scorer`, `technician-performance-coach` |
+
+Changes to the catalog — added, renamed, or removed agents — must:
+
+1. Update the upstream `agents.md` at the corresponding SHA.
+2. Bump the `upstream_sha` in this page's front-matter.
+3. Update the summary counts above.
+4. Note the change in the repo `CHANGELOG.md` under *Changed* or
+   *Added* as appropriate.
+
+## Authorization surfacing
+
+The MCP `prompts/list` endpoint filters the returned list to agents
+the caller is authorized to run in full. The filter looks at:
+
+- The caller's role (`admin` inherits all tools; `user` is bounded
+  by the allowlist).
+- The customer's connected vendor integrations.
+- The customer's tool allowlists per vendor.
+
+If any required tool in an agent's manifest is not reachable, the
+agent is omitted. This prevents a prompt picker full of agents the
+user cannot actually run.
+
+## Custom-agent registration
+
+MSPs with custom agents register them at MSP-org scope. The
+registration path is:
+
+```
+POST /api/msps/<msp-slug>/agents
+```
+
+with a JSON body matching the agent model. The endpoint is admin-only
+and requires the `agents:write` permission. Custom agents are scoped
+to the MSP and visible to every customer under it.
+
+Custom agents follow the same authoring conventions as built-ins;
+enforcement is linted at registration time.
+
+## Related
+
+- [Agents (public concepts)](/reference/agents-concepts/)
+- Upstream: [`mcp-gateway/docs/agents.md`](https://github.com/wyre-technology/mcp-gateway/blob/ad19acd090540765cffc3cc21b57d6fb8555207c/docs/agents.md)
