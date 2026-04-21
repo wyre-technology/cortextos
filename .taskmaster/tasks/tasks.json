@@ -466,7 +466,7 @@
         "dependencies": [
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -528,7 +528,8 @@
             "testStrategy": "100% coverage for permission matrix. Mock caller contexts. Verify errors for unauthorized actions.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:00:22.996Z"
       },
       {
         "id": "8",
@@ -1509,9 +1510,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:40:12.047Z",
+      "lastModified": "2026-04-21T04:00:22.996Z",
       "taskCount": 20,
-      "completedCount": 6,
+      "completedCount": 7,
       "tags": [
         "reseller-tenancy"
       ]
@@ -1520,14 +1521,14 @@
   "msp-admin": {
     "tasks": [
       {
-        "id": 1,
+        "id": "1",
         "title": "Scaffold reseller package and routes",
         "description": "Create src/reseller/ directory with core files and mount new Fastify plugin at /admin/reseller/* behind feature flag",
         "details": "[CROSS-TAG BLOCKER] Requires reseller-tenancy #1-3 (org hierarchy schema + RLS) to be applied before scaffolding reseller routes.\n\nCreate src/reseller/routes.ts with Fastify plugin registration in main app. Add RESELLER_CONSOLE_ENABLED env check - return 404 when false. Create placeholder reseller-service.ts with basic types. Implement requireResellerAccess middleware that validates: (1) auth0 user exists, (2) user in type='reseller' org, (3) resellerId matches user's org memberships, (4) role meets route minimum. Use existing src/web/layout.ts and src/web/styles.ts.",
         "testStrategy": "Unit test guard with mock Auth0 contexts: valid reseller_admin (200), no membership (404), wrong resellerId (404), insufficient role (404), unauthenticated (401). Integration test: curl /admin/reseller/* with flag off (404), flag on + valid user (200).",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1536,7 +1537,8 @@
             "dependencies": [],
             "details": "Create src/reseller/ folder. Add reseller-service.ts with TypeScript interfaces for ResellerUser, ResellerOrg, and basic service methods like getResellerById(). Export types for use in routes and middleware.",
             "status": "pending",
-            "testStrategy": "Verify directory structure exists and types compile without errors. Check placeholder service exports correctly."
+            "testStrategy": "Verify directory structure exists and types compile without errors. Check placeholder service exports correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1547,7 +1549,8 @@
             ],
             "details": "In src/reseller/middleware.ts, check: (1) req.auth0User exists (401 if not), (2) user.org.type === 'reseller', (3) resellerId in user.orgMemberships, (4) user.role >= route minRole. Use Fastify reply codes: 401/403/404. Make role comparison flexible (e.g., 'admin' > 'support').",
             "status": "pending",
-            "testStrategy": "Unit tests: valid reseller_admin (continue), no membership (404), wrong resellerId (404), insufficient role (403), unauthenticated (401). Mock Auth0 context."
+            "testStrategy": "Unit tests: valid reseller_admin (continue), no membership (404), wrong resellerId (404), insufficient role (403), unauthenticated (401). Mock Auth0 context.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1559,7 +1562,8 @@
             ],
             "details": "Export fastify plugin registering routes under /admin/reseller/. Include placeholder routes (e.g., GET /dashboard). Apply requireResellerAccess middleware to protected paths. Import and use layout/styles from src/web/. Structure as standard Fastify plugin with prefix '/admin/reseller'.",
             "status": "pending",
-            "testStrategy": "Unit test route registration and middleware chaining. Verify layout/styles imports resolve."
+            "testStrategy": "Unit test route registration and middleware chaining. Verify layout/styles imports resolve.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1570,7 +1574,8 @@
             ],
             "details": "In main app (e.g., server.ts or app.ts), import and register reseller plugin: app.register(resellerRoutes, { prefix: '/admin/reseller' }). Ensure it loads after auth/web plugins.",
             "status": "pending",
-            "testStrategy": "Integration test: app prints correct route map including /admin/reseller paths. No registration errors on startup."
+            "testStrategy": "Integration test: app prints correct route map including /admin/reseller paths. No registration errors on startup.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1581,12 +1586,14 @@
             ],
             "details": "Read process.env.RESELLER_CONSOLE_ENABLED (boolean). In plugin hook 'onRequest', if false, reply 404 early for all /admin/reseller/* paths. Log flag status on plugin load. Default to false if unset.",
             "status": "pending",
-            "testStrategy": "Integration tests: curl /admin/reseller/* with flag off (404), flag on + valid user (200), flag on + invalid user (401/403/404). Verify env toggle works."
+            "testStrategy": "Integration tests: curl /admin/reseller/* with flag off (404), flag on + valid user (200), flag on + invalid user (401/403/404). Verify env toggle works.",
+            "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:00:19.535Z"
       },
       {
-        "id": 2,
+        "id": "2",
         "title": "Database migrations for reseller schema",
         "description": "Add required schema changes for organizations, reseller_members, impersonation_sessions, reseller_admin_audit tables and indexes",
         "details": "[CROSS-TAG BLOCKER] Schema migrations here must sit AFTER reseller-tenancy #1-3 in apply order.\n\nCreate migrations/: Add organizations.type ENUM('reseller','customer','direct'), organizations.parent_org_id BIGINT FK REFERENCES organizations(id), organizations.suspended_at TIMESTAMP NULL. Create reseller_members(reseller_org_id, user_id, role ENUM('reseller_owner','reseller_admin','reseller_support','reseller_billing','reseller_readonly'), UNIQUE(reseller_org_id,user_id)). Create impersonation_sessions table per §9.1 schema. Create reseller_admin_audit table matching admin_audit_log pattern. Add indexes: organizations(parent_org_id), organizations.name GIN(trigram), org_members(email) GIN, impersonation_sessions(reseller_org_id,actor_user_id,ended_at), reseller_admin_audit(reseller_org_id,created_at DESC).",
@@ -1602,7 +1609,8 @@
             "dependencies": [],
             "details": "ALTER TABLE organizations ADD COLUMN type ENUM('reseller','customer','direct') NOT NULL DEFAULT 'direct'; ADD COLUMN parent_org_id BIGINT NULL REFERENCES organizations(id); ADD COLUMN suspended_at TIMESTAMP NULL; Update existing records to type='direct' WHERE parent_org_id IS NULL.",
             "status": "pending",
-            "testStrategy": "Verify columns exist and have correct types/constraints after migration up. Test down migration restores original schema."
+            "testStrategy": "Verify columns exist and have correct types/constraints after migration up. Test down migration restores original schema.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1611,7 +1619,8 @@
             "dependencies": [],
             "details": "CREATE TABLE reseller_members (id BIGSERIAL PRIMARY KEY, reseller_org_id BIGINT NOT NULL REFERENCES organizations(id), user_id BIGINT NOT NULL REFERENCES users(id), role ENUM('reseller_owner','reseller_admin','reseller_support','reseller_billing','reseller_readonly') NOT NULL, created_at TIMESTAMP DEFAULT NOW(), UNIQUE(reseller_org_id, user_id));",
             "status": "pending",
-            "testStrategy": "Migration up/down passes. Verify table structure, FK constraints, unique constraint prevents duplicate memberships."
+            "testStrategy": "Migration up/down passes. Verify table structure, FK constraints, unique constraint prevents duplicate memberships.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1620,7 +1629,8 @@
             "dependencies": [],
             "details": "CREATE TABLE impersonation_sessions per §9.1 schema with columns including reseller_org_id, actor_user_id, target_user_id, started_at, ended_at, metadata JSONB; Add appropriate indexes and constraints as specified in schema document.",
             "status": "pending",
-            "testStrategy": "Verify table matches §9.1 schema exactly. Test migration up/down. Confirm FK relationships to organizations and users."
+            "testStrategy": "Verify table matches §9.1 schema exactly. Test migration up/down. Confirm FK relationships to organizations and users.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1629,7 +1639,8 @@
             "dependencies": [],
             "details": "CREATE TABLE reseller_admin_audit matching admin_audit_log structure: id, reseller_org_id BIGINT REFERENCES organizations(id), actor_user_id BIGINT, target_customer_id BIGINT, event VARCHAR, metadata JSONB, created_at TIMESTAMP; Add indexes on (reseller_org_id, created_at DESC).",
             "status": "pending",
-            "testStrategy": "Verify table structure matches admin_audit_log pattern. Confirm indexes exist via EXPLAIN. Migration up/down passes."
+            "testStrategy": "Verify table structure matches admin_audit_log pattern. Confirm indexes exist via EXPLAIN. Migration up/down passes.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1643,20 +1654,21 @@
             ],
             "details": "CREATE INDEX ON organizations(parent_org_id); CREATE INDEX organizations_name_trgm ON organizations USING GIN(name gin_trgm_ops); CREATE INDEX org_members_email_trgm ON org_members USING GIN(email gin_trgm_ops); CREATE INDEX ON impersonation_sessions(reseller_org_id, actor_user_id, ended_at); CREATE INDEX ON reseller_admin_audit(reseller_org_id, created_at DESC);",
             "status": "pending",
-            "testStrategy": "Verify all indexes exist and are usable via EXPLAIN ANALYZE. Test index-only scans where applicable. Confirm migration down removes indexes cleanly."
+            "testStrategy": "Verify all indexes exist and are usable via EXPLAIN ANALYZE. Test index-only scans where applicable. Confirm migration down removes indexes cleanly.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 3,
+        "id": "3",
         "title": "Implement reseller-service core CRUD",
         "description": "Build foundational reseller-service.ts for org lookup, membership validation, and basic queries",
         "details": "Implement getResellerOr404(resellerId, userId): validates membership and role, returns org or throws 404. Implement listCustomers(resellerId): SELECT * FROM organizations WHERE parent_org_id=? AND type='customer'. Implement getCustomerOr404(resellerId, customerId): validates parent_org_id=resellerId. Add row-level security: every query WHERE parent_org_id = ? OR reseller_org_id = ?.",
         "testStrategy": "Unit tests cover happy path, 404 cases (wrong parent, no membership), role hierarchy. Integration test with seeded 2-reseller fixture verifies zero leakage.",
         "priority": "high",
         "dependencies": [
-          1,
-          2
+          "1",
+          "2"
         ],
         "status": "pending",
         "subtasks": [
@@ -1667,7 +1679,8 @@
             "dependencies": [],
             "details": "Query organizations table by resellerId, check user membership via membership-service, verify role hierarchy (owner/admin), throw NotFoundException if invalid.",
             "status": "pending",
-            "testStrategy": "Unit test happy path (valid member), 404 for non-member, 404 for wrong role; mock membership-service."
+            "testStrategy": "Unit test happy path (valid member), 404 for non-member, 404 for wrong role; mock membership-service.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1678,7 +1691,8 @@
             ],
             "details": "Execute SQL: SELECT * FROM organizations WHERE parent_org_id = ? AND type = 'customer'; apply row-level security filter.",
             "status": "pending",
-            "testStrategy": "Unit test returns correct customers for valid resellerId, empty array for no customers; integration with seeded data."
+            "testStrategy": "Unit test returns correct customers for valid resellerId, empty array for no customers; integration with seeded data.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1689,7 +1703,8 @@
             ],
             "details": "Query organizations by customerId, assert parent_org_id === resellerId, throw 404 if mismatch or not found.",
             "status": "pending",
-            "testStrategy": "Unit test happy path, 404 for wrong parent_org_id, 404 for non-existent customer."
+            "testStrategy": "Unit test happy path, 404 for wrong parent_org_id, 404 for non-existent customer.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1702,7 +1717,8 @@
             ],
             "details": "Create helper function getRLSFilter(userContext) returning SQL condition; inject into all organization queries in service.",
             "status": "pending",
-            "testStrategy": "Verify queries include RLS clause; test zero data leakage between resellers using 2-reseller fixture."
+            "testStrategy": "Verify queries include RLS clause; test zero data leakage between resellers using 2-reseller fixture.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1716,20 +1732,21 @@
             ],
             "details": "Use Jest, mock DB/membership-service; test role hierarchy, no leakage across resellers, RLS enforcement.",
             "status": "pending",
-            "testStrategy": "100% coverage: happy path, wrong parent, no membership, role checks; integration verifies isolation."
+            "testStrategy": "100% coverage: happy path, wrong parent, no membership, role checks; integration verifies isolation.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 4,
+        "id": "4",
         "title": "Build reseller dashboard service and view",
         "description": "Implement reseller-dashboard-service.ts with tiles and src/web/templates/reseller-dashboard.ts",
         "details": "Create GET /api/reseller/:id/dashboard/summary returning {customerCount:{total,active,trial,suspended}, mrr:{current,trend}, usage:{thisPeriod}, incidents:{count}}. Use reseller_mrr_snapshot materialized view + 60s Redis memoization. Fan-out to dashboard-service.ts per customer as fallback. Template shows tiles above fold, activity feed below. Top 5 customers table clickable to drill-in.",
         "testStrategy": "Load test: seed 100 customers, verify p95<2s. Unit test memoization hit/miss. Template renders correctly with mock data. Verify MRR calculation matches msp-billing assumptions.",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -1740,7 +1757,8 @@
             "dependencies": [],
             "details": "Define view with current MRR, trend (e.g., MoM %), customer counts (total/active/trial/suspended) using organizations table joins with billing snapshots. Refresh every hour via cron.",
             "status": "pending",
-            "testStrategy": "Verify view returns correct aggregations against seeded 10-customer reseller data. Check refresh updates after billing changes."
+            "testStrategy": "Verify view returns correct aggregations against seeded 10-customer reseller data. Check refresh updates after billing changes.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1751,7 +1769,8 @@
             ],
             "details": "Use getResellerOr404 from task 3. Query reseller_mrr_snapshot for {customerCount, mrr:{current,trend}, usage:{thisPeriod}, incidents:{count}}. Cache in Redis with 60s TTL keyed by resellerId.",
             "status": "pending",
-            "testStrategy": "Unit test memoization hit/miss logic. Integration test verifies data structure and 404 on invalid reseller."
+            "testStrategy": "Unit test memoization hit/miss logic. Integration test verifies data structure and 404 on invalid reseller.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1762,7 +1781,8 @@
             ],
             "details": "On cache miss or view error, listCustomers(resellerId) then parallel GET /api/customer/:id/dashboard/summary, aggregate counts/MRR/usage/incidents. Limit to top 50 customers.",
             "status": "pending",
-            "testStrategy": "Mock dashboard-service failures, verify fallback sums correctly. Load test p95<2s with 100 customers."
+            "testStrategy": "Mock dashboard-service failures, verify fallback sums correctly. Load test p95<2s with 100 customers.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1773,7 +1793,8 @@
             ],
             "details": "Tiles: customer counts, MRR current/trend, usage thisPeriod, incidents count. Top 5 customers table by MRR clickable to /reseller/:id/customer/:id. Activity feed from audit logs (task 14).",
             "status": "pending",
-            "testStrategy": "Render with mock data, verify tiles display correctly, table links navigate properly. Responsive on mobile."
+            "testStrategy": "Render with mock data, verify tiles display correctly, table links navigate properly. Responsive on mobile.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1785,20 +1806,21 @@
             ],
             "details": "Register in src/reseller/routes.ts behind RESELLER_CONSOLE_ENABLED flag with requireResellerAccess middleware. Seed 100 customers for load test verifying p95<2s.",
             "status": "pending",
-            "testStrategy": "End-to-end: valid reseller sees data (200), invalid (404), flag off (404). MRR matches msp-billing calculations. Template renders with real endpoint data."
+            "testStrategy": "End-to-end: valid reseller sees data (200), invalid (404), flag off (404). MRR matches msp-billing calculations. Template renders with real endpoint data.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 5,
+        "id": "5",
         "title": "Build customer list view and search endpoint",
         "description": "Implement reseller-customer-list.ts + GET /api/reseller/:id/customers with search/filter/sort/pagination",
         "details": "Endpoint supports q= (trigram search name/email/orgId), status=, plan=, sort=, page=, pageSize=25-100. Returns {items,total,page,pageSize}. Template: table with columns from §7.2, server-side controls, empty state CTA to /customers/new. Add GIN indexes if missing.",
         "testStrategy": "Performance test: 500 customers, verify <500ms p95 first byte. Search accuracy test: substring matches, fuzzy via trigram. Pagination edge cases (page=0, pageSize=100, total=0).",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -1809,7 +1831,8 @@
             "dependencies": [],
             "details": "Use CREATE INDEX CONCURRENTLY idx_organizations_name_gin ON organizations USING GIN(name gin_trgm_ops); repeat for email and org_id. Verify indexes exist before proceeding to avoid redundant creation.",
             "status": "pending",
-            "testStrategy": "Query pg_indexes to confirm GIN indexes with gin_trgm_ops exist. Test EXPLAIN ANALYZE on sample trigram query to verify index usage."
+            "testStrategy": "Query pg_indexes to confirm GIN indexes with gin_trgm_ops exist. Test EXPLAIN ANALYZE on sample trigram query to verify index usage.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1820,7 +1843,8 @@
             ],
             "details": "Use reseller-service listCustomers base query, add WHERE clauses for filters (trigram ILIKE for q% on name/email/orgId), ORDER BY sort param, LIMIT/OFFSET for pagination. Validate reseller membership via getResellerOr404.",
             "status": "pending",
-            "testStrategy": "Unit test all param combos: q=fuzzy, status=active/suspended, plan=basic/pro, sort=name-desc, page=2&pageSize=50. Verify total count accurate with filters."
+            "testStrategy": "Unit test all param combos: q=fuzzy, status=active/suspended, plan=basic/pro, sort=name-desc, page=2&pageSize=50. Verify total count accurate with filters.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1831,7 +1855,8 @@
             ],
             "details": "Table columns per §7.2 spec (name,status,plan,created,etc). Server-side controls: search input, status/plan dropdowns, sort dropdown, pagination (page size 25-100). Empty state: 'No customers yet' + link to /customers/new.",
             "status": "pending",
-            "testStrategy": "Render with mock data: verify all columns display, controls trigger API calls with correct params, empty state shows CTA button that navigates correctly."
+            "testStrategy": "Render with mock data: verify all columns display, controls trigger API calls with correct params, empty state shows CTA button that navigates correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1843,7 +1868,8 @@
             ],
             "details": "Use fetch/API client to call endpoint with query params from controls. Map items[] to table rows. Handle {items,total,page,pageSize} for pagination math. Add loading spinner, error toast for 4xx/5xx.",
             "status": "pending",
-            "testStrategy": "E2E: type search 'acme', verify API call has q=acme, table updates <2s. Change pageSize=50, verify new API call and table row count. Network fail shows error."
+            "testStrategy": "E2E: type search 'acme', verify API call has q=acme, table updates <2s. Change pageSize=50, verify new API call and table row count. Network fail shows error.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1855,20 +1881,21 @@
             ],
             "details": "Load 500 customer fixture. Test trigram substring/fuzzy matches. Edge cases: page=0→1, pageSize=100, total=0. Performance: measure p95 first byte <500ms with Artillery/JMeter.",
             "status": "pending",
-            "testStrategy": "Automated suite: 100% pass rate required. Performance: 500 customers, p95<500ms. Accuracy: 20 test cases (exact, substring, no-match). Pagination: page=999→empty, total=1→pageSize=100."
+            "testStrategy": "Automated suite: 100% pass rate required. Performance: 500 customers, p95<500ms. Accuracy: 20 test cases (exact, substring, no-match). Pagination: page=999→empty, total=1→pageSize=100.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 6,
+        "id": "6",
         "title": "Implement new customer provisioning flow",
         "description": "Build provisioning-service.ts + reseller-new-customer.ts + POST /api/reseller/:id/customers",
         "details": "Multi-step form per §7.3. POST payload validation. Transaction: create customer org (type='customer', parent_org_id, plan), create invitation via invitation-service.ts, return {org,invite}. Idempotent via client-supplied idempotency_key header (store+dedup 24h). Emit reseller.customer.provisioned telemetry. Success page: copyable invite URL, email button, drill-in link.",
         "testStrategy": "E2E: complete form → verify org+invite created, no secrets visible. Double-submit same key → exactly 1 org. Different keys → 2 orgs. Role test: only owner/admin can provision.",
         "priority": "high",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -1879,7 +1906,8 @@
             "dependencies": [],
             "details": "Use state management for steps (e.g., basic info, plan selection, confirmation). Include validation on each step, progress indicator, and navigation buttons. Ensure responsive design for reseller dashboard.",
             "status": "pending",
-            "testStrategy": "Unit test form validation and state transitions. Visual regression tests for each step. Accessibility checks with screen reader simulation."
+            "testStrategy": "Unit test form validation and state transitions. Visual regression tests for each step. Accessibility checks with screen reader simulation.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1888,7 +1916,8 @@
             "dependencies": [],
             "details": "Implement createCustomerOrg(type='customer', parent_org_id=resellerId, plan) and call invitation-service.ts to generate invite. Wrap in transaction to ensure atomicity. Return {org, invite} on success.",
             "status": "pending",
-            "testStrategy": "Unit tests for happy path and rollback on invitation failure. Mock invitation-service. Verify org fields and parent_org_id set correctly."
+            "testStrategy": "Unit tests for happy path and rollback on invitation failure. Mock invitation-service. Verify org fields and parent_org_id set correctly.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1899,7 +1928,8 @@
             ],
             "details": "Validate POST payload for required fields (name, plan, email). Check idempotency_key header: store in dedup table (24h TTL), skip if exists and return cached result, else proceed and store.",
             "status": "pending",
-            "testStrategy": "Integration tests: valid payload creates org, invalid throws 400. Same key double-submit: 1 org. Different keys: 2 orgs. Expired key allows new provision."
+            "testStrategy": "Integration tests: valid payload creates org, invalid throws 400. Same key double-submit: 1 org. Different keys: 2 orgs. Expired key allows new provision.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1910,7 +1940,8 @@
             ],
             "details": "Use getResellerOr404(resellerId, userId) for membership/role validation (owner/admin). On success, emit telemetry with org/invite details. Ensure RLS compliance.",
             "status": "pending",
-            "testStrategy": "Role tests: owner succeeds, non-admin 403. Verify telemetry emitted via mock observer. Non-reseller ID throws 404."
+            "testStrategy": "Role tests: owner succeeds, non-admin 403. Verify telemetry emitted via mock observer. Non-reseller ID throws 404.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1922,20 +1953,21 @@
             ],
             "details": "Display {org.name, invite.token} securely (no secrets). Add copy-to-clipboard for invite URL, email composer prefilled with invite link, link to customer dashboard. Handle errors gracefully.",
             "status": "pending",
-            "testStrategy": "E2E: complete form → land on success page, verify copy/email works, no sensitive data in DOM. Role test: only authorized users provision."
+            "testStrategy": "E2E: complete form → land on success page, verify copy/email works, no sensitive data in DOM. Role test: only authorized users provision.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 7,
+        "id": "7",
         "title": "Build per-customer drill-in shell and overview",
         "description": "Create reseller-customer-overview.ts with header, breadcrumb, 6 sub-tabs structure",
         "details": "Pinned header: name, plan/status badges, Impersonate button, Suspend toggle. Tabs: Overview (read-only team-overview metrics), Users, Connections, Audit, Billing, Suspend modal. Breadcrumb: Reseller > Customers > {name}. Shell detects active impersonation session.",
         "testStrategy": "Template renders all tabs with mock data. Navigation between tabs preserves state. Header badges update on status change. Read-only verification: no forms/actions visible.",
         "priority": "medium",
         "dependencies": [
-          1,
-          5
+          "1",
+          "5"
         ],
         "status": "pending",
         "subtasks": [
@@ -1946,7 +1978,8 @@
             "dependencies": [],
             "details": "Use existing reseller dashboard layout as reference. Include pinned header slot, breadcrumb slot, and tab container with 6 tab placeholders. Ensure responsive design for desktop and tablet.",
             "status": "pending",
-            "testStrategy": "Verify shell renders without errors using mock customer data. Check layout integrity across viewport sizes."
+            "testStrategy": "Verify shell renders without errors using mock customer data. Check layout integrity across viewport sizes.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -1957,7 +1990,8 @@
             ],
             "details": "Fetch customer data via API. Make header sticky on scroll. Badges use color-coded status/plan icons. Impersonate links to session start endpoint. Suspend toggle shows confirmation modal.",
             "status": "pending",
-            "testStrategy": "Confirm breadcrumb links navigate correctly. Header remains pinned during scroll. Toggle updates UI state immediately."
+            "testStrategy": "Confirm breadcrumb links navigate correctly. Header remains pinned during scroll. Toggle updates UI state immediately.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -1969,7 +2003,8 @@
             ],
             "details": "Use client-side tab state management. Overview pulls metrics from customer org API (usage, active users, etc.). Display in cards/charts, no edit forms. Lazy-load tab content.",
             "status": "pending",
-            "testStrategy": "Tab switching preserves scroll position. Overview shows mock metrics correctly. Verify read-only: no input fields or buttons."
+            "testStrategy": "Tab switching preserves scroll position. Overview shows mock metrics correctly. Verify read-only: no input fields or buttons.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -1981,7 +2016,8 @@
             ],
             "details": "Modal includes customer name, current status warning, optional notes field. On submit, call suspend API and refresh badges/header. Handle errors with toast notifications.",
             "status": "pending",
-            "testStrategy": "Modal opens/closes correctly. Submit updates status badge and audit log. Cancel preserves state. Edge case: already suspended customer."
+            "testStrategy": "Modal opens/closes correctly. Submit updates status badge and audit log. Cancel preserves state. Edge case: already suspended customer.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -1993,21 +2029,22 @@
             ],
             "details": "Check session store or API flag on load and poll every 30s. Show impersonation banner in header. Disable Suspend during impersonation. Update badges to reflect session state.",
             "status": "pending",
-            "testStrategy": "Mock session flags: normal vs impersonating. Verify UI changes (banner visible, actions enabled/disabled). State persists on tab switch and page reload."
+            "testStrategy": "Mock session flags: normal vs impersonating. Verify UI changes (banner visible, actions enabled/disabled). State persists on tab switch and page reload.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 8,
+        "id": "8",
         "title": "Implement impersonation service and session management",
         "description": "Build impersonation-service.ts + POST /api/reseller/:id/impersonation-sessions + session cookie logic",
         "details": "Modal collects reason(10+ chars), ticketId, duration(15/30/60m). Create impersonation_session record. Set customer-scoped session cookie with impersonating=true + session.id claim. Redirect to /team/* with banner injection. Enforce single active session per (actor,customer). Max 60m TTL.",
         "testStrategy": "E2E: start session → verify redirect + banner + audit event. Session expiry test: curl after expires_at → 401. Supersession test: new session ends old one. Role matrix: only owner/admin/support.",
         "priority": "high",
         "dependencies": [
-          1,
-          3,
-          7
+          "1",
+          "3",
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -2018,7 +2055,8 @@
             "dependencies": [],
             "details": "Define createImpersonationSession(resellerId, customerId, actorId, reason, ticketId, duration): validate actor role (owner/admin/support via reseller-service), check/enforce single active session per (actor,customer) by ending prior ones, insert into impersonation_sessions table with expires_at = now() + duration (max 60m), return session.id.",
             "status": "pending",
-            "testStrategy": "Unit: valid inputs → session created; invalid role → throws; existing session → old one ended; duration >60m → capped at 60m."
+            "testStrategy": "Unit: valid inputs → session created; invalid role → throws; existing session → old one ended; duration >60m → capped at 60m.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2029,7 +2067,8 @@
             ],
             "details": "Validate POST body {reason (min 10 chars), ticketId, duration (15/30/60)}, call impersonation-service.createImpersonationSession, set secure customer-scoped session cookie with {impersonating: true, sessionId: session.id} (httpOnly, secure, sameSite=strict, expires=session.expires_at), emit audit event via admin-audit-service, redirect to /team/ with 302.",
             "status": "pending",
-            "testStrategy": "Integration: POST valid payload → 302 redirect + cookie set + DB session record + audit log entry; invalid reason len → 400."
+            "testStrategy": "Integration: POST valid payload → 302 redirect + cookie set + DB session record + audit log entry; invalid reason len → 400.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2040,7 +2079,8 @@
             ],
             "details": "In session-middleware.ts: if cookie.impersonating=true, verify sessionId exists, !expired (expires_at > now()), actor has valid membership/role in reseller-service; attach req.impersonationSession = {id, customerId, actorId} or reject with 401; propagate to audit tagging.",
             "status": "pending",
-            "testStrategy": "Unit: valid/expired/missing session → accept/reject; Integration: curl expired cookie → 401 Unauthorized."
+            "testStrategy": "Unit: valid/expired/missing session → accept/reject; Integration: curl expired cookie → 401 Unauthorized.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2051,7 +2091,8 @@
             ],
             "details": "In createImpersonationSession: UPDATE impersonation_sessions SET ended_at=now() WHERE actor_id=? AND customer_org_id=? AND ended_at IS NULL AND expires_at > now(); Add cron job or trigger: DELETE/UPDATE expired sessions; Ensure session middleware rejects ended sessions.",
             "status": "pending",
-            "testStrategy": "E2E: create session A → create session B same (actor,customer) → A ended_at set, B active; cron run → expired sessions cleaned."
+            "testStrategy": "E2E: create session A → create session B same (actor,customer) → A ended_at set, B active; cron run → expired sessions cleaned.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2062,19 +2103,20 @@
             ],
             "details": "Build reseller-impersonation-modal.ts: form with reason textarea (10+ chars validation), ticketId input, duration select (15/30/60m), POST to endpoint; Team templates: if req.impersonationSession, inject dismissible banner 'Impersonated by [actor] (session #[id])'; Frontend role check: hide modal unless owner/admin/support.",
             "status": "pending",
-            "testStrategy": "E2E: non-admin sees no modal; admin: modal submit → redirect + banner visible + cookie present; banner shows correct session details."
+            "testStrategy": "E2E: non-admin sees no modal; admin: modal submit → redirect + banner visible + cookie present; banner shows correct session details.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 9,
+        "id": "9",
         "title": "Add customer users and connections read-only views",
         "description": "Implement reseller-customer-users.ts and reseller-customer-connections.ts",
         "details": "Users: list org_members for customer org (email,role,joined,last_seen), no actions. Connections: credential-service listVendorConnections(customerId) → show name/created/status only, never decrypt. Revoke button disabled unless impersonating. Use existing templates as reference.",
         "testStrategy": "Verify no decrypt calls to credential-service.ts. Template shows correct read-only tables. Impersonation mode shows action buttons. Cross-reseller isolation test.",
         "priority": "medium",
         "dependencies": [
-          7
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -2085,7 +2127,8 @@
             "dependencies": [],
             "details": "Copy structure from existing templates like team-users or similar. Include header, breadcrumb from Task 7, table container for org_members data, and read-only styling. No action buttons or forms.",
             "status": "pending",
-            "testStrategy": "Verify template renders without errors, table headers match spec (email,role,joined,last_seen), no interactive elements present."
+            "testStrategy": "Verify template renders without errors, table headers match spec (email,role,joined,last_seen), no interactive elements present.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2096,7 +2139,8 @@
             ],
             "details": "Use reseller-service getCustomerOr404 to validate access. Query org_members WHERE org_id = customer.org_id, select email,role,joined_at,last_seen_at. Apply row-level security for cross-reseller isolation.",
             "status": "pending",
-            "testStrategy": "Unit test returns correct fields only. Integration test with seeded customer org verifies data isolation from other resellers."
+            "testStrategy": "Unit test returns correct fields only. Integration test with seeded customer org verifies data isolation from other resellers.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2107,7 +2151,8 @@
             ],
             "details": "Match styling and layout from users template. Include table for connections with columns name,created,status. Add disabled Revoke button with conditional logic for impersonation. Never show decrypt fields.",
             "status": "pending",
-            "testStrategy": "Template renders table mock data correctly. Revoke button visible but disabled in normal mode, enabled only in impersonation simulation."
+            "testStrategy": "Template renders table mock data correctly. Revoke button visible but disabled in normal mode, enabled only in impersonation simulation.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2118,7 +2163,8 @@
             ],
             "details": "Call listVendorConnections(customerId) after customer validation. Map response to {name, created, status} only - no decryption or secrets. Ensure no credential exposure in any response.",
             "status": "pending",
-            "testStrategy": "Verify API call made with correct customerId. Response contains only specified fields, no decrypt traces in logs or network calls."
+            "testStrategy": "Verify API call made with correct customerId. Response contains only specified fields, no decrypt traces in logs or network calls.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2130,19 +2176,20 @@
             ],
             "details": "Add Users and Connections tabs to reseller-customer-overview.ts. Implement tab switching with URL hash or state management. Ensure data refreshes on tab activation. Test impersonation context propagation.",
             "status": "pending",
-            "testStrategy": "End-to-end: navigate between tabs preserves data/state. Impersonation mode enables revoke. No data leakage between customers. Performance: both tables load <2s with 100 rows."
+            "testStrategy": "End-to-end: navigate between tabs preserves data/state. Impersonation mode enables revoke. No data leakage between customers. Performance: both tables load <2s with 100 rows.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 10,
+        "id": "10",
         "title": "Implement customer audit and billing views",
         "description": "Build reseller-customer-audit.ts and reseller-customer-billing.ts read-only views",
         "details": "Audit: reuse src/web/templates/team-audit.ts filters, scope to customer org via admin-audit-service.ts. Billing: show plan/usage/next invoice from msp-billing, plan change allowed (owner/admin/billing roles), no payment method details in direct-billing mode.",
         "testStrategy": "Filters work correctly scoped to customer. Plan change emits audit event. Billing role matrix: support sees usage but no plan picker. Data matches msp-billing snapshot.",
         "priority": "medium",
         "dependencies": [
-          7
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -2153,7 +2200,8 @@
             "dependencies": [],
             "details": "Copy src/web/templates/team-audit.ts structure, integrate admin-audit-service.ts with customer org ID filter for row-level scoping. Ensure reseller role validation via reseller-service.ts. Display last 20 events minimum with date range, actor, event type filters.",
             "status": "pending",
-            "testStrategy": "Verify filters scope correctly to customer org only; cross-customer isolation; matches team-audit filters; data from reseller_admin_audit table."
+            "testStrategy": "Verify filters scope correctly to customer org only; cross-customer isolation; matches team-audit filters; data from reseller_admin_audit table.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2162,7 +2210,8 @@
             "dependencies": [],
             "details": "Fetch data from msp-billing API: current plan, usage metrics, next invoice preview. Hide payment method details in direct-billing mode. Show plan picker only for owner/admin/billing roles. Implement role checks via session or reseller-service.",
             "status": "pending",
-            "testStrategy": "Role matrix: support sees usage/plan but no picker; owner sees picker; data matches msp-billing snapshot; plan change emits audit event."
+            "testStrategy": "Role matrix: support sees usage/plan but no picker; owner sees picker; data matches msp-billing snapshot; plan change emits audit event.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2173,7 +2222,8 @@
             ],
             "details": "Mount reseller-customer-audit.ts under /reseller/:id/customers/:cid/audit. Add nav link in customer detail page. Enforce owner/admin/support roles. Reuse reseller-service for membership validation.",
             "status": "pending",
-            "testStrategy": "Access control: unauthorized 403; correct scoping to customer; navigation from customer list works."
+            "testStrategy": "Access control: unauthorized 403; correct scoping to customer; navigation from customer list works.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2184,7 +2234,8 @@
             ],
             "details": "Mount reseller-customer-billing.ts under /reseller/:id/customers/:cid/billing. Add nav link in customer detail page. Role-based UI: full access for owner/admin/billing, read-only usage for support.",
             "status": "pending",
-            "testStrategy": "Role matrix tests; navigation functional; conditional plan picker visibility."
+            "testStrategy": "Role matrix tests; navigation functional; conditional plan picker visibility.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2196,20 +2247,21 @@
             ],
             "details": "Handle plan picker submit: call msp-billing update API, emit audit event via admin-audit-service.ts with customer scoping. No payment changes. E2E: verify data accuracy, role enforcement, audit logs.",
             "status": "pending",
-            "testStrategy": "Plan change → msp-billing updated + audit event; filters scoped correctly; support role no picker; full integration with reseller-service validation."
+            "testStrategy": "Plan change → msp-billing updated + audit event; filters scoped correctly; support role no picker; full integration with reseller-service validation.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 11,
+        "id": "11",
         "title": "Implement suspend/unsuspend customer flow",
         "description": "Add suspend/unsuspend endpoints + modal + session invalidation",
         "details": "POST /api/reseller/:id/customers/:cid/suspend + unsuspend with reason text. Set organizations.suspended_at, invalidate customer sessions, redirect customer users to suspended page. Emit audit events. Owner/admin/support roles only.",
         "testStrategy": "Suspend → verify suspended_at set, customer /team/* → suspended page. Unsuspend → clears timestamp. Session invalidation: active customer sessions rejected. Role matrix test.",
         "priority": "medium",
         "dependencies": [
-          6,
-          7
+          "6",
+          "7"
         ],
         "status": "pending",
         "subtasks": [
@@ -2220,7 +2272,8 @@
             "dependencies": [],
             "details": "Use getResellerOr404 and getCustomerOr404 from task 3. For suspend: SET suspended_at=NOW(), reason. For unsuspend: SET suspended_at=NULL. Validate roles via session. Return 200 on success.",
             "status": "pending",
-            "testStrategy": "Test happy path (suspend/unsuspend), 403 unauthorized roles, 404 invalid reseller/customer, validate DB suspended_at changes."
+            "testStrategy": "Test happy path (suspend/unsuspend), 403 unauthorized roles, 404 invalid reseller/customer, validate DB suspended_at changes.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2231,7 +2284,8 @@
             ],
             "details": "Create invalidateCustomerSessions(customerId): DELETE FROM sessions WHERE org_id IN (SELECT id FROM organizations WHERE parent_org_id=customerId). Call from suspend endpoint.",
             "status": "pending",
-            "testStrategy": "Create active sessions for customer users, suspend customer, verify sessions deleted and login fails with invalid session error."
+            "testStrategy": "Create active sessions for customer users, suspend customer, verify sessions deleted and login fails with invalid session error.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2242,7 +2296,8 @@
             ],
             "details": "Modal shows current status, reason input (required for suspend), optimistic UI update. Error handling for API failures. Accessible with ARIA labels.",
             "status": "pending",
-            "testStrategy": "Manual: open modal, enter reason, submit → verify API call and table row status update. Test cancel, validation errors."
+            "testStrategy": "Manual: open modal, enter reason, submit → verify API call and table row status update. Test cancel, validation errors.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2253,7 +2308,8 @@
             ],
             "details": "Middleware: if org.suspended_at IS NOT NULL, render /suspended page showing reason. Page: 'Account suspended: [reason]', contact support CTA. Cache check.",
             "status": "pending",
-            "testStrategy": "Suspend customer → customer user visits /team/* → verify redirect to suspended page with correct reason. Unsuspend → access restored."
+            "testStrategy": "Suspend customer → customer user visits /team/* → verify redirect to suspended page with correct reason. Unsuspend → access restored.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2265,19 +2321,20 @@
             ],
             "details": "After DB update in endpoints: auditService.log({reseller_org_id, actor: session.userId, target_customer_id: cid, event: 'customer.suspend'/'customer.unsuspend', metadata: {reason}}).",
             "status": "pending",
-            "testStrategy": "Suspend/unsuspend → verify audit entry created with correct fields. Check reseller audit view shows events filtered by customer."
+            "testStrategy": "Suspend/unsuspend → verify audit entry created with correct fields. Check reseller audit view shows events filtered by customer.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 12,
+        "id": "12",
         "title": "Build reseller settings pages",
         "description": "Implement /settings/branding, /invoicing, /payment, /notifications",
         "details": "Branding: form matching src/brand/types.ts::BrandConfig, store per reseller org. Invoicing: business details for MSP→customer invoices. Payment: Stripe Elements for Wyre wholesale payment (read-only display + update flow). Notifications: checkboxes for events in §11. Owner/admin roles (payment→owner/admin/billing).",
         "testStrategy": "Form submission persists correctly. Branding changes don't affect existing customers. Stripe Elements loads without errors. Role matrix: support cannot access settings.",
         "priority": "medium",
         "dependencies": [
-          1
+          "1"
         ],
         "status": "pending",
         "subtasks": [
@@ -2288,7 +2345,8 @@
             "dependencies": [],
             "details": "Build Fastify route GET/POST /settings/branding using requireResellerAccess middleware. Render form fields for logo, colors, fonts per BrandConfig interface. On submit, validate and store in reseller_org table or dedicated branding table with reseller_org_id FK. Apply owner/admin role check.",
             "status": "pending",
-            "testStrategy": "Unit test form validation and submission persists to DB. Verify non-owner roles get 403. Check branding changes isolated per reseller org."
+            "testStrategy": "Unit test form validation and submission persists to DB. Verify non-owner roles get 403. Check branding changes isolated per reseller org.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2297,7 +2355,8 @@
             "dependencies": [],
             "details": "Implement GET/POST /settings/invoicing route. Form includes company name, address, tax ID, logo for invoice header. Store in reseller_org or new invoicing_settings table. Ensure owner/admin/billing roles can access and update. Integrate with existing invoice generation flow.",
             "status": "pending",
-            "testStrategy": "Test form submission updates details correctly. Verify invoice preview reflects changes. Role-based access: support role denied."
+            "testStrategy": "Test form submission updates details correctly. Verify invoice preview reflects changes. Role-based access: support role denied.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2306,7 +2365,8 @@
             "dependencies": [],
             "details": "Add GET/PATCH /settings/payment route restricted to owner/admin/billing roles. Load Stripe Elements for secure card input. Display current payment method read-only. Update flow: collect new details, call Stripe API to update customer payment method. Handle Wyre wholesale specifics.",
             "status": "pending",
-            "testStrategy": "Mock Stripe to test Elements load without errors. Verify update flow tokenizes and saves correctly. Test read-only for non-billing roles."
+            "testStrategy": "Mock Stripe to test Elements load without errors. Verify update flow tokenizes and saves correctly. Test read-only for non-billing roles.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2315,7 +2375,8 @@
             "dependencies": [],
             "details": "Create GET/PATCH /settings/notifications route for owner/admin roles. Fetch event list from §11 (e.g., provisioning, suspend, billing events). Display checkboxes grouped by category. Store selections in reseller_notifications table with reseller_org_id. Trigger sample notifications on save.",
             "status": "pending",
-            "testStrategy": "Test checkbox state persists and toggles notifications correctly. Verify unsupported roles cannot access. Check event list matches §11 spec."
+            "testStrategy": "Test checkbox state persists and toggles notifications correctly. Verify unsupported roles cannot access. Check event list matches §11 spec.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2329,20 +2390,21 @@
             ],
             "details": "Use src/web/layout.ts for consistent navigation/tabs across /settings/* pages. Enforce role matrix: payment restricted to owner/admin/billing. Add global error handling for 404/403. Write integration tests simulating full user flows with seeded reseller data.",
             "status": "pending",
-            "testStrategy": "E2E tests: owner updates all sections successfully; support user hits 403 on payment; branding changes don't leak to other resellers. Load test form submissions."
+            "testStrategy": "E2E tests: owner updates all sections successfully; support user hits 403 on payment; branding changes don't leak to other resellers. Load test form submissions.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 13,
+        "id": "13",
         "title": "Build MSP team management",
         "description": "Implement /team with reseller_members CRUD + invitation flow",
         "details": "List MSP employees with roles. Add/remove/change role via reseller_members table. Reuse src/org/invitation-service.ts with reseller-scope=true flag. Role matrix from §8. Owner/admin only.",
         "testStrategy": "Invite → verify reseller_members record + email sent. Role change → audit event. Cannot invite to customer orgs. Role permissions enforced on all routes.",
         "priority": "medium",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -2353,7 +2415,8 @@
             "dependencies": [],
             "details": "Query reseller_members by reseller_org_id from session. Use role matrix §8 for display labels. Template: table with name, email, role, actions (edit/delete). Backend: GET /api/reseller/team.",
             "status": "pending",
-            "testStrategy": "Owner login → see team list. Admin → see list. Non-admin → 403. Verify roles match DB."
+            "testStrategy": "Owner login → see team list. Admin → see list. Non-admin → 403. Verify roles match DB.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2364,7 +2427,8 @@
             ],
             "details": "POST /api/reseller/team/add: {email, role}. PUT /api/reseller/team/:member_id: {role}. DELETE /api/reseller/team/:member_id. Transactional writes, validate role from §8 matrix.",
             "status": "pending",
-            "testStrategy": "Add member → record created. Change role → updated. Delete → removed. Non-admin → 403. Invalid role → error."
+            "testStrategy": "Add member → record created. Change role → updated. Delete → removed. Non-admin → 403. Invalid role → error.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2375,7 +2439,8 @@
             ],
             "details": "On add: if email not in reseller_members, call invitation-service(reseller-scope=true). Frontend: modal with invite option. Link invite to member record post-accept.",
             "status": "pending",
-            "testStrategy": "Add new email → invite sent + reseller_members pending record. Accept invite → role assigned. Reuse verifies reseller-scope=true."
+            "testStrategy": "Add new email → invite sent + reseller_members pending record. Accept invite → role assigned. Reuse verifies reseller-scope=true.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2386,7 +2451,8 @@
             ],
             "details": "Use existing team templates. Add button → modal (email, role dropdown from §8). Edit/delete icons per row. Success/error toasts. Mobile responsive table.",
             "status": "pending",
-            "testStrategy": "E2E: click add → fill → submit → list updates. Edit role → saves. Delete confirm → removes. Loader states work."
+            "testStrategy": "E2E: click add → fill → submit → list updates. Edit role → saves. Delete confirm → removes. Loader states work.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2398,20 +2464,21 @@
             ],
             "details": "Middleware: check session.role in ['owner','admin']. Audit: reseller_admin_audit on add/edit/delete/invite. Block customer org invites via scope check.",
             "status": "pending",
-            "testStrategy": "Invite → reseller_members record + email. Role change → audit event. Customer org invite → blocked. Permissions: non-admin 403 everywhere."
+            "testStrategy": "Invite → reseller_members record + email. Role change → audit event. Customer org invite → blocked. Permissions: non-admin 403 everywhere.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 14,
+        "id": "14",
         "title": "Implement reseller audit system",
         "description": "Build reseller_admin_audit table writes + /audit view",
         "details": "Every reseller action writes to reseller_admin_audit(reseller_org_id, actor, target_customer_id, event, metadata). Reuse src/audit/admin-audit-service.ts patterns. Template matches team-audit.ts filters. Show last 20 events minimum.",
         "testStrategy": "Verify provisioning/suspend/impersonation emit correct events. Filters work (date range, actor, event type). Cross-reseller isolation (reseller A sees only own audit).",
         "priority": "medium",
         "dependencies": [
-          1,
-          3
+          "1",
+          "3"
         ],
         "status": "pending",
         "subtasks": [
@@ -2422,7 +2489,8 @@
             "dependencies": [],
             "details": "Use similar schema to existing admin-audit tables. Include indexes on reseller_org_id, actor, event, and created_at for efficient querying. Add row-level security policy restricting access by reseller_org_id.",
             "status": "pending",
-            "testStrategy": "Verify table creation via schema inspection. Confirm RLS policy blocks cross-reseller access."
+            "testStrategy": "Verify table creation via schema inspection. Confirm RLS policy blocks cross-reseller access.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2433,7 +2501,8 @@
             ],
             "details": "Define function writeResellerAudit(resellerOrgId, actor, targetCustomerId, event, metadata) that inserts records. Integrate into existing flows like provisioning, suspend/unsuspend, impersonation. Ensure transaction safety.",
             "status": "pending",
-            "testStrategy": "Unit test insert with mock DB. Integration test: trigger provisioning → verify audit record with correct fields."
+            "testStrategy": "Unit test insert with mock DB. Integration test: trigger provisioning → verify audit record with correct fields.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2445,7 +2514,8 @@
             ],
             "details": "Support filters: date range, actor, event type. Default to last 20 events ordered by created_at DESC. Apply RLS for cross-reseller isolation. Paginate with limit/offset.",
             "status": "pending",
-            "testStrategy": "API test: fetch unfiltered → 20 latest events. Filter by date/event → correct subset. Wrong resellerId → empty or 404."
+            "testStrategy": "API test: fetch unfiltered → 20 latest events. Filter by date/event → correct subset. Wrong resellerId → empty or 404.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2456,7 +2526,8 @@
             ],
             "details": "Use table with columns: timestamp, actor, target, event, metadata preview. Implement filter form calling /api/reseller/:id/audit. Show last 20 by default, add pagination. Responsive design.",
             "status": "pending",
-            "testStrategy": "Cypress E2E: load page → verify 20 events displayed. Apply filter → table updates correctly. Metadata expands on click."
+            "testStrategy": "Cypress E2E: load page → verify 20 events displayed. Apply filter → table updates correctly. Metadata expands on click.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2469,19 +2540,20 @@
             ],
             "details": "Update task 6,11,15 services to call writeResellerAudit on actions. Verify events: customer.provisioned, customer.suspended, etc. Test cross-reseller isolation.",
             "status": "pending",
-            "testStrategy": "Verify provisioning/suspend/impersonation emit correct events with metadata. Filters work across date/actor/event. Reseller A cannot see Reseller B audits."
+            "testStrategy": "Verify provisioning/suspend/impersonation emit correct events with metadata. Filters work across date/actor/event. Reseller A cannot see Reseller B audits.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 15,
+        "id": "15",
         "title": "Implement impersonation audit tagging and credential protection",
         "description": "Tag all impersonated writes + block credential decrypt",
         "details": "Modify src/audit/admin-audit-service.ts and src/audit/audit-service.ts: if session.impersonating, add impersonation_session_id to metadata. Update src/credentials/credential-service.ts: if impersonating && !proxy_flow, throw 'MSP impersonation cannot decrypt credentials'. Add banner injection to team templates.",
         "testStrategy": "Start impersonation → perform user add/credential test → verify audit metadata contains session.id. Attempt decrypt → explicit error + audit event. Banner appears on all /team/* pages.",
         "priority": "high",
         "dependencies": [
-          8
+          "8"
         ],
         "status": "pending",
         "subtasks": [
@@ -2492,7 +2564,8 @@
             "dependencies": [],
             "details": "In audit logging functions, add conditional logic: if (session.impersonating) { metadata.impersonation_session_id = session.id; }. Ensure this applies to all write operations.",
             "status": "pending",
-            "testStrategy": "Create audit event during impersonation → verify metadata contains impersonation_session_id field with correct session ID."
+            "testStrategy": "Create audit event during impersonation → verify metadata contains impersonation_session_id field with correct session ID.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2501,7 +2574,8 @@
             "dependencies": [],
             "details": "Apply same pattern as admin-audit-service: check session.impersonating flag and inject session.id into metadata object before logging.",
             "status": "pending",
-            "testStrategy": "Trigger regular audit write while impersonating → confirm metadata includes impersonation_session_id matching active session."
+            "testStrategy": "Trigger regular audit write while impersonating → confirm metadata includes impersonation_session_id matching active session.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2513,7 +2587,8 @@
             ],
             "details": "In decrypt methods, add guard: if (session.impersonating && !session.proxy_flow) { throw new Error('MSP impersonation cannot decrypt credentials'); }",
             "status": "pending",
-            "testStrategy": "Attempt credential decrypt while impersonating (no proxy_flow) → verify explicit error thrown and audit event logged."
+            "testStrategy": "Attempt credential decrypt while impersonating (no proxy_flow) → verify explicit error thrown and audit event logged.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2524,7 +2599,8 @@
             ],
             "details": "Create reusable banner component showing 'Impersonation Active - Admin: [admin_name] Session: [session_id]' with end impersonation link. Include on /team/* pages.",
             "status": "pending",
-            "testStrategy": "Start impersonation session → navigate /team/* pages → verify banner displays correct admin/session info and end link works."
+            "testStrategy": "Start impersonation session → navigate /team/* pages → verify banner displays correct admin/session info and end link works.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2538,25 +2614,26 @@
             ],
             "details": "E2E test: start impersonation → user add + credential decrypt attempt → verify audit metadata tagged correctly, decrypt blocked with error, banner visible.",
             "status": "pending",
-            "testStrategy": "Full flow test + edge cases: non-impersonated writes (no tag), proxy_flow decrypt (allowed), wrong session ID in metadata."
+            "testStrategy": "Full flow test + edge cases: non-impersonated writes (no tag), proxy_flow decrypt (allowed), wrong session ID in metadata.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 16,
+        "id": "16",
         "title": "Add telemetry, cross-reseller tests, accessibility, feature flag",
         "description": "Complete non-functional requirements: telemetry events, isolation tests, a11y, rollout",
         "details": "Emit all §11 events via existing telemetry channel. Write cross-reseller test suite (2 resellers × 5 customers, assert 404 everywhere). WCAG 2.1 AA audit on key flows. Feature flag gates all routes. Add session end endpoints.",
         "testStrategy": "Telemetry schema validation. Isolation suite passes CI. Lighthouse a11y score 95+ on dashboard/customer list. Feature flag toggle test: on→all routes work, off→all 404.",
         "priority": "high",
         "dependencies": [
-          4,
-          5,
-          6,
-          8,
-          11,
-          14,
-          15
+          "4",
+          "5",
+          "6",
+          "8",
+          "11",
+          "14",
+          "15"
         ],
         "status": "pending",
         "subtasks": [
@@ -2567,7 +2644,8 @@
             "dependencies": [],
             "details": "Integrate telemetry calls in key locations like suspend/unsuspend, impersonation, dashboard loads, and session endpoints. Ensure events include necessary metadata such as reseller_id, customer_id, user roles, and action outcomes. Validate against telemetry schema.",
             "status": "pending",
-            "testStrategy": "Unit tests verify event emission on trigger paths. Schema validation confirms structure. Integration test captures and inspects events in mock telemetry sink."
+            "testStrategy": "Unit tests verify event emission on trigger paths. Schema validation confirms structure. Integration test captures and inspects events in mock telemetry sink.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2576,7 +2654,8 @@
             "dependencies": [],
             "details": "Write end-to-end tests using test reseller accounts and seeded customer data. Test all customer-specific endpoints (dashboard, suspend, impersonation, etc.) from wrong reseller context. Include role variations and audit log assertions.",
             "status": "pending",
-            "testStrategy": "CI pipeline runs full suite; all cross-reseller requests return 404. Verify no data leakage via response inspection and database query assertions."
+            "testStrategy": "CI pipeline runs full suite; all cross-reseller requests return 404. Verify no data leakage via response inspection and database query assertions.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2585,7 +2664,8 @@
             "dependencies": [],
             "details": "Run automated Lighthouse audits targeting 95+ a11y score. Manual review for color contrast, keyboard navigation, screen reader compatibility, ARIA labels on reseller-specific UI elements. Fix identified issues in templates and components.",
             "status": "pending",
-            "testStrategy": "Lighthouse CI scores 95+ on audited pages. Manual testing with NVDA/JAWS confirms navigability. Cross-browser keyboard testing passes."
+            "testStrategy": "Lighthouse CI scores 95+ on audited pages. Manual testing with NVDA/JAWS confirms navigability. Cross-browser keyboard testing passes.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2596,7 +2676,8 @@
             ],
             "details": "Introduce reseller feature flag evaluated at middleware level. On 'off', all /api/reseller/* and template routes return 404. Integrate with existing session context. Add flag evaluation to telemetry spans for observability.",
             "status": "pending",
-            "testStrategy": "Toggle test: flag on → all routes accessible; flag off → comprehensive 404 coverage. Performance test confirms <5ms evaluation latency."
+            "testStrategy": "Toggle test: flag on → all routes accessible; flag off → comprehensive 404 coverage. Performance test confirms <5ms evaluation latency.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2609,34 +2690,35 @@
             ],
             "details": "Create DELETE /api/reseller/:id/session and /api/customer/session endpoints for proper cleanup. Integrate with impersonation and suspend flows. Run full regression including telemetry validation, isolation tests, a11y re-audit, and flag toggle matrix.",
             "status": "pending",
-            "testStrategy": "End-to-end: suspend→session invalidate→endpoints cleanup. Full suite re-run confirms no regressions. Load test verifies p95<2s with all features active."
+            "testStrategy": "End-to-end: suspend→session invalidate→endpoints cleanup. Full suite re-run confirms no regressions. Load test verifies p95<2s with all features active.",
+            "parentId": "undefined"
           }
         ]
       },
       {
-        "id": 17,
+        "id": "17",
         "title": "End-to-end acceptance criteria verification",
         "description": "Test all 20 acceptance criteria from §13",
         "details": "Create comprehensive test suite covering every bullet. Include load tests, security tests, role matrix, feature flag, dark launch verification.",
         "testStrategy": "CI suite passes all 20 criteria. Manual dogfood test with Wyre internal reseller org.",
         "priority": "high",
         "dependencies": [
-          1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
-          10,
-          11,
-          12,
-          13,
-          14,
-          15,
-          16
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16"
         ],
         "status": "pending",
         "subtasks": [
@@ -2647,7 +2729,8 @@
             "dependencies": [],
             "details": "Use Docker Compose for clean DB reset. Seed via migration scripts from Task 2. Verify row isolation: reseller A queries return 0 rows for reseller B customers. Include feature flag off/on states.",
             "status": "pending",
-            "testStrategy": "Confirm seed data integrity via SQL counts. Cross-reseller query leakage test: assert 404/empty for unauthorized access."
+            "testStrategy": "Confirm seed data integrity via SQL counts. Cross-reseller query leakage test: assert 404/empty for unauthorized access.",
+            "parentId": "undefined"
           },
           {
             "id": 2,
@@ -2658,7 +2741,8 @@
             ],
             "details": "Group tests by feature: org CRUD, customer list/search, impersonation, audit logs. Cover happy paths, edge cases (empty lists, invalid inputs), role-based access (owner vs readonly). Integrate with CI.",
             "status": "pending",
-            "testStrategy": "Run suite in CI; require 100% pass rate on all 20 criteria. Use video recording for visual regression checks."
+            "testStrategy": "Run suite in CI; require 100% pass rate on all 20 criteria. Use video recording for visual regression checks.",
+            "parentId": "undefined"
           },
           {
             "id": 3,
@@ -2670,7 +2754,8 @@
             ],
             "details": "Use Artillery/k6 for 100 concurrent reseller users. Test pagination, trigram search, sort. Monitor DB queries via EXPLAIN ANALYZE. Include feature flag toggle impact.",
             "status": "pending",
-            "testStrategy": "Assert response times, error rates <1%, no DB connection pool exhaustion. Generate load report with percentiles."
+            "testStrategy": "Assert response times, error rates <1%, no DB connection pool exhaustion. Generate load report with percentiles.",
+            "parentId": "undefined"
           },
           {
             "id": 4,
@@ -2682,7 +2767,8 @@
             ],
             "details": "Automated tests for unauthorized access (404), audit log entries on admin actions, impersonation session isolation. Manual matrix: each role × each feature (read/write/delete).",
             "status": "pending",
-            "testStrategy": "Zero leakage across resellers. Verify audit table has expected entries. Role matrix spreadsheet with pass/fail."
+            "testStrategy": "Zero leakage across resellers. Verify audit table has expected entries. Role matrix spreadsheet with pass/fail.",
+            "parentId": "undefined"
           },
           {
             "id": 5,
@@ -2695,15 +2781,20 @@
             ],
             "details": "Toggle feature flag: off=all 404s, on=all flows work. Test accessibility (Lighthouse 95+), telemetry events emitted. Dark launch: traffic split verification. Document gaps.",
             "status": "pending",
-            "testStrategy": "CI suite + manual checklist passes all 20 criteria. Lighthouse audit report. Telemetry schema validation. Sign-off matrix."
+            "testStrategy": "CI suite + manual checklist passes all 20 criteria. Lighthouse audit report. Telemetry schema validation. Sign-off matrix.",
+            "parentId": "undefined"
           }
         ]
       }
     ],
     "metadata": {
-      "created": "2026-04-18T23:27:41.371Z",
-      "updated": "2026-04-18T23:27:41.371Z",
-      "description": "Tasks for msp-admin context"
+      "version": "1.0.0",
+      "lastModified": "2026-04-21T04:00:19.535Z",
+      "taskCount": 17,
+      "completedCount": 1,
+      "tags": [
+        "msp-admin"
+      ]
     }
   },
   "billing-wholesale": {
