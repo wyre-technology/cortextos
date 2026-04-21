@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
 import type { OrgInvitation, OrgMember } from './org-service.js';
@@ -58,6 +59,17 @@ export class InvitationService {
     this.memberService = memberService;
   }
 
+  /**
+   * Hash an invitation token for at-rest storage and lookup.
+   *
+   * SOC2 invariant (PRD §8.4 / §A.19): the plaintext token never persists
+   * to disk. We hand the raw token back to the caller exactly once — at
+   * creation time, for the email link — and only the hash lives in the DB.
+   */
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
   async createInvitation(
     orgId: string,
     invitedBy: string,
@@ -65,27 +77,44 @@ export class InvitationService {
   ): Promise<OrgInvitation> {
     const id = nanoid();
     const token = nanoid(32);
+    const tokenHash = this.hashToken(token);
     const expiresInHours = options?.expiresInHours ?? 168; // 7 days default
     const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
     const maxUses = options?.maxUses !== undefined ? options.maxUses : 1;
 
+    // Dual-write phase (migration 011): we write the hash (new canonical
+    // storage) AND the plaintext token (legacy column, retained for rollback
+    // safety). A follow-up migration drops the plaintext column once all
+    // outstanding invitations issued before this rollout have expired.
     const rows = await this.sql<InvitationRow[]>`
-      INSERT INTO org_invitations (id, org_id, invited_by, token, expires_at, max_uses, use_count)
-      VALUES (${id}, ${orgId}, ${invitedBy}, ${token}, ${expiresAt}, ${maxUses}, ${0})
+      INSERT INTO org_invitations
+        (id, org_id, invited_by, token, token_hash, expires_at, max_uses, use_count)
+      VALUES
+        (${id}, ${orgId}, ${invitedBy}, ${token}, ${tokenHash}, ${expiresAt}, ${maxUses}, ${0})
       RETURNING *
     `;
 
-    return toInvitation(rows[0]);
+    // Return the raw token to the caller (for email link). The DB row stores
+    // the hash; we substitute the plaintext back in so callers receive the
+    // single copy that will ever exist.
+    return { ...toInvitation(rows[0]), token };
   }
 
   async getInvitationByToken(token: string): Promise<OrgInvitation | null> {
+    const tokenHash = this.hashToken(token);
+    // Prefer the hash column (new path). Fall back to plaintext `token` only
+    // for legacy rows written before migration 011 that have a NULL
+    // token_hash — those age out naturally within expires_at (<= 7 days).
     const rows = await this.sql<InvitationRow[]>`
       SELECT * FROM org_invitations
-      WHERE token = ${token}
+      WHERE (token_hash = ${tokenHash} OR (token_hash IS NULL AND token = ${token}))
         AND (max_uses IS NULL OR use_count < max_uses)
         AND expires_at > NOW()
     `;
-    return rows[0] ? toInvitation(rows[0]) : null;
+    if (!rows[0]) return null;
+    // Return the raw token the caller already supplied rather than the
+    // stored hash, so downstream code building invite URLs keeps working.
+    return { ...toInvitation(rows[0]), token };
   }
 
   async acceptInvitation(token: string, userId: string): Promise<OrgMember | null> {
