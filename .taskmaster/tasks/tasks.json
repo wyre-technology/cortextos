@@ -541,7 +541,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -603,7 +603,8 @@
             "testStrategy": "Acceptance criteria #10-12, #27-28. Verify 100% branch coverage, integration with existing org flows, no regressions.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:05:42.177Z"
       },
       {
         "id": "9",
@@ -1510,9 +1511,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T04:00:22.996Z",
+      "lastModified": "2026-04-21T04:05:42.177Z",
       "taskCount": 20,
-      "completedCount": 7,
+      "completedCount": 8,
       "tags": [
         "reseller-tenancy"
       ]
@@ -4170,7 +4171,7 @@
         "dependencies": [
           "1"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -4232,7 +4233,8 @@
             "testStrategy": "Full TypeScript build succeeds, existing unit tests pass 100%, new test validates all fields accept null/undefined",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:05:45.595Z"
       },
       {
         "id": "3",
@@ -5351,9 +5353,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:46:20.841Z",
+      "lastModified": "2026-04-21T04:05:45.595Z",
       "taskCount": 17,
-      "completedCount": 1,
+      "completedCount": 2,
       "tags": [
         "white-label"
       ]
@@ -5518,7 +5520,7 @@
           "1",
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5580,7 +5582,8 @@
             "testStrategy": "All unit/integration tests pass post-rebase (createInvitation hashes correctly, acceptInvitation validates, no plaintext in DB snapshots). CI pipeline green.",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2026-04-21T04:05:48.986Z"
       },
       {
         "id": "4",
@@ -6708,9 +6711,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-21T03:46:24.220Z",
+      "lastModified": "2026-04-21T04:05:48.987Z",
       "taskCount": 18,
-      "completedCount": 2,
+      "completedCount": 3,
       "tags": [
         "onboarding"
       ]
