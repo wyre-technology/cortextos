@@ -37,7 +37,7 @@
     "jose": "^6.0.8",
     "nanoid": "^5.1.9",
     "openid-client": "^6.8.3",
-    "postgres": "^3.4.5",
+    "postgres": "^3.4.9",
     "stripe": "^20.3.1"
   },
   "devDependencies": {
