@@ -63,6 +63,38 @@ interface TeamCredentialRow {
   updated_at: string;
 }
 
+/** Raw row shape for reseller_shared_vendor_grants table. */
+interface ResellerSharedVendorGrantRow {
+  id: string;
+  reseller_org_id: string;
+  customer_org_id: string;
+  vendor_slug: string;
+  enabled: boolean;
+}
+
+/**
+ * Result of resolving a credential for an org+vendor request.
+ *
+ * Includes provenance — whether the credential is owned by the requesting
+ * customer org directly, or accessed via a reseller's shared grant — so that
+ * downstream callers can emit audit records distinguishing the two paths.
+ */
+export interface ResolvedCredential {
+  /** Decrypted credential key/value pairs. */
+  data: Record<string, string>;
+  /** Vendor the credential belongs to. */
+  vendorSlug: string;
+  /** The org_id whose stored org_credentials row supplied the data. */
+  ownerOrgId: string;
+  /** How the credential was resolved. */
+  source: 'customer' | 'reseller_grant';
+  /**
+   * Grant row ID when `source === 'reseller_grant'`, otherwise null.
+   * Required for audit logging of cross-org credential usage.
+   */
+  grantId: string | null;
+}
+
 /** Raw row shape for service_client_credentials table. */
 interface ServiceClientCredentialRow {
   id: string;
@@ -387,6 +419,90 @@ export class CredentialService {
       SELECT vendor_slug FROM org_credentials WHERE org_id = ${orgId} ORDER BY vendor_slug
     `;
     return rows.map((r) => r.vendor_slug);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reseller-shared credential resolution (PRD §5.3 / §7)
+  //
+  // Resolution order for a customer org requesting a vendor credential:
+  //   1. The customer's own org_credentials row, if any.
+  //   2. The reseller_shared_vendor_grants opt-in, falling through to the
+  //      reseller's org_credentials row for the same vendor.
+  //   3. null — caller handles the no-credential path.
+  //
+  // Standalone orgs and reseller orgs have no step-2 path; their own
+  // org_credentials row is the only source.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve a vendor credential for a given org, following the customer →
+   * reseller-grant fallback chain.
+   *
+   * @returns A {@link ResolvedCredential} describing the provenance and
+   *          decrypted data, or `null` if neither the customer nor any
+   *          enabled reseller grant supplies one.
+   */
+  async resolveForOrgAndVendor(
+    orgId: string,
+    vendorSlug: string,
+  ): Promise<ResolvedCredential | null> {
+    // Step 1: customer's own org_credentials row.
+    const ownRows = await this.sql<OrgCredentialRow[]>`
+      SELECT * FROM org_credentials
+      WHERE org_id = ${orgId} AND vendor_slug = ${vendorSlug}
+    `;
+
+    const ownRow = ownRows[0];
+    if (ownRow) {
+      const data = this.decrypt(this.toOrgCredential(ownRow));
+      if (data) {
+        return {
+          data,
+          vendorSlug,
+          ownerOrgId: orgId,
+          source: 'customer',
+          grantId: null,
+        };
+      }
+    }
+
+    // Step 2: enabled reseller grant for (customer_org_id, vendor_slug).
+    const grantRows = await this.sql<ResellerSharedVendorGrantRow[]>`
+      SELECT id, reseller_org_id, customer_org_id, vendor_slug, enabled
+      FROM reseller_shared_vendor_grants
+      WHERE customer_org_id = ${orgId}
+        AND vendor_slug = ${vendorSlug}
+        AND enabled = TRUE
+      LIMIT 1
+    `;
+
+    const grant = grantRows[0];
+    if (!grant) {
+      return null;
+    }
+
+    const resellerRows = await this.sql<OrgCredentialRow[]>`
+      SELECT * FROM org_credentials
+      WHERE org_id = ${grant.reseller_org_id} AND vendor_slug = ${vendorSlug}
+    `;
+
+    const resellerRow = resellerRows[0];
+    if (!resellerRow) {
+      return null;
+    }
+
+    const data = this.decrypt(this.toOrgCredential(resellerRow));
+    if (!data) {
+      return null;
+    }
+
+    return {
+      data,
+      vendorSlug,
+      ownerOrgId: grant.reseller_org_id,
+      source: 'reseller_grant',
+      grantId: grant.id,
+    };
   }
 
   // ---------------------------------------------------------------------------

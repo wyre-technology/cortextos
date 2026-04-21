@@ -22,6 +22,17 @@ describe('CredentialService', () => {
     const orgStore = new Map<string, Record<string, unknown>>();
     const teamStore = new Map<string, Record<string, unknown>>();
     const svcClientStore = new Map<string, Record<string, unknown>>();
+    // Reseller shared vendor grants, keyed by `${customerOrgId}:${vendorSlug}`.
+    const grantStore = new Map<
+      string,
+      {
+        id: string;
+        reseller_org_id: string;
+        customer_org_id: string;
+        vendor_slug: string;
+        enabled: boolean;
+      }
+    >();
 
     // Create a tagged template function that mimics postgres.js
     const sql = (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -88,6 +99,21 @@ describe('CredentialService', () => {
         const key = `${orgId}:${vendorSlug}`;
         const existed = orgStore.delete(key);
         return Promise.resolve(Object.assign([], { count: existed ? 1 : 0 }));
+      }
+
+      // -----------------------------------------------------------------------
+      // reseller_shared_vendor_grants
+      // -----------------------------------------------------------------------
+
+      if (query.includes('reseller_shared_vendor_grants')) {
+        // resolveForOrgAndVendor reads: customer_org_id, vendor_slug, enabled=TRUE
+        const customerOrgId = values[0] as string;
+        const vendorSlug = values[1] as string;
+        const grant = grantStore.get(`${customerOrgId}:${vendorSlug}`);
+        if (grant && grant.enabled) {
+          return Promise.resolve([grant]);
+        }
+        return Promise.resolve([]);
       }
 
       // -----------------------------------------------------------------------
@@ -247,7 +273,42 @@ describe('CredentialService', () => {
       return Promise.resolve([]);
     };
 
+    // Expose the grant store for tests that need to seed or revoke grants.
+    (sql as unknown as { _grants: typeof grantStore })._grants = grantStore;
+
     return sql as unknown as import('postgres').Sql;
+  }
+
+  /** Convenience: seed a grant row via the mock sql handle. */
+  function seedGrant(
+    sql: import('postgres').Sql,
+    grant: {
+      id: string;
+      resellerOrgId: string;
+      customerOrgId: string;
+      vendorSlug: string;
+      enabled?: boolean;
+    },
+  ): void {
+    const store = (sql as unknown as {
+      _grants: Map<
+        string,
+        {
+          id: string;
+          reseller_org_id: string;
+          customer_org_id: string;
+          vendor_slug: string;
+          enabled: boolean;
+        }
+      >;
+    })._grants;
+    store.set(`${grant.customerOrgId}:${grant.vendorSlug}`, {
+      id: grant.id,
+      reseller_org_id: grant.resellerOrgId,
+      customer_org_id: grant.customerOrgId,
+      vendor_slug: grant.vendorSlug,
+      enabled: grant.enabled ?? true,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -489,6 +550,156 @@ describe('CredentialService', () => {
       await service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', { apiKey: 'b' }, 'admin');
 
       expect(await service.listServiceClientVendors('client_1')).toEqual(['datto-rmm', 'itglue']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // resolveForOrgAndVendor (reseller-shared credential resolution)
+  // -------------------------------------------------------------------------
+
+  describe('resolveForOrgAndVendor', () => {
+    it('returns the customer org credential when one exists', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      await service.storeOrgCredential(
+        'cust_1',
+        'datto-rmm',
+        { apiKey: 'customer-key' },
+        'admin_1',
+      );
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved).not.toBeNull();
+      expect(resolved?.source).toBe('customer');
+      expect(resolved?.ownerOrgId).toBe('cust_1');
+      expect(resolved?.grantId).toBeNull();
+      expect(resolved?.data).toEqual({ apiKey: 'customer-key' });
+    });
+
+    it('falls back to the reseller credential when only a grant exists', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      // Reseller has a shared credential; customer has none of its own.
+      await service.storeOrgCredential(
+        'reseller_1',
+        'datto-rmm',
+        { apiKey: 'shared-reseller-key' },
+        'reseller_admin',
+      );
+      seedGrant(sql, {
+        id: 'grant_abc',
+        resellerOrgId: 'reseller_1',
+        customerOrgId: 'cust_1',
+        vendorSlug: 'datto-rmm',
+        enabled: true,
+      });
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved).not.toBeNull();
+      expect(resolved?.source).toBe('reseller_grant');
+      expect(resolved?.ownerOrgId).toBe('reseller_1');
+      expect(resolved?.grantId).toBe('grant_abc');
+      expect(resolved?.data).toEqual({ apiKey: 'shared-reseller-key' });
+    });
+
+    it('prefers the customer credential when both a grant and an own cred exist', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      await service.storeOrgCredential(
+        'reseller_1',
+        'datto-rmm',
+        { apiKey: 'shared-reseller-key' },
+        'reseller_admin',
+      );
+      await service.storeOrgCredential(
+        'cust_1',
+        'datto-rmm',
+        { apiKey: 'customer-key' },
+        'cust_admin',
+      );
+      seedGrant(sql, {
+        id: 'grant_abc',
+        resellerOrgId: 'reseller_1',
+        customerOrgId: 'cust_1',
+        vendorSlug: 'datto-rmm',
+        enabled: true,
+      });
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved?.source).toBe('customer');
+      expect(resolved?.data).toEqual({ apiKey: 'customer-key' });
+    });
+
+    it('ignores a disabled (revoked) grant and returns null when the customer has no own cred', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      await service.storeOrgCredential(
+        'reseller_1',
+        'datto-rmm',
+        { apiKey: 'shared-reseller-key' },
+        'reseller_admin',
+      );
+      seedGrant(sql, {
+        id: 'grant_abc',
+        resellerOrgId: 'reseller_1',
+        customerOrgId: 'cust_1',
+        vendorSlug: 'datto-rmm',
+        enabled: false,
+      });
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved).toBeNull();
+    });
+
+    it('falls back to the customer own cred when the grant is disabled but the customer has its own', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      await service.storeOrgCredential(
+        'cust_1',
+        'datto-rmm',
+        { apiKey: 'customer-key' },
+        'cust_admin',
+      );
+      seedGrant(sql, {
+        id: 'grant_abc',
+        resellerOrgId: 'reseller_1',
+        customerOrgId: 'cust_1',
+        vendorSlug: 'datto-rmm',
+        enabled: false,
+      });
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved?.source).toBe('customer');
+      expect(resolved?.data).toEqual({ apiKey: 'customer-key' });
+    });
+
+    it('returns null when no credential exists anywhere', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved).toBeNull();
+    });
+
+    it('returns null when a grant references a reseller that has no credential stored', async () => {
+      const sql = createMockSql();
+      const service = new CredentialService(sql);
+
+      seedGrant(sql, {
+        id: 'grant_abc',
+        resellerOrgId: 'reseller_1',
+        customerOrgId: 'cust_1',
+        vendorSlug: 'datto-rmm',
+        enabled: true,
+      });
+
+      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      expect(resolved).toBeNull();
     });
   });
 });
