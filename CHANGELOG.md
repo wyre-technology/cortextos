@@ -1,3 +1,20 @@
+# [1.5.0](https://github.com/wyre-technology/conduit/compare/v1.4.0...v1.5.0) (2026-05-05)
+
+
+### Bug Fixes
+
+* **docker:** copy migrations/ into runtime image ([af7e628](https://github.com/wyre-technology/conduit/commit/af7e6286048dd4d7d48a1af38155e42126f00540))
+* **migrate:** tolerate pre-mig-011 org_invitations on source ([93b05b7](https://github.com/wyre-technology/conduit/commit/93b05b75c5e9bbe1c4a593d31ff6b780c82b63f9))
+
+
+### Features
+
+* **consolidation:** fold mcp-gateway into Conduit ([#46](https://github.com/wyre-technology/conduit/issues/46)) ([4e8cf87](https://github.com/wyre-technology/conduit/commit/4e8cf878854c06655a660ad7da0572b323718d13))
+* **db:** migration runner — apply migrations/*.sql at boot ([ffd529a](https://github.com/wyre-technology/conduit/commit/ffd529a07e447f0bd80b2b235ad76d05f2789e91))
+* **deploy:** staging.conduit.wyre.ai auto-deploy path ([0d722b7](https://github.com/wyre-technology/conduit/commit/0d722b73e40667803cc89096ae7af8383f2ef011))
+* **scim:** SCIM 2.0 inbound provisioning (tenant + reseller scope) ([#38](https://github.com/wyre-technology/conduit/issues/38)) ([400c9a0](https://github.com/wyre-technology/conduit/commit/400c9a07536c893c2a05589bf7887b4319c9e6e4))
+* **security:** backport safe-fetch SSRF guard for ported vendors ([25a80c6](https://github.com/wyre-technology/conduit/commit/25a80c6e4796a97fa609d93a25cde171723ee4d6))
+
 # [1.4.0](https://github.com/wyre-technology/wyre-mcp-gateway-platform/compare/v1.3.4...v1.4.0) (2026-04-21)
 
 
