@@ -31,6 +31,7 @@ import { cliRoutes } from './proxy/cli-router.js';
 import { webRoutes } from './web/routes.js';
 import { VendorOAuthStateStore } from './oauth/vendor-state-store.js';
 import { CreditService } from './billing/credit-service.js';
+import { runMigrations } from './db/migrate.js';
 import { orgRoutes } from './org/routes.js';
 import { billingRoutes } from './billing/checkout.js';
 import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
@@ -155,6 +156,12 @@ const resellerMemberService = new ResellerMemberService(sql);
 
 const logShippingService = new LogShippingService(sql);
 await logShippingService.initTables();
+
+// Migration runner — applies any unapplied migrations from migrations/*.sql
+// after the inline initTables() calls have created the base schema. Idempotent
+// and safe to run on every boot (skips files already in schema_migrations).
+// See src/db/migrate.ts.
+await runMigrations(sql, { log: app.log });
 
 const logShippingAdapters = new Map<string, import('./log-shipping/adapters/types.js').LogShippingAdapter>([
   ['loki', new LokiAdapter()],
