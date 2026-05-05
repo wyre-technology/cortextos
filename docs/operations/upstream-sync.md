@@ -1,17 +1,27 @@
 # Upstream Sync Runbook
 
-Conduit is currently a downstream fork of the `mcp-gateway` product repo
-(`git@github.com:wyre-technology/mcp-gateway.git`). Until the eventual
-merge-back, we periodically pull upstream changes into Conduit so that
-security fixes, vendor integrations, and core engine improvements land here
-without divergence spiraling out of control.
+> **Status (2026-05-05):** This workflow is being retired. mcp-gateway is
+> being folded into Conduit — see
+> [mcp-gateway-cutover-runbook.md](./mcp-gateway-cutover-runbook.md). After
+> production cutover, the upstream remote becomes irrelevant and this doc
+> goes away.
+>
+> Until cutover, the sync still works for cherry-picking emergency fixes
+> from upstream. For substantive changes, prefer landing them directly in
+> Conduit.
 
-This runbook documents how we do that safely.
+Conduit was historically a downstream fork of the `mcp-gateway` product
+repo (`git@github.com:wyre-technology/mcp-gateway.git`). The two are
+being consolidated; this runbook documents the legacy sync flow that
+remains operational until that consolidation completes.
 
 ## Remotes
 
-- `origin` — `wyre-technology/wyre-mcp-gateway-platform` (this repo)
-- `upstream` — `wyre-technology/mcp-gateway` (the product repo)
+- `origin` — `wyre-technology/conduit` (this repo; formerly
+  `wyre-mcp-gateway-platform`, renamed 2026-05-05; old URL still
+  redirects)
+- `upstream` — `wyre-technology/mcp-gateway` (being archived after
+  cutover)
 
 Check your local config with `git remote -v`. If `upstream` is missing:
 
