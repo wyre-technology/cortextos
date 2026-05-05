@@ -1,5 +1,10 @@
 name: Deploy to Azure Container Apps
 
+# Two deploy paths:
+#   - staging: auto-deployed on every push to main once CI passes
+#   - production: manual via workflow_dispatch (gated on the `production`
+#     GitHub environment, which requires an approver)
+
 on:
   workflow_run:
     workflows: ["Release", "CI"]
@@ -10,29 +15,54 @@ on:
       environment:
         description: 'Target environment'
         required: true
-        default: 'production'
+        default: 'staging'
         type: choice
         options:
+          - staging
           - production
 
 concurrency:
-  group: deploy-production
+  group: deploy-${{ inputs.environment || 'staging' }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  resolve:
     runs-on: ubuntu-latest
-    # Deploy when: manual trigger, Release succeeded, or CI succeeded from a docs-update dispatch
+    # Auto-deploy to staging on Release/CI success on main; allow manual
+    # dispatch to either environment.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.name == 'Release' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success')
-    environment: production
+      (github.event.workflow_run.name == 'CI' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+    env:
+      DISPATCH_ENV: ${{ inputs.environment }}
+    steps:
+      - name: Resolve environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="$DISPATCH_ENV"
+          else
+            # CI/Release on main → staging by default. Production deploys
+            # are intentionally manual (gated by the `production` environment).
+            ENV="staging"
+          fi
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: resolve
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
 
     permissions:
       contents: read
       packages: read
       id-token: write
+
+    env:
+      WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
       - uses: actions/checkout@v6
@@ -48,22 +78,39 @@ jobs:
         id: sha
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # Use the head SHA from the workflow that triggered this deploy
-            # (the commit that CI built the Docker image from)
-            FULL_SHA="${{ github.event.workflow_run.head_sha }}"
+            FULL_SHA="$WORKFLOW_RUN_HEAD_SHA"
           else
-            # Manual dispatch — use current HEAD
             FULL_SHA="$(git rev-parse HEAD)"
           fi
           echo "short=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy Bicep
+      # Production: inline params (legacy shape, unchanged from pre-staging)
+      - name: Deploy Bicep (production)
+        if: needs.resolve.outputs.environment == 'production'
         uses: azure/arm-deploy@v2
         with:
           scope: resourcegroup
           resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
           template: ./azure/main.bicep
           parameters: >-
+            gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
+            redeployTrigger=${{ github.run_id }}
+            masterKey=${{ secrets.MASTER_KEY }}
+            jwtSecret=${{ secrets.JWT_SECRET }}
+            pgPassword=${{ secrets.PG_PASSWORD }}
+            ghcrToken=${{ secrets.GHCR_TOKEN }}
+          failOnStdErr: false
+
+      # Staging: bicepparam file + secret overrides
+      - name: Deploy Bicep (staging)
+        if: needs.resolve.outputs.environment == 'staging'
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: ./azure/main.bicep
+          parameters: >-
+            ./azure/params.staging.bicepparam
             gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
             redeployTrigger=${{ github.run_id }}
             masterKey=${{ secrets.MASTER_KEY }}
