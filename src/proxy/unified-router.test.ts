@@ -114,12 +114,14 @@ function createMockOrgService() {
     getUserOrgs: vi.fn().mockResolvedValue([]),
     getUserTeams: vi.fn().mockResolvedValue([]),
     hasServerAccess: vi.fn().mockResolvedValue(true),
+    getPromptCaptureEnabled: vi.fn().mockResolvedValue(false),
   } as unknown as import('../org/org-service.js').OrgService;
 }
 
 function createMockBillingGate() {
   return {
     getRateLimit: vi.fn().mockResolvedValue(1000),
+    canUsePromptCapture: vi.fn().mockResolvedValue(false),
   } as unknown as import('../billing/gate.js').BillingGate;
 }
 

@@ -10,6 +10,7 @@ import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
 import type postgres from 'postgres';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
+import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 
 interface ProxyDeps {
   credentialService: CredentialService;
@@ -216,6 +217,15 @@ export function proxyRoutes(deps: ProxyDeps) {
               ? `org:${injection.orgId}`
               : `user:${injection.userId}`;
 
+          // Resolve prompt capture once per request. Both INSERT sites
+          // below consult `capture` to decide whether tool_arguments and
+          // response_summary get persisted.
+          const capture = await shouldCapturePrompt(
+            orgService,
+            billingGate,
+            injection.orgId,
+          );
+
           // Check if this tool call is cacheable or a write that should invalidate.
           // Only applies to tools/call — other MCP methods (initialize, tools/list…) pass through.
           const vendorToolConfig = mcpMethod === 'tools/call' && toolName
@@ -249,9 +259,11 @@ export function proxyRoutes(deps: ProxyDeps) {
 
             // Log (fire-and-forget)
             const responseTimeMs = Date.now() - startTime;
+            const toolArgs = capture ? captureArguments((body as { params?: { arguments?: unknown } } | undefined)?.params?.arguments) : null;
+            const respSummary = capture ? summarizeResponse(cachedOrFetched) : null;
             sql`
-              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName ?? null}, ${200}, ${responseTimeMs})
+              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary)
+              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName ?? null}, ${200}, ${responseTimeMs}, ${toolArgs}, ${respSummary})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
             // Credit metering — only for tools/call against an org (personal
@@ -277,13 +289,18 @@ export function proxyRoutes(deps: ProxyDeps) {
             vendorSlug,
             toolName,
             startTime,
+            // Snapshot of arguments at request time. The reply.from() body
+            // is streamed back to the client so response_summary isn't
+            // available on this path — only the unified router can capture
+            // responses for live (uncached) tool calls.
+            toolArgs: capture ? captureArguments((body as { params?: { arguments?: unknown } } | undefined)?.params?.arguments) : null,
           };
 
           reply.raw.on('finish', () => {
             const responseTimeMs = Date.now() - logEntry.startTime;
             sql`
-              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
-              VALUES (${logEntry.id}, ${logEntry.userId}, ${logEntry.orgId ?? null}, ${logEntry.vendorSlug}, ${logEntry.toolName ?? null}, ${reply.statusCode}, ${responseTimeMs})
+              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments)
+              VALUES (${logEntry.id}, ${logEntry.userId}, ${logEntry.orgId ?? null}, ${logEntry.vendorSlug}, ${logEntry.toolName ?? null}, ${reply.statusCode}, ${responseTimeMs}, ${logEntry.toolArgs})
             `.catch((err) => {
               app.log.warn({ err }, 'Failed to log request');
             });

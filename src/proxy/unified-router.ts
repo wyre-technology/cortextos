@@ -21,6 +21,7 @@ import { config } from '../config.js';
 import type postgres from 'postgres';
 import { ToolCache, type McpTool } from './tool-cache.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
+import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 
 interface UnifiedProxyDeps {
   credentialService: CredentialService;
@@ -248,6 +249,15 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               ...injection.headers,
             };
 
+            // Resolve prompt capture once per request. Both INSERT sites
+            // below consult `capture` to decide whether tool_arguments and
+            // response_summary get persisted.
+            const capture = await shouldCapturePrompt(
+              orgService,
+              billingGate,
+              injection.orgId,
+            );
+
             // Determine cache scope:
             //   team credentials  → scoped to the team (teams may have different vendor instances)
             //   org credentials   → shared among all org members (same vendor instance)
@@ -286,10 +296,11 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               );
 
               const responseTimeMs = Date.now() - startTime;
-              const toolArgs = body?.params?.arguments ? JSON.stringify(body.params.arguments) : null;
+              const toolArgs = capture ? captureArguments(body?.params?.arguments) : null;
+              const respSummary = capture ? summarizeResponse(cachedOrFetched) : null;
               sql`
-                INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, source)
-                VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${200}, ${responseTimeMs}, ${toolArgs}, ${'mcp'})
+                INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary, source)
+                VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${200}, ${responseTimeMs}, ${toolArgs}, ${respSummary}, ${'mcp'})
               `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
               if (fromCache) {
@@ -311,10 +322,12 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
             );
 
             const responseTimeMs = Date.now() - startTime;
-            const toolArgsForLog = body?.params?.arguments ? JSON.stringify(body.params.arguments) : null;
+            const vendorData = await vendorRes.json();
+            const toolArgsForLog = capture ? captureArguments(body?.params?.arguments) : null;
+            const respSummaryForLog = capture && vendorRes.status < 400 ? summarizeResponse(vendorData) : null;
             sql`
-              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, source)
-              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${vendorRes.status}, ${responseTimeMs}, ${toolArgsForLog}, ${'mcp'})
+              INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary, source)
+              VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${vendorRes.status}, ${responseTimeMs}, ${toolArgsForLog}, ${respSummaryForLog}, ${'mcp'})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
             // Invalidate cache on successful writes
@@ -324,7 +337,6 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               });
             }
 
-            const vendorData = await vendorRes.json();
             return reply.send(vendorData);
           }
 
