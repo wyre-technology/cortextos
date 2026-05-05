@@ -166,11 +166,22 @@ async function migrateOrgMembers(src: Sql, dst: Sql): Promise<TableResult> {
 }
 
 async function migrateOrgInvitations(src: Sql, dst: Sql): Promise<TableResult> {
-  const rows = await src<any[]>`
+  // mcp-gateway pre-mig-011 lacks token_hash / token_hash_algo. Fall back
+  // to a column-set query that omits those, so the migration still copies
+  // the plaintext-token rows. The destination columns get defaulted on
+  // insert (token_hash=null, token_hash_algo='sha256').
+  const rowsWithHash = await safeSelect(src, 'org_invitations(token_hash)', () => src<any[]>`
     SELECT id, org_id, invited_by, token, token_hash, token_hash_algo,
            expires_at, accepted_by, accepted_at, max_uses, use_count, created_at
       FROM org_invitations
-  `;
+  `);
+  const rows = rowsWithHash.length > 0
+    ? rowsWithHash
+    : await safeSelect(src, 'org_invitations(plain)', () => src<any[]>`
+        SELECT id, org_id, invited_by, token,
+               expires_at, accepted_by, accepted_at, max_uses, use_count, created_at
+          FROM org_invitations
+      `);
   if (DRY_RUN) return { read: rows.length, inserted: 0, skipped: 0 };
   let inserted = 0;
   await dst.begin(async (tx) => {
