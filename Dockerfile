@@ -24,6 +24,10 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 
+# Migrations are read at boot by src/db/migrate.ts. Without this COPY the
+# runner finds an empty dir and does nothing.
+COPY migrations ./migrations
+
 USER gateway
 
 EXPOSE 8080
