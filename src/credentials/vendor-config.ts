@@ -1,3 +1,23 @@
+import { validateVendorBaseUrl } from './safe-fetch.js';
+
+/**
+ * Reject any user-supplied URL that points to private IPs / loopback / cloud
+ * metadata endpoints before a vendor `validate()` calls fetch() on it.
+ * Without this, the gateway becomes an SSRF probe for anything behind its
+ * outbound NAT — see src/credentials/safe-fetch.ts for the exact rules.
+ */
+async function rejectIfUnsafeBaseUrl(
+  url: string,
+  label: string,
+): Promise<{ valid: false; error: string } | null> {
+  try {
+    await validateVendorBaseUrl(url);
+    return null;
+  } catch (e) {
+    return { valid: false, error: `${label} rejected: ${(e as Error).message}` };
+  }
+}
+
 export interface VendorField {
   key: string;
   label: string;
@@ -1213,6 +1233,8 @@ export const VENDORS: Record<string, VendorConfig> = {
     async validate(creds) {
       try {
         const baseUrl = (creds.baseUrl || 'https://api.compassone.blackpointcyber.com/v1').replace(/\/$/, '');
+        const urlError = await rejectIfUnsafeBaseUrl(baseUrl, 'Base URL');
+        if (urlError) return urlError;
         const res = await fetch(`${baseUrl}/accounts?limit=1`, {
           headers: {
             Authorization: `Bearer ${creds.apiToken}`,
@@ -1324,6 +1346,8 @@ export const VENDORS: Record<string, VendorConfig> = {
       }
 
       const cippBaseUrl = creds.baseUrl!.replace(/\/$/, '');
+      const urlError = await rejectIfUnsafeBaseUrl(cippBaseUrl, 'CIPP base URL');
+      if (urlError) return urlError;
       const url = `${cippBaseUrl}/api/ListTenants?TenantFilter=allTenants`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
@@ -1730,6 +1754,8 @@ export const VENDORS: Record<string, VendorConfig> = {
       if (!baseUrl) {
         return { valid: false, error: 'Tenant URL is required (e.g. https://vsa.example.com/api/v1.0).' };
       }
+      const urlError = await rejectIfUnsafeBaseUrl(baseUrl, 'Tenant URL');
+      if (urlError) return urlError;
       const hasK1 = !!creds.kaseyaOneToken;
       const hasLocal = !!(creds.username && creds.password);
       if (!hasK1 && !hasLocal) {
@@ -1935,6 +1961,8 @@ export const VENDORS: Record<string, VendorConfig> = {
     async validate(creds) {
       const baseUrl = creds.baseUrl?.replace(/\/+$/, '');
       if (!baseUrl) return { valid: false, error: 'Base URL is required (e.g. https://unitrends.example.com).' };
+      const urlError = await rejectIfUnsafeBaseUrl(baseUrl, 'Base URL');
+      if (urlError) return urlError;
       const verifyTls = creds.verifyTls !== 'false';
       try {
         const fetchOpts: RequestInit & { dispatcher?: unknown } = {

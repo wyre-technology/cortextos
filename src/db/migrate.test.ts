@@ -118,8 +118,9 @@ describe('runMigrations', () => {
     writeMigration('001_bad.sql', 'broken sql goes here');
 
     const { sql } = makeFakeSql();
-    (sql as unknown as { begin: (cb: unknown) => Promise<unknown> }).begin = async (
-      cb: (tx: { unsafe: (s: string) => Promise<unknown> }) => Promise<unknown>,
+    type BeginCb<T> = (tx: { unsafe: (s: string) => Promise<unknown> }) => Promise<T>;
+    (sql as unknown as { begin: <T>(cb: BeginCb<T>) => Promise<T> }).begin = async <T>(
+      cb: BeginCb<T>,
     ) => {
       const tx = {
         unsafe: (body: string) => {
