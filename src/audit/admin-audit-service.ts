@@ -29,7 +29,9 @@ export type AdminEventType =
   | 'team_server_access_revoked'
   | 'log_shipping_destination_created'
   | 'log_shipping_destination_updated'
-  | 'log_shipping_destination_deleted';
+  | 'log_shipping_destination_deleted'
+  | 'scim_connection_created'
+  | 'scim_connection_revoked';
 
 export interface AdminAuditEntry {
   id: string;

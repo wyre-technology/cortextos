@@ -54,6 +54,7 @@ import { dashboardRoutes } from './dashboard/routes.js';
 import { ResellerService } from './reseller/reseller-service.js';
 import { resellerRoutes } from './reseller/routes.js';
 import { ResellerMemberService } from './org/reseller-member-service.js';
+import { scimPlugin } from './scim/router.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -222,6 +223,9 @@ await app.register(fastifyStatic, {
 // orgService enables the client_credentials grant for AI agent access
 await app.register(oauthRoutes(tokenStore, credentialService, orgService));
 
+// SCIM 2.0 inbound provisioning (tenant + reseller scopes)
+await app.register(scimPlugin({ sql }));
+
 // Unified MCP endpoint well-known metadata (RFC 9728 + RFC 8414)
 app.get('/.well-known/oauth-protected-resource/v1/mcp', async (_request, reply) => {
   return reply.type('application/json').send(getUnifiedProtectedResourceMetadata(config.baseUrl));
@@ -254,6 +258,7 @@ await app.register(orgRoutes({
   credentialService,
   billingGate,
   adminAuditService,
+  sql,
 }));
 
 // Tool access API (discover tools, manage allowlists per vendor/role)

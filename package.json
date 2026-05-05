@@ -12,7 +12,8 @@
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "keywords": [
     "mcp",
@@ -38,18 +39,21 @@
     "nanoid": "^5.1.9",
     "openid-client": "^6.8.4",
     "postgres": "^3.4.9",
-    "stripe": "^22.1.0"
+    "scim-patch": "^0.9.0",
+    "stripe": "^22.1.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
+    "@testcontainers/postgresql": "^11.14.0",
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
     "eslint": "^8.56.0",
     "tsx": "^4.19.0",
     "typescript": "^6.0.3",
-    "vitest": "^1.2.0"
+    "vitest": "^1.6.1"
   },
   "engines": {
     "node": ">=20.0.0"

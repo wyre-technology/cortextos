@@ -28,6 +28,8 @@ import { renderTeamConnections, TEAM_CONNECTIONS_STYLES } from './templates/team
 import { renderTeamToolAccess, TEAM_TOOL_ACCESS_STYLES } from './templates/team-tool-access.js';
 import { renderTeamServerAccess, TEAM_SERVER_ACCESS_STYLES } from './templates/team-server-access.js';
 import { renderTeamServiceClients, TEAM_SERVICE_CLIENTS_STYLES } from './templates/team-service-clients.js';
+import { renderTeamScim, TEAM_SCIM_STYLES } from './templates/team-scim.js';
+import { ScimConnectionsService } from '../scim/connections-service.js';
 import { renderTeamAudit, TEAM_AUDIT_STYLES } from './templates/team-audit.js';
 import { renderTeamTeams, TEAM_TEAMS_STYLES } from './templates/team-teams.js';
 import { renderTeamLogShipping, TEAM_LOG_SHIPPING_STYLES } from './templates/team-log-shipping.js';
@@ -630,6 +632,36 @@ export function webRoutes(deps: WebRouteDeps) {
             clientId: c.clientId,
             lastUsedAt: c.lastUsedAt,
             expiresAt: c.expiresAt,
+            createdAt: c.createdAt,
+          })),
+        }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /settings/team/scim ----------
+    app.get('/settings/team/scim', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const connections = new ScimConnectionsService(deps.sql!);
+      const rows = await connections.listForOrg(org.id);
+      const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
+
+      const html = renderLayout(
+        { user, org, activePath: '/settings/team/scim', title: `${org.name} - Provisioning`, pageStyles: TEAM_SCIM_STYLES },
+        renderTeamScim({
+          orgId: org.id,
+          baseUrl: config.baseUrl,
+          scope,
+          connections: rows.map((c) => ({
+            id: c.id,
+            idpType: c.idpType,
+            defaultRole: c.defaultRole,
+            status: c.status,
+            lastSyncAt: c.lastSyncAt,
+            lastError: c.lastError,
             createdAt: c.createdAt,
           })),
         }),

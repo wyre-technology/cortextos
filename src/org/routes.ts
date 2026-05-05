@@ -17,6 +17,7 @@ interface OrgRouteDeps {
   credentialService: CredentialService;
   billingGate: BillingGate;
   adminAuditService: AdminAuditService;
+  sql: import('postgres').Sql;
 }
 
 /**
@@ -803,6 +804,112 @@ export function orgRoutes(deps: OrgRouteDeps) {
           actorId: user.sub,
           eventType: 'service_client_revoked',
           metadata: { clientId: request.params.clientId },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        return reply.code(204).send();
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // SCIM connection management
+    // -----------------------------------------------------------------------
+
+    // POST /api/orgs/:orgId/scim/connections — create a SCIM connection
+    app.post<{
+      Params: { orgId: string };
+      Body: { idp_type: string; default_role: string };
+    }>(
+      '/api/orgs/:orgId/scim/connections',
+      async (request, reply) => {
+        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        if (!user) return;
+
+        const { idp_type: idpType, default_role: defaultRole } = request.body;
+        const allowedIdps = ['entra', 'okta', 'jumpcloud', 'google', 'generic'];
+        if (!allowedIdps.includes(idpType)) {
+          return reply.code(400).send({ error: 'Unsupported idp_type' });
+        }
+        if (!defaultRole?.trim()) {
+          return reply.code(400).send({ error: 'default_role is required' });
+        }
+
+        // Tenant scope: customer/standalone orgs. Reseller scope: type=reseller.
+        const org = await orgService.getOrg(request.params.orgId);
+        if (!org) return reply.code(404).send({ error: 'Org not found' });
+        const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
+
+        const { ScimConnectionsService } = await import('../scim/connections-service.js');
+        const connections = new ScimConnectionsService(deps.sql);
+        const created = await connections.create({
+          orgId: request.params.orgId,
+          scope,
+          idpType: idpType as 'entra' | 'okta' | 'jumpcloud' | 'google' | 'generic',
+          defaultRole: defaultRole.trim(),
+          createdBy: user.sub,
+        });
+
+        void adminAuditService.log({
+          orgId: request.params.orgId,
+          actorId: user.sub,
+          eventType: 'scim_connection_created',
+          metadata: { connectionId: created.connection.id, idpType, scope },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        return reply.code(201).send({
+          id: created.connection.id,
+          idp_type: created.connection.idpType,
+          scope: created.connection.scope,
+          default_role: created.connection.defaultRole,
+          token: created.token,
+          created_at: created.connection.createdAt,
+        });
+      },
+    );
+
+    // GET /api/orgs/:orgId/scim/connections — list connections
+    app.get<{ Params: { orgId: string } }>(
+      '/api/orgs/:orgId/scim/connections',
+      async (request, reply) => {
+        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        if (!user) return;
+
+        const { ScimConnectionsService } = await import('../scim/connections-service.js');
+        const connections = new ScimConnectionsService(deps.sql);
+        const rows = await connections.listForOrg(request.params.orgId);
+        return reply.send(rows.map((c) => ({
+          id: c.id,
+          idp_type: c.idpType,
+          scope: c.scope,
+          default_role: c.defaultRole,
+          status: c.status,
+          last_sync_at: c.lastSyncAt,
+          last_error: c.lastError,
+          created_at: c.createdAt,
+        })));
+      },
+    );
+
+    // DELETE /api/orgs/:orgId/scim/connections/:id — revoke a connection
+    app.delete<{ Params: { orgId: string; id: string } }>(
+      '/api/orgs/:orgId/scim/connections/:id',
+      async (request, reply) => {
+        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        if (!user) return;
+
+        const { ScimConnectionsService } = await import('../scim/connections-service.js');
+        const connections = new ScimConnectionsService(deps.sql);
+        const conn = await connections.getById(request.params.id);
+        if (!conn || conn.orgId !== request.params.orgId) {
+          return reply.code(404).send({ error: 'Connection not found' });
+        }
+        const revoked = await connections.revoke(request.params.id);
+        if (!revoked) return reply.code(404).send({ error: 'Already revoked' });
+
+        void adminAuditService.log({
+          orgId: request.params.orgId,
+          actorId: user.sub,
+          eventType: 'scim_connection_revoked',
+          metadata: { connectionId: request.params.id, idpType: conn.idpType },
         }).catch((err) => request.log.error(err, 'admin audit log failed'));
 
         return reply.code(204).send();

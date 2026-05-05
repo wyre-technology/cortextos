@@ -33,6 +33,7 @@ const TEAM_NAV: NavItem[] = [
   { label: 'Server Access', href: '/settings/team/server-access' },
   { label: 'Teams', href: '/settings/team/teams' },
   { label: 'Service Accounts', href: '/settings/team/service-clients' },
+  { label: 'Provisioning', href: '/settings/team/scim' },
   { label: 'Log Shipping', href: '/settings/team/log-shipping' },
   { label: 'Audit Log', href: '/settings/team/audit' },
 ];

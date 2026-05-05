@@ -21,6 +21,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
+import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -268,6 +269,8 @@ export function auth0Plugin(sql: postgres.Sql) {
       const sub = claims.sub as string;
       const email = (claims.email as string) || '';
       const name = (claims.name as string) || '';
+
+      await bindShadowUserOnLogin(sql, sub, email);
 
       // Upsert user in the database
       await sql`

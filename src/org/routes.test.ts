@@ -143,6 +143,7 @@ async function buildApp(
       credentialService: credentialService ?? createMockCredentialService(),
       billingGate: billingGate ?? createMockBillingGate(),
       adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any,
+      sql: {} as any,
     }),
   );
   return app;
