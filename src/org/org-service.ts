@@ -1,5 +1,6 @@
 import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
+import type { PlanSlug } from '../billing/plan-catalog.js';
 import { MemberService } from './member-service.js';
 import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
@@ -19,7 +20,7 @@ export interface Organization {
   id: string;
   name: string;
   ownerId: string;
-  plan: 'free' | 'pro';
+  plan: PlanSlug;
   defaultServerAccess: 'none' | 'all';
   promptCaptureEnabled: boolean;
   stripeCustomerId: string | null;
@@ -398,7 +399,7 @@ export class OrgService {
       id: row.id,
       name: row.name,
       ownerId: row.owner_id,
-      plan: row.plan as 'free' | 'pro',
+      plan: row.plan as PlanSlug,
       defaultServerAccess: (row.default_server_access as 'none' | 'all') || 'none',
       promptCaptureEnabled: row.prompt_capture_enabled ?? false,
       stripeCustomerId: row.stripe_customer_id,
@@ -441,7 +442,7 @@ export class OrgService {
   async createOrg(
     name: string,
     ownerId: string,
-    plan?: 'free' | 'pro',
+    plan?: PlanSlug,
     options?: CreateOrgOptions,
   ): Promise<Organization> {
     const orgId = nanoid();
@@ -589,7 +590,7 @@ export class OrgService {
 
   async updateOrgPlan(
     orgId: string,
-    plan: 'free' | 'pro',
+    plan: PlanSlug,
     stripeCustomerId?: string,
     stripeSubscriptionId?: string,
   ): Promise<void> {

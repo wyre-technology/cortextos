@@ -23,13 +23,14 @@ export interface OAuthVendorConfig {
   extraFields?: string[];
 }
 
-export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace';
+export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace';
 
 export const VENDOR_CATEGORIES: { slug: VendorCategory; label: string }[] = [
   { slug: 'rmm', label: 'Remote Monitoring & Management' },
   { slug: 'psa', label: 'Professional Services Automation' },
   { slug: 'documentation', label: 'IT Documentation' },
   { slug: 'security', label: 'Security' },
+  { slug: 'bcdr', label: 'Backup, Continuity & Disaster Recovery' },
   { slug: 'network', label: 'Network Monitoring & Security' },
   { slug: 'sales', label: 'Sales & Distribution' },
   { slug: 'accounting', label: 'Accounting & Finance' },
@@ -1188,6 +1189,778 @@ export const VENDORS: Record<string, VendorConfig> = {
       subscriptionKey: 'X-Sherweb-Subscription-Key',
     },
     docsUrl: 'https://developers.sherweb.com/apis',
+  },
+
+  blackpoint: {
+    name: 'Blackpoint Cyber',
+    slug: 'blackpoint',
+    category: 'security',
+    containerUrl: 'http://blackpoint-mcp:8080',
+    fields: [
+      { key: 'apiToken', label: 'API Token', required: true, secret: true },
+      {
+        key: 'baseUrl',
+        label: 'Base URL',
+        required: false,
+        placeholder: 'https://api.compassone.blackpointcyber.com/v1',
+      },
+    ],
+    headerMapping: {
+      apiToken: 'X-Blackpoint-Api-Token',
+      baseUrl: 'X-Blackpoint-Base-Url',
+    },
+    docsUrl: 'https://compassone.blackpointcyber.com/',
+    async validate(creds) {
+      try {
+        const baseUrl = (creds.baseUrl || 'https://api.compassone.blackpointcyber.com/v1').replace(/\/$/, '');
+        const res = await fetch(`${baseUrl}/accounts?limit=1`, {
+          headers: {
+            Authorization: `Bearer ${creds.apiToken}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid Blackpoint Cyber API token.' };
+        }
+        if (!res.ok) {
+          return { valid: false, error: `Blackpoint returned HTTP ${res.status}.` };
+        }
+        return { valid: true };
+      } catch (err) {
+        return {
+          valid: false,
+          error: `Blackpoint validation failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  },
+
+  cipp: {
+    name: 'CIPP',
+    slug: 'cipp',
+    category: 'productivity',
+    containerUrl: 'http://cipp-mcp:8080',
+    fields: [
+      {
+        key: 'baseUrl',
+        label: 'CIPP Base URL',
+        required: true,
+        placeholder: 'https://cippXXXXX.azurewebsites.net',
+      },
+      {
+        key: 'tenantId',
+        label: 'Entra Tenant ID',
+        required: true,
+        placeholder: '00000000-0000-0000-0000-000000000000',
+      },
+      {
+        key: 'clientId',
+        label: 'API Client ID',
+        required: true,
+        placeholder: '00000000-0000-0000-0000-000000000000',
+      },
+      {
+        key: 'clientSecret',
+        label: 'API Client Secret',
+        required: true,
+        secret: true,
+      },
+    ],
+    headerMapping: {
+      baseUrl: 'X-Base-Url',
+      tenantId: 'X-Tenant-Id',
+      clientId: 'X-Client-Id',
+      clientSecret: 'X-Client-Secret',
+    },
+    docsUrl: 'https://github.com/wyre-technology/mcp-gateway/blob/main/docs/vendors/cipp.md',
+    async validate(creds) {
+      const missing = ['baseUrl', 'tenantId', 'clientId', 'clientSecret'].filter((k) => !creds[k]);
+      if (missing.length > 0) {
+        return {
+          valid: false,
+          error: `Missing required CIPP field(s): ${missing.join(', ')}. CIPP's API Client Management issues a client ID + secret — paste those here, not a bearer token.`,
+        };
+      }
+
+      const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(creds.tenantId!)}/oauth2/v2.0/token`;
+      const tokenBody = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: creds.clientId!,
+        client_secret: creds.clientSecret!,
+        scope: `api://${creds.clientId!}/.default`,
+      });
+      let tokenRes: Response;
+      try {
+        tokenRes = await fetch(tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody.toString(),
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { valid: false, error: `Network error reaching Entra token endpoint: ${msg}` };
+      }
+      if (!tokenRes.ok) {
+        const body = await tokenRes.text().catch(() => '');
+        if (tokenRes.status === 400 || tokenRes.status === 401) {
+          return {
+            valid: false,
+            error: `Invalid CIPP OAuth credentials (Entra HTTP ${tokenRes.status}). Verify tenant ID, client ID, and secret. Details: ${body.slice(0, 300)}`,
+          };
+        }
+        return { valid: false, error: `Entra token endpoint returned HTTP ${tokenRes.status}: ${body.slice(0, 300)}` };
+      }
+      let token: string | undefined;
+      try {
+        const parsed = (await tokenRes.json()) as { access_token?: string };
+        token = parsed.access_token;
+      } catch {
+        return { valid: false, error: 'Entra token response was not valid JSON.' };
+      }
+      if (!token) {
+        return { valid: false, error: 'Entra token response did not include an access_token.' };
+      }
+
+      const cippBaseUrl = creds.baseUrl!.replace(/\/$/, '');
+      const url = `${cippBaseUrl}/api/ListTenants?TenantFilter=allTenants`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { valid: true };
+      if (res.status === 401 || res.status === 403) {
+        return {
+          valid: false,
+          error: `CIPP rejected the OAuth-issued token (HTTP ${res.status}). The credentials authenticated against Entra, but CIPP does not recognise this app — check that CIPP's API Client Management has this client ID authorised.`,
+        };
+      }
+      return { valid: false, error: `CIPP returned HTTP ${res.status}. Verify your base URL.` };
+    },
+  },
+
+  crewhu: {
+    name: 'Crewhu',
+    slug: 'crewhu',
+    category: 'productivity',
+    containerUrl: 'http://crewhu-mcp:8080',
+    fields: [
+      { key: 'apiToken', label: 'API Token', required: true, secret: true },
+    ],
+    headerMapping: {
+      apiToken: 'X-Crewhu-Api-Token',
+    },
+    docsUrl: 'https://www.crewhu.com/help-center',
+    async validate(creds) {
+      try {
+        const res = await fetch('https://api.crewhu.com/api/v1/user?step=1&limit=1', {
+          headers: {
+            X_CREWHU_APITOKEN: creds.apiToken!,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid Crewhu API token.' };
+        }
+        if (!res.ok) {
+          return { valid: false, error: `Crewhu returned HTTP ${res.status}.` };
+        }
+        return { valid: true };
+      } catch (err) {
+        return {
+          valid: false,
+          error: `Crewhu validation failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  },
+
+  'datto-bcdr': {
+    name: 'Datto BCDR',
+    slug: 'datto-bcdr',
+    category: 'bcdr',
+    containerUrl: 'http://datto-bcdr-mcp:8080',
+    fields: [
+      { key: 'publicKey', label: 'Public Key', required: true },
+      { key: 'privateKey', label: 'Private Key', required: true, secret: true },
+    ],
+    headerMapping: {
+      publicKey: 'X-Datto-BCDR-Public-Key',
+      privateKey: 'X-Datto-BCDR-Private-Key',
+    },
+    docsUrl: 'https://continuity.datto.com/help/Content/kb/DBMA/KB400000010980.htm',
+    async validate(creds) {
+      const { createHmac } = await import('node:crypto');
+      const path = '/v1/bcdr/device?_perPage=1';
+      const ts = Math.floor(Date.now() / 1000).toString();
+      const stringToSign = `GET\n${path}\n${ts}\n`;
+      const signature = createHmac('sha256', creds.privateKey).update(stringToSign).digest('hex');
+      const res = await fetch(`https://api.datto.com${path}`, {
+        headers: {
+          'X-Datto-API-Key': creds.publicKey,
+          'X-Datto-API-Timestamp': ts,
+          'X-Datto-API-Signature': signature,
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { valid: true };
+      const body = await res.text().catch(() => '');
+      if (res.status === 401) {
+        return {
+          valid: false,
+          error: `Datto BCDR rejected the request (HTTP 401). Common causes: (1) public/private key mismatch, (2) host clock skew >5 minutes. ${body}`.trim(),
+        };
+      }
+      if (res.status === 403) {
+        return { valid: false, error: 'Datto BCDR key lacks permission. Verify the key is enabled and not appliance-restricted.' };
+      }
+      return { valid: false, error: `Datto BCDR returned HTTP ${res.status}: ${body}`.trim() };
+    },
+  },
+
+  'datto-saas-protection': {
+    name: 'Datto SaaS Protection',
+    slug: 'datto-saas-protection',
+    category: 'bcdr',
+    containerUrl: 'http://datto-saas-protection-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true },
+      {
+        key: 'region',
+        label: 'Region',
+        required: false,
+        options: ['us', 'eu'],
+        placeholder: 'us',
+      },
+    ],
+    headerMapping: {
+      apiKey: 'X-Datto-SaaS-API-Key',
+      region: 'X-Datto-SaaS-Region',
+    },
+    docsUrl: 'https://saasprotection.datto.com/help/M365/Content/Other_Administrative_Tasks/using-rest-api-saas-protection.htm',
+    async validate(creds) {
+      const region = creds.region === 'eu' ? 'eu' : 'us';
+      const baseUrl = region === 'eu' ? 'https://api.eu.datto.com' : 'https://api.datto.com';
+      const res = await fetch(`${baseUrl}/api/v1/clients?limit=1`, {
+        headers: { Authorization: `Bearer ${creds.apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { valid: true };
+      const body = await res.text().catch(() => '');
+      if (res.status === 401) {
+        return {
+          valid: false,
+          error: `SaaS Protection rejected the API key (HTTP 401). The error is generic — common causes: (1) bad key, (2) wrong region (you selected '${region}'). ${body}`.trim(),
+        };
+      }
+      if (res.status === 403) {
+        return { valid: false, error: 'SaaS Protection key lacks scope. Verify the key has access to all clients or the targeted client.' };
+      }
+      return { valid: false, error: `SaaS Protection returned HTTP ${res.status}: ${body}`.trim() };
+    },
+  },
+
+  'halopsa-official': {
+    name: 'HaloPSA (First-Party MCP)',
+    slug: 'halopsa-official',
+    category: 'psa',
+    // NOTE: Upstream uses resolveContainerUrl/buildHeadersAsync to dynamically
+    // resolve the per-tenant URL and mint OAuth tokens at request time. Conduit
+    // does not yet have those features; this entry is included for parity but
+    // will not actually proxy until that plumbing is backported.
+    containerUrl: 'https://halopsa.invalid',
+    fields: [
+      { key: 'clientId', label: 'Client ID', required: true },
+      { key: 'clientSecret', label: 'Client Secret', required: true, secret: true },
+      {
+        key: 'tenant',
+        label: 'Tenant',
+        required: true,
+        placeholder: 'subdomain only — e.g. "wyretechnology" for wyretechnology.halopsa.com',
+      },
+    ],
+    headerMapping: {
+      clientId: 'X-Halopsa-Client-Id',
+      clientSecret: 'X-Halopsa-Client-Secret',
+      tenant: 'X-Halopsa-Tenant',
+    },
+    mcpPath: '/api/mcp',
+    docsUrl: 'https://usehalo.com/halopsa/guides/2597',
+    async validate(creds) {
+      const url = `https://${creds.tenant}.halopsa.com/auth/token`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: creds.clientId,
+          client_secret: creds.clientSecret,
+          scope: 'all',
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 400) {
+          return { valid: false, error: 'Invalid HaloPSA client credentials or tenant subdomain.' };
+        }
+        return { valid: false, error: `HaloPSA returned HTTP ${res.status}.` };
+      }
+      const { access_token } = (await res.json()) as { access_token?: string };
+      if (!access_token) {
+        return { valid: false, error: 'HaloPSA token response did not include an access_token.' };
+      }
+      const probe = await fetch(`https://${creds.tenant}.halopsa.com/api/mcp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: `Bearer ${access_token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'wyre-gateway-validator', version: '1.0.0' },
+          },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Could not reach Halopsa MCP endpoint: ${msg}`);
+      });
+      if (probe.status === 404) {
+        return {
+          valid: false,
+          error:
+            'HaloPSA credentials are valid but the MCP endpoint is disabled. ' +
+            'Enable it in Configuration → AI → "Enable the MCP Endpoint" inside HaloPSA.',
+        };
+      }
+      if (!probe.ok) {
+        return { valid: false, error: `HaloPSA MCP endpoint returned HTTP ${probe.status}.` };
+      }
+      return { valid: true };
+    },
+  },
+
+  immybot: {
+    name: 'ImmyBot',
+    slug: 'immybot',
+    category: 'rmm',
+    containerUrl: 'http://immybot-mcp:8080',
+    fields: [
+      {
+        key: 'instanceSubdomain',
+        label: 'Instance Subdomain',
+        required: true,
+        placeholder: 'yourcompany (becomes yourcompany.immy.bot)',
+      },
+      {
+        key: 'tenantId',
+        label: 'Entra Tenant ID',
+        required: true,
+        placeholder: '00000000-0000-0000-0000-000000000000',
+      },
+      {
+        key: 'clientId',
+        label: 'App Registration Client ID',
+        required: true,
+        placeholder: '00000000-0000-0000-0000-000000000000',
+      },
+      {
+        key: 'clientSecret',
+        label: 'App Registration Client Secret',
+        required: true,
+        secret: true,
+      },
+    ],
+    headerMapping: {
+      instanceSubdomain: 'X-Immybot-Instance-Subdomain',
+      tenantId: 'X-Immybot-Tenant-Id',
+      clientId: 'X-Immybot-Client-Id',
+      clientSecret: 'X-Immybot-Client-Secret',
+    },
+    docsUrl: 'https://docs.immy.bot/',
+    async validate(creds) {
+      const missing = ['instanceSubdomain', 'tenantId', 'clientId', 'clientSecret'].filter((k) => !creds[k]);
+      if (missing.length > 0) {
+        return {
+          valid: false,
+          error: `Missing required ImmyBot field(s): ${missing.join(', ')}.`,
+        };
+      }
+      if (!/^[a-zA-Z0-9-]{1,63}$/.test(creds.instanceSubdomain ?? '')) {
+        return {
+          valid: false,
+          error: 'Instance subdomain must contain only alphanumerics and hyphens (DNS-label characters).',
+        };
+      }
+
+      try {
+        const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(creds.tenantId!)}/oauth2/v2.0/token`;
+        const tokenRes = await fetch(tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: creds.clientId!,
+            client_secret: creds.clientSecret!,
+            scope: `api://${creds.clientId}/.default`,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!tokenRes.ok) {
+          return {
+            valid: false,
+            error: `ImmyBot OAuth token exchange failed (HTTP ${tokenRes.status}). Check tenant ID, client ID, and client secret.`,
+          };
+        }
+        const { access_token } = (await tokenRes.json()) as { access_token: string };
+
+        const apiRes = await fetch(
+          `https://${creds.instanceSubdomain}.immy.bot/api/v1/tenants?Page=1&PageSize=1`,
+          {
+            headers: { Authorization: `Bearer ${access_token}` },
+            signal: AbortSignal.timeout(10_000),
+          }
+        );
+        if (apiRes.status === 401 || apiRes.status === 403) {
+          return {
+            valid: false,
+            error: 'ImmyBot rejected the OAuth-issued token. Confirm the app registration is authorised in your ImmyBot instance.',
+          };
+        }
+        if (!apiRes.ok) {
+          return {
+            valid: false,
+            error: `ImmyBot returned HTTP ${apiRes.status}. Verify your instance subdomain.`,
+          };
+        }
+        return { valid: true };
+      } catch (err) {
+        return {
+          valid: false,
+          error: `ImmyBot validation failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  },
+
+  'kaseya-bms': {
+    name: 'Kaseya BMS',
+    slug: 'kaseya-bms',
+    category: 'psa',
+    containerUrl: 'http://kaseya-bms-mcp:8080',
+    fields: [
+      {
+        key: 'tenantSubdomain',
+        label: 'Tenant Subdomain',
+        required: true,
+        placeholder: 'yourcompany',
+      },
+      { key: 'apiToken', label: 'API Token', required: false, secret: true },
+      { key: 'kaseyaOneToken', label: 'Kaseya One token (alt to API token)', required: false, secret: true },
+    ],
+    headerMapping: {
+      tenantSubdomain: 'X-Kaseya-BMS-Tenant-Subdomain',
+      apiToken: 'X-Kaseya-BMS-API-Token',
+      kaseyaOneToken: 'X-Kaseya-BMS-K1-Token',
+    },
+    docsUrl: 'https://help.bms.kaseya.com/help/Content/BMS%20API/bms-api-v2-bms-rest-apis.html',
+    async validate(creds) {
+      const subdomain = creds.tenantSubdomain;
+      if (!subdomain) {
+        return { valid: false, error: 'Tenant subdomain is required (e.g. "yourcompany").' };
+      }
+      if (!/^[a-zA-Z0-9-]{1,63}$/.test(subdomain)) {
+        return { valid: false, error: 'Tenant subdomain must contain only alphanumerics and hyphens (DNS-label characters).' };
+      }
+      const hasK1 = !!creds.kaseyaOneToken;
+      const hasApiToken = !!creds.apiToken;
+      if (!hasK1 && !hasApiToken) {
+        return { valid: false, error: 'Provide either an API token or a Kaseya One token.' };
+      }
+      const token = hasK1 ? creds.kaseyaOneToken : creds.apiToken;
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (!hasK1) headers['X-Tenant'] = subdomain;
+      const url = `https://${subdomain}.bms.kaseya.com/api/v2/service/tickets?$top=1`;
+      try {
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+        if (res.ok) return { valid: true };
+        if (res.status === 401) return { valid: false, error: 'BMS rejected the token. Verify the credential and tenant subdomain.' };
+        if (res.status === 404) return { valid: false, error: 'BMS endpoint not found. Verify tenant subdomain spelling.' };
+        return { valid: false, error: `BMS returned HTTP ${res.status}.` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { valid: false, error: `Failed to reach BMS tenant: ${msg}` };
+      }
+    },
+  },
+
+  'kaseya-vsa': {
+    name: 'Kaseya VSA',
+    slug: 'kaseya-vsa',
+    category: 'rmm',
+    containerUrl: 'http://kaseya-vsa-mcp:8080',
+    fields: [
+      {
+        key: 'tenantUrl',
+        label: 'Tenant URL',
+        required: true,
+        placeholder: 'https://vsa.example.com/api/v1.0',
+      },
+      { key: 'username', label: 'Username', required: false },
+      { key: 'password', label: 'Password', required: false, secret: true },
+      { key: 'kaseyaOneToken', label: 'Kaseya One token (alt to username/password)', required: false, secret: true },
+    ],
+    headerMapping: {
+      tenantUrl: 'X-Kaseya-VSA-Tenant-Url',
+      username: 'X-Kaseya-VSA-Username',
+      password: 'X-Kaseya-VSA-Password',
+      kaseyaOneToken: 'X-Kaseya-VSA-K1-Token',
+    },
+    docsUrl: 'https://help.vsa10.kaseya.com/',
+    async validate(creds) {
+      const baseUrl = creds.tenantUrl?.replace(/\/+$/, '');
+      if (!baseUrl) {
+        return { valid: false, error: 'Tenant URL is required (e.g. https://vsa.example.com/api/v1.0).' };
+      }
+      const hasK1 = !!creds.kaseyaOneToken;
+      const hasLocal = !!(creds.username && creds.password);
+      if (!hasK1 && !hasLocal) {
+        return { valid: false, error: 'Provide either Kaseya One token, or username + password.' };
+      }
+      try {
+        if (hasK1) {
+          const res = await fetch(`${baseUrl}/auth/sso`, {
+            headers: { Authorization: `Bearer ${creds.kaseyaOneToken}` },
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (res.ok) return { valid: true };
+          if (res.status === 401) return { valid: false, error: 'Kaseya One token rejected. Verify the token and tenant URL.' };
+          return { valid: false, error: `VSA returned HTTP ${res.status} on /auth/sso.` };
+        }
+        const { createHash, randomBytes } = await import('node:crypto');
+        const rand = randomBytes(10).toString('hex');
+        const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+        const sha1 = (s: string) => createHash('sha1').update(s).digest('hex');
+        const rawSHA256 = sha256(creds.password + creds.username);
+        const rawSHA1 = sha1(creds.password + creds.username);
+        const pass2 = sha256(rawSHA256 + rand);
+        const pass1 = sha1(rawSHA1 + rand);
+        const auth = `Basic user=${creds.username},pass2=${pass2},pass1=${pass1},rpass2=${rawSHA256},rpass1=${rawSHA1},rand2=${rand}`;
+        const res = await fetch(`${baseUrl}/auth`, {
+          headers: { Authorization: auth },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return { valid: true };
+        if (res.status === 401) return { valid: false, error: 'VSA rejected the credentials. Verify username + password.' };
+        if (res.status === 404) return { valid: false, error: 'VSA /auth endpoint not found. Is the tenant URL correct (must include /api/v1.0)?' };
+        return { valid: false, error: `VSA returned HTTP ${res.status} on /auth.` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { valid: false, error: `Failed to reach VSA tenant: ${msg}` };
+      }
+    },
+  },
+
+  spanning: {
+    name: 'Spanning',
+    slug: 'spanning',
+    category: 'bcdr',
+    containerUrl: 'http://spanning-mcp:8080',
+    fields: [
+      {
+        key: 'platform',
+        label: 'Platform',
+        required: true,
+        options: ['m365', 'gws', 'salesforce'],
+      },
+      { key: 'adminEmail', label: 'Admin Email', required: true },
+      { key: 'apiToken', label: 'API Token', required: true, secret: true },
+    ],
+    headerMapping: {
+      platform: 'X-Spanning-Platform',
+      adminEmail: 'X-Spanning-Admin-Email',
+      apiToken: 'X-Spanning-API-Token',
+    },
+    docsUrl: 'https://www.spanning.com/support/api-documentation/',
+    async validate(creds) {
+      const platform = creds.platform;
+      const baseUrls: Record<string, string> = {
+        m365: 'https://o365-api.spanningbackup.com',
+        gws: 'https://api.spanningbackup.com',
+        salesforce: 'https://salesforce-api.spanningbackup.com',
+      };
+      const baseUrl = baseUrls[platform];
+      if (!baseUrl) {
+        return { valid: false, error: `Invalid platform '${platform}'. Pick m365, gws, or salesforce.` };
+      }
+      const path = '/external/license';
+      const res = await fetch(`${baseUrl}${path}`, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${creds.adminEmail}:${creds.apiToken}`).toString('base64')}`,
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { valid: true };
+      if (res.status === 401) {
+        return {
+          valid: false,
+          error: `Spanning rejected the credentials (HTTP 401). The admin email and API token are pair-bound — verify both fields together. You selected platform '${platform}'.`,
+        };
+      }
+      if (res.status === 403) {
+        return { valid: false, error: `Spanning token lacks scope on platform '${platform}'.` };
+      }
+      const body = await res.text().catch(() => '');
+      return { valid: false, error: `Spanning returned HTTP ${res.status}: ${body}`.trim() };
+    },
+  },
+
+  threatlocker: {
+    name: 'ThreatLocker',
+    slug: 'threatlocker',
+    category: 'security',
+    containerUrl: 'http://threatlocker-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true },
+      { key: 'organizationId', label: 'Organization ID', required: false, placeholder: 'Leave blank for primary org' },
+    ],
+    headerMapping: {
+      apiKey: 'X-Threatlocker-Api-Key',
+      organizationId: 'X-Threatlocker-Organization-Id',
+    },
+    docsUrl: 'https://docs.threatlocker.com/',
+    async validate(creds) {
+      try {
+        const headers: Record<string, string> = {
+          'Authorization': creds.apiKey,
+          'Accept': 'application/json',
+        };
+        if (creds.organizationId) {
+          headers['OrganizationId'] = creds.organizationId;
+        }
+        const res = await fetch('https://portalapi.g.threatlocker.com/portalapi/ApprovalRequest/ApprovalRequestGetCount', {
+          headers,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            return { valid: false, error: 'Invalid ThreatLocker API key.' };
+          }
+          return { valid: false, error: `ThreatLocker returned HTTP ${res.status}.` };
+        }
+        return { valid: true };
+      } catch (err) {
+        return {
+          valid: false,
+          error: `ThreatLocker validation failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  },
+
+  timezest: {
+    name: 'TimeZest',
+    slug: 'timezest',
+    category: 'productivity',
+    containerUrl: 'http://timezest-mcp:8080',
+    fields: [
+      { key: 'apiToken', label: 'API Token', required: true, secret: true },
+    ],
+    headerMapping: {
+      apiToken: 'X-Timezest-Api-Token',
+    },
+    docsUrl: 'https://developer.timezest.com/',
+    async validate(creds) {
+      try {
+        const res = await fetch('https://api.timezest.com/v1/agents', {
+          headers: {
+            Authorization: `Bearer ${creds.apiToken}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid TimeZest API token.' };
+        }
+        if (!res.ok) {
+          return { valid: false, error: `TimeZest returned HTTP ${res.status}.` };
+        }
+        return { valid: true };
+      } catch (err) {
+        return {
+          valid: false,
+          error: `TimeZest validation failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  },
+
+  unitrends: {
+    name: 'Unitrends',
+    slug: 'unitrends',
+    category: 'bcdr',
+    containerUrl: 'http://unitrends-mcp:8080',
+    fields: [
+      {
+        key: 'baseUrl',
+        label: 'Base URL',
+        required: true,
+        placeholder: 'https://unitrends.example.com',
+      },
+      { key: 'username', label: 'Username', required: true },
+      { key: 'password', label: 'Password', required: true, secret: true },
+      {
+        key: 'verifyTls',
+        label: 'Verify TLS',
+        required: false,
+        options: ['true', 'false'],
+        placeholder: 'true',
+      },
+    ],
+    headerMapping: {
+      baseUrl: 'X-Unitrends-Base-URL',
+      username: 'X-Unitrends-Username',
+      password: 'X-Unitrends-Password',
+      verifyTls: 'X-Unitrends-Verify-TLS',
+    },
+    docsUrl: 'https://github.com/unitrends/unitrends-api-doc/wiki',
+    async validate(creds) {
+      const baseUrl = creds.baseUrl?.replace(/\/+$/, '');
+      if (!baseUrl) return { valid: false, error: 'Base URL is required (e.g. https://unitrends.example.com).' };
+      const verifyTls = creds.verifyTls !== 'false';
+      try {
+        const fetchOpts: RequestInit & { dispatcher?: unknown } = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: creds.username, password: creds.password }),
+          signal: AbortSignal.timeout(15_000),
+        };
+        if (!verifyTls) {
+          const { Agent } = await import('undici');
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          fetchOpts.dispatcher = new Agent({ connect: { rejectUnauthorized: false } }) as any;
+        }
+        const res = await fetch(`${baseUrl}/api/login`, fetchOpts);
+        if (res.ok) return { valid: true };
+        if (res.status === 401) return { valid: false, error: 'Unitrends rejected the username/password.' };
+        if (res.status === 503) return { valid: false, error: 'Unitrends appliance is overloaded or in maintenance. Try again in a minute.' };
+        return { valid: false, error: `Unitrends returned HTTP ${res.status} on /api/login.` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('certificate') || msg.includes('CERT_')) {
+          return { valid: false, error: `TLS certificate error reaching ${baseUrl}. Set Verify TLS to false if this is an on-prem appliance with a self-signed cert.` };
+        }
+        return { valid: false, error: `Failed to reach Unitrends: ${msg}` };
+      }
+    },
   },
 };
 

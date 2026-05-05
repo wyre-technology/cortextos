@@ -5,6 +5,8 @@
  * the default free + pro plans that match current hardcoded behavior.
  */
 
+export type PlanSlug = 'free' | 'pro' | 'business';
+
 export interface PlanDefinition {
   slug: string;
   name: string;
@@ -14,6 +16,17 @@ export interface PlanDefinition {
   logShipping: boolean;
   promptCapture: boolean;
   maxMembers: number;         // Infinity = unlimited
+  /**
+   * Monthly credit allocation. Interpreted as:
+   *   - free: flat allocation (creditAllocation total credits/month)
+   *   - pro/business: per-seat allocation (creditAllocation × member count)
+   * Pooled across all org members in either case.
+   */
+  creditAllocation: number;
+  // Business-tier features (mcp-gateway parity). All false on free/pro.
+  auditLogExport: boolean;
+  sso: boolean;
+  serviceClients: boolean;
 }
 
 const DEFAULT_CATALOG: PlanDefinition[] = [
@@ -26,6 +39,10 @@ const DEFAULT_CATALOG: PlanDefinition[] = [
     logShipping: false,
     promptCapture: false,
     maxMembers: 1,
+    creditAllocation: 500,
+    auditLogExport: false,
+    sso: false,
+    serviceClients: false,
   },
   {
     slug: 'pro',
@@ -36,6 +53,24 @@ const DEFAULT_CATALOG: PlanDefinition[] = [
     logShipping: true,
     promptCapture: true,
     maxMembers: Infinity,
+    creditAllocation: 1500,
+    auditLogExport: false,
+    sso: false,
+    serviceClients: false,
+  },
+  {
+    slug: 'business',
+    name: 'Business',
+    vendorLimit: Infinity,
+    rateLimitPerHour: 5000,
+    teamFeatures: true,
+    logShipping: true,
+    promptCapture: true,
+    maxMembers: Infinity,
+    creditAllocation: 4000,
+    auditLogExport: true,
+    sso: true,
+    serviceClients: true,
   },
 ];
 
@@ -50,6 +85,10 @@ function parseCatalog(json: string): PlanDefinition[] {
     logShipping: Boolean(p.logShipping),
     promptCapture: Boolean(p.promptCapture),
     maxMembers: p.maxMembers === 'Infinity' ? Infinity : Number(p.maxMembers),
+    creditAllocation: Number(p.creditAllocation ?? 0),
+    auditLogExport: Boolean(p.auditLogExport),
+    sso: Boolean(p.sso),
+    serviceClients: Boolean(p.serviceClients),
   }));
 }
 

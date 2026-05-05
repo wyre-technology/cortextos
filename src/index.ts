@@ -29,6 +29,8 @@ import { oauthRoutes, completeAuthorization } from './oauth/authorization-server
 import { proxyRoutes } from './proxy/router.js';
 import { cliRoutes } from './proxy/cli-router.js';
 import { webRoutes } from './web/routes.js';
+import { VendorOAuthStateStore } from './oauth/vendor-state-store.js';
+import { CreditService } from './billing/credit-service.js';
 import { orgRoutes } from './org/routes.js';
 import { billingRoutes } from './billing/checkout.js';
 import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
@@ -134,6 +136,11 @@ const tokenStore = new TokenStore(sql);
 await tokenStore.initTables();
 
 const billingGate = new DefaultBillingGate(orgService);
+const creditService = new CreditService(sql, billingGate);
+const vendorOAuthStates = new VendorOAuthStateStore(
+  sql,
+  Buffer.from(config.masterKey, 'hex'),
+);
 const auditService = new AuditService(sql);
 const adminAuditService = new AdminAuditService(sql);
 const toolCache = new ToolCache();
@@ -248,6 +255,7 @@ await app.register(webRoutes({
   orgService,
   billingGate,
   sql,
+  vendorOAuthStates,
   completeAuth,
   logShippingService,
 }));
@@ -319,7 +327,7 @@ app.post<{
     return reply.code(404).send({ error: 'Organization not found' });
   }
 
-  await orgService.updateOrgPlan(orgId, plan as 'free' | 'pro');
+  await orgService.updateOrgPlan(orgId, plan as 'free' | 'pro' | 'business');
   return reply.send({ orgId, plan });
 });
 
@@ -346,6 +354,7 @@ await app.register(proxyRoutes({
   credentialService,
   orgService,
   billingGate,
+  creditService,
   sql,
 }));
 

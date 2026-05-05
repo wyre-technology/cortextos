@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { planCatalog, getPlan, getDefaultPlan } from './plan-catalog.js';
 
 describe('plan-catalog', () => {
-  it('loads default catalog with free and pro plans', () => {
-    expect(planCatalog).toHaveLength(2);
+  it('loads default catalog with free, pro, and business plans', () => {
+    expect(planCatalog).toHaveLength(3);
     expect(planCatalog[0].slug).toBe('free');
     expect(planCatalog[1].slug).toBe('pro');
+    expect(planCatalog[2].slug).toBe('business');
   });
 
   it('free plan has correct defaults', () => {
@@ -26,6 +27,26 @@ describe('plan-catalog', () => {
     expect(pro.logShipping).toBe(true);
     expect(pro.promptCapture).toBe(true);
     expect(pro.maxMembers).toBe(Infinity);
+  });
+
+  it('business plan has business-tier features enabled', () => {
+    const business = getPlan('business')!;
+    expect(business.vendorLimit).toBe(Infinity);
+    expect(business.rateLimitPerHour).toBe(5000);
+    expect(business.teamFeatures).toBe(true);
+    expect(business.logShipping).toBe(true);
+    expect(business.promptCapture).toBe(true);
+    expect(business.auditLogExport).toBe(true);
+    expect(business.sso).toBe(true);
+    expect(business.serviceClients).toBe(true);
+    expect(business.maxMembers).toBe(Infinity);
+  });
+
+  it('pro plan does not have business-tier features', () => {
+    const pro = getPlan('pro')!;
+    expect(pro.auditLogExport).toBe(false);
+    expect(pro.sso).toBe(false);
+    expect(pro.serviceClients).toBe(false);
   });
 
   it('getPlan returns undefined for unknown slug', () => {

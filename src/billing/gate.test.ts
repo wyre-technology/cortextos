@@ -190,4 +190,46 @@ describe('DefaultBillingGate', () => {
       expect(result).toBe(false);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // getCreditAllocation
+  // -------------------------------------------------------------------------
+
+  describe('getCreditAllocation', () => {
+    it('returns flat allocation for free orgs', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'free' }));
+      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
+
+      const result = await gate.getCreditAllocation('org-1');
+
+      expect(result).toBe(500);
+    });
+
+    it('multiplies pro allocation by seat count', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'pro' }));
+      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }, { userId: 'c' }]);
+
+      const result = await gate.getCreditAllocation('org-1');
+
+      expect(result).toBe(4500); // 1500 × 3
+    });
+
+    it('multiplies business allocation by seat count', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'business' }));
+      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
+
+      const result = await gate.getCreditAllocation('org-1');
+
+      expect(result).toBe(8000); // 4000 × 2
+    });
+
+    it('treats zero-member paid orgs as 1 seat', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'pro' }));
+      mockOrgService.getMembers.mockResolvedValue([]);
+
+      const result = await gate.getCreditAllocation('org-1');
+
+      expect(result).toBe(1500);
+    });
+  });
 });

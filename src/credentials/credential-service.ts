@@ -1,12 +1,7 @@
-import {
-  randomBytes,
-  createCipheriv,
-  createDecipheriv,
-  pbkdf2Sync,
-} from 'node:crypto';
 import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
 import { config } from '../config.js';
+import { encrypt as encryptPayload, decrypt as decryptPayload } from './crypto.js';
 
 /** Public interface for a stored vendor credential (camelCase). */
 export interface StoredVendorCredential {
@@ -185,60 +180,34 @@ export class CredentialService {
   }
 
   // ---------------------------------------------------------------------------
-  // Crypto helpers
+  // Crypto helpers — thin wrappers over src/credentials/crypto.ts so that
+  // OAuth flow-state storage and credential storage share the same envelope.
   // ---------------------------------------------------------------------------
 
-  /** Derive an encryption key using PBKDF2 keyed by a scope identifier (userId or orgId). */
-  private deriveKey(scopeId: string, salt: Buffer): Buffer {
-    const keyMaterial = Buffer.concat([
-      this.masterKey,
-      Buffer.from(scopeId, 'utf8'),
-    ]);
-    return pbkdf2Sync(keyMaterial, salt, 100_000, 32, 'sha512');
-  }
-
-  /** Encrypt arbitrary credential data with AES-256-GCM. */
+  /** Encrypt arbitrary credential data with AES-256-GCM, scope-bound to userId/orgId. */
   private encrypt(
     data: Record<string, string>,
     scopeId: string,
   ): { encryptedData: string; iv: string; authTag: string; salt: string } {
-    const salt = randomBytes(32);
-    const key = this.deriveKey(scopeId, salt);
-    const iv = randomBytes(16);
-
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const plaintext = JSON.stringify(data);
-    const encrypted = Buffer.concat([
-      cipher.update(plaintext, 'utf8'),
-      cipher.final(),
-    ]);
-    const authTag = cipher.getAuthTag();
-
+    const payload = encryptPayload(this.masterKey, scopeId, JSON.stringify(data));
     return {
-      encryptedData: encrypted.toString('base64'),
-      iv: iv.toString('base64'),
-      authTag: authTag.toString('base64'),
-      salt: salt.toString('base64'),
+      encryptedData: payload.ciphertext,
+      iv: payload.iv,
+      authTag: payload.authTag,
+      salt: payload.salt,
     };
   }
 
   /** Decrypt a stored credential back to its original key/value pairs. */
   private decrypt(stored: StoredVendorCredential): Record<string, string> | null {
     try {
-      const salt = Buffer.from(stored.salt, 'base64');
-      const key = this.deriveKey(stored.scopeId, salt);
-      const iv = Buffer.from(stored.iv, 'base64');
-      const authTag = Buffer.from(stored.authTag, 'base64');
-      const encryptedData = Buffer.from(stored.encryptedData, 'base64');
-
-      const decipher = createDecipheriv('aes-256-gcm', key, iv);
-      decipher.setAuthTag(authTag);
-      const decrypted = Buffer.concat([
-        decipher.update(encryptedData),
-        decipher.final(),
-      ]);
-
-      return JSON.parse(decrypted.toString('utf8')) as Record<string, string>;
+      const plaintext = decryptPayload(this.masterKey, stored.scopeId, {
+        ciphertext: stored.encryptedData,
+        iv: stored.iv,
+        authTag: stored.authTag,
+        salt: stored.salt,
+      });
+      return JSON.parse(plaintext) as Record<string, string>;
     } catch {
       return null;
     }

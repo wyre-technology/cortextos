@@ -106,6 +106,10 @@ function createMockBillingGate(overrides: Partial<BillingGate> = {}): BillingGat
     getRateLimit: vi.fn().mockResolvedValue(1000),
     canUsePromptCapture: vi.fn().mockResolvedValue(false),
     canUseLogShipping: vi.fn().mockResolvedValue(false),
+    canUseAuditLogExport: vi.fn().mockResolvedValue(false),
+    canUseSso: vi.fn().mockResolvedValue(false),
+    canUseServiceClients: vi.fn().mockResolvedValue(false),
+    getCreditAllocation: vi.fn().mockResolvedValue(0),
     ...overrides,
   };
 }

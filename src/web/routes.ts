@@ -39,26 +39,12 @@ import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/prof
 import { renderTeamDashboard } from './templates/team-dashboard.js';
 
 // ---------------------------------------------------------------------------
-// OAuth state management (unchanged)
+// OAuth flow state — DB-backed, see src/oauth/vendor-state-store.ts.
+// Background sweep runs every 5 minutes; expired-on-read is also enforced
+// inside `consume()`.
 // ---------------------------------------------------------------------------
 
-interface PendingOAuthState {
-  userId: string;
-  vendorSlug: string;
-  codeVerifier: string;
-  oauthSession?: string;
-  orgId?: string;   // set when storing credentials at org level (team connect flow)
-  teamId?: string;  // set when storing credentials at sub-team level
-  createdAt: number;
-}
-const vendorOAuthStates = new Map<string, PendingOAuthState>();
-
-setInterval(() => {
-  const cutoff = Date.now() - 10 * 60 * 1000;
-  for (const [key, val] of vendorOAuthStates) {
-    if (val.createdAt < cutoff) vendorOAuthStates.delete(key);
-  }
-}, 5 * 60 * 1000).unref();
+import { VendorOAuthStateStore } from '../oauth/vendor-state-store.js';
 
 // ---------------------------------------------------------------------------
 // Route deps
@@ -69,6 +55,7 @@ interface WebRouteDeps {
   orgService: OrgService;
   billingGate: BillingGate;
   sql?: postgres.Sql;
+  vendorOAuthStates: VendorOAuthStateStore;
   completeAuth: (sessionId: string, userId: string) => Promise<{ redirectUrl: string } | null>;
   logShippingService: LogShippingService;
 }
@@ -113,7 +100,14 @@ async function requireTeamAccess(
  * connection flow, settings page, and team management pages.
  */
 export function webRoutes(deps: WebRouteDeps) {
-  const { credentialService, orgService, billingGate, completeAuth, logShippingService } = deps;
+  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates } = deps;
+
+  const sweepInterval = setInterval(() => {
+    void vendorOAuthStates.sweepExpired().catch(() => {
+      /* sweep errors are non-fatal; expired-on-read still enforced */
+    });
+  }, 5 * 60 * 1000);
+  sweepInterval.unref();
 
   return async function (app: FastifyInstance): Promise<void> {
     // =====================================================================
@@ -166,14 +160,14 @@ export function webRoutes(deps: WebRouteDeps) {
         const codeVerifier = generateCodeVerifier();
         const stateToken = nanoid();
 
-        vendorOAuthStates.set(stateToken, {
+        await vendorOAuthStates.create({
+          stateToken,
           userId: user.sub,
           vendorSlug,
           codeVerifier,
           oauthSession,
           orgId,
           teamId,
-          createdAt: Date.now(),
         });
 
         const authorizeUrl = buildAuthorizeUrl(vendor.oauthConfig, stateToken, codeVerifier);
@@ -198,14 +192,9 @@ export function webRoutes(deps: WebRouteDeps) {
         return reply.redirect('/settings', 302);
       }
 
-      const pending = vendorOAuthStates.get(state);
+      const pending = await vendorOAuthStates.consume(state);
       if (!pending) {
         app.log.warn({ state }, 'Unknown or expired OAuth state token');
-        return reply.redirect('/settings', 302);
-      }
-      vendorOAuthStates.delete(state);
-
-      if (Date.now() - pending.createdAt > 10 * 60 * 1000) {
         return reply.redirect('/settings', 302);
       }
 

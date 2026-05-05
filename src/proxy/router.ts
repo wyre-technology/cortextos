@@ -5,6 +5,7 @@ import { injectCredentials, resolveUserId, AuthError } from './credential-inject
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import type { CreditService } from '../billing/credit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
 import type postgres from 'postgres';
@@ -14,6 +15,10 @@ interface ProxyDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
+  /** Optional. When provided, successful tools/call responses (cached or live)
+   *  record one credit per call against the org. Personal-scope calls (no orgId)
+   *  are not metered. Fire-and-forget. */
+  creditService?: CreditService;
   sql: postgres.Sql;
 }
 
@@ -25,7 +30,7 @@ interface ProxyDeps {
  * proxied to the corresponding MCP server container.
  */
 export function proxyRoutes(deps: ProxyDeps) {
-  const { credentialService, orgService, billingGate, sql } = deps;
+  const { credentialService, orgService, billingGate, creditService, sql } = deps;
 
   const resultCache = new ResultCache();
 
@@ -249,6 +254,14 @@ export function proxyRoutes(deps: ProxyDeps) {
               VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName ?? null}, ${200}, ${responseTimeMs})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
 
+            // Credit metering — only for tools/call against an org (personal
+            // calls are not metered). Cached responses still consume a credit.
+            if (creditService && mcpMethod === 'tools/call' && injection.orgId) {
+              creditService
+                .recordUsage(injection.orgId, injection.userId, vendorSlug)
+                .catch((err) => { app.log.warn({ err }, 'Failed to record credit usage'); });
+            }
+
             if (fromCache) {
               app.log.debug({ vendorSlug, toolName, cacheScope }, 'Result cache hit');
             }
@@ -274,6 +287,18 @@ export function proxyRoutes(deps: ProxyDeps) {
             `.catch((err) => {
               app.log.warn({ err }, 'Failed to log request');
             });
+
+            // Credit metering — only on successful tools/call against an org.
+            if (
+              creditService &&
+              mcpMethod === 'tools/call' &&
+              logEntry.orgId &&
+              reply.statusCode < 400
+            ) {
+              creditService
+                .recordUsage(logEntry.orgId, logEntry.userId, logEntry.vendorSlug)
+                .catch((err) => { app.log.warn({ err }, 'Failed to record credit usage'); });
+            }
 
             // Eager cache invalidation: if this was a write tool, bump the entity
             // generation so all cached reads for this org+vendor+entityType become stale.

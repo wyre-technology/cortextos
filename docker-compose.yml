@@ -41,6 +41,18 @@ services:
       - VENDOR_URL_PROOFPOINT=http://proofpoint-mcp:8080
       - VENDOR_URL_KNOWBE4=http://knowbe4-mcp:8080
       - VENDOR_URL_SHERWEB=http://sherweb-mcp:8080
+      - VENDOR_URL_BLACKPOINT=http://blackpoint-mcp:8080
+      - VENDOR_URL_CIPP=http://cipp-mcp:8080
+      - VENDOR_URL_CREWHU=http://crewhu-mcp:8080
+      - VENDOR_URL_DATTO_BCDR=http://datto-bcdr-mcp:8080
+      - VENDOR_URL_DATTO_SAAS_PROTECTION=http://datto-saas-protection-mcp:8080
+      - VENDOR_URL_IMMYBOT=http://immybot-mcp:8080
+      - VENDOR_URL_KASEYA_BMS=http://kaseya-bms-mcp:8080
+      - VENDOR_URL_KASEYA_VSA=http://kaseya-vsa-mcp:8080
+      - VENDOR_URL_SPANNING=http://spanning-mcp:8080
+      - VENDOR_URL_THREATLOCKER=http://threatlocker-mcp:8080
+      - VENDOR_URL_TIMEZEST=http://timezest-mcp:8080
+      - VENDOR_URL_UNITRENDS=http://unitrends-mcp:8080
       # OAuth vendor app credentials (gateway-level, not per-user)
       - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
       - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
@@ -250,6 +262,114 @@ services:
 
   sherweb-mcp:
     image: ghcr.io/wyre-technology/sherweb-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  blackpoint-mcp:
+    image: ghcr.io/wyre-technology/blackpoint-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  cipp-mcp:
+    image: ghcr.io/wyre-technology/cipp-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  crewhu-mcp:
+    image: ghcr.io/wyre-technology/crewhu-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  datto-bcdr-mcp:
+    image: ghcr.io/wyre-technology/datto-bcdr-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  datto-saas-protection-mcp:
+    image: ghcr.io/wyre-technology/datto-saas-protection-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  immybot-mcp:
+    image: ghcr.io/wyre-technology/immybot-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  kaseya-bms-mcp:
+    image: ghcr.io/wyre-technology/kaseya-bms-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  kaseya-vsa-mcp:
+    image: ghcr.io/wyre-technology/kaseya-vsa-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  spanning-mcp:
+    image: ghcr.io/wyre-technology/spanning-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  threatlocker-mcp:
+    image: ghcr.io/wyre-technology/threatlocker-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  timezest-mcp:
+    image: ghcr.io/wyre-technology/timezest-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  unitrends-mcp:
+    image: ghcr.io/wyre-technology/unitrends-mcp:latest
     environment:
       - AUTH_MODE=gateway
       - MCP_TRANSPORT=http
