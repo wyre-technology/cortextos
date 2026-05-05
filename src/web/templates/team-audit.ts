@@ -2,13 +2,64 @@ import { escapeHtml } from '../helpers.js';
 
 export interface TeamAuditData {
   orgId: string;
+  captureEnabled: boolean;
+  planAllowsCapture: boolean;
+  isOwner: boolean;
+}
+
+function renderCaptureBanner(data: TeamAuditData): string {
+  const { captureEnabled, planAllowsCapture, isOwner } = data;
+
+  // Free plan or similar — feature isn't unlocked. Surface as informational.
+  if (!planAllowsCapture) {
+    return `
+      <div class="capture-banner capture-banner--locked">
+        <strong>Prompt capture</strong> is a Pro/Business feature.
+        Status entries here record tool name, status, and timing only —
+        not the arguments your team passed in.
+        ${isOwner ? '<a href="/settings/team" class="capture-banner-link">Upgrade to enable.</a>' : ''}
+      </div>
+    `;
+  }
+
+  // Plan allows capture. Show the toggle to owners; show read-only state to members.
+  if (!isOwner) {
+    return `
+      <div class="capture-banner capture-banner--readonly">
+        <strong>Prompt capture is ${captureEnabled ? 'on' : 'off'}.</strong>
+        ${captureEnabled
+          ? 'Tool arguments and a truncated response summary are stored alongside each call.'
+          : 'Only call metadata is stored. An owner can enable full capture.'}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="capture-banner capture-banner--owner">
+      <div class="capture-banner-row">
+        <div class="capture-banner-text">
+          <strong>Prompt capture</strong> &middot;
+          ${captureEnabled
+            ? 'Tool arguments and a truncated response summary are stored alongside each call.'
+            : 'Only call metadata is stored. Turn this on to capture arguments and responses.'}
+        </div>
+        <label class="capture-toggle">
+          <input type="checkbox" id="capture-toggle" ${captureEnabled ? 'checked' : ''} />
+          <span class="capture-toggle-slider" aria-hidden="true"></span>
+          <span class="capture-toggle-label">${captureEnabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </div>
+    </div>
+  `;
 }
 
 export function renderTeamAudit(data: TeamAuditData): string {
   const { orgId } = data;
+  const captureBanner = renderCaptureBanner(data);
 
   return `
     <h1 style="margin-bottom:16px">Audit Log</h1>
+    ${captureBanner}
     <div class="tabs">
       <button class="tab active" onclick="switchTab('proxy')">Proxy Logs</button>
       <button class="tab" onclick="switchTab('admin')">Admin Actions</button>
@@ -170,6 +221,29 @@ export function renderTeamAudit(data: TeamAuditData): string {
       function adminPrevPage() { if (adminPage > 0) { adminPage--; loadAdminLog(); } }
       function adminNextPage() { adminPage++; loadAdminLog(); }
 
+      var captureToggle = document.getElementById('capture-toggle');
+      if (captureToggle) {
+        captureToggle.addEventListener('change', async function() {
+          captureToggle.disabled = true;
+          var enabled = captureToggle.checked;
+          try {
+            var res = await fetch('/api/orgs/' + orgId + '/settings/prompt-capture', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: enabled })
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            var label = captureToggle.parentElement.querySelector('.capture-toggle-label');
+            if (label) label.textContent = enabled ? 'Enabled' : 'Disabled';
+          } catch (err) {
+            captureToggle.checked = !enabled;
+            alert('Failed to update capture setting: ' + (err && err.message ? err.message : err));
+          } finally {
+            captureToggle.disabled = false;
+          }
+        });
+      }
+
       loadLog();
     </script>`;
 }
@@ -219,4 +293,35 @@ export const TEAM_AUDIT_STYLES = `
     font-size: 10px; font-weight: 500; background: var(--badge-personal-bg); color: var(--warning-text);
     margin-left: 4px;
   }
+  .capture-banner {
+    margin: 0 0 16px; padding: 12px 16px; border-radius: 8px;
+    background: var(--bg-card); border: 1px solid var(--border-tertiary);
+    font-size: 13px; color: var(--text-secondary);
+  }
+  .capture-banner strong { color: var(--text-primary); font-weight: 600; }
+  .capture-banner--locked { border-style: dashed; }
+  .capture-banner-link {
+    margin-left: 8px; color: var(--accent-text);
+    text-decoration: underline; font-weight: 500;
+  }
+  .capture-banner-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .capture-banner-text { flex: 1; }
+  .capture-toggle {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    user-select: none; font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  }
+  .capture-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+  .capture-toggle-slider {
+    position: relative; display: inline-block; width: 36px; height: 20px;
+    background: var(--border-primary); border-radius: 999px; transition: background 120ms ease;
+  }
+  .capture-toggle-slider::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    background: #fff; border-radius: 50%; transition: transform 120ms ease;
+  }
+  .capture-toggle input:checked + .capture-toggle-slider { background: var(--accent); }
+  .capture-toggle input:checked + .capture-toggle-slider::after { transform: translateX(16px); }
+  .capture-toggle input:disabled + .capture-toggle-slider { opacity: 0.5; cursor: wait; }
 `;

@@ -750,11 +750,23 @@ export function webRoutes(deps: WebRouteDeps) {
     app.get('/settings/team/audit', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
-      const { user, org } = ctx;
+      const { user, org, membership } = ctx;
+
+      // Capture toggle is gated on plan + owner role. Members see the page
+      // and the captured data, but the toggle UI is read-only / hidden.
+      const [planAllowsCapture, captureEnabled] = await Promise.all([
+        billingGate.canUsePromptCapture(org.id),
+        orgService.getPromptCaptureEnabled(org.id),
+      ]);
 
       const html = renderLayout(
         { user, org, activePath: '/settings/team/audit', title: `${org.name} - Audit Log`, pageStyles: TEAM_AUDIT_STYLES },
-        renderTeamAudit({ orgId: org.id }),
+        renderTeamAudit({
+          orgId: org.id,
+          captureEnabled,
+          planAllowsCapture,
+          isOwner: membership.role === 'owner',
+        }),
       );
       return reply.type('text/html').send(html);
     });
