@@ -9,7 +9,7 @@ coverage/
 logs/
 PLAN-*.md
 azure/*.json
-.claude/worktrees/
+.claude/
 experiments/
 
 # Logs
