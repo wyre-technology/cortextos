@@ -1,3 +1,11 @@
+# [1.6.0](https://github.com/wyre-technology/conduit/compare/v1.5.0...v1.6.0) (2026-05-06)
+
+
+### Features
+
+* **audit:** prompt-capture toggle on /settings/team/audit ([3e44050](https://github.com/wyre-technology/conduit/commit/3e4405032785eafde28ac3a6ebfcae53ce4db7ba))
+* **audit:** wire prompt capture correctly on both proxy paths ([9e89402](https://github.com/wyre-technology/conduit/commit/9e89402e23e753cac5bff9010d0956b9bd0a850e))
+
 # [1.5.0](https://github.com/wyre-technology/conduit/compare/v1.4.0...v1.5.0) (2026-05-05)
 
 
