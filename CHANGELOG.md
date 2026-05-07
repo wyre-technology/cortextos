@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/wyre-technology/conduit/compare/v1.6.0...v1.6.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **ci:** skip SARIF upload from fork/dependabot PRs ([#49](https://github.com/wyre-technology/conduit/issues/49)) ([17e42dd](https://github.com/wyre-technology/conduit/commit/17e42dd012e470de1b5928d4768781dfa6f85674))
+
 # [1.6.0](https://github.com/wyre-technology/conduit/compare/v1.5.0...v1.6.0) (2026-05-06)
 
 
