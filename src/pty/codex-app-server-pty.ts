@@ -461,34 +461,46 @@ export class CodexAppServerPTY {
     await completion;
   }
 
+  /**
+   * Local-command reply: writes to the agent log AND mirrors back to Telegram.
+   * Local commands (`/goal`, `$skill` errors) are handled inside the adapter
+   * without an LLM turn, so the user only sees a response if we send it.
+   */
+  private replyLocal(text: string): void {
+    this._outputBuffer.push(text + '\n');
+    if (this._telegramApi && this._chatId) {
+      this._telegramApi.sendMessage(this._chatId, text, undefined, { parseMode: null }).catch(() => {});
+    }
+  }
+
   private async setGoal(objective: string): Promise<void> {
     if (!this._threadId) throw new Error('No Codex app-server thread is active');
     const response = await this.request<GoalResponse>('thread/goal/set', {
       threadId: this._threadId,
       objective,
     });
-    this._outputBuffer.push(`[goal] ${response.result?.goal?.status || 'active'}: ${objective}\n`);
+    this.replyLocal(`[goal] ${response.result?.goal?.status || 'active'}: ${objective}`);
   }
 
   private async getGoal(): Promise<void> {
     if (!this._threadId) throw new Error('No Codex app-server thread is active');
     const response = await this.request<GoalResponse>('thread/goal/get', { threadId: this._threadId });
     const goal = response.result?.goal;
-    this._outputBuffer.push(goal?.objective
-      ? `[goal] ${goal.status || 'active'}: ${goal.objective}\n`
-      : '[goal] none set\n');
+    this.replyLocal(goal?.objective
+      ? `[goal] ${goal.status || 'active'}: ${goal.objective}`
+      : '[goal] none set');
   }
 
   private async clearGoal(): Promise<void> {
     if (!this._threadId) throw new Error('No Codex app-server thread is active');
     await this.request('thread/goal/clear', { threadId: this._threadId });
-    this._outputBuffer.push('[goal] cleared\n');
+    this.replyLocal('[goal] cleared');
   }
 
   private async handleSkillInput(content: string): Promise<void> {
     const match = content.match(/^\$([A-Za-z0-9:_-]+)(?:\s+([\s\S]*))?$/);
     if (!match) {
-      this._outputBuffer.push('[skill] expected $skill_name [text]\n');
+      this.replyLocal('[skill] expected $skill_name [text]');
       return;
     }
 
@@ -504,9 +516,9 @@ export class CodexAppServerPTY {
         .filter((skill) => skill.enabled !== false && skill.name.includes(skillName))
         .slice(0, 5)
         .map((skill) => skill.name);
-      this._outputBuffer.push(matches.length > 0
-        ? `[skill] unknown "${skillName}". Did you mean: ${matches.join(', ')}?\n`
-        : `[skill] unknown "${skillName}". No enabled matches found.\n`);
+      this.replyLocal(matches.length > 0
+        ? `[skill] unknown "${skillName}". Did you mean: ${matches.join(', ')}?`
+        : `[skill] unknown "${skillName}". No enabled matches found.`);
       return;
     }
 

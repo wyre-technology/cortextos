@@ -188,6 +188,56 @@ Reply using: cortextos bus send-telegram 7940429114 '<your reply>'
     expect(requestMock).toHaveBeenCalledWith('thread/goal/clear', { threadId: 'thread-1' });
   });
 
+  it('mirrors /goal get reply to Telegram when handle is bound', async () => {
+    requestMock.mockResolvedValue({ result: { goal: null } });
+    const pty = makeReadyPty();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    pty.setTelegramHandle({ sendMessage } as unknown as Parameters<typeof pty.setTelegramHandle>[0], '7940429114');
+    pty.write('/goal');
+    pty.write('\r');
+    await Promise.resolve();
+    expect(sendMessage).toHaveBeenCalledWith('7940429114', '[goal] none set', undefined, { parseMode: null });
+  });
+
+  it('mirrors /goal set reply to Telegram when handle is bound', async () => {
+    requestMock.mockResolvedValue({ result: { goal: { status: 'active' } } });
+    const pty = makeReadyPty();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    pty.setTelegramHandle({ sendMessage } as unknown as Parameters<typeof pty.setTelegramHandle>[0], '7940429114');
+    pty.write('/goal Ship native slash routing');
+    pty.write('\r');
+    await Promise.resolve();
+    expect(sendMessage).toHaveBeenCalledWith('7940429114', '[goal] active: Ship native slash routing', undefined, { parseMode: null });
+  });
+
+  it('mirrors /goal clear reply to Telegram when handle is bound', async () => {
+    requestMock.mockResolvedValue({ result: { cleared: true } });
+    const pty = makeReadyPty();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    pty.setTelegramHandle({ sendMessage } as unknown as Parameters<typeof pty.setTelegramHandle>[0], '7940429114');
+    pty.write('/goal clear');
+    pty.write('\r');
+    await Promise.resolve();
+    expect(sendMessage).toHaveBeenCalledWith('7940429114', '[goal] cleared', undefined, { parseMode: null });
+  });
+
+  it('mirrors unknown $skill error to Telegram when handle is bound', async () => {
+    requestMock.mockResolvedValue({ result: { data: [{ cwd: '/tmp', skills: [{ name: 'imagegen', path: '/skill.md', enabled: true }] }] } });
+    const pty = makeReadyPty();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    pty.setTelegramHandle({ sendMessage } as unknown as Parameters<typeof pty.setTelegramHandle>[0], '7940429114');
+    pty.write('$nonexistent_skill');
+    pty.write('\r');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendMessage).toHaveBeenCalledWith(
+      '7940429114',
+      '[skill] unknown "nonexistent_skill". No enabled matches found.',
+      undefined,
+      { parseMode: null },
+    );
+  });
+
   it('does not fall back to text for unknown skills', async () => {
     requestMock.mockResolvedValue({ result: { data: [{ cwd: '/tmp', skills: [{ name: 'imagegen', path: '/skill.md', enabled: true }] }] } });
     const pty = makeReadyPty();
