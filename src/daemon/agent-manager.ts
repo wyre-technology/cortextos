@@ -798,9 +798,23 @@ export class AgentManager {
    * Returns true if the agent is running and the inject succeeded; false otherwise.
    */
   injectAgent(agentName: string, text: string): boolean {
+    return this.injectAgentDetailed(agentName, text).ok;
+  }
+
+  /**
+   * Inject text into an agent's PTY with structured outcome — issue #346.
+   *
+   * Returns NOT_FOUND if the agent isn't in the registry, NOT_RUNNING if
+   * registered but the PTY is gone, DEDUPED on a MessageDedup hash hit. The
+   * boolean-returning `injectAgent()` is preserved for callers (cron
+   * scheduler, fast-checker, fire-cron) that only need pass/fail.
+   */
+  injectAgentDetailed(agentName: string, text: string): { ok: true } | { ok: false; code: 'NOT_FOUND' | 'NOT_RUNNING' | 'DEDUPED'; message: string } {
     const entry = this.agents.get(agentName);
-    if (!entry) return false;
-    return entry.process.injectMessage(text);
+    if (!entry) {
+      return { ok: false, code: 'NOT_FOUND', message: `agent "${agentName}" not in registry` };
+    }
+    return entry.process.injectMessageDetailed(text);
   }
 
   /**

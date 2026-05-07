@@ -719,12 +719,20 @@ export class IPCServer {
           const agentToInject = request.agent;
           const textToInject = request.data?.text as string | undefined;
           if (!agentToInject || !textToInject) {
-            response = { success: false, error: 'inject-agent requires: agent, data.text' };
+            response = { success: false, error: 'inject-agent requires: agent, data.text', code: 'INVALID_INPUT' };
           } else {
-            const ok = this.agentManager.injectAgent(agentToInject, textToInject);
-            response = ok
-              ? { success: true, data: `Injected into agent ${agentToInject}` }
-              : { success: false, error: `Agent ${agentToInject} not found or not running` };
+            // Structured outcome distinguishes NOT_FOUND (agent not in registry)
+            // from NOT_RUNNING (registered but PTY dead) from DEDUPED (content
+            // collision in MessageDedup window). Closes the conflation Boris
+            // surfaced — the harness "3 not found errors" were dedup hits.
+            // See issue #346.
+            const result = this.agentManager.injectAgentDetailed(agentToInject, textToInject);
+            if (result.ok) {
+              response = { success: true, data: `Injected into agent ${agentToInject}` };
+            } else {
+              console.log(`[ipc] inject-agent ${agentToInject}: ${result.code} — ${result.message}`);
+              response = { success: false, error: result.message, code: result.code };
+            }
           }
           break;
         }
