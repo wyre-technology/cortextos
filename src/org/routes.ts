@@ -11,6 +11,7 @@ import type { BillingGate } from '../billing/gate.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
+import { sendLoopsEvent } from '../email/loops.js';
 
 interface OrgRouteDeps {
   orgService: OrgService;
@@ -76,6 +77,17 @@ export function orgRoutes(deps: OrgRouteDeps) {
           : 'free' as const;
 
         const org = await orgService.createOrg(name.trim(), user.sub, plan);
+
+        // Fire one Loops event so org-level drips can trigger without
+        // starting a new contact (avoids overlap with the user-signup drip).
+        if (user.email) {
+          sendLoopsEvent(user.email, 'org_created', {
+            orgId: org.id,
+            orgName: org.name,
+            plan: org.plan,
+          }).catch((err) => app.log.warn({ err }, 'failed to send Loops org_created event'));
+        }
+
         return reply.code(201).send(org);
       },
     );

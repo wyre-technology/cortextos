@@ -81,6 +81,9 @@ export const config = {
   // Webhook URL for waitlist signup notifications (Discord or Slack)
   waitlistNotifyUrl: process.env.WAITLIST_NOTIFY_URL ?? '',
 
+  // Loops.so marketing automation
+  loopsApiKey: process.env.LOOPS_API_KEY ?? '',
+
   // Feature flags — derived from config or explicit env vars
   features: {
     waitlist: !!process.env.WAITLIST_NOTIFY_URL,

@@ -22,6 +22,7 @@ import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
+import { enrollNewUserInLoops } from '../email/loops.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -272,15 +273,19 @@ export function auth0Plugin(sql: postgres.Sql) {
 
       await bindShadowUserOnLogin(sql, sub, email);
 
-      // Upsert user in the database
-      await sql`
+      // xmax = 0 on the returned row means INSERT (new user); non-zero means
+      // a concurrent transaction won the upsert. One roundtrip, race-safe.
+      const [{ is_new: isNewUser }] = await sql<{ is_new: boolean }[]>`
         INSERT INTO users (id, email, name, last_login)
         VALUES (${sub}, ${email}, ${name}, NOW())
         ON CONFLICT (id) DO UPDATE SET
           email      = EXCLUDED.email,
           name       = EXCLUDED.name,
           last_login = NOW()
+        RETURNING (xmax = 0) AS is_new
       `;
+
+      if (isNewUser) enrollNewUserInLoops(app.log, email, name);
 
       // Set the gateway session cookie
       const user: Auth0User = { sub, email, name };

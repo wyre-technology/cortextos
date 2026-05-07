@@ -24,6 +24,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
+import { enrollNewUserInLoops } from '../email/loops.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -259,20 +260,23 @@ export function azureAdPlugin(sql: postgres.Sql) {
       // Use oid as the user ID (stable across tenants)
       const sub = oid;
 
-      // Upsert user in the database
-      await sql`
+      // xmax = 0 on the returned row means INSERT (new user); non-zero means
+      // a concurrent transaction won the upsert. One roundtrip, race-safe.
+      const [{ is_new: isNewUser }] = await sql<{ is_new: boolean }[]>`
         INSERT INTO users (id, email, name, last_login)
         VALUES (${sub}, ${email}, ${name}, NOW())
         ON CONFLICT (id) DO UPDATE SET
           email      = EXCLUDED.email,
           name       = EXCLUDED.name,
           last_login = NOW()
+        RETURNING (xmax = 0) AS is_new
       `;
 
-      // Update tenant_id if available
       if (tid) {
         await sql`UPDATE users SET tenant_id = ${tid} WHERE id = ${sub}`;
       }
+
+      if (isNewUser) enrollNewUserInLoops(app.log, email, name);
 
       // Set the gateway session cookie
       const user: AzureAdUser = { sub, email, name, tenantId: tid };
