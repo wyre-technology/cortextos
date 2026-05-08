@@ -318,6 +318,7 @@ describe('Unified MCP Router', () => {
         'autotask',
         expect.anything(),
         expect.anything(),
+        expect.objectContaining({ allowUnscopedToken: true }),
       );
 
       // Verify the proxied request has the original (un-prefixed) tool name

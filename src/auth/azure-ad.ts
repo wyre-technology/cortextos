@@ -25,6 +25,7 @@ import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
+import { getRequestBaseUrl } from '../http/base-url.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,7 +64,13 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // -----------------------------------------------------------------------
 
     const issuer = new URL('https://login.microsoftonline.com/common/v2.0');
-    const callbackUrl = config.azureCallbackUrl || `${config.baseUrl}/auth/callback`;
+    // Derive the callback URL from the incoming request when AZURE_AD_CALLBACK_URL
+    // isn't explicitly set. The gateway is reachable on multiple hosts; pinning
+    // the callback to a single host strands the session cookie on the other host.
+    function resolveCallbackUrl(request: Pick<FastifyRequest, 'headers' | 'protocol'>): string {
+      if (config.azureCallbackUrl) return config.azureCallbackUrl;
+      return `${getRequestBaseUrl(request, config.allowedHosts)}/auth/callback`;
+    }
 
     const oidcConfig = await oidc.discovery(
       issuer,
@@ -177,7 +184,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
       });
 
       const params: Record<string, string> = {
-        redirect_uri: callbackUrl,
+        redirect_uri: resolveCallbackUrl(request),
         scope: 'openid profile email',
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
@@ -200,7 +207,9 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // -----------------------------------------------------------------------
 
     app.get('/auth/callback', async (request, reply) => {
-      const currentUrl = new URL(`${config.baseUrl}${request.url}`);
+      // openid-client derives redirect_uri from this URL; must match what was
+      // sent at authorize time. Use the request's actual host, not config.baseUrl.
+      const currentUrl = new URL(`${getRequestBaseUrl(request, config.allowedHosts)}${request.url}`);
       const state = currentUrl.searchParams.get('state');
       if (!state) {
         app.log.warn('Azure AD callback missing state parameter');
@@ -258,19 +267,41 @@ export function azureAdPlugin(sql: postgres.Sql) {
       const name = (claims.name as string) || '';
 
       // Use oid as the user ID (stable across tenants)
-      const sub = oid;
+      let sub = oid;
 
-      // xmax = 0 on the returned row means INSERT (new user); non-zero means
-      // a concurrent transaction won the upsert. One roundtrip, race-safe.
-      const [{ is_new: isNewUser }] = await sql<{ is_new: boolean }[]>`
-        INSERT INTO users (id, email, name, last_login)
-        VALUES (${sub}, ${email}, ${name}, NOW())
-        ON CONFLICT (id) DO UPDATE SET
-          email      = EXCLUDED.email,
-          name       = EXCLUDED.name,
-          last_login = NOW()
-        RETURNING (xmax = 0) AS is_new
-      `;
+      // Upsert user in the database. ON CONFLICT (id) covers the common case
+      // and tells us via RETURNING (xmax = 0) whether this was a new insert
+      // (drives Loops enrollment). The 23505 catch handles the rarer
+      // email-unique race.
+      let isNewUser = false;
+      try {
+        const [{ is_new }] = await sql<{ is_new: boolean }[]>`
+          INSERT INTO users (id, email, name, last_login)
+          VALUES (${sub}, ${email}, ${name}, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            email      = EXCLUDED.email,
+            name       = EXCLUDED.name,
+            last_login = NOW()
+          RETURNING (xmax = 0) AS is_new
+        `;
+        isNewUser = is_new;
+      } catch (insertErr: unknown) {
+        const code = (insertErr && typeof insertErr === 'object' && 'code' in insertErr)
+          ? (insertErr as { code: string }).code
+          : null;
+        if (code !== '23505') throw insertErr;
+        const winner = await sql`
+          SELECT id FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
+        `;
+        if (winner.length > 0 && winner[0].id !== sub) {
+          request.log.warn(
+            { winnerId: winner[0].id, claimedSub: sub, email },
+            'azure-ad login: email-unique race, adopting winner row id',
+          );
+          sub = winner[0].id as string;
+          await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+        }
+      }
 
       if (tid) {
         await sql`UPDATE users SET tenant_id = ${tid} WHERE id = ${sub}`;

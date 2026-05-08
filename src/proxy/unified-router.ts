@@ -204,12 +204,16 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               });
             }
 
-            // Inject credentials for this vendor
+            // Inject credentials for this vendor.
+            // Tokens minted at /v1/mcp carry `vendor: ''`; the per-vendor
+            // binding check would 403 every call. Safe to skip — the unified
+            // endpoint only injects credentials the authenticated user owns.
             const injection = await injectCredentials(
               authHeader,
               vendorSlug,
               credentialService,
               orgService,
+              { allowUnscopedToken: true },
             );
 
             // Tool allowlist enforcement (org credentials only)
@@ -421,8 +425,16 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               slug,
               credentialService,
               orgService,
+              { allowUnscopedToken: true },
             );
-          } catch {
+          } catch (err) {
+            // error-level (not warn): outer Promise.allSettled hides per-vendor
+            // failures, so a 100%-failure mode like "all tokens missing vendor
+            // claim" otherwise looks like "no connected tools" with no signal.
+            app.log.error(
+              { slug, err: err instanceof Error ? err.message : String(err) },
+              'aggregateTools: credential injection failed',
+            );
             // No credentials for this vendor — skip
             return [];
           }

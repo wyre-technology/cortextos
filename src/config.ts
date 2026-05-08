@@ -25,6 +25,13 @@ export const config = {
   host: process.env.HOST ?? '0.0.0.0',
   baseUrl: process.env.BASE_URL ?? 'http://localhost:8080',
 
+  // Allowlist of hostnames the gateway is reachable on. Used by
+  // getRequestBaseUrl() to derive per-request base URLs for OAuth callbacks,
+  // discovery metadata, and cookie scoping. Override via ALLOWED_HOSTS env
+  // (comma-separated). The first entry is the canonical fallback.
+  allowedHosts: (process.env.ALLOWED_HOSTS ?? 'mcp.wyre.ai,staging.conduit.wyre.ai,mcp.wyretechnology.com,localhost:8080')
+    .split(',').map((h) => h.trim()).filter(Boolean),
+
   // Master encryption key (32 bytes hex). MUST be set in production.
   masterKey: resolveKey('MASTER_KEY', 'master key'),
 
@@ -73,6 +80,18 @@ export const config = {
   // Alpha invite codes (comma-separated) — orgs created with a valid code get pro plan
   alphaInviteCodes: new Set(
     (process.env.ALPHA_INVITE_CODES ?? '').split(',').map(c => c.trim()).filter(Boolean)
+  ),
+
+  // Comma-separated public-facing Stripe coupon codes that customers may
+  // apply at checkout. Empty means no client-supplied coupons are honored —
+  // internal/sales-driven discounts must be applied server-side. Without
+  // this allowlist any owner could submit any active coupon code in the
+  // Stripe account, including internal/sales codes.
+  stripePublicCouponCodes: new Set(
+    (process.env.STRIPE_PUBLIC_COUPON_CODES ?? '')
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean),
   ),
 
   // Admin API key — protects internal admin endpoints (e.g. waitlist export)

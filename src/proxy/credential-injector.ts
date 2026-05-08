@@ -57,11 +57,23 @@ export async function resolveUserId(authHeader: string | undefined): Promise<str
  *
  * Service accounts (svc:<orgId>:<clientId>): service client creds → org creds
  */
+export interface InjectOptions {
+  /**
+   * Opt out of the per-vendor binding check for tokens with empty `vendor`
+   * claim. Set ONLY at the unified `/v1/mcp` endpoint, which mints
+   * intentionally-unscoped tokens. Per-vendor `/v1/{vendor}/mcp` routes
+   * must leave this off — the binding check there prevents using a token
+   * minted for a low-trust vendor to access a high-trust one.
+   */
+  allowUnscopedToken?: boolean;
+}
+
 export async function injectCredentials(
   authHeader: string | undefined,
   vendorSlug: string,
   credentialService: CredentialService,
   orgService?: OrgService,
+  opts: InjectOptions = {},
 ): Promise<InjectionResult> {
   // 1. Extract Bearer token
   if (!authHeader?.startsWith('Bearer ')) {
@@ -84,6 +96,31 @@ export async function injectCredentials(
   const userId = payload.sub;
   if (!userId) {
     throw new AuthError(401, 'Token missing subject');
+  }
+
+  // Bind the token to the vendor it was issued for.
+  //
+  // The OAuth flow embeds the requested vendor in the access token's `vendor`
+  // claim (see issueAccessToken in oauth/authorization-server.ts). Without
+  // this check, a token minted for vendor A is accepted at /v1/<vendorB>/mcp
+  // — any user with credentials for two vendors can swap a low-trust token
+  // for a high-trust one.
+  //
+  // Service-client tokens carry `vendor: ''` and are explicitly multi-vendor
+  // (gated separately by the per-client allowedVendors check below). Any
+  // other empty/missing `vendor` claim is rejected.
+  const tokenVendor = typeof payload.vendor === 'string' ? payload.vendor : '';
+  const isServiceClient = userId.startsWith('svc:');
+  if (!isServiceClient) {
+    if (!tokenVendor && !opts.allowUnscopedToken) {
+      throw new AuthError(403, 'Token missing vendor claim — re-issue via refresh.');
+    }
+    if (tokenVendor && tokenVendor !== vendorSlug) {
+      throw new AuthError(
+        403,
+        `Token issued for ${tokenVendor} cannot be used at ${vendorSlug}.`,
+      );
+    }
   }
 
   // 3. Resolve vendor configuration

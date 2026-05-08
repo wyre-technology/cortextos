@@ -108,10 +108,42 @@ describe('injectCredentials', () => {
   });
 
   it('rejects unknown vendor slug', async () => {
+    // Token claims the same slug as the URL path so the cross-vendor binding
+    // check passes; the request then reaches getVendor() which throws because
+    // the slug isn't in the registry.
     const token = await makeToken('user123', 'nonexistent');
     await expect(
       injectCredentials(`Bearer ${token}`, 'nonexistent', mockCredentialService as never),
     ).rejects.toThrow('Unknown vendor');
+  });
+
+  it('rejects token issued for a different vendor (cross-vendor binding)', async () => {
+    // Threat: a token minted during the OAuth flow for vendor A is sent to
+    // /v1/<vendorB>/mcp. Without binding, vendor B's credentials are
+    // injected — escalating from a low-trust vendor to a high-trust one.
+    mockCredentialService.get.mockResolvedValue({ apiKey: 'x' });
+    const tokenForA = await makeToken('user123', 'datto-rmm');
+    await expect(
+      injectCredentials(`Bearer ${tokenForA}`, 'autotask', mockCredentialService as never),
+    ).rejects.toThrow(/cannot be used at autotask/);
+    // The credential lookup for B must NOT have been attempted.
+    expect(mockCredentialService.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects human-user token with empty vendor claim (legacy unscoped)', async () => {
+    // Pre-binding tokens didn't carry a vendor claim. Force re-issue via
+    // refresh by rejecting these — alternative is silent vendor-scope drift
+    // on already-issued long-lived tokens.
+    const secret = new TextEncoder().encode(jwtSecret);
+    const legacyToken = await new jose.SignJWT({ sub: 'user123', vendor: '', scope: 'mcp' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .setIssuer(baseUrl)
+      .sign(secret);
+    await expect(
+      injectCredentials(`Bearer ${legacyToken}`, 'datto-rmm', mockCredentialService as never),
+    ).rejects.toThrow(/missing vendor claim/);
   });
 
   it('rejects when no stored credentials exist', async () => {

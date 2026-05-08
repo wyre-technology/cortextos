@@ -62,6 +62,12 @@ export function billingRoutes(orgService: OrgService) {
         };
 
         if (coupon) {
+          // Only allow coupons explicitly published for customer use.
+          // Internal/sales-driven discounts must be applied server-side
+          // via a code path that knows which org gets which discount.
+          if (!config.stripePublicCouponCodes.has(coupon)) {
+            return reply.code(400).send({ error: 'Invalid or unrecognised coupon code' });
+          }
           sessionParams.discounts = [{ coupon }];
         }
 

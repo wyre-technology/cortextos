@@ -315,22 +315,29 @@ export function oauthRoutes(
         });
       }
 
-      // Validate all redirect URIs are well-formed and use http(s)
+      // Validate all redirect URIs are well-formed. https is required;
+      // http is permitted only for loopback addresses per OAuth 2.1 best
+      // practices (RFC 8252 §7.3). Without the loopback check, an attacker
+      // can register http://attacker.example/cb and the authorization-code
+      // flow will deliver the code over plaintext.
+      const isLoopback = (host: string): boolean =>
+        host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
       for (const uri of body.redirect_uris) {
+        let parsed: URL;
         try {
-          const parsed = new URL(uri);
-          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-            return reply.status(400).send({
-              error: 'invalid_request',
-              error_description: `redirect_uri must use https (or http for localhost). Got: ${parsed.protocol}`,
-            });
-          }
+          parsed = new URL(uri);
         } catch {
           return reply.status(400).send({
             error: 'invalid_request',
             error_description: `Invalid redirect_uri: ${uri}`,
           });
         }
+        if (parsed.protocol === 'https:') continue;
+        if (parsed.protocol === 'http:' && isLoopback(parsed.hostname)) continue;
+        return reply.status(400).send({
+          error: 'invalid_request',
+          error_description: `redirect_uri must use https (http permitted only for loopback). Got: ${uri}`,
+        });
       }
 
       const client = await tokenStore.registerClient(body.client_name, body.redirect_uris);
