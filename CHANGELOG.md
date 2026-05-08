@@ -1,3 +1,11 @@
+# [1.7.0](https://github.com/wyre-technology/conduit/compare/v1.6.1...v1.7.0) (2026-05-08)
+
+
+### Features
+
+* **auth:** multi-provider login (Auth0 + Microsoft Entra side-by-side) ([#54](https://github.com/wyre-technology/conduit/issues/54)) ([0365ee3](https://github.com/wyre-technology/conduit/commit/0365ee3db543781e44abf3568cf2529553fbe433))
+* **loops:** wire user signup + org_created drips ([#50](https://github.com/wyre-technology/conduit/issues/50)) ([08431cd](https://github.com/wyre-technology/conduit/commit/08431cd5166c9a7a8df79b5a8f9575ed5361f30f))
+
 ## [1.6.1](https://github.com/wyre-technology/conduit/compare/v1.6.0...v1.6.1) (2026-05-07)
 
 
