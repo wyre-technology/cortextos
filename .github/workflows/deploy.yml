@@ -1,15 +1,15 @@
 name: Deploy to Azure Container Apps
 
-# Two deploy paths:
-#   - staging: auto-deployed on every push to main once CI passes
-#   - production: manual via workflow_dispatch (gated on the `production`
-#     GitHub environment, which requires an approver)
+# Manual-dispatch only. The auto-deploy-on-Release path requires Azure OIDC
+# federation against the SP `mcp-gateway-github-actions`, scoped to this
+# repo's `staging` and `production` environments. Until that federation is
+# wired (needs Application Administrator role on the directory — see
+# https://learn.microsoft.com/azure/active-directory/develop/workload-identity-federation),
+# every workflow_run firing fails at `azure/login@v3` with "Not all values
+# are present" and pollutes the PR/main view with red. Re-enable
+# `workflow_run` here once the federated credential exists.
 
 on:
-  workflow_run:
-    workflows: ["Release", "CI"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:

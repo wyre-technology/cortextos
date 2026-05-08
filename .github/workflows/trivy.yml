@@ -61,7 +61,7 @@ jobs:
   image-scan:
     name: Container image scan
     # Only useful once a released image exists; PR builds don't publish.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
