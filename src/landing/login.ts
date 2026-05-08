@@ -32,8 +32,14 @@ export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string
   const b = overrideBrand ?? brand;
   const homePath = pathPrefix || '/';
 
-  const showAzure = config.authProvider === 'azure-ad';
-  const showAuth0 = config.authProvider === 'auth0';
+  // Each button is shown when its provider has credentials AND
+  // AUTH_PROVIDER doesn't explicitly hide it. Both can be true at once when
+  // AUTH_PROVIDER=both or unset/auto with creds for both.
+  const hasAuth0Creds = !!(config.auth0Domain && config.auth0ClientId && config.auth0ClientSecret);
+  const hasAzureCreds = !!(config.azureClientId && config.azureClientSecret);
+  const provider = config.authProvider;
+  const showAuth0 = hasAuth0Creds && (provider === 'auth0' || provider === 'both' || provider === 'auto');
+  const showAzure = hasAzureCreds && (provider === 'azure-ad' || provider === 'both' || provider === 'auto');
 
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -134,7 +140,7 @@ export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string
     <p class="login-card__sub">Securely access your AI-powered operations hub.</p>
 
     ${showAzure ? `
-    <a href="/auth/login" class="login-btn login-btn--microsoft">
+    <a href="/auth/microsoft/login" class="login-btn login-btn--microsoft">
       <svg class="login-btn__icon" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
         <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>

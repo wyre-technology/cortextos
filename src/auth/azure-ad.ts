@@ -6,9 +6,14 @@
  * in PostgreSQL (keyed by the OAuth `state` parameter) to avoid cookie
  * race conditions from concurrent login requests. Exposes:
  *
- *   GET  /auth/login    — Redirect to Azure AD login
- *   GET  /auth/callback — Handle Azure AD return, upsert user, set session
- *   GET  /auth/logout   — Clear session and redirect to Azure AD logout
+ *   GET  /auth/microsoft/login    — Redirect to Azure AD login
+ *   GET  /auth/microsoft/callback — Handle Azure AD return, upsert user, set session
+ *   GET  /auth/microsoft/logout   — Clear session and redirect to Azure AD logout
+ *
+ * Routes are namespaced under /auth/microsoft/* so this plugin can be
+ * registered alongside the Auth0 plugin (which owns /auth/login,
+ * /auth/callback, /auth/logout) without colliding. The chooser at /login
+ * sends users to the right one.
  *
  * Decorates requests with `auth0User` (reuses the same request property
  * for compatibility) when an active session exists.
@@ -27,7 +32,6 @@ import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
 import { isSafePath } from './safe-path.js';
-import { decodeSessionCookie } from '../lib/session-cookie.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,10 +66,11 @@ const RETURN_TO_COOKIE = 'azure_ad_return_to';
 
 export function azureAdPlugin(sql: postgres.Sql) {
   return fp(async function plugin(app: FastifyInstance): Promise<void> {
-    // Skip registration if Azure AD is not configured
+    // Skip registration if Azure AD is not configured.
+    // Decoration is handled by registerAuthPlugin in src/auth/index.ts; this
+    // plugin never owns the auth0User decorator.
     if (!config.azureClientId || !config.azureClientSecret) {
       app.log.warn('Azure AD not configured — skipping azureAd plugin registration');
-      app.decorateRequest('auth0User', null);
       return;
     }
 
@@ -79,7 +84,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // the callback to a single host strands the session cookie on the other host.
     function resolveCallbackUrl(request: Pick<FastifyRequest, 'headers' | 'protocol'>): string {
       if (config.azureCallbackUrl) return config.azureCallbackUrl;
-      return `${getRequestBaseUrl(request, config.allowedHosts)}/auth/callback`;
+      return `${getRequestBaseUrl(request, config.allowedHosts)}/auth/microsoft/callback`;
     }
 
     const oidcConfig = await oidc.discovery(
@@ -119,24 +124,11 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // Clean up expired auth_state rows (older than 10 minutes)
     await sql`DELETE FROM auth_state WHERE created_at < NOW() - INTERVAL '10 minutes'`;
 
-    // -----------------------------------------------------------------------
-    // Request decorator — parse session cookie on every request
-    // -----------------------------------------------------------------------
-
-    app.decorateRequest('auth0User', null);
-
-    app.addHook('onRequest', async (request, _reply) => {
-      const raw = request.unsignCookie(request.cookies[SESSION_COOKIE] ?? '');
-      if (!raw.valid || !raw.value) {
-        request.auth0User = null;
-        return;
-      }
-
-      // decodeSessionCookie reads emailVerified as `false` for legacy cookies
-      // that pre-date the field, so identity gates that consume it stay safe
-      // until the user re-logs in.
-      request.auth0User = decodeSessionCookie(raw.value);
-    });
+    // Request decoration is handled either by the Auth0 plugin (when Auth0
+    // is also configured — same cookie format) or by the registerAuthPlugin
+    // fallback in src/auth/index.ts (Azure-only deployments). This plugin
+    // intentionally does not decorate request.auth0User to avoid double-
+    // registration when both providers are active.
 
     // -----------------------------------------------------------------------
     // Helper: set / clear cookies
@@ -161,7 +153,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
     }
 
     // -----------------------------------------------------------------------
-    // GET /auth/login
+    // GET /auth/microsoft/login
     // -----------------------------------------------------------------------
 
     async function redirectToAzureAd(
@@ -208,15 +200,15 @@ export function azureAdPlugin(sql: postgres.Sql) {
     }
 
     app.get<{ Querystring: { return_to?: string } }>(
-      '/auth/login',
+      '/auth/microsoft/login',
       async (request, reply) => redirectToAzureAd(request, reply),
     );
 
     // -----------------------------------------------------------------------
-    // GET /auth/callback
+    // GET /auth/microsoft/callback
     // -----------------------------------------------------------------------
 
-    app.get('/auth/callback', async (request, reply) => {
+    app.get('/auth/microsoft/callback', async (request, reply) => {
       // openid-client derives redirect_uri from this URL; must match what was
       // sent at authorize time. Use the request's actual host, not config.baseUrl.
       const currentUrl = new URL(`${getRequestBaseUrl(request, config.allowedHosts)}${request.url}`);
@@ -341,10 +333,10 @@ export function azureAdPlugin(sql: postgres.Sql) {
     });
 
     // -----------------------------------------------------------------------
-    // GET /auth/logout
+    // GET /auth/microsoft/logout
     // -----------------------------------------------------------------------
 
-    app.get('/auth/logout', async (_request, reply) => {
+    app.get('/auth/microsoft/logout', async (_request, reply) => {
       clearSessionCookie(reply);
 
       // Redirect to Azure AD logout endpoint

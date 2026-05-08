@@ -28,6 +28,14 @@ export function landingRoutes() {
       return reply.type('text/html').send(renderLoginPage());
     });
 
+    // GET /auth/choose — alias the chooser at the upstream-mcp-gateway path
+    // so existing bookmarks/links resolve. Forwards any return_to.
+    app.get<{ Querystring: { return_to?: string } }>('/auth/choose', async (request, reply) => {
+      const ret = request.query.return_to;
+      const qs = ret ? `?return_to=${encodeURIComponent(ret)}` : '';
+      return reply.redirect(`/login${qs}`, 302);
+    });
+
     // Customer-branded routes
     for (const [slug, brandCfg] of Object.entries(customerBrands)) {
       const prefix = `/${slug}`;

@@ -53,8 +53,12 @@ export const config = {
     | 'warn'
     | 'error',
 
-  // Auth provider selection: 'auth0' | 'azure-ad'
-  authProvider: (process.env.AUTH_PROVIDER || 'auth0') as 'auth0' | 'azure-ad',
+  // Auth provider selection:
+  //   'auth0'    — Auth0 only (default; backwards-compatible)
+  //   'azure-ad' — Microsoft Entra ID only
+  //   'both'     — both providers active, chooser at /login picks one
+  //   'auto'     — enable whichever credential sets are present
+  authProvider: (process.env.AUTH_PROVIDER || 'auth0') as 'auth0' | 'azure-ad' | 'both' | 'auto',
 
   // Auth0 OIDC configuration
   auth0Domain: process.env.AUTH0_DOMAIN ?? '',       // e.g. "wyre.us.auth0.com"
