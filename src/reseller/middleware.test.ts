@@ -162,7 +162,7 @@ function makeRequest(params: Record<string, string>, user: Auth0User | null): Fa
   } as unknown as FastifyRequest;
 }
 
-const USER: Auth0User = { sub: 'user_alice', email: 'a@x.com', name: 'Alice' };
+const USER: Auth0User = { sub: 'user_alice', email: 'a@x.com', name: 'Alice', emailVerified: true };
 
 // ---------------------------------------------------------------------------
 // Feature flag helper — tests temporarily enable the reseller console.

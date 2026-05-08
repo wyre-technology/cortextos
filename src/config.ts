@@ -82,6 +82,19 @@ export const config = {
     (process.env.ALPHA_INVITE_CODES ?? '').split(',').map(c => c.trim()).filter(Boolean)
   ),
 
+  // Entra ID tenant IDs we trust to attest the user's email is verified.
+  // Microsoft tokens don't include an email_verified claim, so we treat
+  // email from a token whose `tid` is on this allowlist as verified. Empty
+  // (default) means we trust no Entra tenant for verification — every
+  // Entra-issued session arrives with emailVerified=false. Override via
+  // ENTRA_TRUSTED_TENANT_IDS=<comma-separated GUID list>.
+  entraTrustedTenantIds: new Set(
+    (process.env.ENTRA_TRUSTED_TENANT_IDS ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean),
+  ),
+
   // Comma-separated public-facing Stripe coupon codes that customers may
   // apply at checkout. Empty means no client-supplied coupons are honored —
   // internal/sales-driven discounts must be applied server-side. Without

@@ -26,6 +26,8 @@ import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
+import { isSafePath } from './safe-path.js';
+import { decodeSessionCookie } from '../lib/session-cookie.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,6 +40,14 @@ export interface AzureAdUser {
   name: string;
   /** Azure AD tenant ID (tid claim) */
   tenantId: string;
+  /**
+   * True only if the user's tenant id is in `config.entraTrustedTenantIds`.
+   * Microsoft tokens don't include `email_verified`, so we treat email from
+   * a token whose `tid` we've enrolled as verified. Any code consuming this
+   * field MUST refuse identity decisions when it's false. Maps to the same
+   * field on Auth0User so admin / merge / claim gates can use one shape.
+   */
+  emailVerified: boolean;
 }
 
 // Session cookie stores JSON: { sub, email, name, tenantId }
@@ -122,14 +132,10 @@ export function azureAdPlugin(sql: postgres.Sql) {
         return;
       }
 
-      try {
-        const json = Buffer.from(raw.value, 'base64').toString('utf8');
-        const parsed = JSON.parse(json) as AzureAdUser;
-        // Map to Auth0User interface for compatibility with existing code
-        request.auth0User = { sub: parsed.sub, email: parsed.email, name: parsed.name };
-      } catch {
-        request.auth0User = null;
-      }
+      // decodeSessionCookie reads emailVerified as `false` for legacy cookies
+      // that pre-date the field, so identity gates that consume it stay safe
+      // until the user re-logs in.
+      request.auth0User = decodeSessionCookie(raw.value);
     });
 
     // -----------------------------------------------------------------------
@@ -172,8 +178,12 @@ export function azureAdPlugin(sql: postgres.Sql) {
         VALUES (${state}, ${codeVerifier})
       `;
 
-      // Store return_to URL if provided
-      const returnTo = request.query.return_to || '/settings';
+      // Store return_to URL if provided. Reject anything that isn't a same-
+      // origin absolute path; without this an attacker can craft a login URL
+      // like /auth/login?return_to=//evil.com that ends up in a Location
+      // header after the OAuth dance.
+      const rawReturn = request.query.return_to;
+      const returnTo = isSafePath(rawReturn) ? rawReturn : '/settings';
       reply.setCookie(RETURN_TO_COOKIE, returnTo, {
         path: '/auth',
         httpOnly: true,
@@ -309,13 +319,22 @@ export function azureAdPlugin(sql: postgres.Sql) {
 
       if (isNewUser) enrollNewUserInLoops(app.log, email, name);
 
+      // Microsoft tokens lack email_verified; we trust verification only when
+      // the user's tenant id is on the explicit allowlist. Empty allowlist
+      // (default) means every Entra session arrives with emailVerified=false.
+      const emailVerified = tid !== '' && config.entraTrustedTenantIds.has(tid);
+
       // Set the gateway session cookie
-      const user: AzureAdUser = { sub, email, name, tenantId: tid };
+      const user: AzureAdUser = { sub, email, name, tenantId: tid, emailVerified };
       setSessionCookie(reply, user);
 
-      // Redirect to the return_to URL or settings
+      // Redirect to the return_to URL or settings. Re-validate even though
+      // we sanitised on write — defense in depth in case the cookie ever
+      // gets populated by a different code path.
       const returnToCookie = request.unsignCookie(request.cookies[RETURN_TO_COOKIE] ?? '');
-      const returnTo = (returnToCookie.valid && returnToCookie.value) ? returnToCookie.value : '/settings';
+      const returnTo = (returnToCookie.valid && returnToCookie.value && isSafePath(returnToCookie.value))
+        ? returnToCookie.value
+        : '/settings';
       reply.clearCookie(RETURN_TO_COOKIE, { path: '/auth' });
 
       return reply.redirect(returnTo, 302);

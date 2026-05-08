@@ -22,6 +22,8 @@ import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
+import { isSafePath } from './safe-path.js';
+import { decodeSessionCookie } from '../lib/session-cookie.js';
 import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 
@@ -33,9 +35,20 @@ export interface Auth0User {
   sub: string;
   email: string;
   name: string;
+  /**
+   * True only if the upstream IdP attested that this email is verified:
+   *   - Auth0: directly from the `email_verified` claim.
+   *   - Entra: the token's `tid` is in `config.entraTrustedTenantIds`
+   *     (Entra does not emit `email_verified`, but we trust verification
+   *     done by tenants we've explicitly enrolled).
+   * Code that consumes this field MUST refuse identity decisions (admin
+   * gates, email-keyed merges, domain claims, …) when it's false. Legacy
+   * cookies pre-dating this field decode to false, gating them safely.
+   */
+  emailVerified: boolean;
 }
 
-// Session cookie stores JSON: { sub, email, name }
+// Session cookie stores JSON: { sub, email, name, emailVerified }
 const SESSION_COOKIE = 'gateway_session';
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
 
@@ -130,13 +143,10 @@ export function auth0Plugin(sql: postgres.Sql) {
         request.auth0User = null;
         return;
       }
-
-      try {
-        const json = Buffer.from(raw.value, 'base64').toString('utf8');
-        request.auth0User = JSON.parse(json) as Auth0User;
-      } catch {
-        request.auth0User = null;
-      }
+      // decodeSessionCookie reads emailVerified as `false` for legacy cookies
+      // that pre-date the field, so identity gates that consume it stay safe
+      // until the user re-logs in.
+      request.auth0User = decodeSessionCookie(raw.value);
     });
 
     // -----------------------------------------------------------------------
@@ -181,8 +191,12 @@ export function auth0Plugin(sql: postgres.Sql) {
         VALUES (${state}, ${codeVerifier})
       `;
 
-      // Store return_to URL if provided
-      const returnTo = request.query.return_to || '/settings';
+      // Store return_to URL if provided. Reject anything that isn't a same-
+      // origin absolute path; without this, an attacker can craft a login URL
+      // like /auth/login?return_to=//evil.com that ends up in a Location
+      // header after the OAuth dance.
+      const rawReturn = request.query.return_to;
+      const returnTo = isSafePath(rawReturn) ? rawReturn : '/settings';
       reply.setCookie(RETURN_TO_COOKIE, returnTo, {
         path: '/auth',
         httpOnly: true,
@@ -282,6 +296,10 @@ export function auth0Plugin(sql: postgres.Sql) {
       let sub = claims.sub as string;
       const email = (claims.email as string) || '';
       const name = (claims.name as string) || '';
+      // Auth0 emits email_verified directly. Anything else (missing claim,
+      // string 'true') is treated as unverified — gates downstream of this
+      // field MUST fail closed.
+      const emailVerified = claims.email_verified === true;
 
       await bindShadowUserOnLogin(sql, sub, email);
 
@@ -326,12 +344,16 @@ export function auth0Plugin(sql: postgres.Sql) {
       if (isNewUser) enrollNewUserInLoops(app.log, email, name);
 
       // Set the gateway session cookie
-      const user: Auth0User = { sub, email, name };
+      const user: Auth0User = { sub, email, name, emailVerified };
       setSessionCookie(reply, user);
 
-      // Redirect to the return_to URL or settings
+      // Redirect to the return_to URL or settings. Re-validate the path even
+      // though we sanitised on write — defense in depth in case the cookie
+      // ever gets populated by a different code path.
       const returnToCookie = request.unsignCookie(request.cookies[RETURN_TO_COOKIE] ?? '');
-      const returnTo = (returnToCookie.valid && returnToCookie.value) ? returnToCookie.value : '/settings';
+      const returnTo = (returnToCookie.valid && returnToCookie.value && isSafePath(returnToCookie.value))
+        ? returnToCookie.value
+        : '/settings';
       reply.clearCookie(RETURN_TO_COOKIE, { path: '/auth' });
 
       return reply.redirect(returnTo, 302);
