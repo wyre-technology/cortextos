@@ -38,6 +38,9 @@ import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
 import { auditRoutes } from './audit/routes.js';
 import { registerAuthPlugin } from './auth/index.js';
 import { landingRoutes } from './landing/index.js';
+import { adminMetricsRoutes } from './admin/routes.js';
+import { adminReportsRoutes } from './admin/reports.js';
+import { adminOrgRoutes } from './admin/org-routes.js';
 import { waitlistRoutes } from './waitlist/routes.js';
 import { signupRoutes } from './signup/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
@@ -213,6 +216,19 @@ if (config.features.signup) {
 }
 
 // Auth plugin already registered above (before service init for table ordering)
+
+// Platform admin (WYRE-internal) — gated by ADMIN_API_KEY (script/CI) or by
+// a logged-in browser session whose email is in config.adminEmails AND has
+// emailVerified=true. See src/lib/admin-auth.ts.
+await app.register(adminMetricsRoutes({ sql }));
+await app.register(adminReportsRoutes({ sql }));
+await app.register(adminOrgRoutes({
+  sql,
+  orgService,
+  billingGate,
+  creditService,
+  adminAuditService,
+}));
 
 // Landing page (public) — must be after auth plugin so auth0User is available
 await app.register(landingRoutes());

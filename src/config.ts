@@ -99,6 +99,18 @@ export const config = {
       .filter(Boolean),
   ),
 
+  // Comma-separated email addresses allowed to access /admin/* via a logged-in
+  // browser session. Bearer-token auth (ADMIN_API_KEY) still works for scripts
+  // and CI. Browser-session admin gate ALSO requires emailVerified=true on the
+  // session — see src/lib/admin-auth.ts. Empty (default) means no email-based
+  // admin path; only ADMIN_API_KEY works.
+  adminEmails: new Set(
+    (process.env.ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  ),
+
   // Comma-separated public-facing Stripe coupon codes that customers may
   // apply at checkout. Empty means no client-supplied coupons are honored —
   // internal/sales-driven discounts must be applied server-side. Without

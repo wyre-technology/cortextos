@@ -31,7 +31,8 @@ export type AdminEventType =
   | 'log_shipping_destination_updated'
   | 'log_shipping_destination_deleted'
   | 'scim_connection_created'
-  | 'scim_connection_revoked';
+  | 'scim_connection_revoked'
+  | 'admin_comp_credits';
 
 export interface AdminAuditEntry {
   id: string;
