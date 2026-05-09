@@ -1,4 +1,3 @@
-import { brand } from '../brand/index.js';
 import { PAGE_STYLES } from './styles.js';
 
 export function escapeHtml(unsafe: string): string {
@@ -18,7 +17,7 @@ export function renderSuccessPage(vendor: { name: string; slug: string }): strin
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Connected - ${name} - ${escapeHtml(brand.name)}</title>
+  <title>Connected - ${name} - Wyre Technology</title>
   <script>
     (function() {
       var theme = localStorage.getItem('gateway-theme');
@@ -30,7 +29,7 @@ export function renderSuccessPage(vendor: { name: string; slug: string }): strin
 </head>
 <body>
   <div class="card">
-    <div class="brand">${escapeHtml(brand.name)}</div>
+    <div class="brand">Wyre Technology</div>
     <div class="success-icon">&#10003;</div>
     <h1>Connected to ${name}</h1>
     <p class="subtitle">Your ${name} credentials have been securely stored. You can now close this window or manage your connections below.</p>

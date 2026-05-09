@@ -1,5 +1,7 @@
 /** CSS custom property definitions for dark/light theming. */
 export const THEME_VARS = `
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Nunito+Sans:wght@300;400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
   :root {
     --bg-body: #0a0a0a;
     --bg-card: #1a1a1a;
@@ -20,18 +22,22 @@ export const THEME_VARS = `
     --border-tertiary: #262626;
     --border-subtle: #1e1e1e;
     --border-hover: #555;
-    --accent: #2563eb;
-    --accent-hover: #1d4ed8;
-    --accent-light: #3b82f6;
-    --accent-text: #60a5fa;
+    --accent: #00C9DB;
+    --accent-hover: #00b5c6;
+    --accent-light: #33d4e2;
+    --accent-text: #00C9DB;
+    --highlight: #EDE947;
     --success: #22c55e;
     --success-text: #4ade80;
     --error: #ef4444;
     --error-text: #fca5a5;
     --warning: #facc15;
     --warning-text: #f59e0b;
-    --badge-event-bg: #1a2744;
+    --badge-event-bg: #0a2a2d;
     --badge-personal-bg: #2a1a1a;
+    --font-heading: 'Oswald', sans-serif;
+    --font-body: 'Nunito Sans', 'Inter', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
   }
   :root.light {
     --bg-body: #f8f8f8;
@@ -53,11 +59,15 @@ export const THEME_VARS = `
     --border-tertiary: #e5e5e5;
     --border-subtle: #f0f0f0;
     --border-hover: #bbb;
-    --accent-text: #2563eb;
+    --accent: #00a8b8;
+    --accent-hover: #009aa8;
+    --accent-light: #00b5c6;
+    --accent-text: #00899a;
+    --highlight: #d4cc00;
     --success-text: #16a34a;
     --error-text: #dc2626;
     --warning-text: #d97706;
-    --badge-event-bg: #dbeafe;
+    --badge-event-bg: #d9f7fa;
     --badge-personal-bg: #fef3c7;
   }
 `;
@@ -67,7 +77,7 @@ export const PAGE_STYLES = `
   ${THEME_VARS}
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-body);
     background: var(--bg-body);
     color: var(--text-primary);
     min-height: 100vh;
@@ -92,14 +102,16 @@ export const PAGE_STYLES = `
     margin: 0 auto;
   }
   .brand {
+    font-family: var(--font-heading);
     font-size: 13px;
     font-weight: 600;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
     margin-bottom: 24px;
   }
   h1 {
+    font-family: var(--font-heading);
     font-size: 22px;
     font-weight: 600;
     color: var(--text-heading);
@@ -158,6 +170,7 @@ export const PAGE_STYLES = `
   }
   .btn-logout:hover { color: var(--text-primary); border-color: var(--border-hover); }
   .section-title {
+    font-family: var(--font-heading);
     font-size: 16px;
     font-weight: 600;
     color: var(--text-heading);
@@ -181,6 +194,7 @@ export const PAGE_STYLES = `
     padding-top: 20px;
   }
   .category-header {
+    font-family: var(--font-heading);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -191,6 +205,7 @@ export const PAGE_STYLES = `
   .vendor-card {
     background: var(--bg-vendor);
     border: 1px solid var(--border-tertiary);
+    border-left: 4px solid var(--highlight);
     border-radius: 10px;
     padding: 20px;
     display: flex;
@@ -198,7 +213,7 @@ export const PAGE_STYLES = `
     gap: 16px;
     transition: border-color 0.15s;
   }
-  .vendor-card:hover { border-color: var(--border-primary); }
+  .vendor-card:hover { border-color: var(--border-primary); border-left-color: var(--highlight); }
   .vendor-card.connected { border-color: rgba(34, 197, 94, 0.3); }
   .vendor-card-header {
     display: flex;
@@ -232,8 +247,8 @@ export const PAGE_STYLES = `
     font-size: 11px;
     font-weight: 500;
     color: var(--accent-text);
-    background: rgba(96, 165, 250, 0.1);
-    border: 1px solid rgba(96, 165, 250, 0.2);
+    background: rgba(0, 201, 219, 0.1);
+    border: 1px solid rgba(0, 201, 219, 0.2);
     border-radius: 4px;
     padding: 2px 6px;
   }
@@ -311,7 +326,7 @@ export const PAGE_STYLES = `
     border-radius: 4px;
   }
   .plan-badge.free { background: var(--border-tertiary); color: var(--text-tertiary); }
-  .plan-badge.pro { background: rgba(37, 99, 235, 0.15); color: var(--accent-text); }
+  .plan-badge.pro { background: rgba(0, 201, 219, 0.15); color: var(--accent-text); }
   .org-meta { font-size: 13px; color: var(--text-tertiary); }
   .btn-upgrade {
     display: inline-flex;
@@ -369,6 +384,30 @@ export const PAGE_STYLES = `
     color: var(--warning);
   }
   .limit-banner a { color: var(--warning); }
+  .invite-banner {
+    background: rgba(0, 201, 219, 0.08);
+    border: 1px solid rgba(0, 201, 219, 0.35);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 14px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .invite-banner strong { color: #00C9DB; }
+  .invite-banner code {
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(0, 201, 219, 0.14);
+    border: 1px solid rgba(0, 201, 219, 0.3);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 13px;
+    color: #00C9DB;
+    letter-spacing: 0.05em;
+  }
   .toast {
     position: fixed;
     bottom: 24px;

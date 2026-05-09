@@ -21,6 +21,7 @@ interface NavItem {
 const PERSONAL_NAV: NavItem[] = [
   { label: 'Connections', href: '/settings' },
   { label: 'Profile', href: '/settings/profile' },
+  { label: 'Billing', href: '/settings/billing' },
 ];
 
 const TEAM_NAV: NavItem[] = [
@@ -28,6 +29,7 @@ const TEAM_NAV: NavItem[] = [
   { label: 'Dashboard', href: '/settings/team/dashboard' },
   { label: 'Members', href: '/settings/team/members' },
   { label: 'Invitations', href: '/settings/team/invitations' },
+  { label: 'Domains', href: '/settings/team/domains' },
   { label: 'Connections', href: '/settings/team/connections' },
   { label: 'Tool Access', href: '/settings/team/tool-access' },
   { label: 'Server Access', href: '/settings/team/server-access' },
@@ -68,9 +70,10 @@ const LAYOUT_STYLES = `
   }
   .sidebar-brand {
     padding: 20px 16px 4px;
+    font-family: var(--font-heading);
     font-size: 13px;
     font-weight: 600;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
   }
@@ -87,6 +90,7 @@ const LAYOUT_STYLES = `
   }
   .sidebar-section-label {
     padding: 0 16px 6px;
+    font-family: var(--font-heading);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -109,7 +113,7 @@ const LAYOUT_STYLES = `
   .sidebar-item.active {
     color: var(--text-primary);
     border-left-color: var(--accent);
-    background: rgba(37,99,235,0.08);
+    background: rgba(0,201,219,0.08);
   }
   .sidebar-divider {
     height: 1px;
@@ -129,8 +133,8 @@ const LAYOUT_STYLES = `
   .sidebar-upgrade {
     margin: 8px 16px;
     padding: 12px;
-    background: rgba(37,99,235,0.08);
-    border: 1px solid rgba(37,99,235,0.2);
+    background: rgba(0,201,219,0.08);
+    border: 1px solid rgba(0,201,219,0.2);
     border-radius: 6px;
     font-size: 12px;
     color: var(--accent-text);
@@ -196,9 +200,10 @@ const LAYOUT_STYLES = `
   }
   .hamburger:hover { color: var(--text-primary); }
   .mobile-brand {
+    font-family: var(--font-heading);
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-tertiary);
     margin-left: 12px;
@@ -244,7 +249,8 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
-  const isPro = org?.plan === 'pro';
+  const isPro = org?.plan === 'pro' || org?.plan === 'business';
+  const brandName = escapeHtml(brand.name);
 
   const personalNav = PERSONAL_NAV
     .map((item) => renderNavItem(item, activePath))
@@ -252,7 +258,8 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 
   let teamNav = '';
   if (org && isPro) {
-    const planBadge = '<span style="font-size:10px;font-weight:600;color:var(--accent-text);background:rgba(37,99,235,0.15);padding:1px 5px;border-radius:3px;margin-left:6px">PRO</span>';
+    const planLabel = org.plan === 'business' ? 'BUSINESS' : 'PRO';
+    const planBadge = `<span style="font-size:10px;font-weight:600;color:var(--accent-text);background:rgba(0,201,219,0.15);padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
     teamNav = `
     <div class="sidebar-section">
       <div class="sidebar-section-label">${orgName} ${planBadge}</div>
@@ -281,10 +288,10 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)} - ${escapeHtml(brand.name)}</title>
+  <title>${escapeHtml(title)} - ${brandName}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@400;500;600&family=Nunito+Sans:wght@300;400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script>
     (function() {
       var theme = localStorage.getItem('gateway-theme');
@@ -301,14 +308,14 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   <!-- Mobile top bar -->
   <div class="mobile-bar">
     <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle menu">&#9776;</button>
-    <span class="mobile-brand">${escapeHtml(brand.name)}</span>
+    <span class="mobile-brand">${brandName}</span>
   </div>
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
   <div class="layout">
     <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
-      <div class="sidebar-brand">${escapeHtml(brand.name)}</div>
+      <div class="sidebar-brand">${brandName}</div>
       <div class="sidebar-email">${userEmail}</div>
 
       <div class="sidebar-section">
