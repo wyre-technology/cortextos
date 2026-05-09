@@ -41,6 +41,7 @@ import { landingRoutes } from './landing/index.js';
 import { adminMetricsRoutes } from './admin/routes.js';
 import { adminReportsRoutes } from './admin/reports.js';
 import { adminOrgRoutes } from './admin/org-routes.js';
+import { legalRoutes } from './web/legal.js';
 import { waitlistRoutes } from './waitlist/routes.js';
 import { signupRoutes } from './signup/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
@@ -229,6 +230,9 @@ await app.register(adminOrgRoutes({
   creditService,
   adminAuditService,
 }));
+
+// Legal pages (public): /terms, /privacy
+await app.register(legalRoutes());
 
 // Landing page (public) — must be after auth plugin so auth0User is available
 await app.register(landingRoutes());
