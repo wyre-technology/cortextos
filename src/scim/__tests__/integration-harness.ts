@@ -132,6 +132,31 @@ async function applyBootstrap(sql: postgres.Sql): Promise<void> {
   `;
 }
 
+/**
+ * Migrations the SCIM integration harness deliberately skips on first
+ * "does not exist" error. Each entry names the file AND a short reason
+ * the harness is allowed to skip it; the reason is part of the
+ * skip-event log line so future-Hank reading test output sees WHY a
+ * skip is permitted, not just THAT it happened.
+ *
+ * To allow a new skip: add an entry here. Any skip-event without a
+ * matching entry is a hard failure — the harness has drifted from the
+ * test's bootstrap and needs either the bootstrap updated or the
+ * allowlist explicitly extended.
+ */
+const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
+  // The list is empirically derived: each entry is a migration that
+  // ACTUALLY trips the skip path on the current SCIM bootstrap. New
+  // migrations that error here without a matching entry fail the
+  // harness loudly. Updating this list is a deliberate choice, not a
+  // drive-by silencing.
+  { file: '006_audit_actor_org_id.sql',     reason: 'admin_audit_log not in SCIM bootstrap' },
+  { file: '007_rls_enable.sql',             reason: 'RLS not relevant to SCIM business-logic tests' },
+  { file: '014_rls_with_check_clauses.sql', reason: 'RLS not relevant to SCIM business-logic tests' },
+];
+
+const SKIP_LOG_PREFIX = 'HARNESS_SKIP';
+
 async function applyMigrations(sql: postgres.Sql): Promise<void> {
   const dir = join(REPO_ROOT, 'migrations');
   const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
@@ -146,12 +171,31 @@ async function applyMigrations(sql: postgres.Sql): Promise<void> {
     try {
       await sql.begin((tx) => tx.unsafe(body));
     } catch (err) {
-      // RLS migrations (007/014) reference tables that the bootstrap doesn't
-      // create (e.g. reseller_support_grants, audit, credentials). Skip them
-      // — RLS isn't relevant to SCIM business-logic tests.
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('does not exist') && /rls|reseller_support_grants|audit|credentials|customer_sub_orgs|impersonation/i.test(file)) {
-        continue;
+      // Only "does not exist" errors are candidates for the skip
+      // allowlist. Other errors (syntax, FK violation, etc) always
+      // propagate — the migration content is broken and the harness
+      // wouldn't be papering over it usefully by skipping.
+      if (msg.includes('does not exist')) {
+        const allowed = ALLOWED_SKIPS.find((s) => s.file === file);
+        if (allowed) {
+          // Visible skip event. Per-skip log line so the test output
+          // shows the operator exactly which migrations the SCIM
+          // integration suite is structurally bypassing today.
+          // eslint-disable-next-line no-console
+          console.warn(`${SKIP_LOG_PREFIX} file=${file} reason="${allowed.reason}"`);
+          continue;
+        }
+        // Unallowed skip = the harness has drifted from the bootstrap.
+        // Fail loudly with the actionable choice surfaced in the
+        // error message rather than silently bypass.
+        throw new Error(
+          `Migration ${file} failed with "does not exist" but is not in ALLOWED_SKIPS. ` +
+            'Either add the missing tables/columns to the harness bootstrap (preferred — ' +
+            'see harness-drift.test.ts) or, if the migration is genuinely irrelevant to ' +
+            'SCIM business-logic tests, add { file: \'' + file + '\', reason: <why> } to ' +
+            'ALLOWED_SKIPS in this file. Underlying error: ' + msg,
+        );
       }
       throw new Error(`Migration ${file} failed: ${msg}`);
     }
