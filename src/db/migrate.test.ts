@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runMigrations } from './migrate.js';
+import { runMigrations, assertNumericContiguity } from './migrate.js';
 import type postgres from 'postgres';
 
 interface FakeQueryResult {
@@ -104,14 +104,16 @@ describe('runMigrations', () => {
   });
 
   it('applies in lexical order', async () => {
-    writeMigration('010_late.sql', 'select 10');
-    writeMigration('002_early.sql', 'select 2');
+    // Files written out of order; runner sorts and applies 001..003.
+    // Sequence is contiguous so the boot-time contiguity assert passes.
+    writeMigration('003_late.sql', 'select 3');
+    writeMigration('002_middle.sql', 'select 2');
     writeMigration('001_first.sql', 'select 1');
 
     const { sql } = makeFakeSql();
     const r = await runMigrations(sql, { dir: tmpDir, log: silentLog() });
 
-    expect(r.applied).toEqual(['001_first.sql', '002_early.sql', '010_late.sql']);
+    expect(r.applied).toEqual(['001_first.sql', '002_middle.sql', '003_late.sql']);
   });
 
   it('throws on a failing migration', async () => {
@@ -146,8 +148,87 @@ describe('runMigrations', () => {
     expect(log.warn).toHaveBeenCalled();
   });
 
+  it('refuses to boot when migration sequence has a gap', async () => {
+    writeMigration('001_first.sql', 'select 1');
+    writeMigration('003_third.sql', 'select 3'); // gap at 002
+
+    const { sql } = makeFakeSql();
+    await expect(runMigrations(sql, { dir: tmpDir, log: silentLog() })).rejects.toThrow(
+      /sequence gap.*expected 002.*003_third\.sql/,
+    );
+  });
+
   // Cleanup
   it('cleanup', () => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe('assertNumericContiguity', () => {
+  it('passes on an empty list (clean-slate deploy)', () => {
+    expect(() => assertNumericContiguity([])).not.toThrow();
+  });
+
+  it('passes on a single migration starting at 001', () => {
+    expect(() => assertNumericContiguity(['001_first.sql'])).not.toThrow();
+  });
+
+  it('passes on a contiguous sequence 001..017 (current main shape)', () => {
+    const files = Array.from({ length: 17 }, (_, i) => {
+      const n = String(i + 1).padStart(3, '0');
+      return `${n}_migration.sql`;
+    });
+    expect(() => assertNumericContiguity(files)).not.toThrow();
+  });
+
+  it('throws when the sequence has a single-file gap (the 015-shaped case)', () => {
+    // The exact pattern that broke the June 2026 ship: 012 → 016 → 017,
+    // missing 013/014/015.
+    const files = [
+      '001_first.sql',
+      '002_second.sql',
+      '012_twelfth.sql',
+      '016_sixteenth.sql',
+      '017_seventeenth.sql',
+    ];
+    expect(() => assertNumericContiguity(files)).toThrow(/sequence gap/);
+  });
+
+  it('error message names the missing-number expected and the file found instead', () => {
+    expect(() => assertNumericContiguity(['001_first.sql', '003_third.sql'])).toThrow(
+      /expected 002.*found 003_third\.sql/,
+    );
+  });
+
+  it('throws when a duplicate number is present', () => {
+    // Two files share numeric prefix 014 — happens when separate PRs both
+    // claim the next number and one ends up with a longer description.
+    expect(() =>
+      assertNumericContiguity([
+        '001_a.sql',
+        '014_first.sql',
+        '014_second_collision.sql',
+      ]),
+    ).toThrow(/duplicate migration numbers.*14.*014_first\.sql/);
+  });
+
+  it('throws when a file lacks a numeric prefix', () => {
+    expect(() =>
+      assertNumericContiguity(['001_first.sql', 'add_index.sql']),
+    ).toThrow(/missing numeric prefix.*add_index\.sql/);
+  });
+
+  it('throws when the sequence does not start at 001', () => {
+    expect(() => assertNumericContiguity(['002_second.sql', '003_third.sql'])).toThrow(
+      /must start at 001/,
+    );
+  });
+
+  it('treats 1_foo.sql and 001_foo.sql as the same number (parses leading zeros)', () => {
+    // Two files with numeric prefix 1 differing only in zero-padding =
+    // duplicate. The error names them.
+    expect(() =>
+      assertNumericContiguity(['1_short.sql', '001_padded.sql']),
+    ).toThrow(/duplicate migration numbers/);
   });
 });
