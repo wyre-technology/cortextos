@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:coverage:integration": "vitest run --config vitest.integration.config.ts --coverage",
     "migrate:from-mcp-gateway": "tsx scripts/migrate-from-mcp-gateway.ts"
   },
   "keywords": [
@@ -51,6 +53,7 @@
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.2",
+    "@vitest/coverage-v8": "^1.6.1",
     "eslint": "^8.56.0",
     "tsx": "^4.19.0",
     "typescript": "^6.0.3",
