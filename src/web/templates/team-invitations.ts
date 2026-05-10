@@ -3,9 +3,12 @@ import { escapeHtml } from '../helpers.js';
 export interface TeamInvitationsData {
   orgId: string;
   baseUrl: string;
+  // Post-015 contract: existing invitations don't carry the plaintext token.
+  // The list shows status; the copyable URL is shown exactly once at create
+  // time (in the create modal, from the POST response). Re-sharing requires
+  // revoke + create-new.
   invitations: {
     id: string;
-    token: string;
     expiresAt: string;
     maxUses: number | null;
     useCount: number;
@@ -24,16 +27,14 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
   const invitationRows = invitations.length > 0
     ? invitations
         .map((inv) => {
-          const url = `${escapeHtml(baseUrl)}/invite/${escapeHtml(inv.token)}`;
           const expires = new Date(inv.expiresAt).toLocaleDateString();
           const usage = formatUsage(inv.useCount, inv.maxUses);
           return `
         <tr>
-          <td class="invite-url" title="${url}">${url}</td>
+          <td class="invite-id" title="Invite ${escapeHtml(inv.id)}">${escapeHtml(inv.id)}</td>
           <td>${usage}</td>
           <td>${expires}</td>
           <td>
-            <button class="btn-copy" onclick="copyLink('${escapeHtml(inv.token)}')">Copy</button>
             <button class="btn-disconnect" onclick="revokeInvite('${escapeHtml(inv.id)}')">Revoke</button>
           </td>
         </tr>`;
@@ -51,10 +52,14 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
     </div>
     <div class="org-section" style="padding:0;overflow:hidden;margin-top:16px">
       <table>
-        <thead><tr><th>Link</th><th>Usage</th><th>Expires</th><th></th></tr></thead>
+        <thead><tr><th>Invite ID</th><th>Usage</th><th>Expires</th><th></th></tr></thead>
         <tbody>${invitationRows}</tbody>
       </table>
     </div>
+    <p class="section-desc" style="margin-top:8px;font-size:12px">
+      Invite links are shown only at creation time and copied to your clipboard.
+      To re-share an invite, revoke this one and create a new link.
+    </p>
 
     <div class="modal-overlay" id="createModal" style="display:none">
       <div class="modal-card">
@@ -123,12 +128,6 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
           alert('Failed to create invite: ' + (data.error || 'Unknown error'));
         }
         hideCreateModal();
-      }
-
-      async function copyLink(token) {
-        const url = baseUrl + '/invite/' + token;
-        await navigator.clipboard.writeText(url);
-        showToast('Copied to clipboard');
       }
 
       async function revokeInvite(inviteId) {

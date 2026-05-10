@@ -112,13 +112,13 @@ export function invitationRoutes(deps: InvitationRouteDeps) {
           }
         }
 
-        const invitation = await orgService.createInvitation(orgId, user.sub, {
+        const { invitation, plainToken } = await orgService.createInvitation(orgId, user.sub, {
           maxUses: body.maxUses,
           expiresInHours: body.expiresInHours,
         });
-        const inviteUrl = `${config.baseUrl}/invite/${invitation.token}`;
+        const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
 
-        return reply.code(201).send({ ...invitation, inviteUrl });
+        return reply.code(201).send({ ...invitation, token: plainToken, inviteUrl });
       },
     );
 
