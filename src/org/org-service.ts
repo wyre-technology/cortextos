@@ -238,17 +238,16 @@ export class OrgService {
         id          TEXT PRIMARY KEY,
         org_id      TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         invited_by  TEXT NOT NULL REFERENCES users(id),
-        token       TEXT NOT NULL UNIQUE,
         expires_at  TIMESTAMPTZ NOT NULL,
         accepted_by TEXT REFERENCES users(id),
         accepted_at TIMESTAMPTZ,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
-
-    await this.sql`
-      CREATE INDEX IF NOT EXISTS idx_org_invitations_token ON org_invitations(token)
-    `;
+    // Post-015 contract: only the hash column is referenced by the runtime
+    // service. The `token` column (and its UNIQUE constraint + index) has
+    // been dropped by migration 015. On a fresh DB this CREATE TABLE never
+    // creates the legacy column; on an existing DB the migration drops it.
 
     // Migration: add max_uses and use_count columns to org_invitations
     await this.sql`
