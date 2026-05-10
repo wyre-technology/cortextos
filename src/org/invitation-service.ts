@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
-import type { OrgInvitation, OrgMember } from './org-service.js';
+import type { OrgInvitation, OrgMember, CreatedInvitation } from './org-service.js';
 import { MemberService } from './member-service.js';
 
 interface InvitationRow {
   id: string;
   org_id: string;
   invited_by: string;
-  token: string;
+  token_hash: string;
   expires_at: string;
   accepted_by: string | null;
   accepted_at: string | null;
@@ -31,7 +31,6 @@ function toInvitation(row: InvitationRow): OrgInvitation {
     id: row.id,
     orgId: row.org_id,
     invitedBy: row.invited_by,
-    token: row.token,
     expiresAt: row.expires_at,
     acceptedBy: row.accepted_by,
     acceptedAt: row.accepted_at,
@@ -74,47 +73,44 @@ export class InvitationService {
     orgId: string,
     invitedBy: string,
     options?: { maxUses?: number | null; expiresInHours?: number },
-  ): Promise<OrgInvitation> {
+  ): Promise<CreatedInvitation> {
     const id = nanoid();
-    const token = nanoid(32);
-    const tokenHash = this.hashToken(token);
+    const plainToken = nanoid(32);
+    const tokenHash = this.hashToken(plainToken);
     const expiresInHours = options?.expiresInHours ?? 168; // 7 days default
     const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
     const maxUses = options?.maxUses !== undefined ? options.maxUses : 1;
 
-    // Dual-write phase (migration 011): we write the hash (new canonical
-    // storage) AND the plaintext token (legacy column, retained for rollback
-    // safety). A follow-up migration drops the plaintext column once all
-    // outstanding invitations issued before this rollout have expired.
+    // Contract phase (migration 015): only the hash persists. The plaintext
+    // token is handed back to the caller exactly once for the invite URL.
+    // Migration 011 added `token_hash` and dual-wrote both columns; the
+    // legacy `token` column is dropped by 015 once this contract change is
+    // in production. See PRD §8.4 / §A.19 for the SOC2 invariant: plaintext
+    // never persists to disk.
     const rows = await this.sql<InvitationRow[]>`
       INSERT INTO org_invitations
-        (id, org_id, invited_by, token, token_hash, expires_at, max_uses, use_count)
+        (id, org_id, invited_by, token_hash, expires_at, max_uses, use_count)
       VALUES
-        (${id}, ${orgId}, ${invitedBy}, ${token}, ${tokenHash}, ${expiresAt}, ${maxUses}, ${0})
+        (${id}, ${orgId}, ${invitedBy}, ${tokenHash}, ${expiresAt}, ${maxUses}, ${0})
       RETURNING *
     `;
 
-    // Return the raw token to the caller (for email link). The DB row stores
-    // the hash; we substitute the plaintext back in so callers receive the
-    // single copy that will ever exist.
-    return { ...toInvitation(rows[0]), token };
+    return { invitation: toInvitation(rows[0]), plainToken };
   }
 
   async getInvitationByToken(token: string): Promise<OrgInvitation | null> {
     const tokenHash = this.hashToken(token);
-    // Prefer the hash column (new path). Fall back to plaintext `token` only
-    // for legacy rows written before migration 011 that have a NULL
-    // token_hash — those age out naturally within expires_at (<= 7 days).
+    // Hash-only lookup. The pre-015 dual-read fallback for legacy rows with
+    // NULL token_hash is removed: those rows had a max 7-day TTL and the
+    // 011 rollout was >7 days before this lands, so any survivors are stale.
     const rows = await this.sql<InvitationRow[]>`
       SELECT * FROM org_invitations
-      WHERE (token_hash = ${tokenHash} OR (token_hash IS NULL AND token = ${token}))
+      WHERE token_hash = ${tokenHash}
         AND (max_uses IS NULL OR use_count < max_uses)
         AND expires_at > NOW()
     `;
     if (!rows[0]) return null;
-    // Return the raw token the caller already supplied rather than the
-    // stored hash, so downstream code building invite URLs keeps working.
-    return { ...toInvitation(rows[0]), token };
+    return toInvitation(rows[0]);
   }
 
   async acceptInvitation(token: string, userId: string): Promise<OrgMember | null> {

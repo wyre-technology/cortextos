@@ -198,11 +198,15 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(402).send({ error: 'Upgrade to Pro to invite team members' });
         }
 
-        const invitation = await orgService.createInvitation(orgId, user.sub);
-        const inviteUrl = `${config.baseUrl}/invite/${invitation.token}`;
+        const { invitation, plainToken } = await orgService.createInvitation(orgId, user.sub);
+        const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
 
         void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'member_invited', metadata: { invitationId: invitation.id } }).catch((err) => request.log.error(err, 'admin audit log failed'));
-        return reply.code(201).send({ ...invitation, inviteUrl });
+        // The plainToken is included in the response body — this is the only
+        // moment it ever exists in cleartext outside the inviter's clipboard.
+        // Subsequent reads (listInvitations, getInvitationByToken) never carry
+        // the plaintext.
+        return reply.code(201).send({ ...invitation, token: plainToken, inviteUrl });
       },
     );
 

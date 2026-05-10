@@ -88,13 +88,22 @@ export interface OrgInvitation {
   id: string;
   orgId: string;
   invitedBy: string;
-  token: string;
   expiresAt: string;
   acceptedBy: string | null;
   acceptedAt: string | null;
   maxUses: number | null;
   useCount: number;
   createdAt: string;
+}
+
+/**
+ * Returned by `createInvitation`. `plainToken` is shown exactly once — embed
+ * in the invite URL at creation time and never re-display. Only the hash
+ * lives in the DB; subsequent reads of an invitation never carry plaintext.
+ */
+export interface CreatedInvitation {
+  invitation: OrgInvitation;
+  plainToken: string;
 }
 
 export interface ServiceClient {

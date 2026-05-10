@@ -230,21 +230,19 @@ describe('OrgService', () => {
       // Invitations
       // ----------------------------------------------------------------------
       if (query.includes('INSERT INTO org_invitations')) {
-        // Dual-write columns (migration 011):
-        //   (id, org_id, invited_by, token, token_hash, expires_at, max_uses, use_count)
+        // Post-015 contract: only the hash persists. Columns:
+        //   (id, org_id, invited_by, token_hash, expires_at, max_uses, use_count)
         const id = values[0] as string;
         const orgId = values[1] as string;
         const invitedBy = values[2] as string;
-        const token = values[3] as string;
-        const tokenHash = values[4] as string;
-        const expiresAt = values[5] as string;
-        const maxUses = values[6] as number | null;
-        const useCount = values[7] as number;
+        const tokenHash = values[3] as string;
+        const expiresAt = values[4] as string;
+        const maxUses = values[5] as number | null;
+        const useCount = values[6] as number;
         const row = {
           id,
           org_id: orgId,
           invited_by: invitedBy,
-          token,
           token_hash: tokenHash,
           expires_at: expiresAt,
           accepted_by: null,
@@ -257,18 +255,17 @@ describe('OrgService', () => {
         return Promise.resolve([row]);
       }
 
-      // getInvitationByToken -- SELECT ... WHERE token_hash = ? OR (legacy token = ?)
+      // getInvitationByToken -- SELECT ... WHERE token_hash = ?
+      // Post-015 contract: hash-only lookup, no OR-NULL fallback.
       if (
         query.includes('SELECT') &&
         query.includes('org_invitations') &&
         query.includes('token_hash')
       ) {
         const tokenHash = values[0] as string;
-        const token = values[1] as string;
         const row = [...invitations.values()].find(
           (inv) =>
-            (inv.token_hash === tokenHash ||
-              (inv.token_hash == null && inv.token === token)) &&
+            inv.token_hash === tokenHash &&
             (inv.max_uses === null || (inv.use_count as number) < (inv.max_uses as number)) &&
             new Date(inv.expires_at as string) > new Date(),
         );
@@ -443,8 +440,8 @@ describe('OrgService', () => {
     expect(ownerStillThere).not.toBeNull();
 
     // Accept an invitation to add a regular member, then remove them
-    const invitation = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(invitation.token, 'user_member');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    await service.acceptInvitation(plainToken, 'user_member');
 
     const memberExists = await service.getMembership(org.id, 'user_member');
     expect(memberExists).not.toBeNull();
@@ -466,13 +463,13 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Invite Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
+    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner');
 
     expect(invitation.id).toBeDefined();
     expect(invitation.orgId).toBe(org.id);
     expect(invitation.invitedBy).toBe('user_owner');
-    expect(invitation.token).toBeDefined();
-    expect(invitation.token.length).toBeGreaterThanOrEqual(20);
+    expect(plainToken).toBeDefined();
+    expect(plainToken.length).toBeGreaterThanOrEqual(20);
     expect(invitation.acceptedBy).toBeNull();
     expect(invitation.acceptedAt).toBeNull();
     expect(invitation.maxUses).toBe(1);
@@ -492,19 +489,19 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Hash Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
+    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner');
 
     // Callers must receive the raw token once (for the email link).
-    expect(invitation.token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(plainToken).toMatch(/^[A-Za-z0-9_-]+$/);
 
     // Lookup by the raw token must resolve (hash-first path).
-    const byToken = await service.getInvitationByToken(invitation.token);
+    const byToken = await service.getInvitationByToken(plainToken);
     expect(byToken).not.toBeNull();
     expect(byToken!.id).toBe(invitation.id);
 
     // Lookup by the *hash* of the token must NOT resolve — the hash is
     // what the DB stores, but callers must present the plaintext.
-    const hash = createHash('sha256').update(invitation.token).digest('hex');
+    const hash = createHash('sha256').update(plainToken).digest('hex');
     const byHash = await service.getInvitationByToken(hash);
     expect(byHash).toBeNull();
   });
@@ -514,9 +511,9 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Accept Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
 
-    const member = await service.acceptInvitation(invitation.token, 'user_joiner');
+    const member = await service.acceptInvitation(plainToken, 'user_joiner');
     expect(member).not.toBeNull();
     expect(member!.orgId).toBe(org.id);
     expect(member!.userId).toBe('user_joiner');
@@ -527,7 +524,7 @@ describe('OrgService', () => {
     expect(membership).not.toBeNull();
 
     // Using the same token again should return null (already accepted)
-    const again = await service.acceptInvitation(invitation.token, 'user_other');
+    const again = await service.acceptInvitation(plainToken, 'user_other');
     expect(again).toBeNull();
   });
 
@@ -550,7 +547,7 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Revoke Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
+    const { invitation } = await service.createInvitation(org.id, 'user_owner');
 
     const revoked = await service.revokeInvitation(invitation.id);
     expect(revoked).toBe(true);
@@ -571,8 +568,8 @@ describe('OrgService', () => {
   /** Helper: create an org with an owner and add a member, then promote to admin. */
   async function setupWithAdmin(service: InstanceType<typeof OrgService>) {
     const org = await service.createOrg('Admin Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(invitation.token, 'user_admin');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    await service.acceptInvitation(plainToken, 'user_admin');
     await service.updateMemberRole(org.id, 'user_admin', 'admin');
     return org;
   }
@@ -582,8 +579,8 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Role Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(invitation.token, 'user_member');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    await service.acceptInvitation(plainToken, 'user_member');
 
     const updated = await service.updateMemberRole(org.id, 'user_member', 'admin');
     expect(updated).not.toBeNull();
@@ -618,8 +615,8 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('No Promote Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(invitation.token, 'user_member');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    await service.acceptInvitation(plainToken, 'user_member');
 
     const result = await service.updateMemberRole(org.id, 'user_member', 'owner');
     expect(result).toBeNull();
@@ -645,12 +642,12 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Single Use Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner');
+    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
 
-    const member1 = await service.acceptInvitation(invitation.token, 'user_a');
+    const member1 = await service.acceptInvitation(plainToken, 'user_a');
     expect(member1).not.toBeNull();
 
-    const member2 = await service.acceptInvitation(invitation.token, 'user_b');
+    const member2 = await service.acceptInvitation(plainToken, 'user_b');
     expect(member2).toBeNull();
   });
 
@@ -659,22 +656,22 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Multi Use Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner', { maxUses: 3 });
+    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner', { maxUses: 3 });
 
     expect(invitation.maxUses).toBe(3);
     expect(invitation.useCount).toBe(0);
 
-    const m1 = await service.acceptInvitation(invitation.token, 'user_a');
+    const m1 = await service.acceptInvitation(plainToken, 'user_a');
     expect(m1).not.toBeNull();
 
-    const m2 = await service.acceptInvitation(invitation.token, 'user_b');
+    const m2 = await service.acceptInvitation(plainToken, 'user_b');
     expect(m2).not.toBeNull();
 
-    const m3 = await service.acceptInvitation(invitation.token, 'user_c');
+    const m3 = await service.acceptInvitation(plainToken, 'user_c');
     expect(m3).not.toBeNull();
 
     // 4th user should be rejected
-    const m4 = await service.acceptInvitation(invitation.token, 'user_d');
+    const m4 = await service.acceptInvitation(plainToken, 'user_d');
     expect(m4).toBeNull();
   });
 
@@ -683,17 +680,17 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Unlimited Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner', { maxUses: null });
+    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner', { maxUses: null });
 
     expect(invitation.maxUses).toBeNull();
 
-    const m1 = await service.acceptInvitation(invitation.token, 'user_a');
+    const m1 = await service.acceptInvitation(plainToken, 'user_a');
     expect(m1).not.toBeNull();
 
-    const m2 = await service.acceptInvitation(invitation.token, 'user_b');
+    const m2 = await service.acceptInvitation(plainToken, 'user_b');
     expect(m2).not.toBeNull();
 
-    const m3 = await service.acceptInvitation(invitation.token, 'user_c');
+    const m3 = await service.acceptInvitation(plainToken, 'user_c');
     expect(m3).not.toBeNull();
 
     // Should still appear in pending list
@@ -706,7 +703,7 @@ describe('OrgService', () => {
     const service = new OrgService(sql);
 
     const org = await service.createOrg('Custom Expiry Org', 'user_owner');
-    const invitation = await service.createInvitation(org.id, 'user_owner', { expiresInHours: 24 });
+    const { invitation } = await service.createInvitation(org.id, 'user_owner', { expiresInHours: 24 });
 
     const expiresMs = new Date(invitation.expiresAt).getTime() - Date.now();
     const oneDayMs = 24 * 60 * 60 * 1000;

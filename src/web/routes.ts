@@ -506,9 +506,13 @@ export function webRoutes(deps: WebRouteDeps) {
         renderTeamInvitations({
           orgId: org.id,
           baseUrl: config.baseUrl,
+          // Post-015 contract: existing invitations don't carry the plaintext
+          // token — only the hash persists. The list UI shows status only;
+          // the copyable invite URL is shown exactly once at create time
+          // (POST /api/orgs/:orgId/invitations response). Re-issuing requires
+          // revoke + create-new.
           invitations: invitations.map((inv) => ({
             id: inv.id,
-            token: inv.token,
             expiresAt: inv.expiresAt,
             maxUses: inv.maxUses,
             useCount: inv.useCount,

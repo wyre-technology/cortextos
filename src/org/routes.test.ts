@@ -449,15 +449,22 @@ describe('orgRoutes', () => {
         id: 'inv-1',
         orgId: 'org-1',
         invitedBy: 'user-1',
-        token: 'invite-token-abc',
         expiresAt: new Date().toISOString(),
         acceptedBy: null,
         acceptedAt: null,
+        maxUses: 1,
+        useCount: 0,
         createdAt: new Date().toISOString(),
       };
       const orgService = createMockOrgService({
         getMembership: ownerMembership(),
-        createInvitation: vi.fn().mockResolvedValue(invitation),
+        // Post-015 contract: createInvitation returns { invitation, plainToken }.
+        // plainToken is the only place cleartext exists outside the inviter's
+        // clipboard.
+        createInvitation: vi.fn().mockResolvedValue({
+          invitation,
+          plainToken: 'invite-token-abc',
+        }),
       });
       const billingGate = createMockBillingGate({
         canUseTeamFeatures: vi.fn().mockResolvedValue(true),
@@ -471,8 +478,11 @@ describe('orgRoutes', () => {
 
       expect(response.statusCode).toBe(201);
       const body = response.json();
+      // The response body surfaces plaintext at create time — the once-shown
+      // moment for the inviter to copy the URL.
       expect(body.token).toBe('invite-token-abc');
       expect(body.inviteUrl).toContain('/invite/invite-token-abc');
+      expect(body.id).toBe('inv-1');
     });
 
     it('returns 402 when not on pro plan', async () => {
