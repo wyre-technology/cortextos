@@ -49,13 +49,22 @@ async function applyBootstrap(sql: postgres.Sql): Promise<void> {
   `;
 
   // Mirrors src/org/org-service.ts initTables (organizations + org_members + org_invitations).
+  // Keep this in lockstep with OrgService.initTables — drift here is a silent
+  // landmine: migration 017's seat-billing backfill (UPDATE … WHERE
+  // stripe_subscription_id IS NOT NULL) failed cryptically when this mirror
+  // omitted stripe_subscription_id.
   await sql`
     CREATE TABLE IF NOT EXISTS organizations (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      slug       TEXT UNIQUE,
-      created_by TEXT REFERENCES users(id),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                     TEXT PRIMARY KEY,
+      name                   TEXT NOT NULL,
+      slug                   TEXT UNIQUE,
+      owner_id               TEXT REFERENCES users(id),
+      plan                   TEXT NOT NULL DEFAULT 'free',
+      stripe_customer_id     TEXT,
+      stripe_subscription_id TEXT,
+      created_by             TEXT REFERENCES users(id),
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
   await sql`
