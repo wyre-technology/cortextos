@@ -1,10 +1,13 @@
 import { defineConfig } from 'vitest/config';
 
-// Coverage thresholds are intentionally set at the measured floors as of
-// the day this PR landed (rounded down to the nearest int). The point is
-// to make CI fail on regression, not to enforce an aspirational target —
-// when test additions move the actual numbers, ratchet these up in a
-// follow-up PR. See docs/contributing/coverage.md if/when added.
+// Coverage thresholds are intentionally set ~1 point below the measured
+// floors as of the day this PR landed. The buffer absorbs v8's branch-
+// counting edge cases and refactors of already-uncovered code without
+// false-positive CI failures. The point is to make CI fail on real
+// regression, not to enforce an aspirational target — when test
+// additions move the actual numbers, ratchet these up in a follow-up
+// PR. The ratchet policy itself (manual-on-improvement vs cron-recalibrated
+// vs N-run rolling floor) is queued behind the autoresearch cycle approval.
 export default defineConfig({
   test: {
     globals: true,
@@ -24,10 +27,10 @@ export default defineConfig({
       ],
       reportsDirectory: './coverage',
       thresholds: {
-        lines: 34,
-        statements: 34,
-        functions: 47,
-        branches: 80,
+        lines: 33,
+        statements: 33,
+        functions: 46,
+        branches: 79,
       },
     },
   },
