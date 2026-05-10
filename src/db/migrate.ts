@@ -66,7 +66,8 @@ export function assertNumericContiguity(files: readonly string[]): void {
   }
   if (noPrefix.length > 0) {
     throw new Error(
-      `migration filenames missing numeric prefix (expected NNN_description.sql): ${noPrefix.join(', ')}`,
+      `migration filenames missing numeric prefix (expected NNN_description.sql): ${noPrefix.join(', ')}. ` +
+        'Rename to use a numeric prefix or move the file out of migrations/.',
     );
   }
 
@@ -88,13 +89,17 @@ export function assertNumericContiguity(files: readonly string[]): void {
   }
   if (duplicates.length > 0) {
     const detail = duplicates.map((d) => `${d.num} (${d.names.join(' + ')})`).join('; ');
-    throw new Error(`duplicate migration numbers: ${detail}`);
+    throw new Error(
+      `duplicate migration numbers: ${detail}. ` +
+        'Renumber one of the colliding files to the next available number.',
+    );
   }
 
   // Sequence must start at 1 and be contiguous.
   if (numbered[0].num !== 1) {
     throw new Error(
-      `migration sequence must start at 001; first file is ${numbered[0].name} (${numbered[0].num})`,
+      `migration sequence must start at 001; first file is ${numbered[0].name} (${numbered[0].num}). ` +
+        'Renumber the first file to 001 or add the missing 001_*.sql.',
     );
   }
   for (let i = 0; i < numbered.length; i += 1) {
@@ -103,7 +108,8 @@ export function assertNumericContiguity(files: readonly string[]): void {
       const expectedStr = String(expected).padStart(3, '0');
       throw new Error(
         `migration sequence gap: expected ${expectedStr}_*.sql but found ${numbered[i].name} ` +
-          `(sequence: ${numbered.map((n) => n.name).join(', ')})`,
+          `(sequence: ${numbered.map((n) => n.name).join(', ')}). ` +
+          `Add the missing ${expectedStr}_*.sql or renumber subsequent files to close the gap.`,
       );
     }
   }
