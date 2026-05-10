@@ -16,7 +16,8 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage:integration": "vitest run --config vitest.integration.config.ts --coverage",
-    "migrate:from-mcp-gateway": "tsx scripts/migrate-from-mcp-gateway.ts"
+    "migrate:from-mcp-gateway": "tsx scripts/migrate-from-mcp-gateway.ts",
+    "backfill:invitation-tokens": "tsx scripts/backfill-invitation-tokens.ts"
   },
   "keywords": [
     "mcp",
