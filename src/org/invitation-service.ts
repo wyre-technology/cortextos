@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
 import type { OrgInvitation, OrgMember, CreatedInvitation } from './org-service.js';
 import { MemberService } from './member-service.js';
+import { hashInvitationToken } from './invitation-token-hash.js';
 
 interface InvitationRow {
   id: string;
@@ -59,14 +59,13 @@ export class InvitationService {
   }
 
   /**
-   * Hash an invitation token for at-rest storage and lookup.
-   *
-   * SOC2 invariant (PRD §8.4 / §A.19): the plaintext token never persists
-   * to disk. We hand the raw token back to the caller exactly once — at
-   * creation time, for the email link — and only the hash lives in the DB.
+   * Hash an invitation token for at-rest storage and lookup. Delegates to
+   * the shared util in `invitation-token-hash.ts` so the backfill script
+   * (`scripts/backfill-invitation-tokens.ts`) provably uses the same
+   * implementation. Drift between the two = silent backfill miss.
    */
   private hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
+    return hashInvitationToken(token);
   }
 
   async createInvitation(
