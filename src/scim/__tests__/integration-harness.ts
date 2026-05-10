@@ -150,9 +150,10 @@ const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
   // migrations that error here without a matching entry fail the
   // harness loudly. Updating this list is a deliberate choice, not a
   // drive-by silencing.
-  { file: '006_audit_actor_org_id.sql',     reason: 'admin_audit_log not in SCIM bootstrap' },
-  { file: '007_rls_enable.sql',             reason: 'RLS not relevant to SCIM business-logic tests' },
-  { file: '014_rls_with_check_clauses.sql', reason: 'RLS not relevant to SCIM business-logic tests' },
+  { file: '006_audit_actor_org_id.sql',           reason: 'admin_audit_log not in SCIM bootstrap' },
+  { file: '007_rls_enable.sql',                   reason: 'RLS not relevant to SCIM business-logic tests' },
+  { file: '014_rls_with_check_clauses.sql',       reason: 'RLS not relevant to SCIM business-logic tests' },
+  { file: '018_rls_security_definer_helpers.sql', reason: 'RLS not relevant to SCIM business-logic tests' },
 ];
 
 const SKIP_LOG_PREFIX = 'HARNESS_SKIP';
