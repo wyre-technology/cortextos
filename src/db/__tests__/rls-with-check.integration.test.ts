@@ -238,16 +238,20 @@ async function bootstrapSchema(): Promise<void> {
 }
 
 async function applyRlsMigrations(): Promise<void> {
-  // Apply 007 (RLS enable + USING policies) and 014 (WITH CHECK policies)
-  // first — both contain the recursive predicates that 018 fixes. Then
-  // apply 018 (SECURITY DEFINER helpers replacing every recursive
-  // predicate with a function call that bypasses RLS for its single
-  // lookup). The integration suite verifies the post-018 state, so 018
-  // is part of this fixture by construction.
+  // Apply 007 (RLS enable + USING policies), 014 (WITH CHECK policies),
+  // 018 (SECURITY DEFINER helpers replacing every recursive predicate),
+  // and 020 (helper-context fix + UPDATE-policy USING repair).
+  //
+  // We deliberately skip 019 — it was a temporary `WITH CHECK (true)`
+  // passthrough on organizations_insert that 020 supersedes. Including
+  // 019 in the chain would re-create the passthrough only to have 020
+  // immediately DROP+CREATE the proper policy back; harness noise
+  // without test value.
   for (const filename of [
     '007_rls_enable.sql',
     '014_rls_with_check_clauses.sql',
     '018_rls_security_definer_helpers.sql',
+    '020_rls_helper_context_fix_and_update_using.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -392,41 +396,65 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
       }
     });
 
-    // KNOWN GAP — reseller_admin INSERT path does not currently pass
-    // the helper-based WITH CHECK in the full migration setup, even
-    // though the helper returns true outside the policy context.
+    // FIXED in migration 020 (see src/db/__tests__/rls-helper-context-investigation.md).
     //
-    // Diagnostic data captured during PR #65 work:
-    //   - Pre-018 (with recursive policies): same INSERT crashed with
-    //     SQLSTATE 42P17 (infinite recursion). Strict-improvement bar
-    //     is met by 018 — recursion is gone.
-    //   - Post-018 in MINIMAL repro (2 tables, same helper, same
-    //     policy shape): INSERT succeeds. Helper-in-WITH-CHECK works
-    //     in isolation.
-    //   - Post-018 in FULL migration setup (16 tables, 007+014+018):
-    //     INSERT fails 42501. Helper-call in policy context evaluates
-    //     to false even though the same call returns true outside.
-    //   - Hypotheses tested: param binding through SECURITY DEFINER
-    //     (rejected — literal-arg policy also fails), NEW row reference
-    //     (rejected — same), helper-queries-policy-protected-table
-    //     (rejected — owner-bypass works, helper itself returns true).
-    //   - Likely surfaces: plan-cache + STABLE function interaction,
-    //     RLS evaluation order with many policies present, or Postgres
-    //     15 quirk we haven't isolated yet.
+    // Bug A root cause: conduit_is_reseller_admin_of_parent(user, organizations.id)
+    // looks up the org row by id INSIDE the helper to derive parent_org_id. In
+    // INSERT WITH CHECK the new row is not yet stored, the lookup finds 0 rows,
+    // the helper returns false, the policy rejects 42501. Chicken-and-egg in
+    // the helper/policy contract, not a Postgres bug.
     //
-    // Skipped here pending follow-up PR with a clean repro and root
-    // cause. The verified properties on this code path stand: today's
-    // recursion is replaced with a more contained 42501 rejection,
-    // which is strict improvement.
-    it.skip('reseller_admin CAN insert a customer org under their reseller (parent path) — KNOWN GAP, see comment', async () => {
+    // Fix: 020 adds sibling helper conduit_is_reseller_admin_of_reseller(user,
+    // p_reseller_org_id) that takes the reseller org id directly and never
+    // touches `organizations`. The policy passes the NEW row's parent_org_id
+    // column value.
+    //
+    // Caveat (out of scope for this test): INSERT...RETURNING separately
+    // triggers a SELECT-policy check on the new row. Production code in
+    // org-service.ts uses RETURNING *, which is currently masked by
+    // gatewayadmin's rolbypassrls=true but will surface at CP1 (SET ROLE
+    // per-request). Tracked in follow-up task_1778507498148_478.
+    //
+    // PR #65's open hypotheses (plan-cache + STABLE function interaction, RLS
+    // evaluation order, PG version quirk) were all on the wrong axis — they
+    // asked HOW the helper executes, not WHAT the helper queries.
+    it('reseller_admin CAN insert a customer org under their reseller (parent path)', async () => {
       const conn = await asUser('reseller-rita');
       try {
-        const result = await conn.query`
+        // Corroborating before/after: with the OLD helper signature the same
+        // insert REJECTS (chicken-and-egg); with 020's new signature it
+        // ACCEPTS. Embedded as a regression-guard — a future revert to
+        // _of_parent fails loudly here.
+        await sql.unsafe(`DROP POLICY IF EXISTS organizations_insert ON organizations`);
+        await sql.unsafe(`CREATE POLICY organizations_insert ON organizations FOR INSERT
+          WITH CHECK (
+               conduit_is_member_of_org(current_setting('conduit.current_user_id', true), organizations.id)
+            OR conduit_is_reseller_admin_of_parent(current_setting('conduit.current_user_id', true), organizations.id)
+          )`);
+        let oldHelperOutcome: 'pass' | 'reject-42501' | 'other-error' = 'other-error';
+        try {
+          await conn.query`INSERT INTO organizations (id, name, parent_org_id, type)
+            VALUES ('probe-old-helper-1', 'Old Helper Probe', 'reseller-rco', 'customer')`;
+          oldHelperOutcome = 'pass';
+        } catch (e) {
+          oldHelperOutcome = (e as { code?: string }).code === '42501' ? 'reject-42501' : 'other-error';
+        }
+        expect(oldHelperOutcome).toBe('reject-42501');
+
+        // Restore 020's policy and assert the new helper accepts.
+        await sql.unsafe(`DROP POLICY IF EXISTS organizations_insert ON organizations`);
+        await sql.unsafe(`CREATE POLICY organizations_insert ON organizations FOR INSERT
+          WITH CHECK (
+               conduit_is_member_of_org(current_setting('conduit.current_user_id', true), organizations.id)
+            OR conduit_is_reseller_admin_of_reseller(current_setting('conduit.current_user_id', true), organizations.parent_org_id)
+          )`);
+        // No RETURNING — see caveat in docblock.
+        await conn.query`
           INSERT INTO organizations (id, name, parent_org_id, type)
           VALUES ('org-customer-1', 'Customer One', 'reseller-rco', 'customer')
-          RETURNING id
         `;
-        expect(result).toHaveLength(1);
+        const [verify] = await sql`SELECT id FROM organizations WHERE id = 'org-customer-1'`;
+        expect(verify?.id).toBe('org-customer-1');
       } finally {
         conn.release();
       }
