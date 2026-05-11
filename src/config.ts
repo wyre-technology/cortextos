@@ -54,11 +54,11 @@ export const config = {
     | 'error',
 
   // Auth provider selection:
-  //   'auth0'    — Auth0 only (default; backwards-compatible)
+  //   'auth0'    — Auth0 only
   //   'azure-ad' — Microsoft Entra ID only
   //   'both'     — both providers active, chooser at /login picks one
-  //   'auto'     — enable whichever credential sets are present
-  authProvider: (process.env.AUTH_PROVIDER || 'auth0') as 'auth0' | 'azure-ad' | 'both' | 'auto',
+  //   'auto'     — enable whichever credential sets are present (default)
+  authProvider: (process.env.AUTH_PROVIDER || 'auto') as 'auth0' | 'azure-ad' | 'both' | 'auto',
 
   // Auth0 OIDC configuration
   auth0Domain: process.env.AUTH0_DOMAIN ?? '',       // e.g. "wyre.us.auth0.com"
@@ -66,10 +66,16 @@ export const config = {
   auth0ClientSecret: process.env.AUTH0_CLIENT_SECRET ?? '',
   auth0CallbackUrl: process.env.AUTH0_CALLBACK_URL ?? '',  // e.g. "https://gateway.example.com/auth/callback"
 
-  // Azure AD OIDC configuration (multi-tenant)
+  // Azure AD OIDC configuration (multi-tenant).
+  // MICROSOFT_CLIENT_ID/SECRET are accepted as fallbacks for the legacy
+  // env-naming convention used by mcp-gateway. Deployments that predate
+  // the AZURE_AD_* naming (notably the existing staging Container App)
+  // still set MICROSOFT_* — the fallback keeps the Microsoft sign-in
+  // flow live without requiring a coordinated env rename. Drop the
+  // fallback once all envs are migrated to AZURE_AD_*.
   azureTenantId: process.env.AZURE_AD_TENANT_ID ?? '',
-  azureClientId: process.env.AZURE_AD_CLIENT_ID ?? '',
-  azureClientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? '',
+  azureClientId: process.env.AZURE_AD_CLIENT_ID ?? process.env.MICROSOFT_CLIENT_ID ?? '',
+  azureClientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? process.env.MICROSOFT_CLIENT_SECRET ?? '',
   azureCallbackUrl: process.env.AZURE_AD_CALLBACK_URL ?? '',
 
   // Stripe billing
