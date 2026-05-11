@@ -3,6 +3,7 @@ import { requireAuth0 } from '../auth/auth0.js';
 import type { OrgService, OrgRole } from '../org/org-service.js';
 import { ROLE_LEVEL } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import { isPaidPlan } from '../billing/gate.js';
 import type { AuditService } from './audit-service.js';
 import type { AdminAuditService } from './admin-audit-service.js';
 
@@ -34,7 +35,8 @@ export function auditRoutes(deps: AuditRouteDeps) {
       if (!user) return;
 
       const plan = await billingGate.getUserPlan(user.sub);
-      if (plan !== 'pro') {
+      // isPaidPlan — see PR #71 / src/billing/gate.ts for the empirical origin.
+      if (!isPaidPlan(plan)) {
         return reply.code(402).send({ error: 'Audit log requires Pro plan' });
       }
 
@@ -96,7 +98,8 @@ export function auditRoutes(deps: AuditRouteDeps) {
       if (!user) return;
 
       const plan = await billingGate.getUserPlan(user.sub);
-      if (plan !== 'pro') {
+      // isPaidPlan — see PR #71 / src/billing/gate.ts for the empirical origin.
+      if (!isPaidPlan(plan)) {
         return reply.code(402).send({ error: 'Admin audit log requires Pro plan' });
       }
 

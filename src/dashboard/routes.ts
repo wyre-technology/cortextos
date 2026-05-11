@@ -9,6 +9,7 @@ import { requireAuth0 } from '../auth/auth0.js';
 import type { OrgService, Organization, OrgRole } from '../org/org-service.js';
 import { ROLE_LEVEL } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import { isPaidPlan } from '../billing/gate.js';
 import type { DashboardService } from './dashboard-service.js';
 
 interface DashboardRouteDeps {
@@ -26,7 +27,11 @@ export function dashboardRoutes(deps: DashboardRouteDeps) {
       if (!user) return null;
 
       const plan = await billingGate.getUserPlan(user.sub);
-      if (plan !== 'pro') {
+      // Use isPaidPlan helper — same drift class PR #71 closed in
+      // requireTeamAccess. Strict `plan !== "pro"` rejected business-tier
+      // users from the dashboard API; isPaidPlan admits any tier >= pro
+      // (currently pro + business; future tiers pick up automatically).
+      if (!isPaidPlan(plan)) {
         reply.code(402).send({ error: 'Dashboard requires Pro plan' });
         return null;
       }
