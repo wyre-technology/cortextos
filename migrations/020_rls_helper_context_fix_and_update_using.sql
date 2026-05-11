@@ -55,6 +55,11 @@ CREATE OR REPLACE FUNCTION conduit_is_reseller_admin_of_reseller(p_user_id text,
   SECURITY DEFINER
   SET search_path = pg_catalog, public
 AS $$
+  -- INSERT-context only. UPDATE/SELECT paths should use _of_parent which
+  -- looks up parent_org_id via JOIN through organizations. _of_reseller
+  -- takes the parent_org_id directly because INSERT WITH CHECK fires
+  -- before the row is stored — a JOIN-back to organizations would find
+  -- nothing and incorrectly return false (the original Bug A).
   SELECT EXISTS (
     SELECT 1 FROM reseller_members
     WHERE reseller_org_id = p_reseller_org_id
