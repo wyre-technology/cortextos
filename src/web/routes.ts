@@ -5,6 +5,7 @@ import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
 import { ROLE_LEVEL } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import { isPaidPlan } from '../billing/gate.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { renderConnectPage } from './templates/connect.js';
 import { requireAuth0 } from '../auth/auth0.js';
@@ -74,7 +75,7 @@ async function requireTeamAccess(
   if (!user) return null;
 
   const plan = await billingGate.getUserPlan(user.sub);
-  if (plan !== 'pro') {
+  if (!isPaidPlan(plan)) {
     reply.redirect('/settings', 302);
     return null;
   }

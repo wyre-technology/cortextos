@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DefaultBillingGate } from './gate.js';
+import { DefaultBillingGate, isPaidPlan } from './gate.js';
 import type { OrgService } from '../org/org-service.js';
 import type { Organization } from '../org/org-service.js';
 
@@ -231,5 +231,56 @@ describe('DefaultBillingGate', () => {
 
       expect(result).toBe(1500);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isPaidPlan — single source of truth for "team-features tier" gate
+// ---------------------------------------------------------------------------
+//
+// Empirical origin (2026-05-11): requireTeamAccess used `plan !== "pro"`
+// while renderLayout used `plan === "pro" || plan === "business"`. The
+// strict-equality vs OR-set drift produced a business-plan-owner who saw
+// the sidebar team-nav but had every click 302'd back to /settings.
+//
+// These tests guard the invariant: any plan with PLAN_RANK >= pro returns
+// true; anything below or unknown returns false. Both call sites route
+// through this helper so future plan tiers (e.g. "enterprise") pick up
+// automatically without per-call-site edits.
+
+describe('isPaidPlan', () => {
+  it('returns false for free plan', () => {
+    expect(isPaidPlan('free')).toBe(false);
+  });
+
+  it('returns true for pro plan', () => {
+    expect(isPaidPlan('pro')).toBe(true);
+  });
+
+  it('returns true for business plan (the bug-fix evidence)', () => {
+    expect(isPaidPlan('business')).toBe(true);
+  });
+
+  it('returns false for undefined plan (handles no-org case)', () => {
+    expect(isPaidPlan(undefined)).toBe(false);
+  });
+
+  it('returns false for null plan', () => {
+    expect(isPaidPlan(null)).toBe(false);
+  });
+
+  it('returns false for unknown plan slug (defensive, e.g. legacy "enterprise" not in PLAN_RANK)', () => {
+    // Cast forces an out-of-PLAN_RANK slug through the helper.
+    expect(isPaidPlan('legacy-unknown' as never)).toBe(false);
+  });
+
+  // Regression guard against the original drift: the SAME helper must
+  // return TRUE for every plan that renderLayout admits to the team-nav,
+  // AND for every plan that requireTeamAccess admits to /settings/team/*.
+  // Listing them explicitly so a future "drop business from team-features"
+  // decision fails THIS test and forces an explicit review.
+  it('admits both pro and business — render/handler gate parity', () => {
+    expect(isPaidPlan('pro')).toBe(true);
+    expect(isPaidPlan('business')).toBe(true);
   });
 });

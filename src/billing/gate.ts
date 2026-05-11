@@ -26,6 +26,27 @@ export interface BillingGate {
 
 const PLAN_RANK: Record<PlanSlug, number> = { free: 0, pro: 1, business: 2 };
 
+/**
+ * "Is this plan paid?" — single source of truth for the team-features
+ * tier gate used by BOTH renderLayout (sidebar visibility) AND
+ * requireTeamAccess (handler authorization). The two gates MUST use the
+ * same predicate or the user sees clickable team-nav items that 302
+ * back to /settings — a "phantom-clickable-dead-link" UX bug.
+ *
+ * Empirical origin: 2026-05-11 found business-plan-owner Aaron stuck
+ * because requireTeamAccess used `plan !== "pro"` (strict equality)
+ * while layout used `plan === "pro" || plan === "business"` (OR-set).
+ * `business` rendered the nav but failed the gate. Fix: both call sites
+ * route through isPaidPlan; future plan tiers above pro pick up
+ * automatically.
+ */
+export function isPaidPlan(plan: PlanSlug | undefined | null): boolean {
+  if (!plan) return false;
+  const rank = PLAN_RANK[plan];
+  if (rank === undefined) return false;
+  return rank >= PLAN_RANK.pro;
+}
+
 export class DefaultBillingGate implements BillingGate {
   constructor(private orgService: OrgService) {}
 

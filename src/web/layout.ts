@@ -1,5 +1,6 @@
 import type { Auth0User } from '../auth/auth0.js';
 import type { Organization } from '../org/org-service.js';
+import { isPaidPlan } from '../billing/gate.js';
 import { brand } from '../brand/index.js';
 import { PAGE_STYLES } from './styles.js';
 import { escapeHtml } from './helpers.js';
@@ -253,7 +254,10 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
-  const isPro = org?.plan === 'pro' || org?.plan === 'business';
+  // isPaidPlan is the single source of truth shared with requireTeamAccess
+  // — keeps the sidebar-visibility gate matched to the handler-access
+  // gate. See src/billing/gate.ts:isPaidPlan for empirical origin.
+  const isPro = isPaidPlan(org?.plan);
   const brandName = escapeHtml(brand.name);
 
   const personalNav = PERSONAL_NAV
