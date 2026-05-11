@@ -450,6 +450,48 @@ export function webRoutes(deps: WebRouteDeps) {
     });
 
     // =====================================================================
+    // Billing page — stub
+    // =====================================================================
+    //
+    // PR #73 (IA restructure) introduced Billing as a sub-nav item under
+    // the new Organization parent. The lock-step invariant from PR #70
+    // requires a registered handler for every nav href, so this stub
+    // exists to honor that. Real Stripe customer-portal redirect lands
+    // when the billing-page-real-implementation PR ships (task
+    // referenced in PR #73 body). Until then the page renders the layout
+    // shell + a "Coming soon" body so click-from-sidebar resolves to a
+    // 200 with a sensible message rather than a 404 or empty.
+
+    app.get('/settings/billing', async (request, reply) => {
+      const user = requireAuth0(request, reply);
+      if (!user) return;
+
+      const orgs = await orgService.getUserOrgs(user.sub);
+      const org = orgs[0] ?? null;
+
+      const bodyContent = `
+        <section style="max-width:560px; margin:48px auto; padding:24px;">
+          <h1 style="font-size:22px; font-weight:700; margin-bottom:12px;">Billing</h1>
+          <p style="color:var(--text-secondary); line-height:1.6;">
+            Billing management is coming soon. Stripe customer portal
+            integration will land in a follow-up PR. For now, plan changes,
+            invoices, and payment-method updates are handled by your
+            account contact at WYRE Technology.
+          </p>
+        </section>
+      `;
+
+      const html = renderLayout({
+        user,
+        org,
+        activePath: '/settings/billing',
+        title: 'Billing',
+      }, bodyContent);
+
+      return reply.type('text/html').send(html);
+    });
+
+    // =====================================================================
     // Team management pages (sidebar layout, Pro plan + admin/owner)
     // =====================================================================
 

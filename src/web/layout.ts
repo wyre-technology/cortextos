@@ -30,19 +30,43 @@ const PERSONAL_NAV: NavItem[] = [
   { label: 'Profile', href: '/settings/profile' },
 ];
 
+// Top-level team nav. Items not nested under the Organization sub-nav.
+// PR #73 collapsed Members + Invitations + Teams + Service-Accounts +
+// Billing under the Organization parent below. Remaining items stay
+// top-level pending future restructure PRs (e.g. Usage parent for
+// Dashboard/Connections/Tool-Access, Security parent for Audit/SCIM).
 const TEAM_NAV: NavItem[] = [
   { label: 'Overview', href: '/settings/team' },
   { label: 'Dashboard', href: '/settings/team/dashboard' },
-  { label: 'Members', href: '/settings/team/members' },
-  { label: 'Invitations', href: '/settings/team/invitations' },
   { label: 'Connections', href: '/settings/team/connections' },
   { label: 'Tool Access', href: '/settings/team/tool-access' },
   { label: 'Server Access', href: '/settings/team/server-access' },
-  { label: 'Teams', href: '/settings/team/teams' },
-  { label: 'Service Accounts', href: '/settings/team/service-clients' },
   { label: 'Provisioning', href: '/settings/team/scim' },
   { label: 'Log Shipping', href: '/settings/team/log-shipping' },
   { label: 'Audit Log', href: '/settings/team/audit' },
+];
+
+// Organization sub-nav. Indented-list visual (not accordion) so all 5
+// items + active state are visible at a glance. Per Aaron 2026-05-11
+// IA-restructure spec. URLs unchanged this PR — service-clients URL
+// rename and audit-enum atomic refactor land in PR #74; "Invites" is
+// the display label here while URL stays /settings/team/invitations
+// until the same batch.
+const ORGANIZATION_SUBNAV: NavItem[] = [
+  { label: 'Members', href: '/settings/team/members' },
+  { label: 'Invites', href: '/settings/team/invitations' },
+  { label: 'Teams', href: '/settings/team/teams' },
+  { label: 'Service Clients', href: '/settings/team/service-clients' },
+  { label: 'Billing', href: '/settings/billing' },
+];
+
+/** Flattened nav-href list for regression-guard tests. Every entry
+ *  here MUST have a registered route handler — the PR #70 lock-step
+ *  invariant extended to the sub-nav structure. */
+export const ALL_NAV_HREFS: ReadonlyArray<string> = [
+  ...PERSONAL_NAV.map((i) => i.href),
+  ...TEAM_NAV.map((i) => i.href),
+  ...ORGANIZATION_SUBNAV.map((i) => i.href),
 ];
 
 const LAYOUT_STYLES = `
@@ -116,6 +140,41 @@ const LAYOUT_STYLES = `
     background: var(--bg-hover);
   }
   .sidebar-item.active {
+    color: var(--text-primary);
+    border-left-color: var(--accent);
+    background: rgba(0,201,219,0.08);
+  }
+  /* Sub-nav (PR #73 IA restructure): Organization parent label + indented
+     sub-items. Parent label uses same typographic anchor as sidebar-item
+     so it sits in the visual rhythm of the nav, but with muted color +
+     no hover affordance because the parent isn't clickable. Sub-items
+     indent 12px past sidebar-item baseline. */
+  .sidebar-subnav-parent {
+    display: block;
+    padding: 7px 16px 7px 14px;
+    margin-top: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-left: 2px solid transparent;
+  }
+  .sidebar-subnav-parent.active {
+    color: var(--text-secondary);
+  }
+  .sidebar-subnav-item {
+    display: block;
+    padding: 6px 16px 6px 28px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .sidebar-subnav-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+  .sidebar-subnav-item.active {
     color: var(--text-primary);
     border-left-color: var(--accent);
     background: rgba(0,201,219,0.08);
@@ -250,6 +309,12 @@ function renderNavItem(item: NavItem, activePath: string): string {
   return `<a class="${cls}" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`;
 }
 
+function renderSubNavItem(item: NavItem, activePath: string): string {
+  const isActive = activePath === item.href;
+  const cls = isActive ? 'sidebar-subnav-item active' : 'sidebar-subnav-item';
+  return `<a class="${cls}" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`;
+}
+
 export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
   const userEmail = escapeHtml(user.email || user.sub);
@@ -268,10 +333,22 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   if (org && isPro) {
     const planLabel = org.plan === 'business' ? 'BUSINESS' : 'PRO';
     const planBadge = `<span style="font-size:10px;font-weight:600;color:var(--accent-text);background:rgba(0,201,219,0.15);padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
+
+    // Organization sub-nav is active when activePath is any of its hrefs.
+    // Indented-list visual: parent label rendered as a sidebar-section-label
+    // visual anchor, sub-items rendered with sub-item indent.
+    const orgSubNavActive = ORGANIZATION_SUBNAV.some((item) => item.href === activePath);
+    const orgParentCls = orgSubNavActive ? 'sidebar-subnav-parent active' : 'sidebar-subnav-parent';
+    const orgSubItems = ORGANIZATION_SUBNAV
+      .map((item) => renderSubNavItem(item, activePath))
+      .join('');
+
     teamNav = `
     <div class="sidebar-section">
       <div class="sidebar-section-label">${orgName} ${planBadge}</div>
       ${TEAM_NAV.map((item) => renderNavItem(item, activePath)).join('')}
+      <div class="${orgParentCls}">Organization</div>
+      ${orgSubItems}
     </div>`;
   } else if (org && !isPro) {
     teamNav = `
