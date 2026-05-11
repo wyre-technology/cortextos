@@ -10,7 +10,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { renderLandingPage } from './page.js';
-import { renderLoginPage } from './login.js';
+import { renderLoginPage, resolveEnabledProviders } from './login.js';
 import { customerBrands } from '../brand/customers.js';
 
 export function landingRoutes() {
@@ -23,8 +23,19 @@ export function landingRoutes() {
       return reply.type('text/html').send(renderLandingPage());
     });
 
-    // GET /login — login chooser page
+    // GET /login — provider chooser. Short-circuits to the single configured
+    // provider's login URL when only one is enabled so the user doesn't see
+    // a one-button "chooser." Falls through to the chooser HTML when zero
+    // or both providers are enabled (zero = misconfigured deployment; the
+    // empty UI is preserved so the operator sees the problem).
     app.get('/login', async (_request, reply) => {
+      const { showAuth0, showAzure } = resolveEnabledProviders();
+      if (showAuth0 && !showAzure) {
+        return reply.redirect('/auth/login', 302);
+      }
+      if (showAzure && !showAuth0) {
+        return reply.redirect('/auth/microsoft/login', 302);
+      }
       return reply.type('text/html').send(renderLoginPage());
     });
 

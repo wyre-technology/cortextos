@@ -37,7 +37,13 @@ function googleFontsLink(cfg: BrandConfig): string {
 export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: string): string {
   const b = overrideBrand ?? brand;
   const isCustomer = !!overrideBrand;
-  const loginPath = isCustomer ? `${pathPrefix}/login` : '/auth/login';
+  // The non-customer Sign In button targets the provider chooser at /login,
+  // not /auth/login (the Auth0 direct entrypoint). The chooser short-
+  // circuits to the single provider's login URL when only one provider is
+  // configured (see landingRoutes /login handler), so single-provider
+  // deployments don't see a pointless one-button "chooser." Customer-
+  // branded pages already use ${prefix}/login.
+  const loginPath = isCustomer ? `${pathPrefix}/login` : '/login';
   const homePath = pathPrefix || '/';
   const heroHeadline = isCustomer ? 'Your AI-Powered Operations Hub' : 'Your AI-Powered Operations Hub';
   const heroSubtitle = 'Connect all your tools to AI agents securely. One gateway, zero complexity.';

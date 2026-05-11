@@ -28,6 +28,23 @@ function googleFontsLink(cfg: BrandConfig): string {
   return `<link href="https://fonts.googleapis.com/css2?${params}&display=swap" rel="stylesheet" />`;
 }
 
+/**
+ * Compute which providers should be visible on the chooser, based on
+ * config.authProvider + credential presence. Shared between the chooser
+ * HTML render and the /login route handler (which uses this to short-
+ * circuit to the single configured provider's login URL when only one
+ * is enabled — avoids rendering a one-button "chooser" that just adds a
+ * click for no reason).
+ */
+export function resolveEnabledProviders(): { showAuth0: boolean; showAzure: boolean } {
+  const hasAuth0Creds = !!(config.auth0Domain && config.auth0ClientId && config.auth0ClientSecret);
+  const hasAzureCreds = !!(config.azureClientId && config.azureClientSecret);
+  const provider = config.authProvider;
+  const showAuth0 = hasAuth0Creds && (provider === 'auth0' || provider === 'both' || provider === 'auto');
+  const showAzure = hasAzureCreds && (provider === 'azure-ad' || provider === 'both' || provider === 'auto');
+  return { showAuth0, showAzure };
+}
+
 export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string): string {
   const b = overrideBrand ?? brand;
   const homePath = pathPrefix || '/';
@@ -35,11 +52,7 @@ export function renderLoginPage(overrideBrand?: BrandConfig, pathPrefix?: string
   // Each button is shown when its provider has credentials AND
   // AUTH_PROVIDER doesn't explicitly hide it. Both can be true at once when
   // AUTH_PROVIDER=both or unset/auto with creds for both.
-  const hasAuth0Creds = !!(config.auth0Domain && config.auth0ClientId && config.auth0ClientSecret);
-  const hasAzureCreds = !!(config.azureClientId && config.azureClientSecret);
-  const provider = config.authProvider;
-  const showAuth0 = hasAuth0Creds && (provider === 'auth0' || provider === 'both' || provider === 'auto');
-  const showAzure = hasAzureCreds && (provider === 'azure-ad' || provider === 'both' || provider === 'auto');
+  const { showAuth0, showAzure } = resolveEnabledProviders();
 
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
