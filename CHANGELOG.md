@@ -1,3 +1,26 @@
+# [1.8.0](https://github.com/wyre-technology/conduit/compare/v1.7.0...v1.8.0) (2026-05-11)
+
+
+### Bug Fixes
+
+* **auth:** restore Microsoft sign-in by mirroring mcp-gateway env handling ([#68](https://github.com/wyre-technology/conduit/issues/68)) ([14d0847](https://github.com/wyre-technology/conduit/commit/14d08475ff756572029dd991c126f8f31d7ac4e3))
+* **landing:** non-customer Sign In goes through provider chooser, not Auth0-direct ([#69](https://github.com/wyre-technology/conduit/issues/69)) ([444dc71](https://github.com/wyre-technology/conduit/commit/444dc7115a17bceddfa99c78ea6a2cf424b77529)), closes [#68](https://github.com/wyre-technology/conduit/issues/68) [#68](https://github.com/wyre-technology/conduit/issues/68)
+* **migrations:** recover 013_organization_domains and 014_rls_with_check_clauses ([0a9e64d](https://github.com/wyre-technology/conduit/commit/0a9e64d40a3df1e430218e7e3755614dd201e121)), closes [#38](https://github.com/wyre-technology/conduit/issues/38) [#46](https://github.com/wyre-technology/conduit/issues/46)
+* **rls:** migration 020 — helper-context fix (Bug A) + UPDATE-USING repair (Bug B partial) ([b2a0a0b](https://github.com/wyre-technology/conduit/commit/b2a0a0b0a08d453ee148f32f2aca632a29d89f83)), closes [#65](https://github.com/wyre-technology/conduit/issues/65)
+* **rls:** SECURITY DEFINER helpers replace recursive RLS predicates (mig 018) ([5e677bf](https://github.com/wyre-technology/conduit/commit/5e677bff73ddfa6b2a7ca677868af1cf76d55d1c))
+* **rls:** temporarily remove organizations_insert WITH CHECK pending root cause ([c6e02b3](https://github.com/wyre-technology/conduit/commit/c6e02b3eb59202fd1e61bdee1a537ef03b6383d7))
+* **scim/integration-harness:** repair stale organizations bootstrap ([317545d](https://github.com/wyre-technology/conduit/commit/317545d86b6ed6f02352c8128710ff5831ae0a36)), closes [#46](https://github.com/wyre-technology/conduit/issues/46) [#46](https://github.com/wyre-technology/conduit/issues/46)
+
+
+### Features
+
+* **admin:** platform admin dashboard + orgs + reports ([#56](https://github.com/wyre-technology/conduit/issues/56)) ([bdc0dca](https://github.com/wyre-technology/conduit/commit/bdc0dca97409360e256fd32f0d437bfa46705339))
+* **db/migrate:** assert numeric contiguity of migrations on boot ([4b487ca](https://github.com/wyre-technology/conduit/commit/4b487caf01cdbaa0f6a4df7e0cefbf8f0f8c05cf)), closes [#38](https://github.com/wyre-technology/conduit/issues/38) [#46](https://github.com/wyre-technology/conduit/issues/46)
+* **migrations:** 015 drop plaintext invitation token column ([8f570b1](https://github.com/wyre-technology/conduit/commit/8f570b131980cf6277e0f52211ff7a30c73623d7))
+* **scripts:** pre-migration backfill for invitation token_hash ([b1905d6](https://github.com/wyre-technology/conduit/commit/b1905d6ad8076ceae82a71faeb11f16da7766dd4))
+* **ui:** adopt WYRE visual design (cyan accent, Oswald headings) ([#57](https://github.com/wyre-technology/conduit/issues/57)) ([3b11b5e](https://github.com/wyre-technology/conduit/commit/3b11b5e25d826a6e0723ba60f404752593338331)), closes [#00C9DB](https://github.com/wyre-technology/conduit/issues/00C9DB) [#2563eb](https://github.com/wyre-technology/conduit/issues/2563eb) [#EDE947](https://github.com/wyre-technology/conduit/issues/EDE947)
+* **ui:** port legal pages (Terms, Privacy) ([#58](https://github.com/wyre-technology/conduit/issues/58)) ([3cc74dd](https://github.com/wyre-technology/conduit/commit/3cc74dd2cceb64e0f44e150d154aa721b1735cfa))
+
 # [1.7.0](https://github.com/wyre-technology/conduit/compare/v1.6.1...v1.7.0) (2026-05-08)
 
 
