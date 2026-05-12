@@ -27,7 +27,7 @@ export function renderTeamServiceClientConnections(data: TeamServiceClientConnec
           <span class="status-dot active"></span>
         </div>
         <div class="vendor-card-footer">
-          <span class="badge-shared">Service Account</span>
+          <span class="badge-shared">Service Client</span>
           <span class="badge-connected">Connected</span>
           <button class="btn-disconnect" style="margin-left:auto" onclick="disconnectClientVendor('${escapeHtml(slug)}')">Disconnect</button>
         </div>

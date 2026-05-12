@@ -402,7 +402,7 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
         <span class="org-name">${escapeHtml(org.name)}</span>
         <span class="plan-badge pro">Pro</span>
       </div>
-      <p class="org-meta">${memberCount} member${memberCount !== 1 ? 's' : ''}${isOwner ? ' &middot; <a class="btn-manage" href="/settings/team">Manage Team</a>' : ''}</p>
+      <p class="org-meta">${memberCount} member${memberCount !== 1 ? 's' : ''}${isOwner ? ' &middot; <a class="btn-manage" href="/org">Manage Team</a>' : ''}</p>
     </div>`;
   }
 

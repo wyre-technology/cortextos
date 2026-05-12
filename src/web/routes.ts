@@ -38,6 +38,7 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
+import { legacyOrgRedirectTarget } from './legacy-redirect.js';
 
 // ---------------------------------------------------------------------------
 // OAuth flow state — DB-backed, see src/oauth/vendor-state-store.ts.
@@ -111,6 +112,19 @@ export function webRoutes(deps: WebRouteDeps) {
   sweepInterval.unref();
 
   return async function (app: FastifyInstance): Promise<void> {
+    // =====================================================================
+    // Legacy URL redirect — single onRequest hook for the prefix-swap class.
+    // The pure transform lives in ./legacy-redirect.ts for unit-testability;
+    // this hook is the thin Fastify wrapper. See that file's docblock for
+    // the design rationale + bounded-applicability note.
+    // =====================================================================
+    app.addHook('onRequest', async (request, reply) => {
+      const target = legacyOrgRedirectTarget(request.url);
+      if (target) {
+        return reply.redirect(target, 301);
+      }
+    });
+
     // =====================================================================
     // Connect / Disconnect / OAuth callback routes (unchanged)
     // =====================================================================
@@ -235,13 +249,13 @@ export function webRoutes(deps: WebRouteDeps) {
         if (pending.teamId && pending.orgId) {
           // Sub-team connect flow: store at team level
           await credentialService.storeTeamCredential(pending.teamId, pending.orgId, pending.vendorSlug, credData, pending.userId);
-          return reply.redirect(`/settings/team/teams/${pending.teamId}/connections`, 302);
+          return reply.redirect(`/org/teams/${pending.teamId}/connections`, 302);
         }
 
         if (pending.orgId) {
           // Org connect flow: store at org level
           await credentialService.storeOrgCredential(pending.orgId, pending.vendorSlug, credData, pending.userId);
-          return reply.redirect('/settings/team/connections', 302);
+          return reply.redirect('/org/connections', 302);
         }
 
         await credentialService.store(pending.userId, pending.vendorSlug, credData);
@@ -462,7 +476,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // shell + a "Coming soon" body so click-from-sidebar resolves to a
     // 200 with a sensible message rather than a 404 or empty.
 
-    app.get('/settings/billing', async (request, reply) => {
+    app.get('/org/billing', async (request, reply) => {
       const user = requireAuth0(request, reply);
       if (!user) return;
 
@@ -484,7 +498,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const html = renderLayout({
         user,
         org,
-        activePath: '/settings/billing',
+        activePath: '/org/billing',
         title: 'Billing',
       }, bodyContent);
 
@@ -495,8 +509,8 @@ export function webRoutes(deps: WebRouteDeps) {
     // Team management pages (sidebar layout, Pro plan + admin/owner)
     // =====================================================================
 
-    // ---------- GET /settings/team ----------
-    app.get('/settings/team', async (request, reply) => {
+    // ---------- GET /org ----------
+    app.get('/org', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -504,14 +518,14 @@ export function webRoutes(deps: WebRouteDeps) {
       const members = await orgService.getMembers(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team', title: `${org.name} - Overview`, pageStyles: TEAM_OVERVIEW_STYLES },
+        { user, org, activePath: '/org', title: `${org.name} - Overview`, pageStyles: TEAM_OVERVIEW_STYLES },
         renderTeamOverview({ org, memberCount: members.length }),
       );
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/members ----------
-    app.get('/settings/team/members', async (request, reply) => {
+    // ---------- GET /org/members ----------
+    app.get('/org/members', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org, membership } = ctx;
@@ -519,7 +533,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const members = await orgService.getMembersWithProfiles(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/members', title: `${org.name} - Members`, pageStyles: TEAM_MEMBERS_STYLES },
+        { user, org, activePath: '/org/members', title: `${org.name} - Members`, pageStyles: TEAM_MEMBERS_STYLES },
         renderTeamMembers({
           orgId: org.id,
           viewerUserId: user.sub,
@@ -536,8 +550,8 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/invitations ----------
-    app.get('/settings/team/invitations', async (request, reply) => {
+    // ---------- GET /org/invitations ----------
+    app.get('/org/invitations', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -545,7 +559,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const invitations = await orgService.listInvitations(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/invitations', title: `${org.name} - Invitations`, pageStyles: TEAM_INVITATIONS_STYLES },
+        { user, org, activePath: '/org/invitations', title: `${org.name} - Invitations`, pageStyles: TEAM_INVITATIONS_STYLES },
         renderTeamInvitations({
           orgId: org.id,
           baseUrl: config.baseUrl,
@@ -566,8 +580,8 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/connections ----------
-    app.get('/settings/team/connections', async (request, reply) => {
+    // ---------- GET /org/connections ----------
+    app.get('/org/connections', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -575,14 +589,14 @@ export function webRoutes(deps: WebRouteDeps) {
       const orgVendors = await credentialService.listOrgVendors(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/connections', title: `${org.name} - Connections`, pageStyles: TEAM_CONNECTIONS_STYLES },
+        { user, org, activePath: '/org/connections', title: `${org.name} - Connections`, pageStyles: TEAM_CONNECTIONS_STYLES },
         renderTeamConnections({ orgId: org.id, orgVendors }),
       );
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/tool-access ----------
-    app.get('/settings/team/tool-access', async (request, reply) => {
+    // ---------- GET /org/tool-access ----------
+    app.get('/org/tool-access', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -590,14 +604,14 @@ export function webRoutes(deps: WebRouteDeps) {
       const orgVendors = await credentialService.listOrgVendors(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/tool-access', title: `${org.name} - Tool Access`, pageStyles: TEAM_TOOL_ACCESS_STYLES },
+        { user, org, activePath: '/org/tool-access', title: `${org.name} - Tool Access`, pageStyles: TEAM_TOOL_ACCESS_STYLES },
         renderTeamToolAccess({ orgId: org.id, orgVendors }),
       );
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/server-access ----------
-    app.get('/settings/team/server-access', async (request, reply) => {
+    // ---------- GET /org/server-access ----------
+    app.get('/org/server-access', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org, membership } = ctx;
@@ -608,7 +622,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const teamGrants = await orgService.listEffectiveTeamAccessForOrg(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/server-access', title: `${org.name} - Server Access`, pageStyles: TEAM_SERVER_ACCESS_STYLES },
+        { user, org, activePath: '/org/server-access', title: `${org.name} - Server Access`, pageStyles: TEAM_SERVER_ACCESS_STYLES },
         renderTeamServerAccess({
           orgId: org.id,
           org,
@@ -627,8 +641,8 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/teams ----------
-    app.get('/settings/team/teams', async (request, reply) => {
+    // ---------- GET /org/teams ----------
+    app.get('/org/teams', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -638,7 +652,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const orgVendors = await credentialService.listOrgVendors(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/teams', title: `${org.name} - Teams`, pageStyles: TEAM_TEAMS_STYLES },
+        { user, org, activePath: '/org/teams', title: `${org.name} - Teams`, pageStyles: TEAM_TEAMS_STYLES },
         renderTeamTeams({
           orgId: org.id,
           teams,
@@ -649,8 +663,8 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/service-clients ----------
-    app.get('/settings/team/service-clients', async (request, reply) => {
+    // ---------- GET /org/service-clients ----------
+    app.get('/org/service-clients', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -658,7 +672,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const serviceClients = await orgService.listServiceClients(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
+        { user, org, activePath: '/org/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
         renderTeamServiceClients({
           orgId: org.id,
           baseUrl: config.baseUrl,
@@ -675,8 +689,8 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/scim ----------
-    app.get('/settings/team/scim', async (request, reply) => {
+    // ---------- GET /org/scim ----------
+    app.get('/org/scim', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -686,7 +700,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/scim', title: `${org.name} - Provisioning`, pageStyles: TEAM_SCIM_STYLES },
+        { user, org, activePath: '/org/scim', title: `${org.name} - Provisioning`, pageStyles: TEAM_SCIM_STYLES },
         renderTeamScim({
           orgId: org.id,
           baseUrl: config.baseUrl,
@@ -705,9 +719,9 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/teams/:teamId/connections ----------
+    // ---------- GET /org/teams/:teamId/connections ----------
     app.get<{ Params: { teamId: string } }>(
-      '/settings/team/teams/:teamId/connections',
+      '/org/teams/:teamId/connections',
       async (request, reply) => {
         const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
@@ -722,16 +736,16 @@ export function webRoutes(deps: WebRouteDeps) {
         const teamVendors = await credentialService.listTeamVendors(teamId);
 
         const html = renderLayout(
-          { user, org, activePath: '/settings/team/teams', title: `${team.name} - Connections`, pageStyles: TEAM_TEAM_CONNECTIONS_STYLES },
+          { user, org, activePath: '/org/teams', title: `${team.name} - Connections`, pageStyles: TEAM_TEAM_CONNECTIONS_STYLES },
           renderTeamTeamConnections({ orgId: org.id, teamId, teamName: team.name, teamVendors }),
         );
         return reply.type('text/html').send(html);
       },
     );
 
-    // ---------- GET /settings/team/service-clients/:clientId/connections ----------
+    // ---------- GET /org/service-clients/:clientId/connections ----------
     app.get<{ Params: { clientId: string } }>(
-      '/settings/team/service-clients/:clientId/connections',
+      '/org/service-clients/:clientId/connections',
       async (request, reply) => {
         const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
@@ -746,15 +760,15 @@ export function webRoutes(deps: WebRouteDeps) {
         const clientVendors = await credentialService.listServiceClientVendors(clientId);
 
         const html = renderLayout(
-          { user, org, activePath: '/settings/team/service-clients', title: `${serviceClient.name} - Connections`, pageStyles: TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES },
+          { user, org, activePath: '/org/service-clients', title: `${serviceClient.name} - Connections`, pageStyles: TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES },
           renderTeamServiceClientConnections({ orgId: org.id, clientId, clientName: serviceClient.name, clientVendors }),
         );
         return reply.type('text/html').send(html);
       },
     );
 
-    // ---------- GET /settings/team/log-shipping ----------
-    app.get('/settings/team/log-shipping', async (request, reply) => {
+    // ---------- GET /org/log-shipping ----------
+    app.get('/org/log-shipping', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
@@ -762,7 +776,7 @@ export function webRoutes(deps: WebRouteDeps) {
       const destinations = await logShippingService.list(org.id);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/log-shipping', title: `${org.name} - Log Shipping`, pageStyles: TEAM_LOG_SHIPPING_STYLES },
+        { user, org, activePath: '/org/log-shipping', title: `${org.name} - Log Shipping`, pageStyles: TEAM_LOG_SHIPPING_STYLES },
         renderTeamLogShipping({
           orgId: org.id,
           destinations: destinations.map((d) => ({
@@ -779,22 +793,22 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/dashboard ----------
-    app.get('/settings/team/dashboard', async (request, reply) => {
+    // ---------- GET /org/dashboard ----------
+    app.get('/org/dashboard', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
       const { body, pageStyles, pageScripts } = renderTeamDashboard({ orgId: org.id, orgName: org.name });
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/dashboard', title: `${org.name} - Dashboard`, pageStyles, pageScripts },
+        { user, org, activePath: '/org/dashboard', title: `${org.name} - Dashboard`, pageStyles, pageScripts },
         body,
       );
       return reply.type('text/html').send(html);
     });
 
-    // ---------- GET /settings/team/audit ----------
-    app.get('/settings/team/audit', async (request, reply) => {
+    // ---------- GET /org/audit ----------
+    app.get('/org/audit', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org, membership } = ctx;
@@ -807,7 +821,7 @@ export function webRoutes(deps: WebRouteDeps) {
       ]);
 
       const html = renderLayout(
-        { user, org, activePath: '/settings/team/audit', title: `${org.name} - Audit Log`, pageStyles: TEAM_AUDIT_STYLES },
+        { user, org, activePath: '/org/audit', title: `${org.name} - Audit Log`, pageStyles: TEAM_AUDIT_STYLES },
         renderTeamAudit({
           orgId: org.id,
           captureEnabled,
@@ -826,7 +840,7 @@ export function webRoutes(deps: WebRouteDeps) {
     app.get<{ Params: { orgId: string } }>(
       '/org/:orgId/settings',
       async (_request, reply) => {
-        return reply.redirect('/settings/team', 301);
+        return reply.redirect('/org', 301);
       },
     );
   };

@@ -276,7 +276,7 @@ describe('isPaidPlan', () => {
 
   // Regression guard against the original drift: the SAME helper must
   // return TRUE for every plan that renderLayout admits to the team-nav,
-  // AND for every plan that requireTeamAccess admits to /settings/team/*.
+  // AND for every plan that requireTeamAccess admits to /org/*.
   // Listing them explicitly so a future "drop business from team-features"
   // decision fails THIS test and forces an explicit review.
   it('admits both pro and business — render/handler gate parity', () => {

@@ -5,7 +5,7 @@ describe('isSafePath', () => {
   it('accepts simple absolute paths', () => {
     expect(isSafePath('/')).toBe(true);
     expect(isSafePath('/settings')).toBe(true);
-    expect(isSafePath('/settings/billing')).toBe(true);
+    expect(isSafePath('/org/billing')).toBe(true);
     expect(isSafePath('/settings?upgraded=true')).toBe(true);
     expect(isSafePath('/connect/datto-rmm?return=1')).toBe(true);
   });

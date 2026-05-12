@@ -43,7 +43,7 @@ function renderTeamCard(team: OrgTeamWithMembers, orgMembers: TeamTeamsData['org
       <div class="team-card-header">
         <input type="text" class="team-name-input" value="${escapeHtml(team.name)}" onblur="renameTeam('${escapeHtml(team.id)}', this.value)" onkeydown="if(event.key==='Enter')this.blur()" />
         <button class="btn-sm btn-danger" onclick="deleteTeam('${escapeHtml(team.id)}', '${escapeHtml(team.name)}')">Delete</button>
-        <a class="btn-sm btn-primary" href="/settings/team/teams/${escapeHtml(team.id)}/connections" style="text-decoration:none">Connections</a>
+        <a class="btn-sm btn-primary" href="/org/teams/${escapeHtml(team.id)}/connections" style="text-decoration:none">Connections</a>
       </div>
       <div class="team-section">
         <h3>Members</h3>

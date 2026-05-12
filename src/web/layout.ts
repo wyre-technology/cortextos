@@ -36,28 +36,28 @@ const PERSONAL_NAV: NavItem[] = [
 // top-level pending future restructure PRs (e.g. Usage parent for
 // Dashboard/Connections/Tool-Access, Security parent for Audit/SCIM).
 const TEAM_NAV: NavItem[] = [
-  { label: 'Overview', href: '/settings/team' },
-  { label: 'Dashboard', href: '/settings/team/dashboard' },
-  { label: 'Connections', href: '/settings/team/connections' },
-  { label: 'Tool Access', href: '/settings/team/tool-access' },
-  { label: 'Server Access', href: '/settings/team/server-access' },
-  { label: 'Provisioning', href: '/settings/team/scim' },
-  { label: 'Log Shipping', href: '/settings/team/log-shipping' },
-  { label: 'Audit Log', href: '/settings/team/audit' },
+  { label: 'Overview', href: '/org' },
+  { label: 'Dashboard', href: '/org/dashboard' },
+  { label: 'Connections', href: '/org/connections' },
+  { label: 'Tool Access', href: '/org/tool-access' },
+  { label: 'Server Access', href: '/org/server-access' },
+  { label: 'Provisioning', href: '/org/scim' },
+  { label: 'Log Shipping', href: '/org/log-shipping' },
+  { label: 'Audit Log', href: '/org/audit' },
 ];
 
 // Organization sub-nav. Indented-list visual (not accordion) so all 5
 // items + active state are visible at a glance. Per Aaron 2026-05-11
 // IA-restructure spec. URLs unchanged this PR — service-clients URL
 // rename and audit-enum atomic refactor land in PR #74; "Invites" is
-// the display label here while URL stays /settings/team/invitations
+// the display label here while URL stays /org/invitations
 // until the same batch.
 const ORGANIZATION_SUBNAV: NavItem[] = [
-  { label: 'Members', href: '/settings/team/members' },
-  { label: 'Invites', href: '/settings/team/invitations' },
-  { label: 'Teams', href: '/settings/team/teams' },
-  { label: 'Service Clients', href: '/settings/team/service-clients' },
-  { label: 'Billing', href: '/settings/billing' },
+  { label: 'Members', href: '/org/members' },
+  { label: 'Invites', href: '/org/invitations' },
+  { label: 'Teams', href: '/org/teams' },
+  { label: 'Service Clients', href: '/org/service-clients' },
+  { label: 'Billing', href: '/org/billing' },
 ];
 
 /** Flattened nav-href list for regression-guard tests. Every entry

@@ -17,7 +17,7 @@ function renderCaptureBanner(data: TeamAuditData): string {
         <strong>Prompt capture</strong> is a Pro/Business feature.
         Status entries here record tool name, status, and timing only —
         not the arguments your team passed in.
-        ${isOwner ? '<a href="/settings/team" class="capture-banner-link">Upgrade to enable.</a>' : ''}
+        ${isOwner ? '<a href="/org" class="capture-banner-link">Upgrade to enable.</a>' : ''}
       </div>
     `;
   }

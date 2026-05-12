@@ -27,7 +27,7 @@ export function renderTeamServiceClients(data: TeamServiceClientsData): string {
             <td>${c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleDateString() : 'Never'}</td>
             <td>${c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : 'Never'}</td>
             <td style="white-space:nowrap">
-              <a class="btn-sm btn-primary" href="/settings/team/service-clients/${escapeHtml(c.clientId)}/connections" style="text-decoration:none;margin-right:4px">Connections</a>
+              <a class="btn-sm btn-primary" href="/org/service-clients/${escapeHtml(c.clientId)}/connections" style="text-decoration:none;margin-right:4px">Connections</a>
               <button class="btn-disconnect" onclick="revokeServiceClient('${escapeHtml(c.clientId)}')">Revoke</button>
             </td>
           </tr>`).join('')}

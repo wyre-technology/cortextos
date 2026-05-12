@@ -48,7 +48,7 @@ function hasRouteHandlerFor(href: string): { found: boolean; matchedIn?: string 
   // different lines (typed generics often produce that shape). Generic
   // body can also span lines so we accept any chars between `<` and
   // `>`. Anchored to the literal href so /settings does NOT match
-  // /settings/billing.
+  // /org/billing.
   const escapedHref = href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const patternStr = `app\\.(get|post)(<[\\s\\S]*?>)?\\(\\s*['"\`]${escapedHref}['"\`]`;
   const pattern = new RegExp(patternStr);

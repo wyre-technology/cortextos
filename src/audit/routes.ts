@@ -78,7 +78,7 @@ export function auditRoutes(deps: AuditRouteDeps) {
 
     // GET /audit — redirect to sidebar-integrated audit page
     app.get('/audit', async (_request, reply) => {
-      return reply.redirect('/settings/team/audit', 301);
+      return reply.redirect('/org/audit', 301);
     });
 
     // GET /api/audit/admin — JSON admin audit log (Pro plan, admin+ role)
