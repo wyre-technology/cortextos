@@ -47,7 +47,7 @@ import { signupRoutes } from './signup/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
 import { unifiedProxyRoutes } from './proxy/unified-router.js';
 import { getUnifiedProtectedResourceMetadata, getUnifiedAuthMetadata } from './oauth/metadata.js';
-import { toolAccessRoutes } from './org/routes/tool-access.js';
+import { toolAccessRoutes } from './org/tool-access-routes.js';
 import { LogShippingService } from './log-shipping/log-shipping-service.js';
 import { LogShipper } from './log-shipping/shipper.js';
 import { LokiAdapter } from './log-shipping/adapters/loki.js';

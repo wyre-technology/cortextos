@@ -1,9 +1,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { requireAuth0 } from '../../auth/auth0.js';
-import type { Auth0User } from '../../auth/auth0.js';
-import type { OrgService } from '../org-service.js';
-import { ROLE_LEVEL } from '../org-service.js';
-import type { OrgRole } from '../org-service.js';
+import { requireAuth0 } from '../auth/auth0.js';
+import type { Auth0User } from '../auth/auth0.js';
+import type { OrgService } from './org-service.js';
+import { ROLE_LEVEL } from './org-service.js';
+import type { OrgRole } from './org-service.js';
 
 /**
  * Require that the authenticated user is a member of the org with at least the given role.

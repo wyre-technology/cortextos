@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import type { OrgService } from '../org-service.js';
-import type { CredentialService } from '../../credentials/credential-service.js';
-import type { ToolCache } from '../../proxy/tool-cache.js';
-import { getVendor } from '../../credentials/vendor-config.js';
-import { requireOrgRole } from './helpers.js';
+import type { OrgService } from './org-service.js';
+import type { CredentialService } from '../credentials/credential-service.js';
+import type { ToolCache } from '../proxy/tool-cache.js';
+import { getVendor } from '../credentials/vendor-config.js';
+import { requireOrgRole } from './org-route-helpers.js';
 
 interface ToolAccessRouteDeps {
   orgService: OrgService;
