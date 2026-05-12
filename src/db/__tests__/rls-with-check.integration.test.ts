@@ -240,7 +240,8 @@ async function bootstrapSchema(): Promise<void> {
 async function applyRlsMigrations(): Promise<void> {
   // Apply 007 (RLS enable + USING policies), 014 (WITH CHECK policies),
   // 018 (SECURITY DEFINER helpers replacing every recursive predicate),
-  // and 020 (helper-context fix + UPDATE-policy USING repair).
+  // 020 (helper-context fix + first 4-table UPDATE-policy USING repair),
+  // and 022 (Bug B sweep on the remaining 9 UPDATE policies).
   //
   // We deliberately skip 019 — it was a temporary `WITH CHECK (true)`
   // passthrough on organizations_insert that 020 supersedes. Including
@@ -252,6 +253,7 @@ async function applyRlsMigrations(): Promise<void> {
     '014_rls_with_check_clauses.sql',
     '018_rls_security_definer_helpers.sql',
     '020_rls_helper_context_fix_and_update_using.sql',
+    '022_bug_b_update_using_sweep.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -525,6 +527,232 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
       } finally {
         conn.release();
       }
+    });
+  });
+
+  // Bug B sweep coverage (mig 022) lives in
+  // src/db/__tests__/rls-bug-b-sweep.integration.test.ts as its own
+  // standalone integration file. Separate testcontainer keeps role-pool
+  // state clean (this file's earlier tests reserve connections and SET
+  // ROLE rls_test_user, which makes ALTER TABLE DISABLE RLS fail in a
+  // shared-container setup).
+
+  describe.skip('mig 022 — Bug B sweep (see rls-bug-b-sweep.integration.test.ts)', () => {
+    beforeAll(async () => {
+      // Bootstrap-shaped fixtures. The harness CREATE TABLE definitions
+      // are the source of truth for column names; UPDATE targets one
+      // simple existing column per table.
+      //
+      // The testcontainer user is non-superuser non-BYPASSRLS — FORCE RLS
+      // applies to fixture INSERTs too. Workaround: temporarily disable
+      // RLS on each affected table, insert fixtures, re-enable + FORCE,
+      // re-apply the policy migrations so assertions run against the
+      // same RLS state as production.
+      //
+      // RESET ROLE first because earlier tests (organizations UPDATE
+      // tests above) may have left a SET ROLE state on pool connections.
+      // We need the table-owner identity for ALTER TABLE ... DISABLE RLS.
+      await sql.unsafe(`RESET ROLE`);
+      const filesToReapply = [
+        '014_rls_with_check_clauses.sql',
+        '020_rls_helper_context_fix_and_update_using.sql',
+        '022_bug_b_update_using_sweep.sql',
+      ];
+      await sql.unsafe(`
+        ALTER TABLE organizations DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE admin_audit_log DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_invitations DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_server_access DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_tool_allowlist DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE request_log DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE credentials DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_members DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_shared_vendor_grants DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_support_grants DISABLE ROW LEVEL SECURITY;
+      `);
+
+      await sql.begin(async (tx) => {
+
+        await tx`INSERT INTO organizations (id, name, type, parent_org_id) VALUES
+          ('cust-under-rco', 'Customer Under Rita', 'customer', 'reseller-rco')`;
+
+        await tx`INSERT INTO admin_audit_log (id, org_id, actor_id, event_type) VALUES
+          ('aal-1', 'org-alice', 'alice', 'noop')`;
+        await tx`INSERT INTO org_invitations (id, org_id, invited_by, token_hash, expires_at) VALUES
+          ('inv-1', 'org-alice', 'alice', 'hash-1', NOW() + INTERVAL '7 days')`;
+        await tx`INSERT INTO org_server_access (id, org_id, user_id, vendor_slug) VALUES
+          ('osa-1', 'org-alice', 'alice', 'vendor-a')`;
+        await tx`INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, tool_name) VALUES
+          ('ota-1', 'org-alice', 'vendor-a', 'tool-a')`;
+        await tx`INSERT INTO request_log (id, user_id, org_id, vendor_slug) VALUES
+          ('rl-1', 'alice', 'org-alice', 'vendor-a')`;
+        await tx`INSERT INTO credentials (id, user_id, vendor_slug) VALUES
+          ('cred-1', 'alice', 'vendor-a')`;
+        await tx`INSERT INTO reseller_members (id, reseller_org_id, user_id, role) VALUES
+          ('rm-other', 'reseller-rco', 'bob', 'reseller_billing_viewer')`;
+        await tx`INSERT INTO reseller_shared_vendor_grants (id, reseller_org_id, customer_org_id, vendor_slug, enabled) VALUES
+          ('rsvg-1', 'reseller-rco', 'cust-under-rco', 'shared-vendor', true)`;
+        await tx`INSERT INTO reseller_support_grants
+          (id, reseller_org_id, customer_org_id, granted_to_user_id, granted_by, expires_at) VALUES
+          ('rsg-1', 'reseller-rco', 'cust-under-rco', 'reseller-rita',
+           'reseller-rita', NOW() + INTERVAL '7 days')`;
+      });
+
+      // Re-enable RLS + FORCE + re-apply policy migrations so assertion
+      // paths run against the same RLS state as production. (Re-applying
+      // is cheap because the migrations are idempotent via DROP IF EXISTS
+      // + CREATE.)
+      await sql.unsafe(`
+        ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
+        ALTER TABLE admin_audit_log ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE admin_audit_log FORCE ROW LEVEL SECURITY;
+        ALTER TABLE org_invitations ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_invitations FORCE ROW LEVEL SECURITY;
+        ALTER TABLE org_server_access ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_server_access FORCE ROW LEVEL SECURITY;
+        ALTER TABLE org_tool_allowlist ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE org_tool_allowlist FORCE ROW LEVEL SECURITY;
+        ALTER TABLE request_log ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE request_log FORCE ROW LEVEL SECURITY;
+        ALTER TABLE credentials ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE credentials FORCE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_members ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_members FORCE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_shared_vendor_grants ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_shared_vendor_grants FORCE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_support_grants ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE reseller_support_grants FORCE ROW LEVEL SECURITY;
+      `);
+      for (const filename of filesToReapply) {
+        const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
+        const body = raw
+          .replace(/^\s*BEGIN\s*;\s*$/gim, '')
+          .replace(/^\s*COMMIT\s*;\s*$/gim, '');
+        await sql.begin((tx) => tx.unsafe(body));
+      }
+    });
+
+    it('admin_audit_log: alice (member) updates; bob (non-member) sees 0 rows', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE admin_audit_log SET event_type = 'updated-by-alice' WHERE id = 'aal-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`UPDATE admin_audit_log SET event_type = 'compromised' WHERE id = 'aal-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { bobConn.release(); }
+      const [row] = await sql<{ event_type: string }[]>`SELECT event_type FROM admin_audit_log WHERE id = 'aal-1'`;
+      expect(row.event_type).toBe('updated-by-alice');
+    });
+
+    it('credentials: alice updates own; bob blocked from alice\'s row', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE credentials SET vendor_slug = 'vendor-rotated' WHERE id = 'cred-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`UPDATE credentials SET vendor_slug = 'stolen' WHERE id = 'cred-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { bobConn.release(); }
+      const [row] = await sql<{ vendor_slug: string }[]>`SELECT vendor_slug FROM credentials WHERE id = 'cred-1'`;
+      expect(row.vendor_slug).toBe('vendor-rotated');
+    });
+
+    it('org_invitations: alice updates; bob blocked', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE org_invitations SET token_hash = 'rotated-hash' WHERE id = 'inv-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`UPDATE org_invitations SET token_hash = 'stolen' WHERE id = 'inv-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { bobConn.release(); }
+    });
+
+    it('org_server_access: alice updates; bob blocked', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE org_server_access SET vendor_slug = 'vendor-b' WHERE id = 'osa-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`UPDATE org_server_access SET vendor_slug = 'compromised' WHERE id = 'osa-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { bobConn.release(); }
+    });
+
+    it('org_tool_allowlist: alice updates; bob blocked', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE org_tool_allowlist SET tool_name = 'tool-b' WHERE id = 'ota-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`UPDATE org_tool_allowlist SET tool_name = 'compromised' WHERE id = 'ota-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { bobConn.release(); }
+    });
+
+    it('request_log: alice (row-owner) updates own; carol (no org membership) blocked', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE request_log SET vendor_slug = 'vendor-b' WHERE id = 'rl-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { aliceConn.release(); }
+      const carolConn = await asUser('carol');
+      try {
+        const r = await carolConn.query`UPDATE request_log SET vendor_slug = 'compromised' WHERE id = 'rl-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { carolConn.release(); }
+    });
+
+    it('reseller_members: rita (admin) updates; alice (non-reseller-member) blocked', async () => {
+      const ritaConn = await asUser('reseller-rita');
+      try {
+        const r = await ritaConn.query`UPDATE reseller_members SET role = 'reseller_admin' WHERE id = 'rm-other'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { ritaConn.release(); }
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE reseller_members SET role = 'reseller_owner' WHERE id = 'rm-other'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { aliceConn.release(); }
+    });
+
+    it('reseller_shared_vendor_grants: rita (admin) updates; alice blocked', async () => {
+      const ritaConn = await asUser('reseller-rita');
+      try {
+        const r = await ritaConn.query`UPDATE reseller_shared_vendor_grants SET enabled = false WHERE id = 'rsvg-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { ritaConn.release(); }
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE reseller_shared_vendor_grants SET enabled = true WHERE id = 'rsvg-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { aliceConn.release(); }
+    });
+
+    it('reseller_support_grants: rita (grant recipient) updates; alice blocked', async () => {
+      // Rita is granted_to_user_id on the grant, so first-OR branch admits.
+      const ritaConn = await asUser('reseller-rita');
+      try {
+        const r = await ritaConn.query`UPDATE reseller_support_grants SET revoked_at = NOW() WHERE id = 'rsg-1'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally { ritaConn.release(); }
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`UPDATE reseller_support_grants SET revoked_at = NULL WHERE id = 'rsg-1'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally { aliceConn.release(); }
     });
   });
 
