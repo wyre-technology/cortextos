@@ -1,3 +1,21 @@
+# [1.9.0](https://github.com/wyre-technology/conduit/compare/v1.8.0...v1.9.0) (2026-05-12)
+
+
+### Bug Fixes
+
+* **billing:** route remaining plan-gate sites through isPaidPlan helper ([#87](https://github.com/wyre-technology/conduit/issues/87)) ([740a163](https://github.com/wyre-technology/conduit/commit/740a163fe15204f100981fb3df98cf0132f0276a)), closes [72/#86](https://github.com/wyre-technology/conduit/issues/86)
+* **deps:** bump fast-uri 3.1.0 → 3.1.2 for two HIGH CVEs ([#85](https://github.com/wyre-technology/conduit/issues/85)) ([b6edbc4](https://github.com/wyre-technology/conduit/commit/b6edbc43f336152c4d96ddca3105d2fd958d194b)), closes [HI#severity](https://github.com/HI/issues/severity)
+* **gate:** match handler-gate to render-gate via isPaidPlan helper ([#71](https://github.com/wyre-technology/conduit/issues/71)) ([1ce8ca9](https://github.com/wyre-technology/conduit/commit/1ce8ca9db5a9820036ca7d73ed0ac81e9d72906a)), closes [#9](https://github.com/wyre-technology/conduit/issues/9)
+* **gate:** sweep plan-equality drift in dashboard + audit API gates ([#72](https://github.com/wyre-technology/conduit/issues/72)) ([335741c](https://github.com/wyre-technology/conduit/commit/335741c92318ba17451499c76be5764c602f2393)), closes [#71](https://github.com/wyre-technology/conduit/issues/71) [#10](https://github.com/wyre-technology/conduit/issues/10) [#10](https://github.com/wyre-technology/conduit/issues/10) [#71](https://github.com/wyre-technology/conduit/issues/71) [#71](https://github.com/wyre-technology/conduit/issues/71)
+* **layout:** remove dead sidebar nav items pointing at unregistered routes ([#70](https://github.com/wyre-technology/conduit/issues/70)) ([3c0b7d1](https://github.com/wyre-technology/conduit/commit/3c0b7d11f7ed291b028cb860ab68b431a21a1318)), closes [#69](https://github.com/wyre-technology/conduit/issues/69)
+
+
+### Features
+
+* **db:** mig 021 — relax enforce_org_hierarchy to bounded-depth-3 ([#83](https://github.com/wyre-technology/conduit/issues/83)) ([a555d10](https://github.com/wyre-technology/conduit/commit/a555d1012b2dd4e0cab85cc7e7864db0a908ac33)), closes [67-#73](https://github.com/67-/issues/73) [#74-pending](https://github.com/wyre-technology/conduit/issues/74-pending) [#75](https://github.com/wyre-technology/conduit/issues/75)
+* **db:** mig 022 — Bug B sweep on remaining 9 UPDATE policies ([#86](https://github.com/wyre-technology/conduit/issues/86)) ([94b2041](https://github.com/wyre-technology/conduit/commit/94b204197d37e551729f832305fc6a70d90c95a2)), closes [#10](https://github.com/wyre-technology/conduit/issues/10)
+* **layout:** IA restructure A — Organization parent + sub-nav (5 items) ([#73](https://github.com/wyre-technology/conduit/issues/73)) ([3b5b1c2](https://github.com/wyre-technology/conduit/commit/3b5b1c2b77d44b2b415d3447560e77c3f7212c07)), closes [#74](https://github.com/wyre-technology/conduit/issues/74) [#74](https://github.com/wyre-technology/conduit/issues/74) [#72](https://github.com/wyre-technology/conduit/issues/72) [#10](https://github.com/wyre-technology/conduit/issues/10) [#70](https://github.com/wyre-technology/conduit/issues/70) [#10](https://github.com/wyre-technology/conduit/issues/10) [#74](https://github.com/wyre-technology/conduit/issues/74) [#71](https://github.com/wyre-technology/conduit/issues/71)
+
 # [1.8.0](https://github.com/wyre-technology/conduit/compare/v1.7.0...v1.8.0) (2026-05-11)
 
 
