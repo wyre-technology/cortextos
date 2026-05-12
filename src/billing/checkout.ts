@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { config } from '../config.js';
 import type { OrgService } from '../org/org-service.js';
 import { requireAuth0 } from '../auth/auth0.js';
+import { isPaidPlan } from './gate.js';
 
 /**
  * Registers billing routes for Stripe Checkout and Customer Portal.
@@ -42,8 +43,8 @@ export function billingRoutes(orgService: OrgService) {
           return reply.code(404).send({ error: 'Organization not found' });
         }
 
-        // If already on pro, redirect to portal instead
-        if (org.plan === 'pro' && org.stripeCustomerId) {
+        // If already on a paid plan, redirect to portal instead
+        if (isPaidPlan(org.plan) && org.stripeCustomerId) {
           const portalSession = await stripe.billingPortal.sessions.create({
             customer: org.stripeCustomerId,
             return_url: `${config.baseUrl}/settings`,

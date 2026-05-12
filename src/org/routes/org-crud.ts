@@ -3,6 +3,7 @@ import { requireAuth0 } from '../../auth/auth0.js';
 import type { OrgService } from '../org-service.js';
 import { config } from '../../config.js';
 import { requireOrgRole } from './helpers.js';
+import { isPaidPlan } from '../../billing/gate.js';
 
 interface OrgCrudDeps {
   orgService: OrgService;
@@ -104,8 +105,8 @@ export function orgCrudRoutes(deps: OrgCrudDeps) {
         }
 
         const org = await orgService.getOrg(orgId);
-        if (org?.plan === 'pro') {
-          return reply.code(409).send({ error: 'Organization is already on the Pro plan' });
+        if (isPaidPlan(org?.plan)) {
+          return reply.code(409).send({ error: 'Organization is already on a paid plan' });
         }
 
         await orgService.updateOrgPlan(orgId, 'pro');

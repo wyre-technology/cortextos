@@ -2,6 +2,7 @@ import type { Organization } from '../../org/org-service.js';
 import { brand } from '../../brand/index.js';
 import { getVendorsByCategory } from '../../credentials/vendor-config.js';
 import { escapeHtml } from '../helpers.js';
+import { isPaidPlan } from '../../billing/gate.js';
 
 export interface PersonalConnectionsData {
   connectedVendors: string[];
@@ -428,7 +429,7 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
   }
 
   // Team-shared connections not already personally connected
-  if (org && org.plan === 'pro' && orgVendors.length > 0) {
+  if (org && isPaidPlan(org.plan) && orgVendors.length > 0) {
     for (const slug of orgVendors) {
       if (connectedSet.has(slug)) continue; // already shown
       const cat = categories.find((c) => c.vendors.some((v) => v.slug === slug));

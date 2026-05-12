@@ -1284,7 +1284,7 @@ describe('orgRoutes', () => {
       });
 
       expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ error: 'Organization is already on the Pro plan' });
+      expect(response.json()).toEqual({ error: 'Organization is already on a paid plan' });
     });
 
     it('returns 403 for non-owner', async () => {

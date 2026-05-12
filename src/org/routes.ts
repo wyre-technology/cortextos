@@ -8,6 +8,7 @@ import type { OrgService, OrgRole } from './org-service.js';
 import { ROLE_LEVEL } from './org-service.js';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import { isPaidPlan } from '../billing/gate.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
@@ -156,8 +157,8 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         const org = await orgService.getOrg(orgId);
-        if (org?.plan === 'pro') {
-          return reply.code(409).send({ error: 'Organization is already on the Pro plan' });
+        if (isPaidPlan(org?.plan)) {
+          return reply.code(409).send({ error: 'Organization is already on a paid plan' });
         }
 
         await orgService.updateOrgPlan(orgId, 'pro');
