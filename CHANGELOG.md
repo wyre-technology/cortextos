@@ -1,3 +1,11 @@
+# [1.10.0](https://github.com/wyre-technology/conduit/compare/v1.9.0...v1.10.0) (2026-05-13)
+
+
+### Features
+
+* **db:** mig 023 — conduit_is_reseller_admin_of_ancestor recursive helper ([#91](https://github.com/wyre-technology/conduit/issues/91)) ([2553469](https://github.com/wyre-technology/conduit/commit/255346941e9c9cbe65e2e817c6281d31fecaa1cc)), closes [#10](https://github.com/wyre-technology/conduit/issues/10)
+* **ia:** hoist /settings/team/* + /settings/billing → /org/* with permanent 301 redirects ([#90](https://github.com/wyre-technology/conduit/issues/90)) ([3f7ee19](https://github.com/wyre-technology/conduit/commit/3f7ee193285bbcff2de4aaa60502f501ca62e115))
+
 # [1.9.0](https://github.com/wyre-technology/conduit/compare/v1.8.0...v1.9.0) (2026-05-12)
 
 
