@@ -1,5 +1,5 @@
 /**
- * `ascendops update` — customer-friendly opt-in update mechanism MVP.
+ * `cortextos update` — customer-friendly opt-in update mechanism MVP.
  *
  * Wraps the existing `cortextos bus check-upstream` machinery with a
  * confirmation prompt before applying. Per David's directive (locked
@@ -79,8 +79,8 @@ async function runUpdate(opts: UpdateOptions): Promise<void> {
   }
 
   // Updates available.
-  const commitCount = status.commitCount ?? '?';
-  const diffStat = status.diffStat || '';
+  const commitCount = status.commits ?? '?';
+  const diffStat = status.diff_stat || '';
   console.log('');
   console.log(`Upstream updates available: ${commitCount} commit(s) behind.`);
   if (diffStat) console.log(`  ${diffStat}`);
@@ -109,6 +109,10 @@ async function runUpdate(opts: UpdateOptions): Promise<void> {
 
   console.log('');
   console.log('Applying upstream updates...');
+  // checkUpstream's apply path gates on CORTEXTOS_CONFIRM_UPSTREAM_MERGE — the
+  // customer's interactive `y` (or --yes flag) IS that confirmation, so set it
+  // here before calling. Without this, apply short-circuits with a refusal.
+  process.env.CORTEXTOS_CONFIRM_UPSTREAM_MERGE = 'yes';
   const applied = checkUpstream(frameworkRoot, { apply: true }) as any;
   console.log(JSON.stringify(applied, null, 2));
 
