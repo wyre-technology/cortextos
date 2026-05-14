@@ -38,6 +38,7 @@ jobs:
     outputs:
       version: ${{ steps.release_info.outputs.version }}
       released: ${{ steps.release_info.outputs.released }}
+      source_sha: ${{ steps.release_info.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -69,8 +70,22 @@ jobs:
         run: |
           VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$VERSION" ]; then
+            # The release commit ([skip ci]) does NOT trigger docker — only its
+            # parent (the merge commit that triggered THIS workflow run via push
+            # event earlier) was built by docker. docker-release-tag must re-tag
+            # FROM the parent SHA, not from $GITHUB_SHA which points to the
+            # release commit itself. Without this, imagetools create fails with
+            # "sha-<release-commit> not found" because no docker image exists
+            # for the release commit.
+            SOURCE_SHA="$(git rev-parse HEAD^ 2>/dev/null || echo "")"
+            if [ -z "$SOURCE_SHA" ]; then
+              echo "::error::could not resolve parent of release commit; docker-release-tag would fail"
+              exit 1
+            fi
+            SHORT_SOURCE="$(echo "$SOURCE_SHA" | cut -c1-7)"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "source_sha=$SHORT_SOURCE" >> "$GITHUB_OUTPUT"
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
@@ -140,11 +155,16 @@ jobs:
       - name: Tag release image
         env:
           VERSION: ${{ needs.release.outputs.version }}
+          SOURCE_SHA: ${{ needs.release.outputs.source_sha }}
         run: |
           # VERSION is the git tag (e.g. v1.2.3). Strip leading 'v' for semver.
           SEMVER="${VERSION#v}"
-          SHORT_SHA="$(echo "$GITHUB_SHA" | cut -c1-7)"
-          SRC="${IMAGE_NAME}:sha-${SHORT_SHA}"
+          # SOURCE_SHA is the parent of the release commit — the merge commit
+          # that triggered docker via the original push event. Using
+          # $GITHUB_SHA here would point at the release commit ([skip ci])
+          # which docker never built; imagetools create would fail with
+          # "sha-<release-commit> not found".
+          SRC="${IMAGE_NAME}:sha-${SOURCE_SHA}"
 
           docker buildx imagetools create \
             --tag "${IMAGE_NAME}:${VERSION}" \
