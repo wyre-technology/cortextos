@@ -19,6 +19,7 @@ import {
   IconTarget,
   IconMessages,
   IconNotes,
+  IconGitBranch,
 } from '@tabler/icons-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -51,12 +52,16 @@ const navItems: NavItem[] = [
   { label: 'Wiki', href: '/wiki', icon: IconNotes, section: 'intel' },
   { label: 'Experiments', href: '/experiments', icon: IconFlask, section: 'intel' },
   { label: 'Skills', href: '/skills', icon: IconPuzzle, section: 'intel' },
+
+  // Other
+  { label: 'Git Repo', href: '/git-repo', icon: IconGitBranch, section: 'other' },
 ];
 
 const sectionLabels: Record<string, string> = {
   core: '',
   ops: 'Operations',
   intel: 'Intelligence',
+  other: 'Other',
 };
 
 interface SidebarProps {
@@ -94,7 +99,7 @@ export function Sidebar({
   }
 
   // Group items by section
-  const sections = ['core', 'ops', 'intel'];
+  const sections = ['core', 'ops', 'intel', 'other'];
 
   return (
     <aside className="flex h-screen w-56 shrink-0 flex-col border-r bg-card/50">
