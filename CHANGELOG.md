@@ -152,6 +152,14 @@ mcp-gateway CHANGELOG.
   anti-claim language on certifications), authentication, multi-tenant
   + subtenant isolation, prompt injection defenses, billing/dunning
   security, and audit logging.
+- `docs/deploying.md` — Cloudflare Pages deployment guide for the docs
+  site under `conduit.wyre.ai/docs`.
+
+#### Changed
+- Docs site is now configured for the public path
+  `https://conduit.wyre.ai/docs` (Astro `site` + `base: '/docs'` in
+  `docs/astro.config.mjs`). Previously a placeholder
+  `https://docs.conduit.example`.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

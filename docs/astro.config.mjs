@@ -4,7 +4,8 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://docs.conduit.example',
+  site: 'https://conduit.wyre.ai',
+  base: '/docs',
   integrations: [
     starlight({
       title: 'Conduit Docs',
