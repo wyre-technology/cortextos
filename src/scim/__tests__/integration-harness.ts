@@ -157,6 +157,7 @@ const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
   { file: '020_rls_helper_context_fix_and_update_using.sql', reason: 'RLS helper-context fix + UPDATE-policy USING repair; SCIM tests do not exercise RLS policies' },
   { file: '022_bug_b_update_using_sweep.sql', reason: 'Bug B sweep — adds USING to 9 remaining UPDATE policies; SCIM tests do not exercise RLS policies' },
   { file: '027_reseller_pricing_config.sql', reason: 'reseller-channel-billing foundation; RLS policy references conduit_is_member_of_org from mig 018 which SCIM already skips. SCIM tests do not exercise reseller-channel RLS.' },
+  { file: '028_reseller_pricing_config_dp_e_and_created_by_strip.sql', reason: 'mig 027 follow-up: DP-E current-only + created_by column-strip; operates on reseller_pricing_config which SCIM skips. SCIM tests do not exercise reseller-channel RLS.' },
 ];
 
 const SKIP_LOG_PREFIX = 'HARNESS_SKIP';

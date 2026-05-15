@@ -32,7 +32,13 @@ export interface ResellerPricingConfig {
   amountCents: number | null;
   currency: 'USD';
   effectiveAt: string;
-  createdBy: string;
+  /**
+   * The reseller-admin user_id who set this price. Reads via
+   * `reseller_pricing_config_view` (mig 028) nullify this column for
+   * non-reseller-admin callers (Aaron 2026-05-15 lock: subtenant cannot
+   * see who set their price). Reseller-admin callers see the real value.
+   */
+  createdBy: string | null;
   createdAt: string;
 }
 
@@ -65,7 +71,7 @@ interface PricingRow {
   amount_cents: number | null;
   currency: string;
   effective_at: Date | string;
-  created_by: string;
+  created_by: string | null;
   created_at: Date | string;
 }
 
@@ -132,9 +138,21 @@ export class ResellerPricingService {
 
   /**
    * Return the latest effective config row for `(resellerOrgId,
-   * subtenantOrgId)`, or null if none exists. Ordering on
-   * `effective_at DESC` resolves the supersession winner. Tie-breaker on
-   * `created_at DESC` covers same-millisecond inserts deterministically.
+   * subtenantOrgId)`, or null if none exists.
+   *
+   * Reads from `reseller_pricing_config_view` (mig 028), not the base
+   * table. The view inherits the base SELECT policy's row-gating
+   * (subtenant sees only their latest-effective row; reseller-admin
+   * sees full history) AND applies CASE column-projection so subtenant
+   * callers see `created_by = NULL`. Reading through the view lets the
+   * service stay schema-shape-agnostic about which caller-class is
+   * asking — the policy + view handle differentiation.
+   *
+   * Ordering on `effective_at DESC, created_at DESC` resolves the
+   * supersession winner deterministically even on same-millisecond
+   * inserts. For subtenant callers the NOT-EXISTS filter in the base
+   * policy already collapses the result to a single row, so the
+   * ORDER BY + LIMIT is load-bearing only for reseller-admin reads.
    */
   async getCurrentPricing(
     resellerOrgId: string,
@@ -144,7 +162,7 @@ export class ResellerPricingService {
       SELECT id, reseller_org_id, subtenant_org_id, mode,
              rate_basis_points, amount_cents, currency,
              effective_at, created_by, created_at
-        FROM reseller_pricing_config
+        FROM reseller_pricing_config_view
        WHERE reseller_org_id  = ${resellerOrgId}
          AND subtenant_org_id = ${subtenantOrgId}
        ORDER BY effective_at DESC, created_at DESC

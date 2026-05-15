@@ -110,6 +110,10 @@ async function applyMigrations(): Promise<void> {
   for (const filename of [
     '023_reseller_admin_of_ancestor_helper.sql',
     '027_reseller_pricing_config.sql',
+    // mig 028 adds reseller_pricing_config_view + current-only filter on
+    // subtenant SELECT branch. The service's getCurrentPricing now reads
+    // from the view, so this test bootstrap must include it.
+    '028_reseller_pricing_config_dp_e_and_created_by_strip.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -160,6 +164,8 @@ async function provisionTestRole(): Promise<void> {
   await sql.unsafe(`CREATE ROLE rls_test_user`);
   await sql.unsafe(`GRANT USAGE ON SCHEMA public TO rls_test_user`);
   await sql.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rls_test_user`);
+  // mig 028 view — required for service-layer reads to work.
+  await sql.unsafe(`GRANT SELECT ON reseller_pricing_config_view TO rls_test_user`);
 }
 
 interface RlsConnection {
