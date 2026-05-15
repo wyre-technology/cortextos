@@ -38,7 +38,7 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
-import { renderTeamBilling, TEAM_BILLING_STYLES, type TeamBillingData } from './templates/team-billing.js';
+import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData, type DunningView } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { legacyOrgRedirectTarget } from './legacy-redirect.js';
 
@@ -53,6 +53,19 @@ import { VendorOAuthStateStore } from '../oauth/vendor-state-store.js';
 // ---------------------------------------------------------------------------
 // Route deps
 // ---------------------------------------------------------------------------
+
+/**
+ * Collapses a `recovered` dunning state to `none` after 1 hour so the
+ * confirmation toast stops firing on every subsequent page load. Track A
+ * will compute recoveredAt from the latest invoice.payment_succeeded; this
+ * helper enforces the TTL at the read-model boundary so the template stays
+ * pure.
+ */
+function collapseExpiredRecovered(d: DunningView): DunningView {
+  if (d.state !== 'recovered') return d;
+  const ageMs = Date.now() - new Date(d.recoveredAt).getTime();
+  return ageMs > 60 * 60 * 1000 ? { state: 'none' } : d;
+}
 
 interface WebRouteDeps {
   credentialService: CredentialService;
@@ -501,6 +514,13 @@ export function webRoutes(deps: WebRouteDeps) {
       // Mock data — Track A swap-in point. Shape mirrors Stripe
       // Customer / Subscription / Invoice objects via stripe-webhook.ts
       // so substitution is mechanical when Hank's service lands.
+      //
+      // Dunning is hard-coded to { state: 'none' } until Hank's PR exposes
+      // first_failure_at + recovered_at on the read model. Per Ruby's spec
+      // the 1h TTL on `recovered` is enforced here (anything older falls
+      // through to `none`) — keeps the toast from re-firing on stale loads.
+      const dunning: DunningView = collapseExpiredRecovered({ state: 'none' });
+
       const data: TeamBillingData = {
         org,
         plan,
@@ -524,10 +544,14 @@ export function webRoutes(deps: WebRouteDeps) {
           { id: 'in_mock_003', number: '2026-0028', date: new Date(Date.now() - 76 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
           { id: 'in_mock_004', number: '2026-0021', date: new Date(Date.now() - 106 * 24 * 60 * 60 * 1000).toISOString(), amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
         ],
+        dunning,
+        firstName: (user.name || '').split(/\s+/)[0] || null,
       };
 
+      const pageScripts = data.dunning.state === 'recovered' ? DUNNING_TOAST_SCRIPT : undefined;
+
       const html = renderLayout(
-        { user, org, activePath: '/org/billing', title: `${org.name} - Billing`, pageStyles: TEAM_BILLING_STYLES },
+        { user, org, activePath: '/org/billing', title: `${org.name} - Billing`, pageStyles: TEAM_BILLING_STYLES, pageScripts },
         renderTeamBilling(data),
       );
 
