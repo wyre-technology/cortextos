@@ -138,6 +138,15 @@ export const config = {
   // Loops.so marketing automation
   loopsApiKey: process.env.LOOPS_API_KEY ?? '',
 
+  // Dunning lifecycle (Track A — Ruby's checkpoint 3 design, Aaron-acked).
+  // Grace period in days that elapses BEFORE service suspension after the
+  // FIRST invoice.payment_failed. Stripe's smart-retries run during the
+  // first ~7 days; WYRE adds this grace AFTER retries exhaust before the
+  // org's gates flip to suspended. v1 is a global constant per Aaron's
+  // flat policy; per-org configurability deferred to v2 if reseller-channel
+  // surface needs it.
+  dunningGraceDays: Number(process.env.WYRE_DUNNING_GRACE_DAYS ?? '7'),
+
   // Feature flags — derived from config or explicit env vars
   features: {
     waitlist: !!process.env.WAITLIST_NOTIFY_URL,

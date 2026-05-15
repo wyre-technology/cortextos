@@ -613,6 +613,27 @@ export class OrgService {
   }
 
   // -------------------------------------------------------------------------
+  // Subscriptions (mig 017 + 024 schema, used by isServiceActive dunning gate)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Fetch the current subscription row for an org, or null if no row.
+   * Used by BillingGate.canAccessPaidFeatures to compose the dunning-aware
+   * service-active gate alongside isPaidPlan. Returns only the fields the
+   * gate-composition logic needs (status, first_failure_at, recovered_at).
+   */
+  async getSubscription(orgId: string): Promise<{ status: string; first_failure_at: Date | null; recovered_at: Date | null } | null> {
+    const rows = await this.sql<{ status: string; first_failure_at: Date | null; recovered_at: Date | null }[]>`
+      SELECT status, first_failure_at, recovered_at
+        FROM subscriptions
+       WHERE org_id = ${orgId}
+       ORDER BY created_at DESC
+       LIMIT 1
+    `;
+    return rows[0] ?? null;
+  }
+
+  // -------------------------------------------------------------------------
   // Memberships (delegated to MemberService)
   // -------------------------------------------------------------------------
 

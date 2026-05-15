@@ -88,6 +88,16 @@ async function requireTeamAccess(
     return null;
   }
 
+  // Dunning-aware service-active gate (Track A, mig 024). isPaidPlan above
+  // is the tier-check; canAccessPaidFeatures composes that with isServiceActive
+  // (subscription.status + first_failure_at + grace window). A paid org whose
+  // subscription is past-grace returns false here and gets redirected to
+  // /settings (where the billing-area dunning UI surfaces).
+  if (!(await billingGate.canAccessPaidFeatures(org.id))) {
+    reply.redirect('/settings', 302);
+    return null;
+  }
+
   const membership = await orgService.getMembership(org.id, user.sub);
   if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
     reply.redirect('/settings', 302);

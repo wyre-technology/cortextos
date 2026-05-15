@@ -47,6 +47,12 @@ export function auditRoutes(deps: AuditRouteDeps) {
         return reply.code(404).send({ error: 'No organization found' });
       }
 
+      // Dunning-aware gate (Track A, mig 024). Audit access is suspended when
+      // service is past grace, matching requireTeamAccess + dashboard semantics.
+      if (!(await billingGate.canAccessPaidFeatures(org.id))) {
+        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
+      }
+
       // Require admin+ role
       const membership = await orgService.getMembership(org.id, user.sub);
       if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
@@ -107,6 +113,12 @@ export function auditRoutes(deps: AuditRouteDeps) {
       const org = orgs[0];
       if (!org) {
         return reply.code(404).send({ error: 'No organization found' });
+      }
+
+      // Dunning-aware gate (Track A, mig 024). Admin audit gated same as
+      // /api/audit — suspended service blocks audit access regardless of role.
+      if (!(await billingGate.canAccessPaidFeatures(org.id))) {
+        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
       }
 
       // Require admin+ role

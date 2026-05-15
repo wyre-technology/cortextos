@@ -241,7 +241,7 @@ await app.register(landingRoutes());
 // MUST be registered before @fastify/static because it needs its own
 // content type parser for raw body verification.
 if (config.features.billing) {
-  await app.register(stripeWebhookRoutes(orgService));
+  await app.register(stripeWebhookRoutes(orgService, sql));
 }
 
 // Static files — serves Astro docs site from public/.

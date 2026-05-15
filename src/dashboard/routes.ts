@@ -43,6 +43,15 @@ export function dashboardRoutes(deps: DashboardRouteDeps) {
         return null;
       }
 
+      // Dunning-aware gate (Track A, mig 024). isPaidPlan above is the tier-check;
+      // canAccessPaidFeatures composes with isServiceActive so a paid org past
+      // its grace window gets 402 instead of seeing dashboard data they aren't
+      // currently entitled to consume.
+      if (!(await billingGate.canAccessPaidFeatures(org.id))) {
+        reply.code(402).send({ error: 'Service suspended — update billing to resume' });
+        return null;
+      }
+
       const membership = await orgService.getMembership(org.id, user.sub);
       if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
         reply.code(403).send({ error: 'Only admins and owners can view the dashboard' });

@@ -100,6 +100,7 @@ function createMockCredentialService(overrides: Partial<CredentialService> = {})
 function createMockBillingGate(overrides: Partial<BillingGate> = {}): BillingGate {
   return {
     getUserPlan: vi.fn().mockResolvedValue('free'),
+    canAccessPaidFeatures: vi.fn().mockResolvedValue(false),
     canUseTeamFeatures: vi.fn().mockResolvedValue(true),
     canAddMember: vi.fn().mockResolvedValue(true),
     getConnectionLimit: vi.fn().mockResolvedValue(Infinity),

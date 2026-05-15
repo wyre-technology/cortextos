@@ -3,6 +3,14 @@ import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { OrgService } from '../org/org-service.js';
+import type postgres from 'postgres';
+
+// Minimal sql tagged-template mock. Tests that exercise dunning paths
+// override this per-test to assert on the UPDATE query + returned rows.
+function createMockSql(): postgres.Sql {
+  const sql = vi.fn().mockResolvedValue([]) as unknown as postgres.Sql;
+  return sql;
+}
 
 // ---------------------------------------------------------------------------
 // Mock Stripe
@@ -62,7 +70,7 @@ async function buildApp(orgService: OrgService): Promise<FastifyInstance> {
 
   const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
   const app = Fastify({ logger: false });
-  await app.register(stripeWebhookRoutes(orgService));
+  await app.register(stripeWebhookRoutes(orgService, createMockSql()));
   return app;
 }
 
@@ -90,7 +98,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService));
+    await app.register(stripeWebhookRoutes(orgService, createMockSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -112,7 +120,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService));
+    await app.register(stripeWebhookRoutes(orgService, createMockSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -289,7 +297,12 @@ describe('stripeWebhookRoutes', () => {
     await app.close();
   });
 
-  it('syncs plan to free when subscription status is not active', async () => {
+  it('KEEPS plan=pro on past_due status (dunning grace, mig 024)', async () => {
+    // Behavior change from prior version: past_due used to flip plan to free,
+    // which bypassed Ruby's 7-day-grace dunning lifecycle. Now plan stays
+    // 'pro' for past_due and unpaid; isServiceActive in gate.ts uses
+    // (status, first_failure_at, grace) to decide whether to admit the
+    // paid-gate at request time.
     const orgService = createMockOrgService();
 
     mockConstructEvent.mockReturnValue({
@@ -300,6 +313,47 @@ describe('stripeWebhookRoutes', () => {
           id: 'sub_test_id',
           customer: 'cus_test_customer',
           status: 'past_due',
+          metadata: { org_id: 'org_xyz' },
+        },
+      },
+    });
+
+    const app = await buildApp(orgService);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/stripe',
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': 'valid_sig',
+      },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(orgService.updateOrgPlan).toHaveBeenCalledWith(
+      'org_xyz',
+      'pro',
+      'cus_test_customer',
+      'sub_test_id',
+    );
+    await app.close();
+  });
+
+  it('flips plan=free on canceled status (terminal)', async () => {
+    // Only canonical terminal states downgrade the plan-tier. Stripe's
+    // canceled + incomplete_expired are the truly-over signals; past_due
+    // and unpaid keep plan='pro' under the dunning grace.
+    const orgService = createMockOrgService();
+
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_sub_canceled',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_test_id',
+          customer: 'cus_test_customer',
+          status: 'canceled',
           metadata: { org_id: 'org_xyz' },
         },
       },
