@@ -193,6 +193,13 @@ mcp-gateway CHANGELOG.
   under **Reference**. The legacy file is retained as engineering
   reference with a "MIGRATED" pointer at the top, pending the broader
   legacy `docs/*.md` sweep-delete.
+- Migrated the MSP onboarding guide into the Starlight content tree at
+  `docs/src/content/docs/guides/msp-onboarding.mdx` (previously a
+  "Coming soon" stub). Content rebranded from "MCP Gateway platform" to
+  Conduit, and UI paths corrected for the `/settings/*` → `/org/*` IA
+  hoist (PRs #57/#73/#90) — verified against the registered routes in
+  `src/web/routes.ts`. The legacy `docs/onboarding-guide.md` is retained
+  as engineering reference with a "MIGRATED" pointer.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

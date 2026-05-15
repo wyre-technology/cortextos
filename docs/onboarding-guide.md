@@ -1,5 +1,13 @@
 # MSP Customer Onboarding Guide
 
+> **MIGRATED — this file is no longer the source of truth.**
+>
+> The customer-facing version lives at [`docs/src/content/docs/guides/msp-onboarding.mdx`](src/content/docs/guides/msp-onboarding.mdx) and is published at `https://conduit.wyre.ai/docs/guides/msp-onboarding`. The Starlight version is rebranded to Conduit and has corrected UI paths (the `/settings/*` → `/org/*` IA hoist from PRs #57/#73/#90).
+>
+> This file is preserved as engineering reference until the legacy `docs/*.md` sweep-delete. Do not extend this file — make changes in the Starlight `.mdx` version.
+
+---
+
 This document describes the end-to-end flow for onboarding a new Managed Service Provider (MSP) onto the MCP Gateway platform.
 
 ## Phase 1: Discovery
