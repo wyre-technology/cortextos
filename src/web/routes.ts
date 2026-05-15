@@ -38,8 +38,10 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
-import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData, type DunningView } from './templates/team-billing.js';
+import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
+import { deriveDunningView } from '../billing/dunning-view.js';
+import Stripe from 'stripe';
 import { legacyOrgRedirectTarget } from './legacy-redirect.js';
 
 // ---------------------------------------------------------------------------
@@ -53,19 +55,6 @@ import { VendorOAuthStateStore } from '../oauth/vendor-state-store.js';
 // ---------------------------------------------------------------------------
 // Route deps
 // ---------------------------------------------------------------------------
-
-/**
- * Collapses a `recovered` dunning state to `none` after 1 hour so the
- * confirmation toast stops firing on every subsequent page load. Track A
- * will compute recoveredAt from the latest invoice.payment_succeeded; this
- * helper enforces the TTL at the read-model boundary so the template stays
- * pure.
- */
-function collapseExpiredRecovered(d: DunningView): DunningView {
-  if (d.state !== 'recovered') return d;
-  const ageMs = Date.now() - new Date(d.recoveredAt).getTime();
-  return ageMs > 60 * 60 * 1000 ? { state: 'none' } : d;
-}
 
 interface WebRouteDeps {
   credentialService: CredentialService;
@@ -489,15 +478,21 @@ export function webRoutes(deps: WebRouteDeps) {
     });
 
     // =====================================================================
-    // Billing page — IA shell with mock data (Track B)
+    // Billing page — IA shell + dunning (Track B, real-data swap-in)
     // =====================================================================
     //
-    // Renders the four billing surfaces (current plan, next invoice +
-    // usage, payment method, invoice history) using mock data shaped
-    // from plan-catalog.ts. Real Stripe customer-portal redirect +
-    // invoice fetch land with Track A — at that point the mock builder
-    // below gets replaced with service calls and the template renders
-    // unchanged.
+    // Dunning state is now derived live from
+    //   - orgService.getSubscription (Conduit DB: status, first_failure_at,
+    //     recovered_at; mig 017 + mig 024)
+    //   - Stripe API direct (card brand/last4, attempt_count, next-retry,
+    //     amount/currency, current_period_end)
+    // per Hank's Track A architecture (derive-on-fly, no dunning_state mirror).
+    //
+    // The remaining mock fields (next-invoice line, invoice history) stay
+    // until the dedicated Stripe-invoice-fetch surface lands. Same template
+    // + same insertion points — only the data sources change.
+
+    const stripeClient = config.stripeSecretKey ? new Stripe(config.stripeSecretKey) : null;
 
     app.get('/org/billing', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
@@ -511,15 +506,12 @@ export function webRoutes(deps: WebRouteDeps) {
         ? plan.creditAllocation * memberCount
         : plan.creditAllocation;
 
-      // Mock data — Track A swap-in point. Shape mirrors Stripe
-      // Customer / Subscription / Invoice objects via stripe-webhook.ts
-      // so substitution is mechanical when Hank's service lands.
-      //
-      // Dunning is hard-coded to { state: 'none' } until Hank's PR exposes
-      // first_failure_at + recovered_at on the read model. Per Ruby's spec
-      // the 1h TTL on `recovered` is enforced here (anything older falls
-      // through to `none`) — keeps the toast from re-firing on stale loads.
-      const dunning: DunningView = collapseExpiredRecovered({ state: 'none' });
+      const dunning = await deriveDunningView(org.id, {
+        orgService,
+        stripe: stripeClient,
+        graceDays: config.dunningGraceDays,
+        stripeSubscriptionId: org.stripeSubscriptionId,
+      });
 
       const data: TeamBillingData = {
         org,
