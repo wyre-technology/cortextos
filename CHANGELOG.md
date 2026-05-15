@@ -154,6 +154,13 @@ mcp-gateway CHANGELOG.
   security, and audit logging.
 - `docs/deploying.md` — Cloudflare Pages deployment guide for the docs
   site under `conduit.wyre.ai/docs`.
+- `docs/src/content/docs/reference/subtenants.mdx` — customer-facing
+  reference page for the subtenant model: depth-3 reseller hierarchy,
+  the two disjoint role spaces (org-member vs reseller-scope), the
+  transitive-admin recursive helper, vendor-credential downstream
+  sharing via reseller-shared grants, reseller-scoped pricing config
+  with subtenant-opaque visibility, and clean severance behavior.
+  Sidebar-linked under **Reference**.
 
 #### Changed
 - Docs site is now configured for the public path
