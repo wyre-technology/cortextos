@@ -185,6 +185,12 @@ describe('stripeWebhookRoutes', () => {
 
   it('upgrades org to pro on checkout.session.completed', async () => {
     const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'org_abc',
+      name: 'Test Org',
+      plan: 'free',
+      stripeCustomerId: null,
+    });
 
     mockConstructEvent.mockReturnValue({
       id: 'evt_test_123',
@@ -219,6 +225,99 @@ describe('stripeWebhookRoutes', () => {
       'cus_test_customer',
       'sub_test_subscription',
     );
+    await app.close();
+  });
+
+  it('skips upgrade when checkout.session.completed org is not found', async () => {
+    const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_no_org',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_session',
+          customer: 'cus_test_customer',
+          subscription: 'sub_test_subscription',
+          metadata: { org_id: 'org_ghost' },
+        },
+      },
+    });
+
+    const app = await buildApp(orgService);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/stripe',
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': 'valid_sig',
+      },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses plan update when checkout.session customer != org customer and fires anomaly alert', async () => {
+    // Stub the webhook URL so the notifier actually invokes fetch.
+    vi.stubEnv('SLACK_SALES_WEBHOOK_URL', 'https://hooks.slack.test/services/billing');
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    } as Response);
+
+    const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'org_billy',
+      name: "Billy's Org",
+      plan: 'pro',
+      stripeCustomerId: 'cus_original',
+    });
+
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_mismatch',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_dup_customer',
+          // Stripe minted a duplicate customer; doesn't match the org.
+          customer: 'cus_duplicate',
+          subscription: 'sub_new',
+          metadata: { org_id: 'org_billy' },
+        },
+      },
+    });
+
+    const app = await buildApp(orgService);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/stripe',
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': 'valid_sig',
+      },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    // Plan must NOT be updated when customer IDs don't match.
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+
+    // Anomaly notifier is fire-and-forget — give the microtask a tick to run.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://hooks.slack.test/services/billing',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    fetchSpy.mockRestore();
     await app.close();
   });
 
@@ -456,6 +555,12 @@ describe('stripeWebhookRoutes', () => {
 
   it('returns 500 when orgService.updateOrgPlan throws so Stripe retries', async () => {
     const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'org_fail',
+      name: 'Fail Org',
+      plan: 'free',
+      stripeCustomerId: null,
+    });
     (orgService.updateOrgPlan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('DB connection lost'));
 
     mockConstructEvent.mockReturnValue({

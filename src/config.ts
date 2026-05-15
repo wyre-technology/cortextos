@@ -135,6 +135,12 @@ export const config = {
   // Webhook URL for waitlist signup notifications (Discord or Slack)
   waitlistNotifyUrl: process.env.WAITLIST_NOTIFY_URL ?? '',
 
+  // Slack incoming-webhook URL for #conduit-sales notifications (billing
+  // anomalies — webhook customer-mismatch, etc.). Empty (default) makes
+  // every notifier in src/billing/sales-notifier.ts a no-op so local dev
+  // and pre-rollout deploys don't crash the Stripe webhook handler.
+  slackSalesWebhookUrl: process.env.SLACK_SALES_WEBHOOK_URL ?? '',
+
   // Loops.so marketing automation
   loopsApiKey: process.env.LOOPS_API_KEY ?? '',
 

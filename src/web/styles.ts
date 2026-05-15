@@ -327,6 +327,7 @@ export const PAGE_STYLES = `
   }
   .plan-badge.free { background: var(--border-tertiary); color: var(--text-tertiary); }
   .plan-badge.pro { background: rgba(0, 201, 219, 0.15); color: var(--accent-text); }
+  .plan-badge.business { background: rgba(237, 233, 71, 0.12); color: var(--highlight); }
   .org-meta { font-size: 13px; color: var(--text-tertiary); }
   .btn-upgrade {
     display: inline-flex;

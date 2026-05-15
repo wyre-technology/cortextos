@@ -342,6 +342,59 @@ describe('billingRoutes', () => {
   // POST /api/billing/checkout redirects pro orgs to portal
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // POST /api/billing/checkout reuses Stripe customer on resub
+  // -------------------------------------------------------------------------
+
+  it('reuses existing Stripe customer on resub (org on free with stripeCustomerId)', async () => {
+    mockRequireAuth0.mockReturnValue({
+      sub: 'auth0|user_owner',
+      email: 'owner@example.com',
+      name: 'Owner',
+    });
+
+    mockCheckoutCreate.mockResolvedValue({
+      url: 'https://checkout.stripe.com/resub_session',
+    });
+
+    const orgService = createMockOrgService({
+      getMembership: vi.fn().mockResolvedValue({
+        id: 'mem_owner',
+        orgId: 'org_resub',
+        userId: 'auth0|user_owner',
+        role: 'owner',
+        joinedAt: null,
+        createdAt: new Date().toISOString(),
+      }),
+      getOrg: vi.fn().mockResolvedValue({
+        id: 'org_resub',
+        name: 'Resub Org',
+        ownerId: 'auth0|user_owner',
+        plan: 'free',
+        // Cancelled before — customer ID lingers from the prior sub.
+        stripeCustomerId: 'cus_existing',
+        stripeSubscriptionId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    const app = await buildApp(orgService);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/billing/checkout',
+      payload: { org_id: 'org_resub' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    // Stripe rejects passing both `customer` and `customer_email` — when
+    // we have a stripeCustomerId we must pass `customer` and omit the email.
+    const callArg = mockCheckoutCreate.mock.calls[0][0];
+    expect(callArg.customer).toBe('cus_existing');
+    expect(callArg.customer_email).toBeUndefined();
+    await app.close();
+  });
+
   it('redirects to Stripe portal when org is already on pro plan', async () => {
     mockRequireAuth0.mockReturnValue({
       sub: 'auth0|user_owner',

@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { config } from '../config.js';
 import type { OrgService } from '../org/org-service.js';
 import { sendLoopsEvent } from '../email/loops.js';
+import { notifyBillingAnomaly } from './sales-notifier.js';
 
 /**
  * Registers the Stripe webhook handler at POST /api/webhooks/stripe.
@@ -67,6 +68,40 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
             const orgId = session.metadata?.org_id;
             if (!orgId) {
               app.log.warn({ sessionId: session.id }, 'checkout.session.completed missing org_id metadata');
+              break;
+            }
+
+            const org = await orgService.getOrg(orgId);
+            if (!org) {
+              app.log.warn({ orgId, sessionId: session.id }, 'checkout.session.completed: org not found');
+              break;
+            }
+
+            // Anti-hijack guard: refuse to update the plan when the session
+            // customer doesn't match the org's existing Stripe customer.
+            // Combined with the checkout-side fix (resub now passes
+            // `customer`), this should be impossible in normal flow — but
+            // if it ever fires we surface a Slack alert so it can't silently
+            // rot the way it did before mcp-gateway PR #121.
+            if (org.stripeCustomerId && org.stripeCustomerId !== session.customer) {
+              app.log.error(
+                {
+                  orgId,
+                  sessionCustomer: session.customer,
+                  orgCustomer: org.stripeCustomerId,
+                },
+                'checkout.session.completed: customer mismatch',
+              );
+              notifyBillingAnomaly(
+                {
+                  orgId,
+                  orgName: org.name,
+                  sessionId: session.id,
+                  sessionCustomer: (session.customer as string | null) ?? null,
+                  orgCustomer: org.stripeCustomerId,
+                },
+                app.log,
+              ).catch((err) => app.log.warn({ err }, 'notifyBillingAnomaly failed'));
               break;
             }
 

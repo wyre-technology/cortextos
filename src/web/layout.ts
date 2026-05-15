@@ -332,7 +332,10 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   let teamNav = '';
   if (org && isPro) {
     const planLabel = org.plan === 'business' ? 'BUSINESS' : 'PRO';
-    const planBadge = `<span style="font-size:10px;font-weight:600;color:var(--accent-text);background:rgba(0,201,219,0.15);padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
+    const planTone = org.plan === 'business'
+      ? 'background:rgba(237,233,71,0.12);color:var(--highlight)'
+      : 'background:rgba(0,201,219,0.15);color:var(--accent-text)';
+    const planBadge = `<span style="font-size:10px;font-weight:600;${planTone};padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
 
     // Organization sub-nav is active when activePath is any of its hrefs.
     // Indented-list visual: parent label rendered as a sidebar-section-label

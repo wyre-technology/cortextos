@@ -59,8 +59,18 @@ export function billingRoutes(orgService: OrgService) {
           cancel_url: `${config.baseUrl}/settings`,
           metadata: { org_id: orgId },
           subscription_data: { metadata: { org_id: orgId } },
-          customer_email: user.email || undefined,
         };
+
+        // Resub flow: org cancelled (plan=free) but still has a Stripe
+        // customer from a prior subscription. Reuse that customer so we
+        // don't mint a duplicate — duplicates trip the webhook's
+        // anti-hijack guard and leave the upgrade silently stranded.
+        // Stripe rejects passing both `customer` and `customer_email`.
+        if (org.stripeCustomerId) {
+          sessionParams.customer = org.stripeCustomerId;
+        } else {
+          sessionParams.customer_email = user.email || undefined;
+        }
 
         if (coupon) {
           // Only allow coupons explicitly published for customer use.
