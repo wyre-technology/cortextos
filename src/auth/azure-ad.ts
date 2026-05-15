@@ -107,6 +107,15 @@ export function azureAdPlugin(sql: postgres.Sql) {
       )
     `;
 
+    // last_login retrofit: pre-existing DBs that were created before
+    // last_login was added to the CREATE TABLE never received the column.
+    // The /auth/microsoft/callback path UPDATEs last_login on every
+    // login, so the missing column manifests as a 42703 500 in
+    // production-like envs. Idempotent IF NOT EXISTS; existing rows pick
+    // up DEFAULT NOW() at apply-time. Mirrors the first_name/last_name/
+    // display_name/tenant_id additive-ALTER pattern below — keeping the
+    // discipline symmetric across all post-initial-schema columns.
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`;

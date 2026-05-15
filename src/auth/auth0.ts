@@ -112,6 +112,14 @@ export function auth0Plugin(sql: postgres.Sql) {
       )
     `;
 
+    // last_login retrofit (companion to the additive-ALTER pattern below):
+    // pre-existing DBs that were created before last_login was added to
+    // the CREATE TABLE never received the column, so the
+    // /auth/microsoft/callback path's UPDATE fails with 42703 in
+    // production-like envs. Idempotent IF NOT EXISTS; existing rows pick
+    // up DEFAULT NOW() at apply-time. Same fix landed in azure-ad.ts.
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+
     // Profile fields (added after initial schema)
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
