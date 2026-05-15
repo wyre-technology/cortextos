@@ -38,6 +38,8 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
+import { renderTeamBilling, TEAM_BILLING_STYLES, type TeamBillingData } from './templates/team-billing.js';
+import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { legacyOrgRedirectTarget } from './legacy-redirect.js';
 
 // ---------------------------------------------------------------------------
@@ -474,43 +476,60 @@ export function webRoutes(deps: WebRouteDeps) {
     });
 
     // =====================================================================
-    // Billing page — stub
+    // Billing page — IA shell with mock data (Track B)
     // =====================================================================
     //
-    // PR #73 (IA restructure) introduced Billing as a sub-nav item under
-    // the new Organization parent. The lock-step invariant from PR #70
-    // requires a registered handler for every nav href, so this stub
-    // exists to honor that. Real Stripe customer-portal redirect lands
-    // when the billing-page-real-implementation PR ships (task
-    // referenced in PR #73 body). Until then the page renders the layout
-    // shell + a "Coming soon" body so click-from-sidebar resolves to a
-    // 200 with a sensible message rather than a 404 or empty.
+    // Renders the four billing surfaces (current plan, next invoice +
+    // usage, payment method, invoice history) using mock data shaped
+    // from plan-catalog.ts. Real Stripe customer-portal redirect +
+    // invoice fetch land with Track A — at that point the mock builder
+    // below gets replaced with service calls and the template renders
+    // unchanged.
 
     app.get('/org/billing', async (request, reply) => {
-      const user = requireAuth0(request, reply);
-      if (!user) return;
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
 
-      const orgs = await orgService.getUserOrgs(user.sub);
-      const org = orgs[0] ?? null;
+      const plan = getPlan(org.plan) ?? getDefaultPlan();
+      const members = await orgService.getMembers(org.id);
+      const memberCount = members.length;
+      const creditsAllocated = plan.maxMembers === Infinity
+        ? plan.creditAllocation * memberCount
+        : plan.creditAllocation;
 
-      const bodyContent = `
-        <section style="max-width:560px; margin:48px auto; padding:24px;">
-          <h1 style="font-size:22px; font-weight:700; margin-bottom:12px;">Billing</h1>
-          <p style="color:var(--text-secondary); line-height:1.6;">
-            Billing management is coming soon. Stripe customer portal
-            integration will land in a follow-up PR. For now, plan changes,
-            invoices, and payment-method updates are handled by your
-            account contact at WYRE Technology.
-          </p>
-        </section>
-      `;
-
-      const html = renderLayout({
-        user,
+      // Mock data — Track A swap-in point. Shape mirrors Stripe
+      // Customer / Subscription / Invoice objects via stripe-webhook.ts
+      // so substitution is mechanical when Hank's service lands.
+      const data: TeamBillingData = {
         org,
-        activePath: '/org/billing',
-        title: 'Billing',
-      }, bodyContent);
+        plan,
+        memberCount,
+        creditsUsed: Math.floor(creditsAllocated * 0.37),
+        creditsAllocated,
+        paymentMethod: {
+          brand: 'visa',
+          last4: '4242',
+          expMonth: 12,
+          expYear: 2027,
+        },
+        nextInvoice: {
+          amountCents: plan.slug === 'business' ? 19900 : 4900,
+          currency: 'usd',
+          dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        invoices: [
+          { id: 'in_mock_001', number: '2026-0042', date: new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
+          { id: 'in_mock_002', number: '2026-0035', date: new Date(Date.now() - 46 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
+          { id: 'in_mock_003', number: '2026-0028', date: new Date(Date.now() - 76 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
+          { id: 'in_mock_004', number: '2026-0021', date: new Date(Date.now() - 106 * 24 * 60 * 60 * 1000).toISOString(), amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
+        ],
+      };
+
+      const html = renderLayout(
+        { user, org, activePath: '/org/billing', title: `${org.name} - Billing`, pageStyles: TEAM_BILLING_STYLES },
+        renderTeamBilling(data),
+      );
 
       return reply.type('text/html').send(html);
     });
