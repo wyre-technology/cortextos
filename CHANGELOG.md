@@ -147,6 +147,11 @@ mcp-gateway CHANGELOG.
   Trivy filesystem + container image workflow, and
   `docs/operations/security-scanning.md` triage guide. All findings
   upload as SARIF to the GitHub Security tab; non-blocking by design.
+- `docs/security.md` — initial customer-facing security documentation
+  covering credential encryption, trust model (with org-standard
+  anti-claim language on certifications), authentication, multi-tenant
+  + subtenant isolation, prompt injection defenses, billing/dunning
+  security, and audit logging.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)
