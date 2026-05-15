@@ -1,3 +1,21 @@
+# [1.11.0](https://github.com/wyre-technology/conduit/compare/v1.10.0...v1.11.0) (2026-05-15)
+
+
+### Bug Fixes
+
+* **billing:** reuse Stripe customer on resub + alert on webhook mismatch ([#96](https://github.com/wyre-technology/conduit/issues/96)) ([3686429](https://github.com/wyre-technology/conduit/commit/368642967db5cdebd1cffed79135a535d1919be7)), closes [#conduit-sales](https://github.com/wyre-technology/conduit/issues/conduit-sales)
+* **ci:** tag release image from pre-release SHA, not release commit ([#93](https://github.com/wyre-technology/conduit/issues/93)) ([0044c60](https://github.com/wyre-technology/conduit/commit/0044c6039acf29cef7ab9f6d2d2360e3fada48e2))
+
+
+### Features
+
+* **billing:** dunning lifecycle Loops events + grace-aware service gate ([#94](https://github.com/wyre-technology/conduit/issues/94)) ([a415bef](https://github.com/wyre-technology/conduit/commit/a415befad3f93de323c2a1b8e5766c9ad3c4c79c)), closes [#10](https://github.com/wyre-technology/conduit/issues/10) [#10](https://github.com/wyre-technology/conduit/issues/10)
+* **billing:** dunning UI extension — 5 render fns + tests + 14 preview fixtures (Track B follow-up) ([#95](https://github.com/wyre-technology/conduit/issues/95)) ([61d36c0](https://github.com/wyre-technology/conduit/commit/61d36c08127a08554eb9d770aa7c10ac0bf413dc)), closes [#92](https://github.com/wyre-technology/conduit/issues/92)
+* **billing:** IA shell for /org/billing with mock data (Track B) ([#92](https://github.com/wyre-technology/conduit/issues/92)) ([9b58096](https://github.com/wyre-technology/conduit/commit/9b58096d17db28874f8b6197ad43a0d9b5001790)), closes [#73](https://github.com/wyre-technology/conduit/issues/73)
+* **billing:** swap dunning from mock to real read-model (Track A integration) ([#98](https://github.com/wyre-technology/conduit/issues/98)) ([48f9c5d](https://github.com/wyre-technology/conduit/commit/48f9c5ddf2277b4008b8ac976e9de84f47f5e295))
+* **billing:** Track C PR-A — reseller_pricing_config foundation ([#97](https://github.com/wyre-technology/conduit/issues/97)) ([96ac432](https://github.com/wyre-technology/conduit/commit/96ac43257550c9a35ea0a0981e0ba79164ad09b3)), closes [#10](https://github.com/wyre-technology/conduit/issues/10)
+* **billing:** Track C PR-A follow-up — DP-E current-only + created_by strip ([#99](https://github.com/wyre-technology/conduit/issues/99)) ([666865f](https://github.com/wyre-technology/conduit/commit/666865f79c71e4bafa88d27279c4bd9a0834b04d)), closes [#10](https://github.com/wyre-technology/conduit/issues/10)
+
 # [1.10.0](https://github.com/wyre-technology/conduit/compare/v1.9.0...v1.10.0) (2026-05-13)
 
 
