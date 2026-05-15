@@ -51,6 +51,7 @@ export default defineConfig({
             { label: 'API', slug: 'reference/api' },
             { label: 'Permissions', slug: 'reference/permissions' },
             { label: 'Agents', slug: 'reference/agents-concepts' },
+            { label: 'Security', slug: 'reference/security' },
           ],
         },
         {

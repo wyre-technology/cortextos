@@ -1,16 +1,13 @@
-# Security
-
-> **MIGRATED — this file is no longer the source of truth.**
->
-> The customer-facing version of this content lives at [`docs/src/content/docs/reference/security.mdx`](src/content/docs/reference/security.mdx) and is published at `https://conduit.wyre.ai/docs/reference/security`.
->
-> This file is preserved as engineering reference until the legacy `docs/*.md` sweep-delete (planned once all customer-facing content has been migrated to Starlight). Do not extend this file — make changes in the Starlight `.mdx` version.
-
+---
+title: Security
+description: How Conduit protects vendor credentials, defends against prompt injection, and enforces multi-tenant isolation — including the trust model and what we will not claim.
 ---
 
-This page covers how Conduit protects vendor credentials, how it defends against prompt injection, how multi-tenant and subtenant isolation are enforced, and what security properties you should understand when deploying Conduit for your MSP.
+This page covers how Conduit protects vendor credentials, how it defends against prompt injection attacks, how multi-tenant and subtenant isolation are enforced, and what security properties you should understand when deploying Conduit for your MSP.
 
-> **Document status:** initial publication. Trust Model language is the org-standard anti-claim pattern (see [§ Trust Model](#trust-model)) and has been deliberately mirrored from the WYRE MCP Gateway security doc. Implementation specifics in this version were confirmed against current code by Engineering review (see PR #100). Auth0 flow names are pending PR #36's merge — wording may be tweaked at that point.
+:::note[Document status]
+Trust Model language is the org-standard anti-claim pattern (see [Trust Model](#trust-model)) and has been deliberately mirrored from the WYRE MCP Gateway security doc. Implementation specifics in this version were confirmed against current code by Engineering review.
+:::
 
 ---
 
@@ -26,7 +23,7 @@ All vendor credentials stored in Conduit are encrypted using **AES-256-GCM** wit
 
 Encryption is performed at the application layer before credentials reach the database. The database stores only encrypted blobs.
 
-The reference implementation lives in [`src/credentials/crypto.ts`](../src/credentials/crypto.ts) (~100 lines). The cipher, KDF, and parameter sizes are byte-for-byte identical to the WYRE MCP Gateway. We're happy to walk through it on a call.
+The reference implementation lives in [`src/credentials/crypto.ts`](https://github.com/wyre-technology/conduit/blob/main/src/credentials/crypto.ts) (~100 lines). The cipher, KDF, and parameter sizes are byte-for-byte identical to the WYRE MCP Gateway. We're happy to walk through it on a call.
 
 ### Credential Resolution Hierarchy
 
@@ -39,16 +36,16 @@ Conduit resolves vendor credentials in the following order:
 
 This hierarchy lets MSPs centralize shared vendor accounts at the org level (or share credentials downstream from a reseller to a sub-customer) while allowing individual technicians to override with personal credentials when needed.
 
-The reference implementation is documented inline in [`src/proxy/credential-injector.ts`](../src/proxy/credential-injector.ts).
+The reference implementation is documented inline in [`src/proxy/credential-injector.ts`](https://github.com/wyre-technology/conduit/blob/main/src/proxy/credential-injector.ts).
 
 ### Credential Injection
 
-Vendor credentials are **never** transmitted to Claude, the AI model, or the end-user's local workstation. The flow:
+Vendor credentials are **never** transmitted to the AI model or the end-user's local workstation. The flow:
 
-1. Claude (in the user's MCP client) calls a tool — for example, `autotask__list_tickets`.
+1. The AI client (in the user's MCP client) calls a tool — for example, `autotask__list_tickets`.
 2. Conduit receives the call, authenticates the request, and decrypts the relevant credentials for that user (resolved per the hierarchy above).
 3. Conduit makes the upstream API call to the vendor using the decrypted credentials.
-4. The upstream response is returned to Claude.
+4. The upstream response is returned to the AI client.
 
 At no point do credentials leave Conduit's server-side environment. The MCP protocol carries only the tool name, arguments, and result — not credentials.
 
@@ -74,12 +71,12 @@ What matters is whether that trust dependency is **bounded**, **observable**, an
 
 - Per-record key derivation means an attacker with master key + database has to do per-record cryptographic work for every credential they want to decrypt. There is no free mass dump.
 - There is no admin "view credential" page, no support-tier reset path, and no export script in the codebase. Adding one would require new code visible in git history.
-- Postgres Row-Level Security (RLS) is enabled across tenant tables (see [§ Multi-Tenant Isolation](#multi-tenant-isolation)). RLS predicates are written as `SECURITY DEFINER` helper functions to avoid recursive evaluation and to make policy intent reviewable.
+- Postgres Row-Level Security (RLS) is enabled across tenant tables (see [Multi-Tenant Isolation](#multi-tenant-isolation)). RLS predicates are written as `SECURITY DEFINER` helper functions to avoid recursive evaluation and to make policy intent reviewable.
 
 ### Observable — the audit trail
 
 - Every tool call appears in the audit log within seconds.
-- Every infrastructure-level access (secret read, database query) is logged in the cloud provider's activity logs **(verify retention)**.
+- Every infrastructure-level access (secret read, database query) is logged in your cloud provider's activity logs (retention varies by provider — see your provider's documentation).
 - Every code change to credential-handling paths goes through code review.
 
 ### Reversible — the kill switch
@@ -87,13 +84,13 @@ What matters is whether that trust dependency is **bounded**, **observable**, an
 - Rotate the credential at the vendor (ConnectWise, Autotask, etc.) at any time and what Conduit holds goes stale instantly. Conduit holds no persistent vendor sessions.
 - Delete the credential from Conduit and the encrypted record is erased immediately.
 - Remove a member from your org and their access to org credentials is gone with no cached tokens.
-- Remove a sub-organization from a parent reseller and the subtenant relationship is severed (see [§ Subtenant Model](#subtenant-model)).
+- Remove a sub-organization from a parent reseller and the subtenant relationship is severed (see [Subtenant Model](#subtenant-model)).
 
 ### What we're working on
 
 The single biggest improvement to this trust model is **envelope encryption with a cloud-managed HSM-backed key encryption key (KEK)** that has `wrapKey`/`unwrapKey` permission only — no extract permission, even for operators. After that change ships, a person with full subscription RBAC can call online decryption (with audit trail) but cannot extract the key for offline mass decryption. This moves the trust boundary from "people with prod access" to "code running in the operator's managed identity context."
 
-Design and migration plan: [`design-docs/master-key-envelope-encryption.md`](../design-docs/master-key-envelope-encryption.md) (in flight, see PR #55).
+Design and migration plan: [`design-docs/master-key-envelope-encryption.md`](https://github.com/wyre-technology/conduit/blob/main/design-docs/master-key-envelope-encryption.md) (in flight).
 
 ### What we won't claim
 
@@ -115,7 +112,7 @@ Design and migration plan: [`design-docs/master-key-envelope-encryption.md`](../
 
 ### User Authentication (Auth0 OIDC)
 
-Conduit users authenticate via Auth0 OIDC. The provider chooser routes new sign-ins through a provider selection screen; existing customers using the legacy Auth0-direct flow continue to work via the same backend. **(verify auth flow names against current routes after PR #36 lands)**
+Conduit users authenticate via Auth0 OIDC. The provider chooser routes new sign-ins through a provider selection screen; existing customers using the legacy Auth0-direct flow continue to work via the same backend.
 
 ### MCP Client Authentication (OAuth 2.1 + PKCE)
 
@@ -132,7 +129,7 @@ Conduit publishes OAuth 2.1 metadata at `/.well-known/oauth-authorization-server
 
 ### JWT Access Tokens
 
-Access tokens are HS256-signed JWTs (see [`src/oauth/authorization-server.ts`](../src/oauth/authorization-server.ts)) with a configurable TTL. The token includes the user's identity and organization context. Expired tokens are rejected; MCP clients automatically use the refresh token to obtain a new access token without requiring re-authorization.
+Access tokens are HS256-signed JWTs (see [`src/oauth/authorization-server.ts`](https://github.com/wyre-technology/conduit/blob/main/src/oauth/authorization-server.ts)) with a configurable TTL. The token includes the user's identity and organization context. Expired tokens are rejected; MCP clients automatically use the refresh token to obtain a new access token without requiring re-authorization.
 
 ### Refresh Token Rotation
 
@@ -226,9 +223,9 @@ Stripe webhooks are verified via the Stripe-provided HMAC signature on every req
 
 ### Dunning Lifecycle
 
-Subscription failures (failed renewals, expired cards) move the org through a dunning lifecycle with a configurable grace window before service is gated. The grace window defaults to **7 days** and is configurable via the `WYRE_DUNNING_GRACE_DAYS` environment variable (see [`src/config.ts`](../src/config.ts) and `BillingGate.canAccessPaidFeatures` / `isServiceActive` in [`src/billing/gate.ts`](../src/billing/gate.ts)). The first-failure timestamp is persisted (migration `024_dunning_first_failure_at.sql`) so the lifecycle is recoverable across service restarts.
+Subscription failures (failed renewals, expired cards) move the org through a dunning lifecycle with a configurable grace window before service is gated. The grace window defaults to **7 days** and is configurable via the `WYRE_DUNNING_GRACE_DAYS` environment variable (see [`src/config.ts`](https://github.com/wyre-technology/conduit/blob/main/src/config.ts) and `BillingGate.canAccessPaidFeatures` / `isServiceActive` in [`src/billing/gate.ts`](https://github.com/wyre-technology/conduit/blob/main/src/billing/gate.ts)). The first-failure timestamp is persisted (migration `024_dunning_first_failure_at.sql`) so the lifecycle is recoverable across service restarts.
 
-During the grace window, customers retain access. After the grace window expires, plan-gated features are disabled at the service layer using the `isPaidPlan` helper, ensuring consistent behavior across all enforcement points (PRs #71, #72, #87 sweep).
+During the grace window, customers retain access. After the grace window expires, plan-gated features are disabled at the service layer using the `isPaidPlan` helper, ensuring consistent behavior across all enforcement points.
 
 ---
 
@@ -245,7 +242,7 @@ Every tool call made through Conduit is recorded in the request log. Log entries
 
 Administrative actions (team membership changes, credential updates, allowlist modifications, invitation sends, impersonation events) are separately recorded in the `admin_audit_log` table with the acting user and timestamp.
 
-Admin audit log records are retained for **90 days** by default (see `cleanupAdminAuditLog` in [`src/audit/admin-audit-service.ts`](../src/audit/admin-audit-service.ts)). The retention window is configurable per cleanup invocation; tiered/plan-specific retention is not yet wired. Cleanup is opt-in — there is no scheduled cron job that runs it today.
+Admin audit log records are retained for **90 days** by default (see `cleanupAdminAuditLog` in [`src/audit/admin-audit-service.ts`](https://github.com/wyre-technology/conduit/blob/main/src/audit/admin-audit-service.ts)). The retention window is configurable per cleanup invocation; tiered/plan-specific retention is not yet wired. Cleanup is opt-in — there is no scheduled cron job that runs it today.
 
 Owners and admins can export logs as CSV from the dashboard.
 

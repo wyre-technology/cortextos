@@ -160,6 +160,14 @@ mcp-gateway CHANGELOG.
   `https://conduit.wyre.ai/docs` (Astro `site` + `base: '/docs'` in
   `docs/astro.config.mjs`). Previously a placeholder
   `https://docs.conduit.example`.
+- Migrated security documentation into the Starlight content tree at
+  `docs/src/content/docs/reference/security.mdx`. The legacy
+  `docs/security.md` was a draft markdown file that the Starlight build
+  did not serve — customers could not read it at
+  `conduit.wyre.ai/docs`. The Starlight version is now sidebar-linked
+  under **Reference**. The legacy file is retained as engineering
+  reference with a "MIGRATED" pointer at the top, pending the broader
+  legacy `docs/*.md` sweep-delete.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)
