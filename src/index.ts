@@ -15,6 +15,7 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { config } from './config.js';
@@ -258,14 +259,24 @@ if (config.features.billing) {
   await app.register(stripeWebhookRoutes(orgService, systemPool()));
 }
 
-// Static files — serves Astro docs site from public/.
+// Static files — serves the built docs site from public/ when present.
 // Fastify registered routes always take priority over static.
-await app.register(fastifyStatic, {
-  root: path.join(__dirname, '..', 'public'),
-  prefix: '/',
-  wildcard: false,
-  decorateReply: false,
-});
+// public/ is a build artifact (gitignored) and is not bundled in every
+// image — register @fastify/static only when the directory exists, so a
+// docs-less image boots clean instead of warning "root path must exist".
+const publicDir = path.join(__dirname, '..', 'public');
+if (existsSync(publicDir)) {
+  await app.register(fastifyStatic, {
+    root: publicDir,
+    prefix: '/',
+    wildcard: false,
+    decorateReply: false,
+  });
+} else {
+  app.log.info(
+    `Static dir ${publicDir} absent — skipping @fastify/static (docs not bundled in this image)`,
+  );
+}
 
 // OAuth 2.1 endpoints (Claude Desktop/Code ↔ Gateway authentication)
 // orgService enables the client_credentials grant for AI agent access
