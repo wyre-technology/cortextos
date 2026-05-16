@@ -113,6 +113,33 @@ npm run migrate:from-mcp-gateway
 Same script as staging. Idempotent — re-run safely if interrupted. Watch the
 canary line at the end.
 
+### 6.2a Set the Entra trusted-tenant allowlist (REQUIRED before any prod login)
+
+**Before** the DNS flip — before any migrated user can log into Conduit prod —
+set `ENTRA_TRUSTED_TENANT_IDS` on the Conduit prod gateway container app. Populate
+it with ONLY genuinely-trusted tenants — for WYRE that is the single tenant
+`d92c73a4`:
+
+```
+ENTRA_TRUSTED_TENANT_IDS=d92c73a4-ccc2-4277-8c5d-73c2849adfa4
+```
+
+(That id is WYRE's `wyretechnology.com` Entra tenant — verify via Microsoft
+Graph `findTenantInformationByTenantId` if in doubt.) A wrong or extra tenant
+in this allowlist re-opens the account-takeover vector: any tenant listed here
+makes its users' `email` claim adopt-eligible, so an attacker who controls a
+listed tenant can set an `email` attribute to a victim's address and adopt
+their account. List only tenants you would trust to assert identity.
+
+Why this is load-bearing: migrated users are keyed on mcp-gateway-era subject
+ids. Conduit reconciles a login to its migrated row via adopt-by-email, which
+is **gated on `emailVerified`**. For Azure AD, `emailVerified` is true only
+when the login tenant is on this allowlist. An **unpopulated** allowlist makes
+`emailVerified` false for every Entra user → the adopt never fires → every
+migrated user gets a fresh, empty, duplicate row on first login. That is the
+Phase-5 staging identity-binding bug, reproduced in prod at launch. Staging
+happens to already have this set; **prod must not be assumed to.**
+
 ### 6.3 DNS flip
 
 Point the customer-facing hostname (e.g., `mcp.wyre.ai`) at Conduit

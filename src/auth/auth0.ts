@@ -25,6 +25,7 @@ import { getRequestBaseUrl } from '../http/base-url.js';
 import { isSafePath } from './safe-path.js';
 import { decodeSessionCookie } from '../lib/session-cookie.js';
 import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
+import { findAdoptableUserId } from './adopt-by-email.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 
 // ---------------------------------------------------------------------------
@@ -311,13 +312,32 @@ export function auth0Plugin(sql: postgres.Sql) {
 
       await bindShadowUserOnLogin(sql, sub, email);
 
+      // Adopt-by-email: if a user row already exists for this email
+      // (case-insensitive), this login belongs to that row regardless of
+      // what subject id the IdP minted — reconciles a user whose row was
+      // created under a different id (mcp-gateway migration, case-variant
+      // duplicate). Gated on emailVerified inside findAdoptableUserId — see
+      // adopt-by-email.ts for why an unverified-email adopt is unsafe.
+      let adopted = false;
+      const adoptableId = await findAdoptableUserId(sql, sub, email, emailVerified);
+      if (adoptableId) {
+        request.log.warn(
+          { existingId: adoptableId, claimedSub: sub, email },
+          'auth0 login: adopting existing user row by verified email (id mismatch)',
+        );
+        sub = adoptableId;
+        await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+        adopted = true;
+      }
+
       // Upsert user in the database. ON CONFLICT (id) covers the common case
       // and tells us via RETURNING (xmax = 0) whether this was a new insert
       // (drives Loops enrollment). The 23505 catch handles the rarer
       // email-unique race where two concurrent first-login requests for the
       // same email both see no user and race the INSERT.
       let isNewUser = false;
-      try {
+      if (!adopted) {
+       try {
         const [{ is_new }] = await sql<{ is_new: boolean }[]>`
           INSERT INTO users (id, email, name, last_login)
           VALUES (${sub}, ${email}, ${name}, NOW())
@@ -347,6 +367,7 @@ export function auth0Plugin(sql: postgres.Sql) {
           sub = winner[0].id as string;
           await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         }
+       }
       }
 
       if (isNewUser) enrollNewUserInLoops(app.log, email, name);

@@ -32,6 +32,7 @@ import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
 import { isSafePath } from './safe-path.js';
+import { findAdoptableUserId } from './adopt-by-email.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -280,12 +281,42 @@ export function azureAdPlugin(sql: postgres.Sql) {
       // Use oid as the user ID (stable across tenants)
       let sub = oid;
 
+      // emailVerified for Azure AD is NOT a per-mailbox claim — Microsoft
+      // tokens omit email_verified. It is the trust decision "did this login
+      // come from a tenant we trust the email of": true only when the login
+      // tenant is on the ENTRA_TRUSTED_TENANT_IDS allowlist. Computed here
+      // (ahead of the upsert) because the adopt-by-email step below gates on
+      // it. The Conduit Azure AD app is multi-tenant (AzureADMultipleOrgs),
+      // so an untrusted tenant can emit an arbitrary `email` claim — gating
+      // the adopt on a trusted tenant is what stops a cross-tenant attacker
+      // from binding to a victim's row by claiming the victim's email.
+      const emailVerified = tid !== '' && config.entraTrustedTenantIds.has(tid);
+
+      // Adopt-by-email: if a user row already exists for this email
+      // (case-insensitive), this login belongs to that row regardless of the
+      // oid the IdP minted — reconciles a row created under a different id
+      // (mcp-gateway migration, case-variant duplicate). Gated on
+      // emailVerified (trusted-tenant) inside findAdoptableUserId — see
+      // adopt-by-email.ts for why a forged cross-tenant email must not adopt.
+      let adopted = false;
+      const adoptableId = await findAdoptableUserId(sql, sub, email, emailVerified);
+      if (adoptableId) {
+        request.log.warn(
+          { existingId: adoptableId, claimedSub: sub, email, tid },
+          'azure-ad login: adopting existing user row by verified email (id mismatch)',
+        );
+        sub = adoptableId;
+        await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+        adopted = true;
+      }
+
       // Upsert user in the database. ON CONFLICT (id) covers the common case
       // and tells us via RETURNING (xmax = 0) whether this was a new insert
       // (drives Loops enrollment). The 23505 catch handles the rarer
       // email-unique race.
       let isNewUser = false;
-      try {
+      if (!adopted) {
+       try {
         const [{ is_new }] = await sql<{ is_new: boolean }[]>`
           INSERT INTO users (id, email, name, last_login)
           VALUES (${sub}, ${email}, ${name}, NOW())
@@ -312,6 +343,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
           sub = winner[0].id as string;
           await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         }
+       }
       }
 
       if (tid) {
@@ -320,12 +352,8 @@ export function azureAdPlugin(sql: postgres.Sql) {
 
       if (isNewUser) enrollNewUserInLoops(app.log, email, name);
 
-      // Microsoft tokens lack email_verified; we trust verification only when
-      // the user's tenant id is on the explicit allowlist. Empty allowlist
-      // (default) means every Entra session arrives with emailVerified=false.
-      const emailVerified = tid !== '' && config.entraTrustedTenantIds.has(tid);
-
-      // Set the gateway session cookie
+      // Set the gateway session cookie. `emailVerified` was computed above
+      // (the adopt-by-email step gates on it).
       const user: AzureAdUser = { sub, email, name, tenantId: tid, emailVerified };
       setSessionCookie(reply, user);
 
