@@ -60,6 +60,60 @@ export function summarizeProbeError(raw: string | null): string | null {
   return 'connection failed';
 }
 
+/**
+ * One vendor's tenant-facing health. The response shape of
+ * GET /api/orgs/:orgId/vendor-health, and the input the connections-page
+ * SSR renders. Canonical here (monitoring domain) so the HTTP endpoint and
+ * the server-rendered page share one definition.
+ */
+export interface VendorHealth {
+  vendorSlug: string;
+  displayName: string;
+  status: VendorHealthState;
+  /** ISO 8601; null when the vendor has no cache entry yet. */
+  lastChecked: string | null;
+  latencyMs: number;
+  version: string | null;
+  /** Controlled string, populated only for degraded/down. */
+  errorDetail: string | null;
+}
+
+/**
+ * Assemble per-vendor health for the vendors an org has connected.
+ *
+ * `slugs` MUST be the org-scoped vendor list (credentialService
+ * .listOrgVendors(orgId)) — never the global slug set. The function indexes
+ * the global monitor cache by those org slugs, so an org only ever sees its
+ * own vendors; passing the global list would leak cross-tenant health.
+ *
+ * Single source of truth for the raw-cache to tenant-4-state mapping: both
+ * the HTTP endpoint and the connections-page SSR call this, so the two
+ * cannot drift.
+ */
+export function assembleOrgVendorHealth(
+  slugs: string[],
+  cache: Record<string, Omit<VendorStatus, 'slug'>>,
+): VendorHealth[] {
+  return slugs.map((slug) => {
+    const s = cache[slug];
+    const status: VendorHealthState = s ? deriveVendorHealth(s) : 'unknown';
+    const isUnhealthy = status === 'degraded' || status === 'down';
+    return {
+      vendorSlug: slug,
+      displayName: getVendor(slug)?.name ?? slug,
+      status,
+      lastChecked: s?.lastChecked.toISOString() ?? null,
+      latencyMs: s?.responseMs ?? 0,
+      version: s?.version ?? null,
+      // errorDetail is meaningful only for degraded/down — it backs the UI
+      // hover affordance. summarizeProbeError bounds the raw monitor error
+      // to a controlled string; a raw exception message never reaches a
+      // tenant.
+      errorDetail: isUnhealthy ? summarizeProbeError(s?.lastError ?? null) : null,
+    };
+  });
+}
+
 export class VendorMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private state = new Map<string, VendorStatus>();

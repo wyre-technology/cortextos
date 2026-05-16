@@ -40,6 +40,7 @@ import { renderTeamDashboard } from './templates/team-dashboard.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
+import { assembleOrgVendorHealth, type VendorMonitor } from '../monitoring/vendor-monitor.js';
 import Stripe from 'stripe';
 import { legacyOrgRedirectTarget } from './legacy-redirect.js';
 
@@ -62,6 +63,7 @@ interface WebRouteDeps {
   vendorOAuthStates: VendorOAuthStateStore;
   completeAuth: (sessionId: string, userId: string) => Promise<{ redirectUrl: string } | null>;
   logShippingService: LogShippingService;
+  vendorMonitor: VendorMonitor;
 }
 
 /**
@@ -114,7 +116,7 @@ async function requireTeamAccess(
  * connection flow, settings page, and team management pages.
  */
 export function webRoutes(deps: WebRouteDeps) {
-  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates } = deps;
+  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
 
   const sweepInterval = setInterval(() => {
     void vendorOAuthStates.sweepExpired().catch(() => {
@@ -630,9 +632,19 @@ export function webRoutes(deps: WebRouteDeps) {
 
       const orgVendors = await credentialService.listOrgVendors(org.id);
 
+      // Vendor container health — SSR reads the VendorMonitor cache directly
+      // (no self-HTTP-fetch). assembleOrgVendorHealth is the SAME function the
+      // GET /api/orgs/:orgId/vendor-health endpoint uses; passing orgVendors
+      // (the org's connected slugs) org-scopes it — the global cache is never
+      // rendered unfiltered.
+      const vendorHealth = new Map(
+        assembleOrgVendorHealth(orgVendors, vendorMonitor.getStatus())
+          .map((vh) => [vh.vendorSlug, vh] as const),
+      );
+
       const html = renderLayout(
         { user, org, activePath: '/org/connections', title: `${org.name} - Connections`, pageStyles: TEAM_CONNECTIONS_STYLES },
-        renderTeamConnections({ orgId: org.id, orgVendors }),
+        renderTeamConnections({ orgId: org.id, orgVendors, vendorHealth }),
       );
       return reply.type('text/html').send(html);
     });

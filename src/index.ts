@@ -318,6 +318,7 @@ await app.register(webRoutes({
   vendorOAuthStates,
   completeAuth,
   logShippingService,
+  vendorMonitor,
 }));
 
 // Organization management API + invitation routes

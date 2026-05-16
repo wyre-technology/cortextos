@@ -1,10 +1,42 @@
 import { brand } from '../../brand/index.js';
 import { getVendorsByCategory, VENDORS } from '../../credentials/vendor-config.js';
 import { escapeHtml } from '../helpers.js';
+import type { VendorHealth } from '../../monitoring/vendor-monitor.js';
+import {
+  statusDotClass,
+  statusLabel,
+  formatLastChecked,
+  hasErrorContext,
+  VENDOR_HEALTH_STYLES,
+} from '../vendor-health-view.js';
 
 export interface TeamConnectionsData {
   orgId: string;
   orgVendors: string[];
+  /** Per-vendor container health, keyed by vendor slug. A connected vendor
+   *  with no entry renders as 'unknown'. */
+  vendorHealth: Map<string, VendorHealth>;
+}
+
+/**
+ * Footer health block for a connected vendor card — the dot's sibling
+ * label + the "checked Xm ago" freshness stamp. Per Aaron-approved UX
+ * (2026-05-16): dot + label, hover reveals last-error, report-only (no
+ * reconnect CTA), freshness stamp.
+ */
+function renderVendorHealthStatus(health: VendorHealth | undefined): string {
+  const status = health?.status ?? 'unknown';
+  const lastChecked = health?.lastChecked ?? null;
+  const errorDetail = health?.errorDetail ?? null;
+  // Hover affordance: last-error detail, only for degraded/down.
+  const title = hasErrorContext(status) && errorDetail
+    ? ` title="${escapeHtml(errorDetail)}"`
+    : '';
+  return `
+        <span class="vc-health">
+          <span class="vc-status vc-status-${escapeHtml(status)}"${title}>${escapeHtml(statusLabel(status))}</span>
+          <span class="vc-freshness">checked ${escapeHtml(formatLastChecked(lastChecked))}</span>
+        </span>`;
 }
 
 const SHORT_LABELS: Record<string, string> = {
@@ -20,6 +52,30 @@ const SHORT_LABELS: Record<string, string> = {
 };
 
 export const TEAM_CONNECTIONS_STYLES = `
+  ${VENDOR_HEALTH_STYLES}
+
+  /* Connected-vendor health footer: status label stacked above the
+     "checked Xm ago" freshness stamp. Column layout so a longer label
+     ("Not responding") never competes horizontally with the Disconnect
+     button or wraps mid-phrase. */
+  .vc-health {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .vc-status-healthy  { color: var(--success-text); }
+  .vc-status-degraded { color: #f59e0b; }
+  .vc-status-down     { color: #dc2626; }
+  .vc-status-unknown  { color: var(--text-tertiary); }
+  .vc-status { white-space: nowrap; }
+  .vc-status[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+  .vc-freshness {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+
   /* Page header */
   .connections-header {
     display: flex;
@@ -253,7 +309,7 @@ export const TEAM_CONNECTIONS_STYLES = `
 `;
 
 export function renderTeamConnections(data: TeamConnectionsData): string {
-  const { orgId, orgVendors } = data;
+  const { orgId, orgVendors, vendorHealth } = data;
   const orgVendorSet = new Set(orgVendors);
   const categories = getVendorsByCategory();
   const totalVendors = categories.reduce((sum, c) => sum + c.vendors.length, 0);
@@ -298,6 +354,8 @@ export function renderTeamConnections(data: TeamConnectionsData): string {
     const safeLabel = escapeHtml(catLabel);
 
     if (isConnected) {
+      const health = vendorHealth.get(slug);
+      const dotClass = statusDotClass(health?.status ?? 'unknown');
       return `
       <div class="vendor-card is-connected" data-cat="${cat}" data-name="${searchName}" data-conn="1">
         <div class="vc-top">
@@ -305,10 +363,10 @@ export function renderTeamConnections(data: TeamConnectionsData): string {
             <div class="vc-name">${name}</div>
             <div class="vc-cat">${safeLabel}</div>
           </div>
-          <span class="vc-dot connected"></span>
+          <span class="vc-dot ${dotClass}"></span>
         </div>
         <div class="vc-footer">
-          <span class="vc-status">Connected</span>
+          ${renderVendorHealthStatus(health)}
           <button class="vc-btn-disconnect" onclick="disconnectOrgVendor('${escapeHtml(slug)}')">Disconnect</button>
         </div>
       </div>`;

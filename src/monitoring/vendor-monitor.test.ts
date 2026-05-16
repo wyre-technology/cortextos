@@ -3,7 +3,9 @@ import {
   VendorMonitor,
   deriveVendorHealth,
   summarizeProbeError,
+  assembleOrgVendorHealth,
   DEGRADED_LATENCY_MS,
+  type VendorStatus,
 } from './vendor-monitor.js';
 
 // Mock config before importing
@@ -318,5 +320,66 @@ describe('summarizeProbeError', () => {
     // must not slip past as if it were a clean status.
     expect(summarizeProbeError('Error: HTTP 500 from http://internal-host:8080'))
       .toBe('connection failed');
+  });
+});
+
+describe('assembleOrgVendorHealth', () => {
+  type CacheEntry = Omit<VendorStatus, 'slug'>;
+  const entry = (over: Partial<CacheEntry>): CacheEntry => ({
+    status: 'up',
+    version: '1.0.0',
+    responseMs: 100,
+    lastChecked: new Date('2026-05-16T12:00:00Z'),
+    lastStateChange: new Date('2026-05-16T11:00:00Z'),
+    consecutiveFailures: 0,
+    lastError: null,
+    ...over,
+  });
+
+  it('returns one entry per requested slug, in order', () => {
+    const out = assembleOrgVendorHealth(['datto-rmm'], { 'datto-rmm': entry({}) });
+    expect(out).toHaveLength(1);
+    expect(out[0].vendorSlug).toBe('datto-rmm');
+    expect(out[0].displayName).toBeTruthy(); // getVendor(slug)?.name ?? slug
+    expect(out[0].status).toBe('healthy');
+  });
+
+  it('org-scopes: a global-cache vendor NOT in the slug list is never returned', () => {
+    const cache = {
+      'datto-rmm': entry({}),
+      'some-other-org-vendor': entry({ status: 'down', consecutiveFailures: 5 }),
+    };
+    const out = assembleOrgVendorHealth(['datto-rmm'], cache);
+    expect(out.map((v) => v.vendorSlug)).toEqual(['datto-rmm']);
+  });
+
+  it('maps a slug with no cache entry to unknown + null lastChecked', () => {
+    const out = assembleOrgVendorHealth(['datto-rmm'], {});
+    expect(out[0].status).toBe('unknown');
+    expect(out[0].lastChecked).toBeNull();
+    expect(out[0].errorDetail).toBeNull();
+  });
+
+  it('populates errorDetail only for degraded/down, bounded', () => {
+    const cache = {
+      'datto-rmm': entry({ status: 'down', consecutiveFailures: 4, lastError: 'HTTP 503' }),
+    };
+    const out = assembleOrgVendorHealth(['datto-rmm'], cache);
+    expect(out[0].status).toBe('down');
+    expect(out[0].errorDetail).toBe('HTTP 5xx');
+  });
+
+  it('leaves errorDetail null for a healthy vendor even if lastError lingers', () => {
+    const cache = {
+      'datto-rmm': entry({ status: 'up', consecutiveFailures: 0, lastError: 'HTTP 500' }),
+    };
+    const out = assembleOrgVendorHealth(['datto-rmm'], cache);
+    expect(out[0].status).toBe('healthy');
+    expect(out[0].errorDetail).toBeNull();
+  });
+
+  it('falls back to the slug as displayName for an unknown vendor', () => {
+    const out = assembleOrgVendorHealth(['not-a-real-vendor'], {});
+    expect(out[0].displayName).toBe('not-a-real-vendor');
   });
 });

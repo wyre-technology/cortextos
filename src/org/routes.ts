@@ -12,8 +12,7 @@ import { isPaidPlan } from '../billing/gate.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import {
-  deriveVendorHealth,
-  summarizeProbeError,
+  assembleOrgVendorHealth,
   type VendorMonitor,
 } from '../monitoring/vendor-monitor.js';
 import { config } from '../config.js';
@@ -421,27 +420,11 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
         if (!user) return;
 
+        // assembleOrgVendorHealth is the single source of truth for the
+        // org-scoped raw-cache → tenant-4-state mapping — shared with the
+        // /org/connections SSR page so the two renderings cannot drift.
         const slugs = await credentialService.listOrgVendors(orgId);
-        const cache = vendorMonitor.getStatus();
-
-        const vendors = slugs.map((slug) => {
-          const s = cache[slug];
-          const status = s ? deriveVendorHealth(s) : 'unknown';
-          const isUnhealthy = status === 'degraded' || status === 'down';
-          return {
-            vendorSlug: slug,
-            displayName: getVendor(slug)?.name ?? slug,
-            status,
-            lastChecked: s?.lastChecked.toISOString() ?? null,
-            latencyMs: s?.responseMs ?? 0,
-            version: s?.version ?? null,
-            // errorDetail is surfaced only for degraded/down — it backs the
-            // UI hover affordance and is meaningless when healthy. The raw
-            // monitor lastError is bound to a controlled string before it
-            // reaches tenant output — never a raw exception message.
-            errorDetail: isUnhealthy ? summarizeProbeError(s?.lastError ?? null) : null,
-          };
-        });
+        const vendors = assembleOrgVendorHealth(slugs, vendorMonitor.getStatus());
 
         return reply.send({ vendors });
       },
