@@ -216,6 +216,14 @@ mcp-gateway CHANGELOG.
   subscription management, and the dunning lifecycle (payment-failing →
   past-due → final-warning → suspended, with the 7-day grace window).
   Sidebar-linked under **Guides**.
+- New `docs/src/content/docs/guides/scim.mdx` — customer-facing SCIM
+  Provisioning guide consolidating the four legacy `docs/scim/*.md`
+  IdP guides (Entra ID, Okta, JumpCloud, Google Workspace) into one
+  page: shared token-generation steps, per-IdP setup, the
+  what-gets-provisioned mapping, and per-IdP troubleshooting. UI paths
+  corrected to `/org/scim` (verified against `src/web/routes.ts`). The
+  legacy `docs/scim/*.md` files now carry "MIGRATED" pointers.
+  Sidebar-linked under **Guides**.
 
 #### Fixed
 - Corrected the Pro-tier feature list in
@@ -224,6 +232,10 @@ mcp-gateway CHANGELOG.
   CSV export and service clients to the Pro plan; per
   `src/billing/plan-catalog.ts` those are **Business**-tier features.
   Service-client setup is now flagged as Business-tier.
+- Corrected the Container Architecture section of the security doc:
+  production runs on Azure Container Apps, not Coolify (Coolify is used
+  for a separate application). Fixed in both the Starlight page and the
+  legacy file.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

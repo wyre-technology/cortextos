@@ -1,5 +1,8 @@
 # SCIM provisioning — Microsoft Entra ID
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The four legacy `docs/scim/*.md` guides were consolidated into one Starlight page at [`docs/src/content/docs/guides/scim.mdx`](../src/content/docs/guides/scim.mdx), published at `https://conduit.wyre.ai/docs/guides/scim`. Do not extend this file — edit the Starlight version.
+
 This guide walks an Entra ID admin through connecting their tenant to the gateway via SCIM 2.0. Provisioning runs every ~40 minutes by default; you can also click **Provision on demand**.
 
 ## Prerequisites

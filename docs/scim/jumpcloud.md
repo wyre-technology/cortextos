@@ -1,5 +1,8 @@
 # SCIM provisioning — JumpCloud
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The four legacy `docs/scim/*.md` guides were consolidated into one Starlight page at [`docs/src/content/docs/guides/scim.mdx`](../src/content/docs/guides/scim.mdx), published at `https://conduit.wyre.ai/docs/guides/scim`. Do not extend this file — edit the Starlight version.
+
 This guide walks a JumpCloud admin through connecting their directory to the gateway via SCIM 2.0.
 
 ## Prerequisites

@@ -1,5 +1,8 @@
 # SCIM provisioning — Google Workspace
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The four legacy `docs/scim/*.md` guides were consolidated into one Starlight page at [`docs/src/content/docs/guides/scim.mdx`](../src/content/docs/guides/scim.mdx), published at `https://conduit.wyre.ai/docs/guides/scim`. Do not extend this file — edit the Starlight version.
+
 > **Note:** Google Workspace's user-provisioning surface is OAuth-based and tightly coupled to its **Automated User Provisioning** catalog. For non-catalog apps, Google supports **SCIM 2.0** through the **Google Cloud Identity** API, but the experience is materially less polished than Entra/Okta/JumpCloud. We recommend using one of the gallery integrations if you also have those IdPs available, and reaching to Google Workspace as a last resort.
 
 This guide walks a Google Workspace super admin through connecting their tenant to the gateway via SCIM 2.0.

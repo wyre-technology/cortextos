@@ -1,0 +1,174 @@
+---
+title: SCIM Provisioning
+description: Connect an identity provider (Entra ID, Okta, JumpCloud, Google Workspace) to Conduit via SCIM 2.0 to automatically provision users and teams.
+---
+
+SCIM 2.0 lets an identity provider (IdP) automatically create, update, and deactivate Conduit users — and optionally materialize IdP groups as Conduit teams — so you do not manage membership by hand.
+
+This guide covers the four IdPs Conduit supports: **Microsoft Entra ID**, **Okta**, **JumpCloud**, and **Google Workspace**. The first step — generating a SCIM token — is the same for all of them; the rest is IdP-specific.
+
+---
+
+## Generate a SCIM token in Conduit
+
+Do this first, regardless of IdP:
+
+1. In Conduit, go to **Provisioning** (`/org/scim`).
+2. Click **Connect IdP**.
+3. Choose your IdP.
+4. Pick the **default role** new SCIM-provisioned users will receive — `member` is the safe default.
+5. Click **Generate token**.
+6. Copy the **Tenant URL** and **Secret token**. They will not be shown again — keep the tab open while you configure the IdP.
+
+## What gets provisioned
+
+The mapping is the same across all four IdPs:
+
+| IdP concept | Conduit concept |
+|-------------|-----------------|
+| User assignment (direct or via group) | `users` row + `org_members` row at the connection's default role |
+| Group assignment / push | `org_teams` row + `org_team_members` for each member |
+| User disabled / deactivated / unassigned | `org_members` row removed; `users.active = false` (re-activatable) |
+
+:::note
+SCIM creates a "shadow" user record keyed by email. A provisioned user must still log in through Conduit's existing SSO (Auth0) — on first login the shadow record binds to their identity.
+:::
+
+---
+
+## Microsoft Entra ID
+
+Provisioning runs every ~40 minutes by default; you can also click **Provision on demand**.
+
+**Prerequisites:** an Owner or Admin on the Conduit organization, and an Entra ID admin who can create Enterprise applications.
+
+### 1. Create the Enterprise application
+
+1. [Azure portal](https://portal.azure.com) → **Microsoft Entra ID** → **Enterprise applications** → **+ New application**.
+2. Click **Create your own application**.
+3. Name it (e.g. "Conduit SCIM").
+4. Choose **Integrate any other application you don't find in the gallery (Non-gallery)**.
+5. Click **Create**.
+
+### 2. Configure provisioning
+
+1. From the app's **Overview**, choose **Provisioning** → **Get started**.
+2. Set **Provisioning Mode** to **Automatic**.
+3. Under **Admin Credentials**: paste the **Tenant URL** and **Secret Token** from the Conduit step.
+4. Click **Test Connection** — expect "The supplied credentials are authorized to enable provisioning".
+5. Click **Save**.
+
+### 3. Assign users and start
+
+1. App **Overview** → **Users and groups** → **+ Add user/group**, pick who to provision, **Assign**.
+2. Back in **Provisioning**, set **Provisioning Status** to **On**, **Save**.
+3. Click **Provision on demand** to push the first batch immediately.
+
+Verify in Conduit's `/org/members` and `/org/teams` pages.
+
+### Troubleshooting — Entra
+
+- **"Test Connection" fails with 401** — the token in Entra doesn't match what Conduit issued. Generate a new token and paste it again.
+- **Group memberships not syncing** — Entra only sends memberships for groups explicitly assigned to the application. Add the group itself under **Users and groups**, not just its members.
+- **Provisioning paused after errors** — Entra auto-pauses after sustained failures. Check **Provisioning logs**, fix the cause, then **Restart provisioning**.
+
+---
+
+## Okta
+
+**Prerequisites:** an Owner or Admin on the Conduit organization, and an Okta admin who can add applications.
+
+### 1. Create the Okta app
+
+1. Okta admin console → **Applications → Browse App Catalog → SCIM 2.0 Test App (OAuth Bearer Token)** → **Add Integration**.
+2. Name it (e.g. "Conduit"), click **Done**.
+
+### 2. Configure provisioning
+
+1. In the app, **Provisioning** tab → **Configure API Integration**.
+2. Check **Enable API integration**. **Base URL** = the Conduit Tenant URL; **API Token** = the secret token.
+3. Click **Test API Credentials** — expect "the credentials provided were verified successfully". **Save**.
+4. Under **Provisioning → To App**, enable **Create Users**, **Update User Attributes**, **Deactivate Users**.
+
+### 3. Assign users and push groups
+
+1. **Assignments** tab → **Assign → Assign to People** (or **Assign to Groups**), then **Save and Go Back**. Okta pushes assigned users immediately.
+2. Optional — to materialize Okta groups as Conduit teams: **Push Groups** tab → **+ Push Groups → Find groups by name**, pick the group, choose **Create Group** under Match Result, **Save**.
+
+### Troubleshooting — Okta
+
+- **"Test API Credentials" returns 401** — the token is wrong or revoked. Generate a fresh one.
+- **"User does not match a single SCIM user"** — Okta dedupes by `userName` (mapped to email). Confirm the user's Okta username is the same email Conduit uses.
+- **Group push has no members** — only group members who are also individually assigned to the application get pushed. Assign the group in **Assignments**.
+
+---
+
+## JumpCloud
+
+JumpCloud syncs every ~5 minutes by default.
+
+**Prerequisites:** an Owner or Admin on the Conduit organization, and a JumpCloud admin who can manage SSO Applications.
+
+### 1. Create the SSO application
+
+1. JumpCloud admin console → **User Authentication → SSO Applications → + Add New Application**.
+2. Search for **Custom SAML App** — JumpCloud's SCIM provisioning lives under any SAML/SSO app.
+3. Set a Display Name (e.g. "Conduit"), **Save Application**.
+4. Open the application → **Identity Management** tab.
+
+### 2. Configure SCIM 2.0
+
+1. On **Identity Management**, set **Configuration Type** to **SCIM 2.0**.
+2. **Base URL** = the Conduit Tenant URL; **Token Key** = the secret token.
+3. Click **Test Connection** — expect success.
+4. Set **Group Management** to **On** if you want JumpCloud groups synced as Conduit teams.
+5. Click **Activate**.
+
+### 3. Assign users and groups
+
+1. Open the application → **User Groups** tab → tick the groups to provision, **Save**.
+2. Optional — assign individual users on the **Users** tab.
+
+### Troubleshooting — JumpCloud
+
+- **Test Connection fails** — re-paste the token; trailing whitespace is a common cause.
+- **Users provisioned but no group membership** — Group Management was off when the app was activated. Toggle it on and re-save; JumpCloud replays group memberships on the next sync.
+- **Sync seems stuck** — force a sync by toggling **Identity Management → Activate** off and on.
+
+---
+
+## Google Workspace
+
+:::caution
+Google Workspace's SCIM support is materially less polished than Entra, Okta, or JumpCloud — there is no on-demand sync, PATCH support is limited, and group syncing flattens nested groups. If you also have one of the other IdPs available, prefer it. Google Workspace also requires a plan that includes **Cloud Identity Premium** (or equivalent).
+:::
+
+**Prerequisites:** an Owner or Admin on the Conduit organization, and a Google Workspace **super admin** (regular admins lack provisioning rights).
+
+### 1. Add the custom SAML / SCIM app
+
+1. [Google Admin console](https://admin.google.com) → **Apps → Web and mobile apps → Add app → Add custom SAML app**.
+2. Name the app (e.g. "Conduit"), **Continue**.
+3. Skip the SAML config (only provisioning is needed) — **Continue → Finish**.
+
+### 2. Configure auto-provisioning
+
+1. From the app's page, click **Auto-provisioning**.
+2. **SCIM connector configuration**: **Endpoint URL** = the Conduit Tenant URL; **Bearer token** = the secret token.
+3. **Test connection** → expect success.
+4. **Attribute mapping**: keep the defaults.
+5. **Provisioning scope**: choose which org units / groups to sync.
+6. **Deprovisioning**: choose **Suspend the user** (maps to `active=false` in Conduit).
+7. **Save**, then toggle the **Auto-provisioning** switch on. Google syncs every ~30 minutes.
+
+### Troubleshooting — Google Workspace
+
+- **"This service is not available"** on the SCIM connector page — your Workspace plan doesn't include SCIM. Upgrade to Cloud Identity Premium.
+- **Bearer token rejected** — ensure no quotes or whitespace were added when pasting.
+- **Users not appearing** — confirm the user is inside an org unit or group within the app's provisioning scope. Users outside the scope are silently ignored.
+
+---
+
+## Revoking access
+
+For any IdP: in Conduit, go to **Provisioning** (`/org/scim`) and click **Revoke** on the connection. This invalidates the token immediately — the IdP will receive a 401 on its next sync. Teams and users the connection created remain in place until removed manually.
