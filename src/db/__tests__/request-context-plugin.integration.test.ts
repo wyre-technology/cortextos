@@ -87,6 +87,15 @@ async function buildApp(): Promise<FastifyInstance> {
 }
 
 describe('request-context plugin — settle matrix', () => {
+  // PROPAGATION-CRITICAL — do not weaken this test.
+  // It is the only case in the matrix that discriminates a working request
+  // context from a broken one. The rollback / onError / raw-close cases all
+  // assert the probe row is ABSENT — which is equally true if the plugin
+  // never established a context at all (the handler's getSql() throws, 500s,
+  // and never inserts). They pass vacuously against a dead-on-arrival plugin.
+  // This COMMIT case asserts the row is PRESENT, so it fails the moment the
+  // ALS context stops reaching the handler — exactly the c2 bug this test
+  // first caught (enterWith() after an await). Keep it asserting row-PRESENT.
   it('COMMITs the request transaction on a <500 response', async () => {
     const app = await buildApp();
     try {
