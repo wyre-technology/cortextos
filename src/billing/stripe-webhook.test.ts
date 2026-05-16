@@ -593,6 +593,115 @@ describe('stripeWebhookRoutes', () => {
     await app.close();
   });
 
+  // -------------------------------------------------------------------------
+  // Track C — reseller-channel invoice routing
+  // -------------------------------------------------------------------------
+
+  // postgres.js returns a query result that is an array with a `.count`
+  // property. The Track C handlers read `.count` to rowCount-gate; the
+  // mock must carry it.
+  function createCountingSql(count: number): postgres.Sql {
+    const result = Object.assign([], { count });
+    return vi.fn().mockResolvedValue(result) as unknown as postgres.Sql;
+  }
+
+  async function buildAppWithSql(orgService: OrgService, sql: postgres.Sql): Promise<FastifyInstance> {
+    vi.resetModules();
+    stubStripeEnv();
+    const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
+    const app = Fastify({ logger: false });
+    await app.register(stripeWebhookRoutes(orgService, sql));
+    return app;
+  }
+
+  it('routes invoice.payment_succeeded WITH reseller_invoice_id to Track C → marks paid, 200', async () => {
+    const orgService = createMockOrgService();
+    const sql = createCountingSql(1);
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_rc_paid',
+      type: 'invoice.payment_succeeded',
+      data: { object: { id: 'in_x', metadata: { reseller_invoice_id: 'inv-rc-1' } } },
+    });
+    const app = await buildAppWithSql(orgService, sql);
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    // Track C path ran the reseller_invoices UPDATE; Track A subscription
+    // path was not taken (no orgService call).
+    expect(sql).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('routes invoice.payment_failed WITH reseller_invoice_id to Track C → marks past_due, 200', async () => {
+    const orgService = createMockOrgService();
+    const sql = createCountingSql(1);
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_rc_failed',
+      type: 'invoice.payment_failed',
+      data: { object: { id: 'in_x', metadata: { reseller_invoice_id: 'inv-rc-2' } } },
+    });
+    const app = await buildAppWithSql(orgService, sql);
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(sql).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('200-acks (not 500) when reseller_invoice_id matches no row — permanent failure, retry cannot help', async () => {
+    const orgService = createMockOrgService();
+    const sql = createCountingSql(0); // zero rows matched
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_rc_orphan',
+      type: 'invoice.payment_succeeded',
+      data: { object: { id: 'in_x', metadata: { reseller_invoice_id: 'inv-nonexistent' } } },
+    });
+    const app = await buildAppWithSql(orgService, sql);
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    // Unresolvable event is 200-acked, not 500 — a 500 would trigger a
+    // Stripe exponential-retry storm on a permanently-unresolvable event.
+    expect(response.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('invoice.payment_succeeded WITHOUT reseller_invoice_id stays on the Track A path', async () => {
+    const orgService = createMockOrgService();
+    // Track A path: no reseller metadata → subscription-recovery logic.
+    // subRaw is absent → the Track A handler breaks early; no Track C UPDATE.
+    const sql = createCountingSql(0);
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_ta',
+      type: 'invoice.payment_succeeded',
+      data: { object: { id: 'in_x', metadata: {} } },
+    });
+    const app = await buildAppWithSql(orgService, sql);
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    await app.close();
+  });
+
   it('returns 200 for unhandled event types without calling orgService', async () => {
     const orgService = createMockOrgService();
 

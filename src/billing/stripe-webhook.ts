@@ -7,15 +7,106 @@ import { sendLoopsEvent } from '../email/loops.js';
 import { notifyBillingAnomaly } from './sales-notifier.js';
 
 /**
+ * Webhook handler for a Track C reseller-channel invoice payment success.
+ *
+ * rowCount-gating pattern: the UPDATE is guarded `WHERE status IN
+ * ('open','past_due')` so a duplicate Stripe delivery (at-least-once)
+ * AND an out-of-order delivery are both absorbed — a second
+ * payment_succeeded matches zero rows because status is already 'paid'.
+ *
+ * FUTURE on-paid side-effects (MSP notification, revenue-event emission,
+ * Loops event): gate them on `result.count > 0` of THIS update. A
+ * side-effect inside `if (result.count > 0)` fires exactly-once under
+ * at-least-once delivery WITHOUT a dedup table — the row-transition
+ * itself is the dedup token. A dedup table is only needed if a future
+ * side-effect is a non-idempotent external call that cannot be
+ * rowCount-gated.
+ *
+ * BYPASS RLS: reseller_invoices has FORCE ROW LEVEL SECURITY (mig 027).
+ * This UPDATE has no user session to satisfy the RLS policy; it relies
+ * on the webhook connection role (gatewayadmin) carrying the BYPASSRLS
+ * attribute. DEPLOY-CHECKLIST: the production conduit DB-role must be
+ * verified to carry BYPASSRLS before this path is trusted in prod —
+ * do NOT infer prod==staging (staging was confirmed 2026-05-15).
+ *
+ * Error disposition (retry-signal-must-match-retry-tractability):
+ *   - zero-rows-matched (unresolvable / already-terminal) → permanent;
+ *     log + return normally → outer handler 200-acks. Retrying cannot
+ *     fix a missing row; a 500 here would trigger a Stripe retry-storm.
+ *   - DB error inside the UPDATE → transient; propagates → outer 500 →
+ *     Stripe retries, which can help.
+ */
+export async function handleResellerInvoicePaymentSucceeded(
+  resellerInvoiceId: string,
+  sql: postgres.Sql,
+  log: FastifyInstance['log'],
+): Promise<void> {
+  const result = await sql`
+    UPDATE reseller_invoices
+       SET status = 'paid'
+     WHERE id = ${resellerInvoiceId}
+       AND status IN ('open', 'past_due')
+  `;
+  if ((result as unknown as { count: number }).count === 0) {
+    log.warn(
+      { resellerInvoiceId },
+      'reseller invoice payment_succeeded matched no open/past_due row — acking (permanent, retry cannot help)',
+    );
+    return;
+  }
+  log.info({ resellerInvoiceId }, 'reseller invoice marked paid');
+}
+
+/**
+ * Webhook handler for a Track C reseller-channel invoice payment failure.
+ *
+ * Sets status='past_due'. Per the Track C scope-doc, MSP-level dunning
+ * lives at the subscription layer (mig 024 first_failure_at on
+ * subscriptions) — the reseller-invoice carries a derived 'past_due'
+ * status as a visible-state, NOT its own dunning clock. The MSP's WYRE
+ * subscription dunning handles grace + suspension.
+ *
+ * rowCount-gating, BYPASS RLS, and error disposition: identical to
+ * handleResellerInvoicePaymentSucceeded above — see that docblock.
+ */
+export async function handleResellerInvoicePaymentFailed(
+  resellerInvoiceId: string,
+  sql: postgres.Sql,
+  log: FastifyInstance['log'],
+): Promise<void> {
+  const result = await sql`
+    UPDATE reseller_invoices
+       SET status = 'past_due'
+     WHERE id = ${resellerInvoiceId}
+       AND status = 'open'
+  `;
+  if ((result as unknown as { count: number }).count === 0) {
+    log.warn(
+      { resellerInvoiceId },
+      'reseller invoice payment_failed matched no open row — acking (permanent, retry cannot help)',
+    );
+    return;
+  }
+  log.info({ resellerInvoiceId }, 'reseller invoice marked past_due');
+}
+
+/**
  * Registers the Stripe webhook handler at POST /api/webhooks/stripe.
  *
  * Handles:
  *   - checkout.session.completed → upgrade org to pro
  *   - customer.subscription.updated → sync plan (canceled-only downgrade)
  *   - customer.subscription.deleted → downgrade to free
- *   - invoice.payment_failed → set first_failure_at, fire Loops dunning event
- *   - invoice.payment_succeeded → clear first_failure_at, set recovered_at,
- *     fire Loops recovered event (only if it ended a dunning cycle)
+ *   - invoice.payment_failed → Track A: set first_failure_at + fire Loops
+ *     dunning event. Track C: mark reseller_invoices past_due.
+ *   - invoice.payment_succeeded → Track A: clear first_failure_at, set
+ *     recovered_at, fire Loops recovered event. Track C: mark
+ *     reseller_invoices paid.
+ *
+ * Track A vs Track C routing discriminator: a reseller-channel invoice
+ * carries `metadata.reseller_invoice_id` (set by ResellerInvoiceService
+ * at createInvoice time). Stripe subscription invoices never carry that
+ * key — its presence is an unambiguous discriminator.
  *
  * Dunning architecture (Track A, mig 024):
  *   - Derive-on-fly. Stripe is source of truth for subscription status.
@@ -150,6 +241,16 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
 
           case 'invoice.payment_failed': {
             const invoice = event.data.object as Stripe.Invoice;
+
+            // Track C routing: reseller-channel invoices carry
+            // metadata.reseller_invoice_id. Route + break before the
+            // Track A subscription-dunning path.
+            const resellerInvoiceIdF = invoice.metadata?.reseller_invoice_id;
+            if (resellerInvoiceIdF) {
+              await handleResellerInvoicePaymentFailed(resellerInvoiceIdF, sql, app.log);
+              break;
+            }
+
             // Stripe API moved invoice.subscription to invoice.parent.subscription_details.subscription in v22.
             const subRaw = invoice.parent?.subscription_details?.subscription ?? null;
             const subscriptionId = typeof subRaw === 'string' ? subRaw : subRaw?.id ?? null;
@@ -215,6 +316,16 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
 
           case 'invoice.payment_succeeded': {
             const invoice = event.data.object as Stripe.Invoice;
+
+            // Track C routing: reseller-channel invoices carry
+            // metadata.reseller_invoice_id. Route + break before the
+            // Track A subscription-recovery path.
+            const resellerInvoiceIdS = invoice.metadata?.reseller_invoice_id;
+            if (resellerInvoiceIdS) {
+              await handleResellerInvoicePaymentSucceeded(resellerInvoiceIdS, sql, app.log);
+              break;
+            }
+
             // Stripe API moved invoice.subscription to invoice.parent.subscription_details.subscription in v22.
             const subRaw = invoice.parent?.subscription_details?.subscription ?? null;
             const subscriptionId = typeof subRaw === 'string' ? subRaw : subRaw?.id ?? null;
