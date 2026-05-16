@@ -153,6 +153,13 @@ export const config = {
   // Loops.so marketing automation
   loopsApiKey: process.env.LOOPS_API_KEY ?? '',
 
+  // Resend — transactional email (invitations, welcome, security notices).
+  // Unset => transactional email is a logged no-op (see src/email/resend.ts).
+  resendApiKey: process.env.RESEND_API_KEY ?? '',
+  // From-address for transactional email. MUST be on a domain verified in the
+  // Resend account, so it is env-configurable per environment.
+  emailFrom: process.env.EMAIL_FROM ?? 'Conduit <notifications@conduit.wyre.ai>',
+
   // Dunning lifecycle (Track A — Ruby's checkpoint 3 design, Aaron-acked).
   // Grace period in days that elapses BEFORE service suspension after the
   // FIRST invoice.payment_failed. Stripe's smart-retries run during the

@@ -520,6 +520,29 @@ describe('orgRoutes', () => {
 
       expect(response.statusCode).toBe(403);
     });
+
+    it('returns 400 for a malformed optional email — before any invitation is created', async () => {
+      authenticateAs();
+      const createInvitation = vi.fn();
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        createInvitation,
+      });
+      const billingGate = createMockBillingGate({
+        canUseTeamFeatures: vi.fn().mockResolvedValue(true),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/invitations',
+        payload: { email: 'not-an-email' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      // Validation precedes the mutation — no invitation row is created.
+      expect(createInvitation).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

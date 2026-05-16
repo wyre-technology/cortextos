@@ -13,6 +13,13 @@ import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
 import { sendLoopsEvent } from '../email/loops.js';
+import {
+  sendInvitationEmail,
+  sendMemberRemovedEmail,
+  sendRoleChangedEmail,
+} from '../email/transactional.js';
+import { validateEmail } from '../signup/routes.js';
+import { getSql } from '../db/context.js';
 
 interface OrgRouteDeps {
   orgService: OrgService;
@@ -42,6 +49,15 @@ async function requireOrgRole(
   }
 
   return user;
+}
+
+/** Resolve a user's email by id, or null if unknown. The users table has no
+ *  RLS, so the row survives org_members removal — safe to call post-mutation. */
+async function resolveUserEmail(userId: string): Promise<string | null> {
+  const rows = await getSql()<{ email: string | null }[]>`
+    SELECT email FROM users WHERE id = ${userId} LIMIT 1
+  `;
+  return rows[0]?.email ?? null;
 }
 
 export function orgRoutes(deps: OrgRouteDeps) {
@@ -184,7 +200,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // -----------------------------------------------------------------------
 
     // POST /api/orgs/:orgId/invitations — create invite link
-    app.post<{ Params: { orgId: string } }>(
+    //
+    // The optional `email` body field is additive and backward-compatible:
+    // when present the invite is also emailed to that address; the response
+    // still carries the copy-link, so an omitted `email` is the unchanged
+    // copy-link flow.
+    app.post<{ Params: { orgId: string }; Body: { email?: string } }>(
       '/api/orgs/:orgId/invitations',
       { config: { rateLimit: { max: 10, timeWindow: '1 hour' } } },
       async (request, reply) => {
@@ -198,10 +219,39 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(402).send({ error: 'Upgrade to Pro to invite team members' });
         }
 
+        // Validate the optional invitee address BEFORE the mutation, so a
+        // typo'd address is fast 400 feedback rather than a created
+        // invitation whose email silently fails. An empty/whitespace-only
+        // value means the field was not provided — skip straight to the
+        // unchanged copy-link flow rather than 400-ing it.
+        let inviteEmail: string | undefined;
+        if (request.body?.email?.trim()) {
+          const v = validateEmail(request.body.email);
+          if (!v.ok) return reply.code(400).send({ error: v.reason });
+          inviteEmail = v.email;
+        }
+
         const { invitation, plainToken } = await orgService.createInvitation(orgId, user.sub);
         const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
 
         void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'member_invited', metadata: { invitationId: invitation.id } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // Email prep + send are non-blocking: a failure here must not 500 a
+        // request whose invitation was already created.
+        if (inviteEmail) {
+          try {
+            const org = await orgService.getOrg(orgId);
+            sendInvitationEmail(request.log, {
+              to: inviteEmail,
+              orgName: org?.name ?? 'your organization',
+              inviteUrl,
+              invitedByEmail: user.email,
+            });
+          } catch (err) {
+            request.log.warn({ err }, 'invitation email prep failed');
+          }
+        }
+
         // The plainToken is included in the response body — this is the only
         // moment it ever exists in cleartext outside the inviter's clipboard.
         // Subsequent reads (listInvitations, getInvitationByToken) never carry
@@ -283,6 +333,22 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(400).send({ error: 'Cannot remove the org owner' });
         }
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'member_removed', metadata: { memberRole: targetMembership?.role } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // Email prep + send are non-blocking: a failure here must not 500 a
+        // request whose member removal already committed. The users row
+        // survives org_members removal, so the address is still resolvable.
+        try {
+          const to = await resolveUserEmail(userId);
+          if (to) {
+            const org = await orgService.getOrg(orgId);
+            sendMemberRemovedEmail(request.log, {
+              to,
+              orgName: org?.name ?? 'an organization',
+            });
+          }
+        } catch (err) {
+          request.log.warn({ err }, 'member-removed email prep failed');
+        }
         return reply.code(204).send();
       },
     );
@@ -313,6 +379,22 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'role_changed', metadata: { oldRole, newRole: role } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // Email prep + send are non-blocking: a failure here must not 500 a
+        // request whose role change already committed.
+        try {
+          const to = await resolveUserEmail(userId);
+          if (to) {
+            const org = await orgService.getOrg(orgId);
+            sendRoleChangedEmail(request.log, {
+              to,
+              orgName: org?.name ?? 'an organization',
+              newRole: role,
+            });
+          }
+        } catch (err) {
+          request.log.warn({ err }, 'role-changed email prep failed');
+        }
         return reply.send(updated);
       },
     );

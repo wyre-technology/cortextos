@@ -30,6 +30,7 @@ import { systemPool } from '../db/context.js';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
+import { sendWelcomeEmail } from '../email/transactional.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
 import { isSafePath } from './safe-path.js';
 import { findAdoptableUserId } from './adopt-by-email.js';
@@ -350,7 +351,10 @@ export function azureAdPlugin() {
         await systemPool()`UPDATE users SET tenant_id = ${tid} WHERE id = ${sub}`;
       }
 
-      if (isNewUser) enrollNewUserInLoops(app.log, email, name);
+      if (isNewUser) {
+        enrollNewUserInLoops(app.log, email, name);
+        sendWelcomeEmail(app.log, { to: email, name });
+      }
 
       // Set the gateway session cookie. `emailVerified` was computed above
       // (the adopt-by-email step gates on it).

@@ -27,6 +27,7 @@ import { decodeSessionCookie } from '../lib/session-cookie.js';
 import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
 import { findAdoptableUserId } from './adopt-by-email.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
+import { sendWelcomeEmail } from '../email/transactional.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -370,7 +371,10 @@ export function auth0Plugin() {
        }
       }
 
-      if (isNewUser) enrollNewUserInLoops(app.log, email, name);
+      if (isNewUser) {
+        enrollNewUserInLoops(app.log, email, name);
+        sendWelcomeEmail(app.log, { to: email, name });
+      }
 
       // Set the gateway session cookie
       const user: Auth0User = { sub, email, name, emailVerified };
