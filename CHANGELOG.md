@@ -200,6 +200,16 @@ mcp-gateway CHANGELOG.
   hoist (PRs #57/#73/#90) — verified against the registered routes in
   `src/web/routes.ts`. The legacy `docs/onboarding-guide.md` is retained
   as engineering reference with a "MIGRATED" pointer.
+- Migrated the API reference into the Starlight content tree at
+  `docs/src/content/docs/reference/api.mdx` (previously a "Coming soon"
+  stub). Endpoint paths verified against the registered routes in `src/`
+  (org/oauth/health/audit/tool-access/billing/proxy). Added a note that
+  billing endpoints are conditionally registered (Stripe-dependent) and
+  scoped the section as subscription billing so reseller-channel billing
+  can be added later without a rewrite; documented the
+  `POST /api/webhooks/stripe` ingest endpoint. The legacy
+  `docs/api-reference.md` is retained as engineering reference with a
+  "MIGRATED" pointer.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

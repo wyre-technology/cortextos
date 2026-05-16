@@ -1,5 +1,13 @@
 # API Reference
 
+> **MIGRATED — this file is no longer the source of truth.**
+>
+> The customer-facing version lives at [`docs/src/content/docs/reference/api.mdx`](src/content/docs/reference/api.mdx) and is published at `https://conduit.wyre.ai/docs/reference/api`. Endpoint paths in the Starlight version were verified against the registered routes in `src/`.
+>
+> This file is preserved as engineering reference until the legacy `docs/*.md` sweep-delete. Do not extend this file — make changes in the Starlight `.mdx` version.
+
+---
+
 All endpoints require authentication unless noted otherwise. Authentication is via Auth0 OIDC session (web UI routes) or Bearer JWT (API/MCP routes).
 
 > **Note:** Examples in this document use vendor names like `datto-rmm`, `itglue`, and `autotask` for illustration. The actual vendors available depend on your deployment configuration.
