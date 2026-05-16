@@ -129,6 +129,64 @@ export const VENDORS: Record<string, VendorConfig> = {
     },
   },
 
+  action1: {
+    name: 'Action1',
+    slug: 'action1',
+    category: 'rmm',
+    containerUrl: 'http://action1-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, placeholder: 'Client ID from Action1 → Settings → API Credentials' },
+      { key: 'secret', label: 'Secret', required: true, secret: true, placeholder: 'Non-recoverable — copy on creation' },
+      {
+        key: 'region',
+        label: 'Region',
+        required: true,
+        options: ['NorthAmerica', 'Europe', 'AsiaPacific', 'Australia'],
+      },
+      { key: 'defaultOrgId', label: 'Default Organization ID', required: false, placeholder: 'Optional — for single-tenant use' },
+    ],
+    headerMapping: {
+      apiKey: 'X-Action1-API-Key',
+      secret: 'X-Action1-Secret',
+      region: 'X-Action1-Region',
+      defaultOrgId: 'X-Action1-Default-Org-Id',
+    },
+    docsUrl: 'https://www.action1.com/api-documentation/',
+    async validate(creds) {
+      // Action1 uses OAuth 2.0 client_credentials grant. The MCP server itself
+      // handles the token exchange + caching at request time; validate here just
+      // confirms the credentials can mint a token against the configured region.
+      const hosts: Record<string, string> = {
+        NorthAmerica: 'app.action1.com',
+        Europe: 'app.eu.action1.com',
+        AsiaPacific: 'app.ap.action1.com',
+        Australia: 'app.au.action1.com',
+      };
+      const host = hosts[creds.region];
+      if (!host) {
+        return { valid: false, error: `Unknown Action1 region: ${creds.region}` };
+      }
+      const body = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: creds.apiKey,
+        client_secret: creds.secret,
+      });
+      const res = await fetch(`https://${host}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 400) {
+          return { valid: false, error: 'Invalid Action1 API Key or Secret for the selected region.' };
+        }
+        return { valid: false, error: `Action1 OAuth token endpoint returned HTTP ${res.status}.` };
+      }
+      return { valid: true };
+    },
+  },
+
   domotz: {
     name: 'Domotz',
     slug: 'domotz',
