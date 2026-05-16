@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { OrgService } from './org-service.js';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import type { VendorMonitor } from '../monitoring/vendor-monitor.js';
 import { enterTestContext, type Sql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
@@ -131,10 +132,18 @@ function unauthenticated(): void {
   );
 }
 
+/** A VendorMonitor stub whose getStatus() returns the given cache. */
+function createMockVendorMonitor(
+  cache: Record<string, unknown> = {},
+): VendorMonitor {
+  return { getStatus: vi.fn().mockReturnValue(cache) } as unknown as VendorMonitor;
+}
+
 async function buildApp(
   orgService: OrgService,
   credentialService?: CredentialService,
   billingGate?: BillingGate,
+  vendorMonitor?: VendorMonitor,
 ): Promise<FastifyInstance> {
   vi.resetModules();
   vi.stubEnv('MASTER_KEY', MASTER_KEY);
@@ -149,7 +158,8 @@ async function buildApp(
       orgService,
       credentialService: credentialService ?? createMockCredentialService(),
       billingGate: billingGate ?? createMockBillingGate(),
-      adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any //sql: {} as any,
+      adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any, //sql: {} as any,
+      vendorMonitor: vendorMonitor ?? createMockVendorMonitor(),
     }),
   );
   return app;
@@ -1069,6 +1079,126 @@ describe('orgRoutes', () => {
 
       expect(response.statusCode).toBe(302);
       expect(response.headers.location).toBe('/auth/login');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Vendor health
+  // -------------------------------------------------------------------------
+
+  describe('GET /api/orgs/:orgId/vendor-health', () => {
+    /** A monitor cache entry shaped like VendorMonitor.getStatus() output. */
+    function cacheEntry(over: Record<string, unknown> = {}) {
+      return {
+        status: 'up',
+        version: '1.0.0',
+        responseMs: 120,
+        lastChecked: new Date('2026-05-16T17:00:00.000Z'),
+        lastStateChange: new Date('2026-05-16T16:00:00.000Z'),
+        consecutiveFailures: 0,
+        lastError: null,
+        ...over,
+      };
+    }
+
+    it('returns 403 for a non-member', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({ getMembership: vi.fn().mockResolvedValue(null) });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/orgs/org-1/vendor-health',
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('maps each connected vendor to its 4-state health', async () => {
+      authenticateAs();
+      mockGetVendor.mockImplementation((slug: string) => ({ name: `Vendor ${slug}` }));
+      const orgService = createMockOrgService({ getMembership: memberMembership() });
+      const credentialService = createMockCredentialService({
+        listOrgVendors: vi.fn().mockResolvedValue(['v-healthy', 'v-degraded', 'v-down', 'v-unprobed']),
+      });
+      const vendorMonitor = createMockVendorMonitor({
+        'v-healthy': cacheEntry(),
+        // up but carrying 1-2 failures below the down threshold -> degraded
+        'v-degraded': cacheEntry({ consecutiveFailures: 2, lastError: 'timeout' }),
+        'v-down': cacheEntry({ status: 'down', consecutiveFailures: 5, lastError: 'HTTP 503' }),
+        // 'v-unprobed' deliberately absent from the cache
+      });
+      app = await buildApp(orgService, credentialService, undefined, vendorMonitor);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/orgs/org-1/vendor-health',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const byslug = Object.fromEntries(
+        response.json().vendors.map((v: { vendorSlug: string }) => [v.vendorSlug, v]),
+      );
+      expect(byslug['v-healthy'].status).toBe('healthy');
+      expect(byslug['v-degraded'].status).toBe('degraded');
+      expect(byslug['v-down'].status).toBe('down');
+      expect(byslug['v-unprobed'].status).toBe('unknown');
+      expect(byslug['v-healthy'].displayName).toBe('Vendor v-healthy');
+    });
+
+    it('surfaces errorDetail only for degraded/down vendors, bounded to a controlled string', async () => {
+      authenticateAs();
+      mockGetVendor.mockImplementation((slug: string) => ({ name: slug }));
+      const orgService = createMockOrgService({ getMembership: memberMembership() });
+      const credentialService = createMockCredentialService({
+        listOrgVendors: vi.fn().mockResolvedValue(['v-healthy', 'v-down-http', 'v-down-raw']),
+      });
+      const vendorMonitor = createMockVendorMonitor({
+        'v-healthy': cacheEntry({ lastError: null }),
+        'v-down-http': cacheEntry({ status: 'down', consecutiveFailures: 5, lastError: 'HTTP 503' }),
+        // A raw exception string from the probe catch path must NOT pass through.
+        'v-down-raw': cacheEntry({
+          status: 'down',
+          consecutiveFailures: 5,
+          lastError: 'connect ECONNREFUSED 10.0.3.7:8080',
+        }),
+      });
+      app = await buildApp(orgService, credentialService, undefined, vendorMonitor);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/orgs/org-1/vendor-health',
+      });
+
+      const byslug = Object.fromEntries(
+        response.json().vendors.map((v: { vendorSlug: string }) => [v.vendorSlug, v]),
+      );
+      expect(byslug['v-healthy'].errorDetail).toBeNull();
+      // HTTP status collapses to a class; the raw exception string is denied.
+      expect(byslug['v-down-http'].errorDetail).toBe('HTTP 5xx');
+      expect(byslug['v-down-raw'].errorDetail).toBe('connection failed');
+    });
+
+    it('returns only the vendors the org has connected', async () => {
+      authenticateAs();
+      mockGetVendor.mockImplementation((slug: string) => ({ name: slug }));
+      const orgService = createMockOrgService({ getMembership: memberMembership() });
+      const credentialService = createMockCredentialService({
+        listOrgVendors: vi.fn().mockResolvedValue(['v-connected']),
+      });
+      const vendorMonitor = createMockVendorMonitor({
+        'v-connected': cacheEntry(),
+        'v-other-tenant': cacheEntry(),
+      });
+      app = await buildApp(orgService, credentialService, undefined, vendorMonitor);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/orgs/org-1/vendor-health',
+      });
+
+      const slugs = response.json().vendors.map((v: { vendorSlug: string }) => v.vendorSlug);
+      expect(slugs).toEqual(['v-connected']);
     });
   });
 

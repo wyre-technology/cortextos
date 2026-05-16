@@ -15,6 +15,50 @@ export interface VendorStatus {
 
 const FAILURE_THRESHOLD = 3;
 
+/**
+ * Latency above which an otherwise-up vendor is reported `degraded` rather
+ * than `healthy`. Tunable; the probe itself times out at 10s.
+ */
+export const DEGRADED_LATENCY_MS = 2000;
+
+/** Tenant-facing 4-state health derived from the raw monitor status. */
+export type VendorHealthState = 'healthy' | 'degraded' | 'down' | 'unknown';
+
+/**
+ * Map a raw monitor {@link VendorStatus} to the tenant-facing 4-state model.
+ *
+ *   down     — the monitor has declared the vendor down (>= 3 failures)
+ *   degraded — responding, but slow (latency over threshold) OR carrying
+ *              1-2 consecutive failures (below the hard down threshold)
+ *   healthy  — up, fast, no recent failures
+ *   unknown  — not yet probed
+ */
+export function deriveVendorHealth(
+  s: Pick<VendorStatus, 'status' | 'consecutiveFailures' | 'responseMs'>,
+): VendorHealthState {
+  if (s.status === 'down') return 'down';
+  if (s.status === 'unknown') return 'unknown';
+  if (s.consecutiveFailures > 0 || s.responseMs > DEGRADED_LATENCY_MS) return 'degraded';
+  return 'healthy';
+}
+
+/**
+ * Bound a raw monitor `lastError` to a controlled, tenant-safe string.
+ *
+ * The monitor's `lastError` is either `HTTP <status>` (from a non-OK probe
+ * response) or a raw exception message from the probe's catch block — which
+ * can carry arbitrary internal detail. This function is default-deny: it
+ * allowlists the `HTTP NNN` shape and collapses it to a status class; every
+ * other shape maps to a single generic string. An unanticipated error shape
+ * therefore cannot leak to a tenant.
+ */
+export function summarizeProbeError(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /^HTTP (\d)\d{2}$/.exec(raw);
+  if (m) return `HTTP ${m[1]}xx`;
+  return 'connection failed';
+}
+
 export class VendorMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private state = new Map<string, VendorStatus>();

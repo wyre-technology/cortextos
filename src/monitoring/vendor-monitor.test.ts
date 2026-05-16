@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { VendorMonitor } from './vendor-monitor.js';
+import {
+  VendorMonitor,
+  deriveVendorHealth,
+  summarizeProbeError,
+  DEGRADED_LATENCY_MS,
+} from './vendor-monitor.js';
 
 // Mock config before importing
 vi.mock('../config.js', () => ({
@@ -200,5 +205,59 @@ describe('VendorMonitor', () => {
     await monitor.probeAll();
     expect(monitor.getStatus()['test-vendor'].status).toBe('up');
     expect(monitor.getStatus()['test-vendor'].version).toBeNull();
+  });
+});
+
+describe('deriveVendorHealth', () => {
+  it('maps a fast, failure-free up vendor to healthy', () => {
+    expect(deriveVendorHealth({ status: 'up', consecutiveFailures: 0, responseMs: 100 }))
+      .toBe('healthy');
+  });
+
+  it('maps down to down regardless of latency', () => {
+    expect(deriveVendorHealth({ status: 'down', consecutiveFailures: 5, responseMs: 50 }))
+      .toBe('down');
+  });
+
+  it('maps an unprobed vendor to unknown', () => {
+    expect(deriveVendorHealth({ status: 'unknown', consecutiveFailures: 0, responseMs: 0 }))
+      .toBe('unknown');
+  });
+
+  it('maps up-but-slow (latency over threshold) to degraded', () => {
+    expect(deriveVendorHealth({
+      status: 'up',
+      consecutiveFailures: 0,
+      responseMs: DEGRADED_LATENCY_MS + 1,
+    })).toBe('degraded');
+  });
+
+  it('maps up-with-1-2-failures (below the down threshold) to degraded', () => {
+    expect(deriveVendorHealth({ status: 'up', consecutiveFailures: 2, responseMs: 100 }))
+      .toBe('degraded');
+  });
+});
+
+describe('summarizeProbeError', () => {
+  it('returns null for a null input', () => {
+    expect(summarizeProbeError(null)).toBeNull();
+  });
+
+  it('collapses an HTTP status to its class', () => {
+    expect(summarizeProbeError('HTTP 503')).toBe('HTTP 5xx');
+    expect(summarizeProbeError('HTTP 404')).toBe('HTTP 4xx');
+  });
+
+  it('maps any non-HTTP error shape to the generic string (default-deny)', () => {
+    expect(summarizeProbeError('connect ECONNREFUSED 10.0.3.7:8080')).toBe('connection failed');
+    expect(summarizeProbeError('The operation timed out')).toBe('connection failed');
+    expect(summarizeProbeError('getaddrinfo ENOTFOUND datto-rmm-mcp')).toBe('connection failed');
+  });
+
+  it('does not pass through a string that merely contains "HTTP NNN"', () => {
+    // The allowlist is anchored — a crafted message embedding the pattern
+    // must not slip past as if it were a clean status.
+    expect(summarizeProbeError('Error: HTTP 500 from http://internal-host:8080'))
+      .toBe('connection failed');
   });
 });

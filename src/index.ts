@@ -326,6 +326,7 @@ await app.register(orgRoutes({
   credentialService,
   billingGate,
   adminAuditService,
+  vendorMonitor,
 }));
 
 // Tool access API (discover tools, manage allowlists per vendor/role)

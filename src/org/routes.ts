@@ -11,6 +11,11 @@ import type { BillingGate } from '../billing/gate.js';
 import { isPaidPlan } from '../billing/gate.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
+import {
+  deriveVendorHealth,
+  summarizeProbeError,
+  type VendorMonitor,
+} from '../monitoring/vendor-monitor.js';
 import { config } from '../config.js';
 import { sendLoopsEvent } from '../email/loops.js';
 import {
@@ -26,6 +31,7 @@ interface OrgRouteDeps {
   credentialService: CredentialService;
   billingGate: BillingGate;
   adminAuditService: AdminAuditService;
+  vendorMonitor: VendorMonitor;
 }
 
 /**
@@ -61,7 +67,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
 }
 
 export function orgRoutes(deps: OrgRouteDeps) {
-  const { orgService, credentialService, billingGate, adminAuditService } = deps;
+  const { orgService, credentialService, billingGate, adminAuditService, vendorMonitor } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -396,6 +402,48 @@ export function orgRoutes(deps: OrgRouteDeps) {
           request.log.warn({ err }, 'role-changed email prep failed');
         }
         return reply.send(updated);
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // Vendor health
+    // -----------------------------------------------------------------------
+
+    // GET /api/orgs/:orgId/vendor-health — per-vendor container health for
+    // the vendors this org has connected. Reads the VendorMonitor's 60s
+    // server-side poll cache; it never live-checks a container on page load.
+    // Current-state only — no uptime history (see
+    // .taskmaster/docs/spec-observability-vendor-health.md §5.4).
+    app.get<{ Params: { orgId: string } }>(
+      '/api/orgs/:orgId/vendor-health',
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
+        if (!user) return;
+
+        const slugs = await credentialService.listOrgVendors(orgId);
+        const cache = vendorMonitor.getStatus();
+
+        const vendors = slugs.map((slug) => {
+          const s = cache[slug];
+          const status = s ? deriveVendorHealth(s) : 'unknown';
+          const isUnhealthy = status === 'degraded' || status === 'down';
+          return {
+            vendorSlug: slug,
+            displayName: getVendor(slug)?.name ?? slug,
+            status,
+            lastChecked: s?.lastChecked.toISOString() ?? null,
+            latencyMs: s?.responseMs ?? 0,
+            version: s?.version ?? null,
+            // errorDetail is surfaced only for degraded/down — it backs the
+            // UI hover affordance and is meaningless when healthy. The raw
+            // monitor lastError is bound to a controlled string before it
+            // reaches tenant output — never a raw exception message.
+            errorDetail: isUnhealthy ? summarizeProbeError(s?.lastError ?? null) : null,
+          };
+        });
+
+        return reply.send({ vendors });
       },
     );
 
