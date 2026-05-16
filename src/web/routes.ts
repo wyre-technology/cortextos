@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
@@ -563,6 +563,71 @@ export function webRoutes(deps: WebRouteDeps) {
 
       return reply.type('text/html').send(html);
     });
+
+    // =====================================================================
+    // Reseller-console shell — stub routes (Track C)
+    // =====================================================================
+    //
+    // The reseller-channel UX (Track C "Conduit — Subtenant Experience"
+    // Figma, 5 surfaces) is built surface-by-surface in follow-up PRs.
+    // This PR pours the layout foundation: the reseller-console nav
+    // ("Customers") + the reseller-settings nav (General / Branding /
+    // Billing & Plans / API & Webhooks / Audit Log).
+    //
+    // The PR #70 lock-step invariant requires a registered handler for
+    // every nav href. These stubs honor it — each renders the layout
+    // shell + a "coming soon" body so a sidebar click resolves to a 200,
+    // not a 404. Real surfaces replace each stub in its own PR (same
+    // play as the /org/billing stub → IA shell progression).
+
+    function resellerStubBody(surface: string): string {
+      return `
+        <section style="max-width:560px;margin:48px auto;padding:24px">
+          <h1 style="font-size:22px;font-weight:700;margin-bottom:12px">${surface}</h1>
+          <p style="color:var(--text-secondary);line-height:1.6">
+            This is part of the Conduit reseller console. The ${surface}
+            surface is in active development and will land in a follow-up
+            release.
+          </p>
+        </section>
+      `;
+    }
+
+    // ---------- GET /org/customers (Track C Surface 1 — stub) ----------
+    app.get('/org/customers', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+      const html = renderLayout(
+        { user, org, activePath: '/org/customers', title: `${org.name} - Customers` },
+        resellerStubBody('Customers'),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/reseller/* (Track C Surface 5 — stubs) ----------
+    //
+    // Registered as explicit `app.get('<literal>', …)` calls (not a loop)
+    // so the layout.test.ts lock-step source-grep can statically verify
+    // each nav href has a handler. The shared `resellerSettingsStub`
+    // factory keeps the bodies DRY without hiding the path literal.
+    const resellerSettingsStub = (path: string, label: string) =>
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+        if (!ctx) return;
+        const { user, org } = ctx;
+        const html = renderLayout(
+          { user, org, activePath: path, title: `${org.name} - ${label}`, navMode: 'reseller-settings' },
+          resellerStubBody(label),
+        );
+        return reply.type('text/html').send(html);
+      };
+
+    app.get('/org/reseller/general',  resellerSettingsStub('/org/reseller/general', 'General'));
+    app.get('/org/reseller/branding', resellerSettingsStub('/org/reseller/branding', 'Branding'));
+    app.get('/org/reseller/billing',  resellerSettingsStub('/org/reseller/billing', 'Billing & Plans'));
+    app.get('/org/reseller/api',      resellerSettingsStub('/org/reseller/api', 'API & Webhooks'));
+    app.get('/org/reseller/audit',    resellerSettingsStub('/org/reseller/audit', 'Audit Log'));
 
     // =====================================================================
     // Team management pages (sidebar layout, Pro plan + admin/owner)
