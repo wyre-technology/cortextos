@@ -179,7 +179,7 @@ When Conduit makes upstream API calls, it uses credentials resolved from the req
 
 ### Container Architecture
 
-Vendor MCP server containers run on an internal network and are not directly exposed to the public internet. All inbound traffic passes through Conduit's authentication and authorization layer before reaching vendor MCP servers. The mechanism varies by deployment topology — `docker-compose` deployments use container `expose:` (internal-only) rather than `ports:` (host-bound), and Coolify/production deployments place Conduit behind a reverse proxy with the same effective result.
+Vendor MCP server containers run on an internal network and are not directly exposed to the public internet. All inbound traffic passes through Conduit's authentication and authorization layer before reaching vendor MCP servers. The mechanism varies by deployment topology — `docker-compose` deployments use container `expose:` (internal-only) rather than `ports:` (host-bound), and the production deployment on Azure Container Apps runs vendor containers as internal services reachable only through the gateway, with Azure's managed ingress fronting the single public endpoint.
 
 ---
 
