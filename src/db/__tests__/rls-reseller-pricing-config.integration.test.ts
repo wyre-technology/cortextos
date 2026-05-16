@@ -1,5 +1,5 @@
 /**
- * Migration 027 — reseller_pricing_config table + RLS + structural trigger
+ * Migration 025 — reseller_pricing_config table + RLS + structural trigger
  * + append-only supersession.
  *
  * Paired accept/reject coverage across the independent enforcement layers
@@ -57,7 +57,7 @@ beforeEach(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bootstrap — minimal schema mig 027 depends on
+// Bootstrap — minimal schema mig 025 depends on
 // ---------------------------------------------------------------------------
 
 async function bootstrapSchema(): Promise<void> {
@@ -109,11 +109,11 @@ async function bootstrapSchema(): Promise<void> {
 async function applyMigrations(): Promise<void> {
   for (const filename of [
     '023_reseller_admin_of_ancestor_helper.sql',
-    '027_reseller_pricing_config.sql',
-    // mig 028 adds reseller_pricing_config_view + current-only filter on
+    '025_reseller_pricing_config.sql',
+    // mig 026 adds reseller_pricing_config_view + current-only filter on
     // subtenant SELECT branch. The service's getCurrentPricing now reads
     // from the view, so this test bootstrap must include it.
-    '028_reseller_pricing_config_dp_e_and_created_by_strip.sql',
+    '026_reseller_pricing_config_dp_e_and_created_by_strip.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -164,7 +164,7 @@ async function provisionTestRole(): Promise<void> {
   await sql.unsafe(`CREATE ROLE rls_test_user`);
   await sql.unsafe(`GRANT USAGE ON SCHEMA public TO rls_test_user`);
   await sql.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rls_test_user`);
-  // mig 028 view — required for service-layer reads to work.
+  // mig 026 view — required for service-layer reads to work.
   await sql.unsafe(`GRANT SELECT ON reseller_pricing_config_view TO rls_test_user`);
 }
 
@@ -218,7 +218,7 @@ function makePctInput(overrides: Partial<{
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('mig 027 — RLS INSERT path', () => {
+describe('mig 025 — RLS INSERT path', () => {
   it('reseller-admin can set pricing for their depth-1 subtenant', async () => {
     const conn = await asUser('rita');
     try {
@@ -271,7 +271,7 @@ describe('mig 027 — RLS INSERT path', () => {
   });
 });
 
-describe('mig 027 — structural trigger', () => {
+describe('mig 025 — structural trigger', () => {
   // Trigger fires on every INSERT and operates on NEW row regardless of
   // RLS verdict; tests run with bypass (superuser) so we exercise the
   // trigger in isolation from RLS gating.
@@ -292,7 +292,7 @@ describe('mig 027 — structural trigger', () => {
   });
 });
 
-describe('mig 027 — CHECK constraints', () => {
+describe('mig 025 — CHECK constraints', () => {
   // CHECK constraints fire regardless of RLS; run as superuser to isolate.
   it('rejects percentage mode with amount_cents populated', async () => {
     await expect(
@@ -349,7 +349,7 @@ describe('mig 027 — CHECK constraints', () => {
   });
 });
 
-describe('mig 027 — RLS SELECT path', () => {
+describe('mig 025 — RLS SELECT path', () => {
   beforeEach(async () => {
     // Seed two rows as superuser (bypass RLS) — tests then read via
     // reserved rls_test_user connections to exercise SELECT policies.
@@ -395,7 +395,7 @@ describe('mig 027 — RLS SELECT path', () => {
   });
 });
 
-describe('mig 027 — append-only supersession', () => {
+describe('mig 025 — append-only supersession', () => {
   it('getCurrentPricing returns the latest effective row', async () => {
     const conn = await asUser('rita');
     try {
@@ -480,7 +480,7 @@ describe('mig 027 — append-only supersession', () => {
   });
 });
 
-describe('mig 027 — service-layer round-trip', () => {
+describe('mig 025 — service-layer round-trip', () => {
   it('setPricing returns the inserted shape (percentage)', async () => {
     const conn = await asUser('rita');
     try {

@@ -1,6 +1,6 @@
 /**
- * Migration 028 — DP-E current-only + created_by column-strip follow-up to
- * mig 027.
+ * Migration 026 — DP-E current-only + created_by column-strip follow-up to
+ * mig 025.
  *
  * Two mechanisms, each does ONE thing (per Aaron 2026-05-15 disambiguation
  * + boss-greenlit shape):
@@ -18,7 +18,7 @@
  *   - view: created_by preserved for reseller-admin
  *   - getCurrentPricing through view: composes row-gating + column-strip
  *
- * Companion: rls-reseller-pricing-config.integration.test.ts (mig 027
+ * Companion: rls-reseller-pricing-config.integration.test.ts (mig 025
  * foundation). Same testcontainer + rls_test_user reserved-connection
  * pattern (test-environment-substitution-fidelity discipline — local-pass
  * proves nothing unless the test-actor matches production-privilege-class).
@@ -102,8 +102,8 @@ async function bootstrapSchema(): Promise<void> {
 async function applyMigrations(): Promise<void> {
   for (const filename of [
     '023_reseller_admin_of_ancestor_helper.sql',
-    '027_reseller_pricing_config.sql',
-    '028_reseller_pricing_config_dp_e_and_created_by_strip.sql',
+    '025_reseller_pricing_config.sql',
+    '026_reseller_pricing_config_dp_e_and_created_by_strip.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -186,7 +186,7 @@ async function seedTwoConfigs() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('mig 028 — DP-E current-only on base table SELECT policy', () => {
+describe('mig 026 — DP-E current-only on base table SELECT policy', () => {
   beforeEach(seedTwoConfigs);
 
   it('subtenant sees ONLY the latest-effective row (older row hidden)', async () => {
@@ -209,7 +209,7 @@ describe('mig 028 — DP-E current-only on base table SELECT policy', () => {
     } finally { await conn.release(); }
   });
 
-  it('cross-reseller admin sees nothing (unchanged from mig 027)', async () => {
+  it('cross-reseller admin sees nothing (unchanged from mig 025)', async () => {
     const conn = await asUser('bob');
     try {
       const rows = await conn.query`SELECT id FROM reseller_pricing_config`;
@@ -226,7 +226,7 @@ describe('mig 028 — DP-E current-only on base table SELECT policy', () => {
   });
 });
 
-describe('mig 028 — view column-strip on created_by', () => {
+describe('mig 026 — view column-strip on created_by', () => {
   beforeEach(seedTwoConfigs);
 
   it('subtenant SELECT via view returns created_by = NULL on the current row', async () => {
@@ -282,7 +282,7 @@ describe('mig 028 — view column-strip on created_by', () => {
   });
 });
 
-describe('mig 028 — ServiceLayer.getCurrentPricing composes row-gating + column-strip', () => {
+describe('mig 026 — ServiceLayer.getCurrentPricing composes row-gating + column-strip', () => {
   beforeEach(seedTwoConfigs);
 
   it('subtenant: returns latest row with createdBy = null', async () => {
@@ -328,7 +328,7 @@ describe('mig 028 — ServiceLayer.getCurrentPricing composes row-gating + colum
   });
 });
 
-describe('mig 028 — conduit_is_latest_pricing_row helper contract', () => {
+describe('mig 026 — conduit_is_latest_pricing_row helper contract', () => {
   beforeEach(seedTwoConfigs);
 
   it('returns TRUE for the latest-effective row', async () => {
@@ -353,7 +353,7 @@ describe('mig 028 — conduit_is_latest_pricing_row helper contract', () => {
   });
 });
 
-describe('mig 028 — write-path unchanged by follow-up', () => {
+describe('mig 026 — write-path unchanged by follow-up', () => {
   it('setPricing still inserts into base table and returns expected shape', async () => {
     const conn = await asUser('rita');
     try {

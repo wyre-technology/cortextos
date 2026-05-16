@@ -1,6 +1,6 @@
 /**
  * ResellerPricingService — append-only supersession layer over
- * `reseller_pricing_config` (mig 027).
+ * `reseller_pricing_config` (mig 025).
  *
  * Track C PR-A foundation. Two responsibilities:
  *   - setPricing: append a new row capturing a (reseller, subtenant, mode,
@@ -34,7 +34,7 @@ export interface ResellerPricingConfig {
   effectiveAt: string;
   /**
    * The reseller-admin user_id who set this price. Reads via
-   * `reseller_pricing_config_view` (mig 028) nullify this column for
+   * `reseller_pricing_config_view` (mig 026) nullify this column for
    * non-reseller-admin callers (Aaron 2026-05-15 lock: subtenant cannot
    * see who set their price). Reseller-admin callers see the real value.
    */
@@ -140,7 +140,7 @@ export class ResellerPricingService {
    * Return the latest effective config row for `(resellerOrgId,
    * subtenantOrgId)`, or null if none exists.
    *
-   * Reads from `reseller_pricing_config_view` (mig 028), not the base
+   * Reads from `reseller_pricing_config_view` (mig 026), not the base
    * table. The view inherits the base SELECT policy's row-gating
    * (subtenant sees only their latest-effective row; reseller-admin
    * sees full history) AND applies CASE column-projection so subtenant

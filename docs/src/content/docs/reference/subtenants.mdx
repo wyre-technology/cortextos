@@ -104,7 +104,7 @@ Two operational notes:
 
 ## Reseller-scoped pricing
 
-A reseller can configure markup pricing for each of its customers (and, where applicable, their sub-customers) in `reseller_pricing_config` (migrations `027_reseller_pricing_config.sql` and `028_reseller_pricing_config_dp_e_and_created_by_strip.sql`).
+A reseller can configure markup pricing for each of its customers (and, where applicable, their sub-customers) in `reseller_pricing_config` (migrations `025_reseller_pricing_config.sql` and `026_reseller_pricing_config_dp_e_and_created_by_strip.sql`).
 
 Two pricing modes are supported:
 
@@ -151,5 +151,5 @@ There is no automatic data deletion when a customer leaves — that is a separat
 | Direct-parent admin helper | migration `018_rls_security_definer_helpers.sql` |
 | Reseller-shared vendor grants | migration `004_reseller_shared_vendor_grants.sql` |
 | Reseller support grants | migration `005_reseller_support_grants.sql` |
-| Reseller pricing config | migrations `027_reseller_pricing_config.sql`, `028_reseller_pricing_config_dp_e_and_created_by_strip.sql` |
+| Reseller pricing config | migrations `025_reseller_pricing_config.sql`, `026_reseller_pricing_config_dp_e_and_created_by_strip.sql` |
 | Customer sub-org invitations | migration `010_customer_sub_orgs.sql` |

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration:      028_reseller_pricing_config_dp_e_and_created_by_strip.sql
+-- Migration:      026_reseller_pricing_config_dp_e_and_created_by_strip.sql
 -- Date:           2026-05-15
 -- PRD Reference:  Track C scope-doc DP-E disambiguation (Aaron 2026-05-15)
 --                 + created_by visibility lock (Aaron 2026-05-15)
@@ -104,7 +104,7 @@ DROP POLICY IF EXISTS reseller_pricing_config_select ON reseller_pricing_config;
 CREATE POLICY reseller_pricing_config_select ON reseller_pricing_config
   FOR SELECT
   USING (
-       -- Reseller-admin: full history visible (unchanged from mig 027).
+       -- Reseller-admin: full history visible (unchanged from mig 025).
        conduit_is_reseller_admin_of_ancestor(
          current_setting('conduit.current_user_id', true),
          subtenant_org_id
@@ -149,7 +149,7 @@ SELECT
 FROM reseller_pricing_config;
 
 COMMENT ON VIEW reseller_pricing_config_view IS
-  'Migration 028: read-path projection over reseller_pricing_config. '
+  'Migration 026: read-path projection over reseller_pricing_config. '
   'security_invoker=true means caller RLS applies (row-gating via base '
   'table SELECT policy). CASE nullifies created_by for non-reseller-admin '
   'callers (Aaron 2026-05-15 lock: subtenant cannot see who set the '
@@ -174,10 +174,10 @@ BEGIN
      AND policyname = 'reseller_pricing_config_select';
 
   IF v_policy_def IS NULL THEN
-    RAISE EXCEPTION 'mig 028 audit: reseller_pricing_config_select policy missing after replace';
+    RAISE EXCEPTION 'mig 026 audit: reseller_pricing_config_select policy missing after replace';
   END IF;
   IF position('conduit_is_latest_pricing_row' in v_policy_def) = 0 THEN
-    RAISE EXCEPTION 'mig 028 audit: SELECT policy does not reference conduit_is_latest_pricing_row helper (got: %)', v_policy_def;
+    RAISE EXCEPTION 'mig 026 audit: SELECT policy does not reference conduit_is_latest_pricing_row helper (got: %)', v_policy_def;
   END IF;
 
   -- Verify view exists with the expected name.
@@ -187,7 +187,7 @@ BEGIN
        AND schemaname = 'public'
   ) INTO v_view_exists;
   IF NOT v_view_exists THEN
-    RAISE EXCEPTION 'mig 028 audit: reseller_pricing_config_view missing';
+    RAISE EXCEPTION 'mig 026 audit: reseller_pricing_config_view missing';
   END IF;
 END$$;
 

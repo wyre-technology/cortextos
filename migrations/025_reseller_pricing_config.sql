@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration:      027_reseller_pricing_config.sql
+-- Migration:      025_reseller_pricing_config.sql
 -- Date:           2026-05-15
 -- PRD Reference:  Track C scope-doc (2026-05-13, Walter), DPs A/B/C/D/E/F locked
 -- Ticket:         Track C PR-A — reseller-channel-billing foundation
@@ -285,7 +285,7 @@ BEGIN
      WHERE table_name = 'reseller_pricing_config'
        AND column_name = 'mode' AND data_type = 'text' AND is_nullable = 'NO'
   ) THEN
-    RAISE EXCEPTION 'mig 027 audit: reseller_pricing_config.mode missing or wrong shape';
+    RAISE EXCEPTION 'mig 025 audit: reseller_pricing_config.mode missing or wrong shape';
   END IF;
 
   IF NOT EXISTS (
@@ -293,14 +293,14 @@ BEGIN
      WHERE table_name = 'reseller_pricing_config'
        AND column_name = 'effective_at' AND data_type = 'timestamp with time zone'
   ) THEN
-    RAISE EXCEPTION 'mig 027 audit: reseller_pricing_config.effective_at missing or wrong type';
+    RAISE EXCEPTION 'mig 025 audit: reseller_pricing_config.effective_at missing or wrong type';
   END IF;
 
   -- RLS enabled + forced.
   SELECT relrowsecurity AND relforcerowsecurity INTO v_rls_enabled
     FROM pg_class WHERE relname = 'reseller_pricing_config';
   IF NOT COALESCE(v_rls_enabled, false) THEN
-    RAISE EXCEPTION 'mig 027 audit: RLS not enabled+forced on reseller_pricing_config';
+    RAISE EXCEPTION 'mig 025 audit: RLS not enabled+forced on reseller_pricing_config';
   END IF;
 
   -- Trigger attached.
@@ -311,14 +311,14 @@ BEGIN
        AND NOT tgisinternal
   ) INTO v_trigger_exists;
   IF NOT v_trigger_exists THEN
-    RAISE EXCEPTION 'mig 027 audit: structure-enforcement trigger missing';
+    RAISE EXCEPTION 'mig 025 audit: structure-enforcement trigger missing';
   END IF;
 
   -- Exactly 2 policies (SELECT + INSERT); no UPDATE/DELETE policy attached.
   SELECT COUNT(*) INTO v_policy_count
     FROM pg_policies WHERE tablename = 'reseller_pricing_config';
   IF v_policy_count <> 2 THEN
-    RAISE EXCEPTION 'mig 027 audit: expected 2 policies on reseller_pricing_config, found %', v_policy_count;
+    RAISE EXCEPTION 'mig 025 audit: expected 2 policies on reseller_pricing_config, found %', v_policy_count;
   END IF;
 END$$;
 

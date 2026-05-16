@@ -171,7 +171,7 @@ Conduit supports a reseller hierarchy: an MSP (the reseller) may have multiple s
 
 A reseller administrator can administer their direct customers and (transitively) their customers' sub-organizations. The transitive admin check is encapsulated in `conduit_is_reseller_admin_of_ancestor` (migration `023_reseller_admin_of_ancestor_helper.sql`). A customer administrator can administer only their own organization and direct sub-organizations.
 
-Reseller-level pricing configuration is scoped to the reseller and not visible to sub-customers (migrations `027`/`028_reseller_pricing_config*.sql`).
+Reseller-level pricing configuration is scoped to the reseller and not visible to sub-customers (migrations `025`/`026_reseller_pricing_config*.sql`).
 
 ### Vendor API Isolation
 
