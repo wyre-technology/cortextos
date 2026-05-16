@@ -1,6 +1,7 @@
 import { getVendorSlugs, getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
 import { sendWebhook } from './webhook.js';
+import { sendRootlyAlert, type RootlyVendorAlert } from './rootly.js';
 
 export interface VendorStatus {
   slug: string;
@@ -164,6 +165,11 @@ export class VendorMonitor {
         const versionStr = version ? ` (v${version})` : '';
         this.logger.info({ slug, version }, `vendor-monitor: ${slug} recovered`);
         void this.alert(`🟢 Vendor RECOVERED: ${slug} — back up after ${downDuration}${versionStr}`);
+        this.pageRootly({
+          vendorSlug: slug,
+          status: 'resolved',
+          summary: `Vendor MCP container recovered: ${slug} — back up after ${downDuration}`,
+        });
       }
     } catch (err) {
       const elapsed = Date.now() - start;
@@ -196,7 +202,26 @@ export class VendorMonitor {
     if (justCrossedThreshold) {
       this.logger.warn({ slug, error, failures }, `vendor-monitor: ${slug} is DOWN`);
       void this.alert(`🔴 Vendor DOWN: ${slug} — ${error} after ${FAILURE_THRESHOLD} consecutive failures`);
+      this.pageRootly({
+        vendorSlug: slug,
+        status: 'firing',
+        summary: `Vendor MCP container DOWN: ${slug} — ${FAILURE_THRESHOLD} consecutive failed probes`,
+        consecutiveFailures: failures,
+        lastError: error,
+      });
     }
+  }
+
+  /**
+   * Page Rootly for a vendor health transition — fire-and-forget. A failed
+   * page is logged and never thrown: paging must not disrupt the probe loop.
+   * Fires only on the down / recovered transitions (once per episode), so it
+   * does not stack alerts while a vendor stays down.
+   */
+  private pageRootly(alert: RootlyVendorAlert): void {
+    sendRootlyAlert(this.logger, alert).catch((err) =>
+      this.logger.warn({ err, slug: alert.vendorSlug }, 'vendor-monitor: Rootly page failed'),
+    );
   }
 
   private async alert(text: string): Promise<void> {

@@ -96,6 +96,14 @@ export const config = {
   monitorWebhookUrl: process.env.MONITOR_WEBHOOK_URL ?? '',
   monitorIntervalMs: Number(process.env.MONITOR_INTERVAL_MS ?? 60_000),
 
+  // Rootly inbound-webhook URL for vendor-down paging. When a vendor MCP
+  // container transitions to down (3 consecutive failed probes) the monitor
+  // POSTs a Rootly alert here; it resolves the alert on recovery. Unset =>
+  // a logged no-op (see src/monitoring/rootly.ts), so dev / CI / a not-yet-
+  // provisioned environment boots without paging. This is one shared Rootly
+  // alert source — Azure Monitor posts to the same URL from infra.
+  rootlyWebhookUrl: process.env.ROOTLY_WEBHOOK_URL ?? '',
+
   // Alpha invite codes (comma-separated) — orgs created with a valid code get pro plan
   alphaInviteCodes: new Set(
     (process.env.ALPHA_INVITE_CODES ?? '').split(',').map(c => c.trim()).filter(Boolean)

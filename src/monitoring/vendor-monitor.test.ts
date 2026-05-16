@@ -28,6 +28,11 @@ vi.mock('./webhook.js', () => ({
   sendWebhook: vi.fn(),
 }));
 
+// Mock Rootly paging
+vi.mock('./rootly.js', () => ({
+  sendRootlyAlert: vi.fn().mockResolvedValue(undefined),
+}));
+
 const mockLogger = {
   info: vi.fn(),
   warn: vi.fn(),
@@ -56,10 +61,15 @@ function mockNetworkError() {
 describe('VendorMonitor', () => {
   let monitor: VendorMonitor;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.spyOn(globalThis, 'fetch');
     monitor = new VendorMonitor(mockLogger);
     vi.clearAllMocks();
+    // afterEach's restoreAllMocks() strips the factory vi.fn()'s
+    // implementation — re-establish it so sendRootlyAlert resolves a promise
+    // (the monitor does sendRootlyAlert(...).catch(...)).
+    const { sendRootlyAlert } = await import('./rootly.js');
+    vi.mocked(sendRootlyAlert).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -169,6 +179,55 @@ describe('VendorMonitor', () => {
     expect(monitor.getStatus()['test-vendor'].consecutiveFailures).toBe(0);
 
     (config as Record<string, unknown>).monitorWebhookUrl = '';
+  });
+
+  it('pages Rootly firing only at the down threshold (not before, not after)', async () => {
+    const { sendRootlyAlert } = await import('./rootly.js');
+
+    // Failures 1 and 2: no page
+    mockNetworkError();
+    await monitor.probeAll();
+    mockNetworkError();
+    await monitor.probeAll();
+    expect(sendRootlyAlert).not.toHaveBeenCalled();
+
+    // Failure 3: firing page
+    mockNetworkError();
+    await monitor.probeAll();
+    expect(sendRootlyAlert).toHaveBeenCalledOnce();
+    expect(vi.mocked(sendRootlyAlert).mock.calls[0][1]).toMatchObject({
+      vendorSlug: 'test-vendor',
+      status: 'firing',
+      consecutiveFailures: 3,
+    });
+
+    vi.mocked(sendRootlyAlert).mockClear();
+
+    // Failure 4: no additional page — once per episode
+    mockNetworkError();
+    await monitor.probeAll();
+    expect(sendRootlyAlert).not.toHaveBeenCalled();
+  });
+
+  it('pages Rootly resolved on the recovery transition', async () => {
+    const { sendRootlyAlert } = await import('./rootly.js');
+
+    // Drive to DOWN
+    for (let i = 0; i < 3; i++) {
+      mockNetworkError();
+      await monitor.probeAll();
+    }
+    vi.mocked(sendRootlyAlert).mockClear();
+
+    // Recover
+    mockSuccessResponse('1.2.3');
+    await monitor.probeAll();
+
+    expect(sendRootlyAlert).toHaveBeenCalledOnce();
+    expect(vi.mocked(sendRootlyAlert).mock.calls[0][1]).toMatchObject({
+      vendorSlug: 'test-vendor',
+      status: 'resolved',
+    });
   });
 
   it('resets consecutive failures on success', async () => {
