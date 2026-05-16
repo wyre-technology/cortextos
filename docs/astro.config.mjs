@@ -50,11 +50,14 @@ export default defineConfig({
         {
           label: 'Reference',
           items: [
+            { label: 'Architecture', slug: 'reference/architecture' },
             { label: 'API', slug: 'reference/api' },
+            { label: 'CLI Wrapper', slug: 'reference/cli' },
             { label: 'Permissions', slug: 'reference/permissions' },
-            { label: 'Agents', slug: 'reference/agents-concepts' },
             { label: 'Security', slug: 'reference/security' },
             { label: 'Subtenant Model', slug: 'reference/subtenants' },
+            { label: 'Prompt Capture & Privacy', slug: 'reference/prompt-capture' },
+            { label: 'Agents', slug: 'reference/agents-concepts' },
           ],
         },
         {

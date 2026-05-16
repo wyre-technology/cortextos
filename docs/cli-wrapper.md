@@ -1,5 +1,8 @@
 # CLI Wrapper
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The customer-facing version lives at [`docs/src/content/docs/reference/cli.mdx`](src/content/docs/reference/cli.mdx), published at `https://conduit.wyre.ai/docs/reference/cli`. Do not extend this file — edit the Starlight version.
+
 The CLI endpoint provides a simplified REST API for executing MCP tool calls without the overhead of the full MCP JSON-RPC protocol. It is designed for scripts, automation, and lightweight integrations.
 
 ## Endpoints

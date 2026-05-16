@@ -1,0 +1,164 @@
+---
+title: CLI Wrapper
+description: Conduit's CLI endpoint — a simplified REST API for executing MCP tool calls without the full MCP JSON-RPC protocol.
+---
+
+The CLI endpoint provides a simplified REST API for executing MCP tool calls without the overhead of the full MCP JSON-RPC protocol. It is designed for scripts, automation, and lightweight integrations.
+
+For the full HTTP API, see the [API reference](/docs/reference/api/).
+
+---
+
+## Endpoints
+
+### POST /v1/:vendor/cli
+
+Execute a single tool call.
+
+**Authentication:** Bearer JWT (from the OAuth 2.1 flow or a `client_credentials` grant).
+
+**Request:**
+
+```json
+{ "tool": "datto_list_devices", "args": { "siteId": "123" } }
+```
+
+**Response (success):**
+
+```json
+{ "result": { "content": [ { "type": "text", "text": "[{\"id\": 1, ...}]" } ] } }
+```
+
+**Response (tool error):**
+
+```json
+{ "error": "No devices found matching the criteria" }
+```
+
+**HTTP status codes:**
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success |
+| 400 | Missing required field (`tool`) |
+| 401 | Authentication required or invalid token |
+| 403 | No credentials for vendor, or tool not permitted by allowlist |
+| 422 | Tool execution error (the vendor returned an error) |
+| 429 | Rate limit exceeded |
+| 500 | Internal proxy error |
+| 502 | Vendor MCP server returned an error |
+
+### GET /v1/:vendor/cli/schema
+
+Get CLI-friendly tool definitions for a vendor — tools as flat command/flag structures instead of nested JSON Schema.
+
+**Authentication:** Bearer JWT.
+
+```json
+{
+  "vendor": "datto-rmm",
+  "vendorName": "Datto RMM",
+  "commands": [
+    {
+      "command": "list-devices",
+      "description": "List all devices monitored by Datto RMM",
+      "flags": [
+        { "name": "siteId", "type": "string", "required": false, "description": "Filter by site ID" }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## How it works
+
+1. The client sends `POST /v1/:vendor/cli` with `{ "tool": ..., "args": ... }`.
+2. The gateway verifies the JWT and resolves credentials — the same auth and credential injection as the MCP proxy.
+3. Tool allowlist check, if the org has an allowlist for this vendor/role.
+4. The session pool provides a pre-initialized MCP session.
+5. The gateway sends a JSON-RPC `tools/call` to the vendor container.
+6. The vendor response (SSE or JSON) is parsed.
+7. A plain JSON result is returned to the client.
+
+### Session pooling
+
+The MCP protocol requires a three-step handshake (`initialize` → `notifications/initialized` → `tools/list`) before any tool call. The `McpSessionPool` maintains pre-initialized sessions per vendor, indexed by vendor slug and credential headers, so a CLI request reuses an existing session instead of repeating the handshake. Stale sessions (vendor restarted, session expired) are evicted and recreated on retry.
+
+### Result caching
+
+For read-only tools, the CLI endpoint includes an in-memory result cache:
+
+- **Per-scope isolation** — cache keys scoped by `team:id`, `org:id`, or `user:id`
+- **In-flight deduplication** — concurrent identical requests share a single vendor call
+- **Write invalidation** — write operations invalidate related cache entries
+- **Configurable TTL** — per-vendor, per-tool TTL via `VENDOR_TOOL_CONFIG`
+
+---
+
+## Token savings
+
+The CLI endpoint reduces token consumption by roughly 40% compared to using the MCP protocol directly:
+
+1. **No MCP protocol overhead** — JSON-RPC envelopes, capability negotiation, and session messages are stripped down to `{ "tool": ..., "args": ... }`.
+2. **Compact schema format** — `/cli/schema` converts verbose JSON Schema tool definitions into flat flag lists.
+3. **Tool name normalization** — MCP names like `datto_list_devices` become CLI-friendly `list-devices`.
+4. **No streaming overhead** — the endpoint parses SSE internally and returns a single JSON response.
+
+---
+
+## Rate limiting
+
+Rate limits are applied per user, per vendor. The limit matches the org's plan (see [Billing & Plans](/docs/guides/billing/)) — Free 100/hour/vendor, Pro 1,000/hour/vendor, Business 5,000/hour/vendor. The rate limit key is `{userId}:{vendor}:cli`.
+
+---
+
+## Timing headers
+
+Every response includes a timing breakdown:
+
+| Header | Description |
+|--------|-------------|
+| `X-Auth-Ms` | JWT verification + credential resolution |
+| `X-Session-Ms` | MCP session acquisition (cache hit ≈ 0ms) |
+| `X-Vendor-Ms` | Vendor container response time |
+| `X-Total-Ms` | Total request time |
+
+---
+
+## Usage examples
+
+```bash
+TOKEN="eyJ..."
+
+# Execute a tool call
+curl -s -X POST https://conduit.wyre.ai/v1/datto-rmm/cli \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "datto_list_devices"}' | jq '.result'
+
+# Get the tool schema
+curl -s https://conduit.wyre.ai/v1/datto-rmm/cli/schema \
+  -H "Authorization: Bearer $TOKEN" | jq '.commands[].command'
+```
+
+### Service client authentication
+
+```bash
+# Obtain a token via the client_credentials grant
+TOKEN=$(curl -s -X POST https://conduit.wyre.ai/oauth/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=svc_abc123" \
+  -d "client_secret=xyz789" \
+  -d "scope=mcp:all" | jq -r '.access_token')
+
+curl -s -X POST https://conduit.wyre.ai/v1/autotask/cli \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "autotask_search_tickets", "args": {"status": "Open"}}'
+```
+
+:::note
+Vendor names (`datto-rmm`, `itglue`, `autotask`) are illustrative — replace them with the vendors configured in your deployment. Service clients are a Business-tier feature.
+:::

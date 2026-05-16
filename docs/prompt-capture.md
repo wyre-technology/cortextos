@@ -1,5 +1,8 @@
 # Prompt Capture
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The customer-facing version lives at [`docs/src/content/docs/reference/prompt-capture.mdx`](src/content/docs/reference/prompt-capture.mdx), published at `https://conduit.wyre.ai/docs/reference/prompt-capture`. Do not extend this file — edit the Starlight version.
+
 ## Overview
 
 The gateway captures metadata about every MCP tool call in the `request_log` table. This provides visibility into how AI tools are being used across the organization.

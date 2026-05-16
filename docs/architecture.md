@@ -1,5 +1,8 @@
 # Architecture
 
+> **MIGRATED — this file is no longer the source of truth.**
+> The customer-facing version lives at [`docs/src/content/docs/reference/architecture.mdx`](src/content/docs/reference/architecture.mdx), published at `https://conduit.wyre.ai/docs/reference/architecture`. Do not extend this file — edit the Starlight version.
+
 ## System Overview
 
 The MCP Gateway is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between AI clients (Claude Desktop, Claude Code, custom agents) and vendor MCP servers used by Managed Service Providers. The specific vendors available depend on the customer deployment.

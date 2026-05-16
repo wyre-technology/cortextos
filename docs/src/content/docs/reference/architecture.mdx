@@ -1,0 +1,133 @@
+---
+title: Architecture
+description: Conduit's system architecture — the Fastify gateway, its component services, and the data flow of an MCP tool call.
+---
+
+Conduit is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between AI clients (Claude Desktop, Claude Code, custom agents) and the vendor MCP servers used by Managed Service Providers. The specific vendors available depend on the deployment.
+
+The production deployment runs on **Azure Container Apps** (provisioned via Bicep — see `azure/main.bicep`); `docker-compose` is used for local development.
+
+## System overview
+
+```
+                          +-----------------------+
+                          |   AI Client           |
+                          | (Claude Desktop/Code) |
+                          +----------+------------+
+                                     |
+                            OAuth 2.1 + PKCE
+                                     |
+                          +----------v------------+
+                          |    Fastify Gateway     |
+                          |    (Node.js / TS)      |
+                          |  - OAuth 2.1 Server    |
+                          |  - Auth0 OIDC          |
+                          |  - Credential Service  |
+                          |  - Org / Team Service  |
+                          |  - Billing Gate        |
+                          |  - Audit Service       |
+                          |  - Tool Cache          |
+                          |  - CLI Router          |
+                          |  - Unified Proxy       |
+                          +--+----+-----+-----+----+
+                             |    |     |     |
+                       +-----v+ +-v---+ +v----+ +v----------------+
+                       |Postgres| |Auth0| |Stripe| | Vendor MCP    |
+                       +--------+ +-----+ +------+ | Containers    |
+                                                   | (per deploy)  |
+                                                   +---------------+
+```
+
+## Component roles
+
+### Fastify gateway (core application)
+
+The central Node.js process running Fastify v5. Handles all HTTP traffic, route dispatch, and plugin orchestration. Listens on port 8080 by default.
+
+### OAuth 2.1 authorization server
+
+Implements RFC 8414 metadata discovery, RFC 7591 dynamic client registration, authorization code flow with PKCE (S256), token exchange, refresh, and revocation. Issues HS256 JWTs with configurable TTLs. Every MCP client authenticates through this server to obtain a Bearer token.
+
+### Auth0 OIDC (user authentication)
+
+Handles human user identity via OpenID Connect. Users sign in through Auth0; the gateway maps the Auth0 `sub` claim to internal user IDs. All web UI routes and settings-management API endpoints require an Auth0 session.
+
+### Vendor MCP containers
+
+Each vendor runs as an isolated container exposing the MCP protocol over Streamable HTTP (port 8080, path `/mcp`). Containers run in `AUTH_MODE=gateway` — they trust the gateway to inject authenticated credentials via HTTP headers. The gateway never exposes vendor containers directly to clients.
+
+### Credential service
+
+Manages encrypted storage of vendor API keys, tokens, and secrets — AES-256-GCM with per-record PBKDF2-derived keys. Four credential scopes: **personal**, **team**, **organization**, and **service client**. See the [Security guide](/docs/reference/security/#credential-security) for the encryption detail and the [credential resolution hierarchy](/docs/reference/security/#credential-resolution-hierarchy).
+
+### Organization & team service
+
+Multi-tenant org management with role-based access (`owner` > `admin` > `member`). Handles org CRUD, membership, invitations, teams, per-member/per-vendor server access grants, and per-vendor/per-role tool allowlists. The reseller hierarchy layered on top is covered in the [Subtenant Model](/docs/reference/subtenants/).
+
+### Billing gate
+
+Plan-based feature gating (Free / Pro / Business). Controls connection limits, rate limits, team features, and audit access. Integrates with Stripe for subscription management — see the [Billing & Plans guide](/docs/guides/billing/).
+
+### Audit service
+
+A dual audit system: **request audit** logs every MCP tool call to `request_log`; **admin audit** logs administrative actions to `admin_audit_log`. See [Prompt Capture](/docs/reference/prompt-capture/) for exactly what is and is not recorded.
+
+### Tool cache
+
+Caches `tools/list` responses from vendor containers to avoid repeated MCP handshakes. Tools are fetched once per vendor and refreshed periodically.
+
+### Unified proxy (`/v1/mcp`)
+
+A single MCP endpoint that aggregates all connected vendors behind one JWT. Tool names are prefixed with `{vendorSlug}__` to avoid collisions; on `tools/call` the prefix routes to the correct vendor container.
+
+### CLI router (`/v1/:vendor/cli`)
+
+A REST API accepting plain JSON tool calls instead of MCP JSON-RPC. Maintains persistent MCP sessions via a session pool to avoid the per-call handshake. See the [CLI Wrapper reference](/docs/reference/cli/).
+
+### Log shipping service
+
+Ships audit logs to external SIEM platforms (Loki, Graylog, LogScale). Per-org configuration with encrypted credentials; runs as a background process.
+
+### Vendor monitor
+
+A background health checker that periodically pings vendor containers and reports status via `/health/vendors`.
+
+## Data flow: an MCP tool call
+
+1. The client sends an MCP `tools/call` request to `/v1/mcp` (unified) or `/v1/:vendor/mcp` (per-vendor) with a Bearer JWT.
+2. The gateway verifies the JWT (HS256) and extracts the user ID from the `sub` claim.
+3. The credential injector resolves vendor credentials through the scope hierarchy (personal → team → org → service client).
+4. For OAuth vendors (Xero, QuickBooks Online, HubSpot, Microsoft 365), an expired access token is refreshed using the stored refresh token, and the new tokens are persisted.
+5. Credentials are mapped to vendor-specific HTTP headers.
+6. Tool allowlist enforcement: if the org has an allowlist for this vendor/role, the tool is checked against it.
+7. The request is proxied to the vendor container (`POST http://vendor-mcp:8080/mcp`).
+8. The vendor container processes the call against the vendor API.
+9. The response is returned through the gateway to the client.
+10. An audit log entry is written (fire-and-forget): user, org, vendor, tool name, status, response time.
+11. If log shipping is configured, the entry is forwarded to the SIEM.
+
+## Key design decisions
+
+### Single JWT for all vendors
+
+A user authenticates once via OAuth 2.1 and receives a JWT that works across all vendor MCP servers. The gateway resolves which vendors the user has credentials for at request time — no per-vendor OAuth flow for the end user.
+
+### Encrypted credential hierarchy
+
+Credentials are encrypted at rest (AES-256-GCM, PBKDF2-derived keys). The scope hierarchy — personal → team → org → service client — allows flexible sharing; resolution walks it top-down and the first match wins.
+
+### Credential injection via HTTP headers
+
+Vendor containers never store credentials. The gateway injects them per request via HTTP headers, keeping containers stateless and allowing credential rotation without redeploying containers.
+
+### Vendor container isolation
+
+Each vendor runs in its own container with `AUTH_MODE=gateway` and trusts the gateway for authentication. Some third-party MCP servers use a gateway wrapper middleware that extracts credentials from headers.
+
+### Tool name prefixing (unified endpoint)
+
+The unified `/v1/mcp` endpoint prefixes tool names with `{vendor}__` so a single MCP connection can reach every vendor's tools, reducing client configuration to one URL.
+
+### Session pooling (CLI endpoint)
+
+The CLI endpoint maintains a pool of pre-initialized MCP sessions with vendor containers, avoiding the `initialize` / `notifications/initialized` / `tools/list` handshake on every call.

@@ -224,6 +224,19 @@ mcp-gateway CHANGELOG.
   corrected to `/org/scim` (verified against `src/web/routes.ts`). The
   legacy `docs/scim/*.md` files now carry "MIGRATED" pointers.
   Sidebar-linked under **Guides**.
+- New Reference pages migrated from legacy `docs/*.md`, all sidebar-linked
+  under **Reference**:
+  - `reference/architecture.mdx` — system architecture, component roles,
+    and the MCP-tool-call data flow. States the production deployment
+    target (Azure Container Apps, verified against `.github/workflows/
+    deploy.yml` + `azure/main.bicep`).
+  - `reference/cli.mdx` — the CLI wrapper endpoint (`/v1/:vendor/cli`):
+    session pooling, result caching, token savings, rate limits.
+  - `reference/prompt-capture.mdx` — the audit-log privacy boundary:
+    what is and is not captured (no prompt content, no tool arguments,
+    no results).
+  The legacy `docs/architecture.md`, `docs/cli-wrapper.md`, and
+  `docs/prompt-capture.md` now carry "MIGRATED" pointers.
 
 #### Fixed
 - Corrected the Pro-tier feature list in

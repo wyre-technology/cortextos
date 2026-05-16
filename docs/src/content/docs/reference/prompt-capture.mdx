@@ -1,0 +1,61 @@
+---
+title: Prompt Capture & Privacy
+description: What Conduit's audit log records about MCP tool calls — and, importantly, what it deliberately does not.
+---
+
+Conduit records metadata about every MCP tool call so that an organization has visibility into how AI tools are being used. This page is about the **privacy boundary** of that capture — what is recorded and, just as importantly, what is not.
+
+For the audit log API and retention behavior, see the [API reference](/docs/reference/api/#audit) and the [Security guide](/docs/reference/security/#audit-logging).
+
+---
+
+## What is captured
+
+Each tool call generates a `request_log` entry:
+
+| Field | Description |
+|-------|-------------|
+| `user_id` | The authenticated user who made the call |
+| `org_id` | The organization context |
+| `vendor_slug` | Which vendor was called (e.g. `datto-rmm`) |
+| `tool_name` | The specific tool invoked (e.g. `datto_list_devices`) |
+| `status_code` | HTTP status of the response |
+| `response_time_ms` | End-to-end latency |
+| `created_at` | Timestamp |
+
+## What is NOT captured
+
+Conduit does **not** capture:
+
+- The user's prompt or conversation context
+- Tool call **arguments** (the parameters passed to the tool)
+- Tool call **results** (the data returned by the vendor)
+- The AI model's reasoning or chain-of-thought
+
+This is a deliberate privacy decision. The audit log records *what tool was used, by whom, and when* — not the content of the interaction. A search query, a ticket ID, a customer's data returned by a vendor API — none of it is logged.
+
+:::note
+Because arguments and results are never captured, the audit log cannot be used to reconstruct what data an AI agent saw. That is a privacy guarantee, and also a deliberate limit — the audit log answers "was this tool used?", not "what did it return?".
+:::
+
+## Privacy summary
+
+- **No prompt content** — Conduit never sees or stores the user's prompt, conversation history, or model output.
+- **No tool arguments** — call parameters (search queries, record IDs) are not logged.
+- **No response content** — data returned by vendor APIs is not stored.
+- **Metadata only** — who used what tool, when, and how long it took.
+- **Encrypted at rest** — the database storing audit logs is encrypted at rest (enabled by default on Azure Database for PostgreSQL Flexible Server).
+- **Access controlled** — see below.
+- **Auto-cleanup** — request log entries are purged after 90 days.
+
+## Access control
+
+Audit log access is gated three ways:
+
+1. **Plan** — audit log access requires a paid plan (Pro or Business). Audit log **CSV export** is a Business-tier feature.
+2. **Role** — only `admin` and `owner` roles can view the audit log.
+3. **Scope** — users only ever see logs for their own organization.
+
+## Retention
+
+Request log entries older than **90 days** are automatically cleaned up. For longer retention or SIEM integration, configure [log shipping](/docs/guides/msp-onboarding/) to Loki, Graylog, or LogScale — the audit log is forwarded as it is written, and the SIEM's own retention policy then applies.
