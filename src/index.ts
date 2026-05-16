@@ -50,6 +50,7 @@ import { ToolCache } from './proxy/tool-cache.js';
 import { unifiedProxyRoutes } from './proxy/unified-router.js';
 import { getUnifiedProtectedResourceMetadata, getUnifiedAuthMetadata } from './oauth/metadata.js';
 import { toolAccessRoutes } from './org/tool-access-routes.js';
+import { requireAdmin } from './lib/admin-auth.js';
 import { LogShippingService } from './log-shipping/log-shipping-service.js';
 import { LogShipper } from './log-shipping/shipper.js';
 import { LokiAdapter } from './log-shipping/adapters/loki.js';
@@ -213,14 +214,22 @@ vendorMonitor.start();
 // Route registration
 // ---------------------------------------------------------------------------
 
-// Health check (unauthenticated, no rate limit)
+// Liveness check — unauthenticated, no rate limit. Carries no vendor or
+// tenant data, so it is safe to leave open for uptime monitors.
 app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// Vendor health (unauthenticated, like /health)
-app.get('/health/vendors', async () => ({
-  timestamp: new Date().toISOString(),
-  vendors: vendorMonitor.getStatus(),
-}));
+// Vendor health — admin-gated (ops monitoring only). This was previously
+// unauthenticated and global: it exposed every vendor container's `version`
+// and `lastError` to any unauthenticated caller, across all tenants — a
+// cross-tenant info disclosure. requireAdmin accepts the ADMIN_API_KEY
+// bearer token (the ops/monitoring path) or an admin browser session.
+app.get('/health/vendors', async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  return {
+    timestamp: new Date().toISOString(),
+    vendors: vendorMonitor.getStatus(),
+  };
+});
 
 // Waitlist (conditionally registered if webhook URL configured)
 if (config.features.waitlist) {
