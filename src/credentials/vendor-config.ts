@@ -2048,6 +2048,139 @@ export const VENDORS: Record<string, VendorConfig> = {
       }
     },
   },
+
+  ironscales: {
+    name: 'Ironscales',
+    slug: 'ironscales',
+    category: 'security',
+    containerUrl: 'http://ironscales-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true, placeholder: 'Generate in Ironscales partner portal' },
+      { key: 'companyId', label: 'Company ID', required: true, placeholder: 'Ironscales tenant/company identifier' },
+    ],
+    headerMapping: {
+      apiKey: 'X-Ironscales-API-Key',
+      companyId: 'X-Ironscales-Company-Id',
+    },
+    docsUrl: 'https://app.ironscales.com/api/docs',
+    async validate(creds) {
+      const res = await fetch(`https://app.ironscales.com/appapi/company/${encodeURIComponent(creds.companyId)}/incident/`, {
+        headers: { Authorization: `Bearer ${creds.apiKey}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid Ironscales API key or company ID.' };
+        }
+        return { valid: false, error: `Ironscales returned HTTP ${res.status}.` };
+      }
+      return { valid: true };
+    },
+  },
+
+  mimecast: {
+    name: 'Mimecast',
+    slug: 'mimecast',
+    category: 'security',
+    containerUrl: 'http://mimecast-mcp:8080',
+    fields: [
+      { key: 'clientId', label: 'Client ID', required: true, placeholder: 'Mimecast API 2.0 Client ID' },
+      { key: 'clientSecret', label: 'Client Secret', required: true, secret: true },
+      {
+        key: 'region',
+        label: 'Region',
+        required: true,
+        options: ['us', 'eu', 'de', 'ca', 'za', 'au', 'offshore', 'je'],
+      },
+    ],
+    headerMapping: {
+      clientId: 'X-Mimecast-Client-Id',
+      clientSecret: 'X-Mimecast-Client-Secret',
+      region: 'X-Mimecast-Region',
+    },
+    docsUrl: 'https://developer.services.mimecast.com/api/2.0',
+    async validate(creds) {
+      // Mimecast uses OAuth client_credentials at the regional token endpoint.
+      // The MCP server itself handles the token exchange + caching at request
+      // time; validate here just confirms creds can mint a token at the
+      // configured region (same shape as the Action1 entry).
+      const hosts: Record<string, string> = {
+        us: 'https://api.services.mimecast.com',
+        eu: 'https://eu-api.mimecast.com',
+        de: 'https://de-api.mimecast.com',
+        ca: 'https://ca-api.mimecast.com',
+        za: 'https://za-api.mimecast.com',
+        au: 'https://au-api.mimecast.com',
+        offshore: 'https://offshore-api.mimecast.com',
+        je: 'https://je-api.mimecast.com',
+      };
+      const host = hosts[creds.region];
+      if (!host) {
+        return { valid: false, error: `Unknown Mimecast region: ${creds.region}` };
+      }
+      const body = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+      });
+      const res = await fetch(`${host}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 400) {
+          return { valid: false, error: 'Invalid Mimecast credentials for the selected region.' };
+        }
+        return { valid: false, error: `Mimecast OAuth token endpoint returned HTTP ${res.status}.` };
+      }
+      return { valid: true };
+    },
+  },
+
+  spamtitan: {
+    name: 'SpamTitan',
+    slug: 'spamtitan',
+    category: 'security',
+    containerUrl: 'http://spamtitan-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true, placeholder: 'Generate in SpamTitan admin console' },
+      {
+        key: 'baseUrl',
+        label: 'Base URL (optional)',
+        required: false,
+        placeholder: 'https://your-spamtitan.example.com — omit for TitanHQ-hosted',
+      },
+    ],
+    headerMapping: {
+      apiKey: 'X-SpamTitan-API-Key',
+      baseUrl: 'X-SpamTitan-Base-URL',
+    },
+    docsUrl: 'https://www.titanhq.com/spamtitan/api-documentation/',
+    async validate(creds) {
+      // Two-tier vendor: TitanHQ-hosted (no baseUrl needed) or MSP-self-hosted
+      // (customer-supplied baseUrl). When customer supplies a baseUrl, run it
+      // through the SSRF guard before any fetch — per playbook §SSRF guard rule.
+      const baseUrl = (creds.baseUrl?.trim() || 'https://api-spamtitan.titanhq.com').replace(/\/+$/, '');
+      if (creds.baseUrl?.trim()) {
+        const rejected = await rejectIfUnsafeBaseUrl(baseUrl, 'SpamTitan base URL');
+        if (rejected) return rejected;
+      }
+      const res = await fetch(`${baseUrl}/restapi/v100/quarantine`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${creds.apiKey}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid SpamTitan API key for the configured base URL.' };
+        }
+        return { valid: false, error: `SpamTitan returned HTTP ${res.status}.` };
+      }
+      return { valid: true };
+    },
+  },
 };
 
 /**
