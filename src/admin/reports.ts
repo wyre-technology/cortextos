@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { requireAdmin } from '../lib/admin-auth.js';
 import { escapeHtml } from '../web/helpers.js';
 import { renderAdminPage } from './layout.js';
-import { getSql } from '../db/context.js';
+import { getSql, runAsSystem } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -413,7 +413,9 @@ export function adminReportsRoutes() {
     app.get<{ Querystring: QueryString }>('/admin/reports/inactive-users', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
       const filter = parseFilter(request.query);
-      const rows = await fetchInactiveUsers(filter);
+      // Platform-wide report across all users/orgs — system-path (BYPASSRLS).
+      // requireAdmin above is the gate.
+      const rows = await runAsSystem(() => fetchInactiveUsers(filter));
       const html = renderInactiveUsersPage(rows, filter, new Date().toISOString());
       return reply.type('text/html').send(html);
     });
@@ -423,7 +425,9 @@ export function adminReportsRoutes() {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const filter = parseFilter(request.query);
-        const rows = await fetchInactiveUsers(filter);
+        // Platform-wide report across all users/orgs — system-path
+        // (BYPASSRLS). requireAdmin above is the gate.
+        const rows = await runAsSystem(() => fetchInactiveUsers(filter));
         const date = new Date().toISOString().slice(0, 10);
         return sendCsv(reply, `inactive-users-${date}.csv`, rowsToCsv(rows));
       },
@@ -434,7 +438,9 @@ export function adminReportsRoutes() {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const filter = parseFilter(request.query);
-        const rows = await fetchInactiveUsers(filter);
+        // Platform-wide report across all users/orgs — system-path
+        // (BYPASSRLS). requireAdmin above is the gate.
+        const rows = await runAsSystem(() => fetchInactiveUsers(filter));
         return reply.send({ generated_at: new Date().toISOString(), filter, rows });
       },
     );

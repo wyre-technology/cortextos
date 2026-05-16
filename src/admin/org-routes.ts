@@ -6,7 +6,7 @@ import type { CreditService } from '../billing/credit-service.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { renderAdminPage } from './layout.js';
 import { FEATURES, PLAN_RANK, type FeatureKey, type Plan } from '../billing/features.js';
-import { getSql } from '../db/context.js';
+import { getSql, runAsSystem } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,35 +113,37 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         if (!requireAdmin(request, reply)) return;
 
         const q = (request.query.q ?? '').trim();
-        let rows: OrgListRow[];
-        if (q) {
-          const like = `%${q}%`;
-          rows = await getSql()<OrgListRow[]>`
+        // Platform-wide org list — system-path (BYPASSRLS). requireAdmin
+        // above is the gate. The list is intentionally cross-org.
+        const rows = await runAsSystem<OrgListRow[]>(() => {
+          if (q) {
+            const like = `%${q}%`;
+            return getSql()<OrgListRow[]>`
+              SELECT
+                o.id, o.name, o.plan, o.owner_id, o.stripe_customer_id, o.stripe_subscription_id, o.created_at,
+                u.email AS owner_email, u.name AS owner_name,
+                (SELECT COUNT(*)::text FROM org_members m WHERE m.org_id = o.id) AS member_count
+              FROM organizations o
+              LEFT JOIN users u ON u.id = o.owner_id
+              WHERE o.name ILIKE ${like}
+                 OR o.id   ILIKE ${like}
+                 OR u.email ILIKE ${like}
+                 OR o.stripe_customer_id ILIKE ${like}
+              ORDER BY o.created_at DESC
+              LIMIT 50
+            `;
+          }
+          return getSql()<OrgListRow[]>`
             SELECT
               o.id, o.name, o.plan, o.owner_id, o.stripe_customer_id, o.stripe_subscription_id, o.created_at,
               u.email AS owner_email, u.name AS owner_name,
               (SELECT COUNT(*)::text FROM org_members m WHERE m.org_id = o.id) AS member_count
             FROM organizations o
             LEFT JOIN users u ON u.id = o.owner_id
-            WHERE o.name ILIKE ${like}
-               OR o.id   ILIKE ${like}
-               OR u.email ILIKE ${like}
-               OR o.stripe_customer_id ILIKE ${like}
             ORDER BY o.created_at DESC
             LIMIT 50
           `;
-        } else {
-          rows = await getSql()<OrgListRow[]>`
-            SELECT
-              o.id, o.name, o.plan, o.owner_id, o.stripe_customer_id, o.stripe_subscription_id, o.created_at,
-              u.email AS owner_email, u.name AS owner_name,
-              (SELECT COUNT(*)::text FROM org_members m WHERE m.org_id = o.id) AS member_count
-            FROM organizations o
-            LEFT JOIN users u ON u.id = o.owner_id
-            ORDER BY o.created_at DESC
-            LIMIT 50
-          `;
-        }
+        });
 
         const tableRows = rows
           .map(
@@ -201,7 +203,9 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     // -----------------------------------------------------------------------
     app.get('/admin/orgs/new', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const rows = await getSql()<NewOrgRow[]>`
+      // Platform-wide signup list — system-path (BYPASSRLS). requireAdmin
+      // above is the gate; the list is intentionally cross-org.
+      const rows = await runAsSystem(() => getSql()<NewOrgRow[]>`
         SELECT
           o.id, o.name, o.plan, o.created_at,
           u.email AS owner_email, u.name AS owner_name,
@@ -216,7 +220,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         WHERE o.created_at >= NOW() - INTERVAL '30 days'
         ORDER BY o.created_at DESC
         LIMIT 100
-      `;
+      `);
       const tableRows = rows
         .map(
           (r) => `
@@ -263,7 +267,9 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     // -----------------------------------------------------------------------
     app.get('/admin/audit', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const rows = await getSql()<AuditEntryRow[]>`
+      // Platform-wide audit log — system-path (BYPASSRLS). admin_audit_log is
+      // FORCE-RLS; requireAdmin above is the gate, the view is cross-org.
+      const rows = await runAsSystem(() => getSql()<AuditEntryRow[]>`
         SELECT
           a.id, a.org_id, a.actor_id, a.event_type, a.metadata, a.created_at,
           o.name AS org_name
@@ -271,7 +277,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         LEFT JOIN organizations o ON o.id = a.org_id
         ORDER BY a.created_at DESC
         LIMIT 100
-      `;
+      `);
       const tableRows = rows
         .map(
           (r) => `
@@ -320,7 +326,11 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         if (!requireAdmin(request, reply)) return;
         const orgId = request.params.orgId;
         const csrfToken = getOrSetCsrfToken(request, reply);
-        const org = await orgService.getOrg(orgId);
+        // Admin views ANY org's detail — they are not a member of it, so the
+        // reads must run system-path (BYPASSRLS). Every query below filters
+        // by the :orgId / org.ownerId param explicitly, so BYPASSRLS returns
+        // only the target org's rows. requireAdmin above is the gate.
+        const org = await runAsSystem(() => orgService.getOrg(orgId));
         if (!org) {
           return reply
             .code(404)
@@ -334,45 +344,49 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
             );
         }
 
-        const [members, usage, balance, allocation, features, ownerRows, recentLogs, recentAudit] = await Promise.all([
-          orgService.getMembersWithProfiles(orgId),
-          creditService.getUsageThisMonth(orgId),
-          creditService.getBlockBalance(orgId),
-          billingGate.getCreditAllocation(orgId),
-          // featureSummary not yet implemented in Conduit's BillingGate — derive
-          // a minimal map from the FEATURES registry against org plan so the
-          // panel renders without per-feature override resolution.
-          Promise.resolve(
-            Object.fromEntries(
-              (Object.keys(FEATURES) as FeatureKey[]).map((k) => [
-                k,
-                PLAN_RANK[org.plan as Plan] >= PLAN_RANK[FEATURES[k].minPlan],
-              ]),
-            ) as Record<FeatureKey, boolean>,
-          ),
-          getSql()<{ email: string | null; name: string | null }[]>`
-            SELECT email, name FROM users WHERE id = ${org.ownerId} LIMIT 1
-          `,
-          getSql()<{ created_at: string; vendor_slug: string; tool_name: string | null; status_code: number; user_email: string | null }[]>`
-            SELECT rl.created_at, rl.vendor_slug, rl.tool_name, rl.status_code, u.email AS user_email
-            FROM request_log rl
-            LEFT JOIN users u ON u.id = rl.user_id
-            WHERE rl.org_id = ${orgId}
-              AND rl.tool_name IS NOT NULL
-              AND rl.tool_name NOT IN ('initialize','notifications/initialized','tools/list','tools/call','prompts/list','resources/list','ping')
-              AND rl.vendor_slug NOT IN ('_unified','_gateway')
-            ORDER BY rl.created_at DESC
-            LIMIT 20
-          `,
-          getSql()<AuditEntryRow[]>`
-            SELECT id, org_id, actor_id, event_type, metadata, created_at,
-                   NULL::text AS org_name
-            FROM admin_audit_log
-            WHERE org_id = ${orgId}
-            ORDER BY created_at DESC
-            LIMIT 10
-          `,
-        ]);
+        // System-path: the admin is not a member of this org. Every query
+        // here filters by orgId / org.ownerId explicitly, so BYPASSRLS still
+        // returns only the target org's rows.
+        const [members, usage, balance, allocation, features, ownerRows, recentLogs, recentAudit] =
+          await runAsSystem(() => Promise.all([
+            orgService.getMembersWithProfiles(orgId),
+            creditService.getUsageThisMonth(orgId),
+            creditService.getBlockBalance(orgId),
+            billingGate.getCreditAllocation(orgId),
+            // featureSummary not yet implemented in Conduit's BillingGate — derive
+            // a minimal map from the FEATURES registry against org plan so the
+            // panel renders without per-feature override resolution.
+            Promise.resolve(
+              Object.fromEntries(
+                (Object.keys(FEATURES) as FeatureKey[]).map((k) => [
+                  k,
+                  PLAN_RANK[org.plan as Plan] >= PLAN_RANK[FEATURES[k].minPlan],
+                ]),
+              ) as Record<FeatureKey, boolean>,
+            ),
+            getSql()<{ email: string | null; name: string | null }[]>`
+              SELECT email, name FROM users WHERE id = ${org.ownerId} LIMIT 1
+            `,
+            getSql()<{ created_at: string; vendor_slug: string; tool_name: string | null; status_code: number; user_email: string | null }[]>`
+              SELECT rl.created_at, rl.vendor_slug, rl.tool_name, rl.status_code, u.email AS user_email
+              FROM request_log rl
+              LEFT JOIN users u ON u.id = rl.user_id
+              WHERE rl.org_id = ${orgId}
+                AND rl.tool_name IS NOT NULL
+                AND rl.tool_name NOT IN ('initialize','notifications/initialized','tools/list','tools/call','prompts/list','resources/list','ping')
+                AND rl.vendor_slug NOT IN ('_unified','_gateway')
+              ORDER BY rl.created_at DESC
+              LIMIT 20
+            `,
+            getSql()<AuditEntryRow[]>`
+              SELECT id, org_id, actor_id, event_type, metadata, created_at,
+                     NULL::text AS org_name
+              FROM admin_audit_log
+              WHERE org_id = ${orgId}
+              ORDER BY created_at DESC
+              LIMIT 10
+            `,
+          ]));
 
         const owner = ownerRows[0] ?? { email: null, name: null };
 
@@ -545,7 +559,10 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       if (reason.length < 5 || reason.length > 500) {
         errors.push('reason must be 5–500 chars');
       }
-      const org = await orgService.getOrg(orgId);
+      // Admin acts on an org they are not a member of — system-path
+      // (BYPASSRLS). requireAdminMutation above is the gate; every call here
+      // is scoped to the :orgId param.
+      const org = await runAsSystem(() => orgService.getOrg(orgId));
       if (!org) errors.push('org not found');
 
       const back = (qs: string) => reply.redirect(`/admin/orgs/${orgId}?${qs}`);
@@ -555,12 +572,14 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
 
       const actorEmail = actorEmailFromRequest(request);
       try {
-        await creditService.grantComp(orgId, amountRaw, actorEmail, reason);
-        await adminAuditService.log({
-          orgId,
-          actorId: actorEmail,
-          eventType: 'admin_comp_credits',
-          metadata: { amount: amountRaw, reason },
+        await runAsSystem(async () => {
+          await creditService.grantComp(orgId, amountRaw, actorEmail, reason);
+          await adminAuditService.log({
+            orgId,
+            actorId: actorEmail,
+            eventType: 'admin_comp_credits',
+            metadata: { amount: amountRaw, reason },
+          });
         });
       } catch (err) {
         request.log.error({ err, orgId }, 'comp-credits failed');
@@ -577,7 +596,9 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const csrfToken = getOrSetCsrfToken(request, reply);
-        const org = await orgService.getOrg(request.params.orgId);
+        // System-path: admin views the delete-confirm for any org. getOrg is
+        // scoped to the :orgId param. requireAdmin above is the gate.
+        const org = await runAsSystem(() => orgService.getOrg(request.params.orgId));
         if (!org) {
           return reply.code(404).type('text/html').send(
             renderAdminPage({
@@ -658,7 +679,10 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       const confirmName = (request.body.confirm_name ?? '').trim();
       const reason = (request.body.reason ?? '').trim() || undefined;
 
-      const org = await orgService.getOrg(orgId);
+      // Admin deletes an org they are not a member of — system-path
+      // (BYPASSRLS). requireAdminMutation above is the gate; getOrg /
+      // deleteOrg / the audit write are all scoped to the :orgId param.
+      const org = await runAsSystem(() => orgService.getOrg(orgId));
       const back = (qs: string) => reply.redirect(`/admin/orgs/${orgId}/delete?${qs}`);
       if (!org) {
         return reply.redirect(`/admin/orgs?flash_err=${encodeURIComponent('Org not found')}`);
@@ -671,14 +695,14 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       try {
         // Conduit's OrgService doesn't yet expose a forensic deleteOrgWithAudit
         // helper. Hard-delete + write a separate audit row.
-        const ok = await orgService.deleteOrg(orgId);
+        const ok = await runAsSystem(() => orgService.deleteOrg(orgId));
         if (!ok) throw new Error('org_delete_failed');
-        await adminAuditService.log({
+        await runAsSystem(() => adminAuditService.log({
           orgId,
           actorId: actorEmail,
           eventType: 'org_deleted',
           metadata: { reason, deleted_name: org.name },
-        });
+        }));
         request.log.info({ orgId, actorEmail, reason }, 'admin hard-deleted org');
       } catch (err) {
         const code = err instanceof Error ? err.message : 'unknown';

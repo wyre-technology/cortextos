@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireAdmin } from '../lib/admin-auth.js';
 import { escapeHtml } from '../web/helpers.js';
 import { THEME_VARS } from '../web/styles.js';
-import { getSql } from '../db/context.js';
+import { getSql, runAsSystem } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -626,7 +626,12 @@ export function adminMetricsRoutes() {
     // -------------------------------------------------------------------------
     app.get('/api/admin/metrics', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const metrics = await fetchMetrics();
+      // fetchMetrics aggregates platform-wide across all orgs — it must run
+      // system-path (BYPASSRLS). On the request-path connection RLS scopes it
+      // to the caller's own org memberships (and to nothing at all for an
+      // ADMIN_API_KEY caller, which has no session user). requireAdmin above
+      // is the gate; runAsSystem wraps only the data access.
+      const metrics = await runAsSystem(() => fetchMetrics());
       return reply.send(metrics);
     });
 
@@ -635,7 +640,8 @@ export function adminMetricsRoutes() {
     // -------------------------------------------------------------------------
     app.get('/admin/dashboard', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const metrics = await fetchMetrics();
+      // Platform-wide aggregate — system-path, same as /api/admin/metrics.
+      const metrics = await runAsSystem(() => fetchMetrics());
       return reply.type('text/html').send(renderDashboard(metrics));
     });
   };
