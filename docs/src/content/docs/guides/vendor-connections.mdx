@@ -1,11 +1,91 @@
 ---
 title: Vendor Connections
-description: Connecting vendor MCP servers (ConnectWise, Autotask, M365, etc.) to a customer.
+description: Connecting vendor tools to Conduit — the supported vendor catalog, credential scopes, how to connect, rotate, and troubleshoot.
 ---
 
-**Coming soon.**
+A **vendor connection** is a set of stored credentials that lets Conduit broker an AI agent's tool calls to a vendor's API — ConnectWise, Autotask, Microsoft 365, IT Glue, and the rest. This guide covers what vendors are available, where credentials live, and how to connect, rotate, and troubleshoot them.
 
-This guide will cover attaching vendor MCP servers to a customer's Conduit
-tenant: credential storage, scoping, rotation, and troubleshooting connection
-failures. See the legacy `docs/vendor-integration.md` for the developer-facing
-view in the meantime.
+For the step-by-step place in the onboarding flow, see [MSP Onboarding § Connect vendor credentials](/docs/guides/msp-onboarding/#3-connect-vendor-credentials). For how credentials are encrypted and resolved, see the [Security guide](/docs/reference/security/#credential-security).
+
+---
+
+## Supported vendors
+
+Conduit ships with **no pre-configured vendors** — the vendors enabled in a deployment depend on the customer's tool stack, decided during discovery. The integrations built so far:
+
+| Vendor | Slug | Category | Auth type |
+|--------|------|----------|-----------|
+| Datto RMM | `datto-rmm` | RMM | API Key + Secret |
+| Syncro | `syncro` | RMM | API Key |
+| Atera | `atera` | RMM | API Key |
+| SuperOps | `superops` | RMM | API Token |
+| ConnectWise Automate | `connectwise-automate` | RMM | Client Credentials |
+| NinjaOne | `ninjaone` | RMM | Client Credentials |
+| Autotask PSA | `autotask` | PSA | Username + Secret |
+| HaloPSA | `halopsa` | PSA | Client Credentials |
+| ConnectWise PSA | `connectwise-psa` | PSA | Public/Private Key |
+| IT Glue | `itglue` | Documentation | API Key |
+| Hudu | `hudu` | Documentation | API Key |
+| Liongard | `liongard` | Documentation | Access Key |
+| Domotz | `domotz` | Network | API Key |
+| RocketCyber | `rocketcyber` | Security | API Key |
+| SentinelOne | `sentinelone` | Security | API Token |
+| Huntress | `huntress` | Security | API Key + Secret |
+| Blumira | `blumira` | Security | JWT Token |
+| runZero | `runzero` | Security | API Token |
+| Avanan | `avanan` | Email Security | API Key |
+| Proofpoint | `proofpoint` | Email Security | API Key |
+| KnowBe4 | `knowbe4` | Email Security | API Key |
+| SalesBuildr | `salesbuildr` | Sales | API Key |
+| PandaDoc | `pandadoc` | Sales | API Key |
+| Pax8 | `pax8` | Sales | MCP Token |
+| Xero | `xero` | Accounting | OAuth 2.0 |
+| QuickBooks Online | `qbo` | Accounting | OAuth 2.0 |
+| HubSpot | `hubspot` | CRM | OAuth 2.0 |
+| Microsoft 365 | `m365` | Productivity | OAuth 2.0 |
+
+Adding a vendor not on this list is a development task — see the engineering vendor-integration guide.
+
+## Credential scopes
+
+A vendor credential can be stored at one of four scopes. When a tool call runs, Conduit resolves the credential by walking the scopes in order (see the [credential resolution hierarchy](/docs/reference/security/#credential-resolution-hierarchy)):
+
+- **Personal** — the individual user's own credential.
+- **Team** — shared by a team; used when the user is in exactly one team with a credential for that vendor.
+- **Organization** — the org's shared credential; the common case for an MSP that uses one vendor account.
+- **Service client** — a credential bound to a machine-to-machine service client (Business tier).
+
+Most MSPs configure vendors at the **organization** scope so every technician shares one vendor account. Personal credentials are the override when a technician needs to act as themselves.
+
+## Connecting a vendor
+
+From the connections page at **`/org/connections`**:
+
+- **API-key vendors** (most of the catalog) — click **Connect** next to the vendor and enter the required fields (API key, secret, subdomain, etc. — the exact fields depend on the vendor's auth type in the table above).
+- **OAuth vendors** (Xero, QuickBooks Online, HubSpot, Microsoft 365) — click **Connect** and complete the OAuth flow in the browser. Conduit stores the access and refresh tokens, encrypted, and refreshes them automatically when they expire.
+
+Conduit validates a credential against the vendor's API at connect time where the vendor supports it, so a bad key is caught immediately rather than on first tool call.
+
+Credentials can also be set via the API — see [`POST /api/orgs/:orgId/credentials/:vendor`](/docs/reference/api/#credentials).
+
+## Rotating credentials
+
+When a vendor API key is rotated on the vendor side, update the stored credential at the matching scope:
+
+- **Org-level** — `/org/connections`
+- **Team-level** — the team's connections under `/org/teams`
+- **Personal** — `/settings/profile`
+
+Conduit encrypts the new credential and uses it immediately; the old one is overwritten. There is no separate "rotate" action — re-connecting overwrites in place.
+
+## Troubleshooting connection failures
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Tool calls return 403 "no credentials for vendor" | No credential is configured at any scope the user can resolve. Connect the vendor at the org scope, or check the user is in a team that has one. |
+| Tool calls fail with an upstream auth error | The stored credential is stale or was rotated on the vendor side. Re-connect at `/org/connections`. |
+| OAuth vendor stops working after a while | The refresh token was revoked (password change, app uninstalled at the vendor, consent withdrawn). Re-run the OAuth connect flow. |
+| Connect-time validation fails immediately | The key/secret is wrong, or the vendor account lacks API permissions. Verify the credential directly against the vendor's portal. |
+| A tool is missing for a connected vendor | A tool allowlist may be restricting it for the user's role — see [`/org/tool-access`](/docs/guides/msp-onboarding/#6-configure-tool-allowlists-optional). |
+
+If a vendor is reachable but a specific call misbehaves, the [audit log](/docs/reference/api/#audit) records every tool call with its status code — a fast way to confirm whether the failure is auth, the vendor, or the tool itself.

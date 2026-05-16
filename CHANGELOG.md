@@ -237,6 +237,10 @@ mcp-gateway CHANGELOG.
     no results).
   The legacy `docs/architecture.md`, `docs/cli-wrapper.md`, and
   `docs/prompt-capture.md` now carry "MIGRATED" pointers.
+- Filled in `docs/src/content/docs/guides/vendor-connections.mdx`
+  (previously a "Coming soon" stub) — the supported-vendor catalog,
+  credential scopes, connecting/rotating vendors, and a
+  connection-failure troubleshooting table.
 
 #### Fixed
 - Corrected the Pro-tier feature list in
