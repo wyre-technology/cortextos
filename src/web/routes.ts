@@ -40,6 +40,12 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
+import {
+  renderResellerCustomers,
+  RESELLER_CUSTOMERS_STYLES,
+  RESELLER_CUSTOMERS_SCRIPT,
+  type ResellerCustomer,
+} from './templates/reseller-customers.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -593,14 +599,36 @@ export function webRoutes(deps: WebRouteDeps) {
       `;
     }
 
-    // ---------- GET /org/customers (Track C Surface 1 — stub) ----------
+    // ---------- GET /org/customers (Track C Surface 1 — Reseller Dashboard) ----------
+    //
+    // Customer-organization list for a reseller. Mock-data-first: the
+    // customer rows below are placeholders shaped like the Track A
+    // customer-list read model. When that endpoint lands, the mock builder
+    // is the single swap-in point — the template renders unchanged.
     app.get('/org/customers', async (request, reply) => {
       const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
+
+      const now = Date.now();
+      const min = 60 * 1000;
+      const customers: ResellerCustomer[] = [
+        { id: 'cust_mock_1', name: 'AM3 Technology & Cybersecurity', subdomain: 'am3.conduit.wyre.ai',     plan: 'business', userCount: 12, mcpCalls30d: 8247,  lastActivity: new Date(now - 2 * min).toISOString() },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions',             subdomain: 'teamdns.conduit.wyre.ai', plan: 'pro',      userCount: 8,  mcpCalls30d: 3182,  lastActivity: new Date(now - 47 * min).toISOString() },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group',             subdomain: 'mtnmsp.conduit.wyre.ai',  plan: 'pro',      userCount: 6,  mcpCalls30d: 1094,  lastActivity: new Date(now - 3 * 60 * min).toISOString() },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners',            subdomain: 'coastal.conduit.wyre.ai', plan: 'business', userCount: 15, mcpCalls30d: 12403, lastActivity: new Date(now - 24 * 60 * min).toISOString() },
+      ];
+
       const html = renderLayout(
-        { user, org, activePath: '/org/customers', title: `${org.name} - Customers` },
-        resellerStubBody('Customers'),
+        {
+          user,
+          org,
+          activePath: '/org/customers',
+          title: `${org.name} - Customers`,
+          pageStyles: RESELLER_CUSTOMERS_STYLES,
+          pageScripts: RESELLER_CUSTOMERS_SCRIPT,
+        },
+        renderResellerCustomers({ org, customers }),
       );
       return reply.type('text/html').send(html);
     });
