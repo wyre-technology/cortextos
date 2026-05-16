@@ -1,7 +1,11 @@
-// Observability module — Log Analytics workspace, action group, and alert rules
+// Observability module — action group and alert rules.
+//
+// The Log Analytics workspace was extracted to modules/log-analytics.bicep to
+// break a module dependency cycle (gateway-app consumes the workspace;
+// observability consumes the gateway id). This module now receives the
+// workspace resource id as a parameter.
 //
 // Deploys:
-//   - Log Analytics workspace (sink for Container Apps logs)
 //   - Action Group (email receiver)
 //   - Tier 1 alerts: gateway restarts, 5xx rate, health failures, DB connectivity
 //   - Tier 2 alerts: high latency, MCP server restarts, rate-limit exhaustion, auth failures
@@ -18,14 +22,8 @@ param alertEmail string = ''
 @description('Gateway container app resource ID (scope for restart metric alert)')
 param gatewayId string
 
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: '${prefix}-logs'
-  location: location
-  properties: {
-    sku: { name: 'PerGB2018' }
-    retentionInDays: 30
-  }
-}
+@description('Log Analytics workspace resource ID (scope for scheduled-query alert rules)')
+param workspaceId string
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
   name: '${prefix}-alerts'
@@ -86,7 +84,7 @@ resource alertGateway5xx 'Microsoft.Insights/scheduledQueryRules@2023-03-15-prev
     description: 'More than 5% of gateway requests returned 5xx over 5 minutes'
     severity: 1
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -126,7 +124,7 @@ resource alertHealthFailures 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
     description: 'Gateway health probe failed 3+ times in 5 minutes — possible outage'
     severity: 0
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -166,7 +164,7 @@ resource alertDbConnectivity 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
     description: 'PostgreSQL connection errors detected in gateway logs'
     severity: 1
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -206,7 +204,7 @@ resource alertHighLatency 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pre
     description: 'Gateway P95 response time exceeded 5 seconds over 5 minutes'
     severity: 2
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -249,7 +247,7 @@ resource alertMcpServerRestarts 'Microsoft.Insights/scheduledQueryRules@2023-03-
     description: 'An MCP vendor server container restarted more than 2 times in 5 minutes'
     severity: 2
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -289,7 +287,7 @@ resource alertRateLimits 'Microsoft.Insights/scheduledQueryRules@2023-03-15-prev
     description: 'More than 50 rate-limited (429) responses in 1 hour — possible abuse or undersized limits'
     severity: 2
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT15M'
     windowSize: 'PT1H'
     criteria: {
@@ -329,7 +327,7 @@ resource alertAuthFailures 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     description: 'More than 20 authentication failures (401/403) in 5 minutes — possible attack or misconfigured client'
     severity: 2
     enabled: true
-    scopes: [logAnalytics.id]
+    scopes: [workspaceId]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     criteria: {
@@ -359,9 +357,4 @@ resource alertAuthFailures 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
   }
 }
 
-output workspaceId string = logAnalytics.id
-output workspaceName string = logAnalytics.name
-output customerId string = logAnalytics.properties.customerId
-#disable-next-line outputs-should-not-contain-secrets
-output primarySharedKey string = logAnalytics.listKeys().primarySharedKey
 output actionGroupId string = actionGroup.id

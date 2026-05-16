@@ -8,9 +8,10 @@
 //   - modules/keyvault.bicep       Key Vault (Auth0 / Stripe secrets)
 //   - modules/identity.bicep       Role assignment for gateway -> KV
 //   - modules/postgres.bicep       PostgreSQL Flexible Server + DB + firewall
+//   - modules/log-analytics.bicep  Log Analytics workspace (no dependencies)
 //   - modules/gateway-app.bicep    Container Apps Env + gateway app
 //   - modules/vendor-app.bicep     Per-vendor MCP server container apps
-//   - modules/observability.bicep  Log Analytics, action group, alerts
+//   - modules/observability.bicep  Action group + alert rules
 
 targetScope = 'resourceGroup'
 
@@ -114,6 +115,14 @@ module keyvault './modules/keyvault.bicep' = {
   }
 }
 
+module logAnalytics './modules/log-analytics.bicep' = {
+  name: 'log-analytics'
+  params: {
+    location: location
+    prefix: prefix
+  }
+}
+
 module observability './modules/observability.bicep' = {
   name: 'observability'
   params: {
@@ -121,6 +130,7 @@ module observability './modules/observability.bicep' = {
     prefix: prefix
     alertEmail: alertEmail
     gatewayId: gatewayApp.outputs.gatewayId
+    workspaceId: logAnalytics.outputs.workspaceId
   }
 }
 
@@ -140,9 +150,9 @@ module gatewayApp './modules/gateway-app.bicep' = {
   params: {
     location: location
     prefix: prefix
-    logAnalyticsWorkspaceId: observability.outputs.workspaceId
-    logAnalyticsCustomerId: observability.outputs.customerId
-    logAnalyticsSharedKey: observability.outputs.primarySharedKey
+    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
+    logAnalyticsCustomerId: logAnalytics.outputs.customerId
+    logAnalyticsSharedKey: logAnalytics.outputs.primarySharedKey
     keyVaultUri: keyvault.outputs.vaultUri
     gatewayImage: gatewayImage
     customDomain: customDomain
