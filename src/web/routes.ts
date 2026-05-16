@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import type postgres from 'postgres';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
@@ -60,7 +59,6 @@ interface WebRouteDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
-  sql?: postgres.Sql;
   vendorOAuthStates: VendorOAuthStateStore;
   completeAuth: (sessionId: string, userId: string) => Promise<{ redirectUrl: string } | null>;
   logShippingService: LogShippingService;
@@ -447,15 +445,14 @@ export function webRoutes(deps: WebRouteDeps) {
       let lastName: string | null = null;
       let displayName: string | null = null;
 
-      if (deps.sql) {
-        const rows = await deps.sql<{ first_name: string | null; last_name: string | null; display_name: string | null }[]>`
-          SELECT first_name, last_name, display_name FROM users WHERE id = ${user.sub}
-        `;
-        if (rows.length > 0) {
-          firstName = rows[0].first_name;
-          lastName = rows[0].last_name;
-          displayName = rows[0].display_name;
-        }
+      const { getSql } = await import('../db/context.js');
+      const rows = await getSql()<{ first_name: string | null; last_name: string | null; display_name: string | null }[]>`
+        SELECT first_name, last_name, display_name FROM users WHERE id = ${user.sub}
+      `;
+      if (rows.length > 0) {
+        firstName = rows[0].first_name;
+        lastName = rows[0].last_name;
+        displayName = rows[0].display_name;
       }
 
       const bodyContent = renderProfileSettings({
@@ -740,7 +737,7 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
-      const connections = new ScimConnectionsService(deps.sql!);
+      const connections = new ScimConnectionsService();
       const rows = await connections.listForOrg(org.id);
       const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
 

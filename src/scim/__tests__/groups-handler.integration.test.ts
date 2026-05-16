@@ -16,6 +16,7 @@ import { ScimGroupsHandler } from '../groups-handler.js';
 import { ScimUsersHandler } from '../users-handler.js';
 import type { ScimConnection } from '../types.js';
 import { seedConnection, seedOwner, startIntegrationDb, type IntegrationDb } from './integration-harness.js';
+import { enterTestContext } from '../../db/context.js';
 
 let db: IntegrationDb;
 let groups: ScimGroupsHandler;
@@ -40,8 +41,8 @@ function buildConnection(over: { orgId: string; createdBy: string }): ScimConnec
 
 beforeAll(async () => {
   db = await startIntegrationDb();
-  groups = new ScimGroupsHandler(db.sql);
-  users = new ScimUsersHandler(db.sql);
+  groups = new ScimGroupsHandler();
+  users = new ScimUsersHandler();
 }, 90_000);
 
 afterAll(async () => {
@@ -50,6 +51,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.reset();
+  enterTestContext(db.sql);
 });
 
 async function provisionUser(conn: ScimConnection, email: string): Promise<string> {

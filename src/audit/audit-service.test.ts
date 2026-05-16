@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AuditEntry } from './audit-service.js';
+import { runWithSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -94,9 +95,9 @@ describe('AuditService', () => {
     it('returns entries with default pagination (limit 50, offset 0)', async () => {
       const row = makeRow();
       const { sql, calls } = createMockSql({ rows: [row], count: 1 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const result = await service.query({});
+      const result = await runWithSql(sql, () => service.query({}));
 
       expect(result.entries).toHaveLength(1);
       expect(result.total).toBe(1);
@@ -127,9 +128,9 @@ describe('AuditService', () => {
 
     it('respects custom limit and offset', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({ limit: 10, offset: 20 });
+      await runWithSql(sql, () => service.query({ limit: 10, offset: 20 }));
 
       const selectCall = calls.find((c) => c.query.includes('SELECT r.*'));
       const vals = selectCall!.values;
@@ -139,9 +140,9 @@ describe('AuditService', () => {
 
     it('clamps limit to max 200', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({ limit: 999 });
+      await runWithSql(sql, () => service.query({ limit: 999 }));
 
       const selectCall = calls.find((c) => c.query.includes('SELECT r.*'));
       const vals = selectCall!.values;
@@ -150,9 +151,9 @@ describe('AuditService', () => {
 
     it('filters by orgId (including personal-credential usage)', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({ orgId: 'org_42' });
+      await runWithSql(sql, () => service.query({ orgId: 'org_42' }));
 
       // There should be a fragment call with r.org_id and org_members subquery
       const fragmentCall = calls.find((c) => c.query.includes('org_id'));
@@ -162,9 +163,9 @@ describe('AuditService', () => {
 
     it('filters by userId', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({ userId: 'user_99' });
+      await runWithSql(sql, () => service.query({ userId: 'user_99' }));
 
       const fragmentCall = calls.find((c) => c.query.includes('r.user_id'));
       expect(fragmentCall).toBeDefined();
@@ -173,9 +174,9 @@ describe('AuditService', () => {
 
     it('filters by vendorSlug', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({ vendorSlug: 'halopsa' });
+      await runWithSql(sql, () => service.query({ vendorSlug: 'halopsa' }));
 
       const fragmentCall = calls.find((c) => c.query.includes('r.vendor_slug'));
       expect(fragmentCall).toBeDefined();
@@ -184,12 +185,12 @@ describe('AuditService', () => {
 
     it('filters by date range (startDate and endDate)', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({
+      await runWithSql(sql, () => service.query({
         startDate: '2026-01-01T00:00:00Z',
         endDate: '2026-01-31T23:59:59Z',
-      });
+      }));
 
       const startCall = calls.find(
         (c) => c.query.includes('r.created_at >='),
@@ -206,13 +207,13 @@ describe('AuditService', () => {
 
     it('combines multiple filters', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.query({
+      await runWithSql(sql, () => service.query({
         orgId: 'org_1',
         userId: 'user_1',
         vendorSlug: 'syncro',
-      });
+      }));
 
       // Each filter produces a fragment call
       expect(calls.some((c) => c.query.includes('r.org_id') || c.query.includes('org_id'))).toBe(true);
@@ -226,9 +227,9 @@ describe('AuditService', () => {
 
     it('returns empty results when no matches', async () => {
       const { sql } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const result = await service.query({});
+      const result = await runWithSql(sql, () => service.query({}));
 
       expect(result.entries).toEqual([]);
       expect(result.total).toBe(0);
@@ -237,9 +238,9 @@ describe('AuditService', () => {
     it('returns correct total count independent of page size', async () => {
       const rows = [makeRow({ id: 'log_1' }), makeRow({ id: 'log_2' })];
       const { sql } = createMockSql({ rows, count: 150 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const result = await service.query({ limit: 2 });
+      const result = await runWithSql(sql, () => service.query({ limit: 2 }));
 
       expect(result.entries).toHaveLength(2);
       expect(result.total).toBe(150);
@@ -253,9 +254,9 @@ describe('AuditService', () => {
   describe('exportCsv()', () => {
     it('returns CSV with header row', async () => {
       const { sql } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const csv = await service.exportCsv({});
+      const csv = await runWithSql(sql, () => service.exportCsv({}));
       const lines = csv.split('\n');
 
       expect(lines[0]).toBe(
@@ -266,9 +267,9 @@ describe('AuditService', () => {
     it('includes all entry fields in correct order', async () => {
       const row = makeRow();
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const csv = await service.exportCsv({});
+      const csv = await runWithSql(sql, () => service.exportCsv({}));
       const lines = csv.split('\n');
 
       expect(lines).toHaveLength(2); // header + 1 data row
@@ -280,9 +281,9 @@ describe('AuditService', () => {
     it('handles null orgId and toolName as empty strings', async () => {
       const row = makeRow({ org_id: null, tool_name: null });
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const csv = await service.exportCsv({});
+      const csv = await runWithSql(sql, () => service.exportCsv({}));
       const lines = csv.split('\n');
 
       // org_id and tool_name positions should be empty
@@ -294,9 +295,9 @@ describe('AuditService', () => {
     it('handles null responseTimeMs as empty string', async () => {
       const row = makeRow({ response_time_ms: null });
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      const csv = await service.exportCsv({});
+      const csv = await runWithSql(sql, () => service.exportCsv({}));
       const lines = csv.split('\n');
 
       expect(lines[1]).toBe(
@@ -306,9 +307,9 @@ describe('AuditService', () => {
 
     it('overrides pagination (offset 0, limit clamped to 200 by query)', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AuditService(sql);
+      const service = new AuditService();
 
-      await service.exportCsv({ limit: 5, offset: 100 });
+      await runWithSql(sql, () => service.exportCsv({ limit: 5, offset: 100 }));
 
       const selectCall = calls.find((c) => c.query.includes('SELECT r.*'));
       const vals = selectCall!.values;

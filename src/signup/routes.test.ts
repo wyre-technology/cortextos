@@ -19,6 +19,7 @@ import {
   InMemoryRateLimiter,
   renderSignupPage,
 } from './routes.js';
+import { enterTestContext } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // postgres.js tagged-template mock — captures INSERTed intent rows.
@@ -59,7 +60,8 @@ async function makeApp(overrides?: { limiter?: InMemoryRateLimiter }) {
   const mock = createMockSql();
   const app = Fastify();
   await app.register(formbody);
-  await app.register(signupRoutes({ sql: mock.sql, limiter: overrides?.limiter }));
+  enterTestContext(mock.sql);
+  await app.register(signupRoutes({ limiter: overrides?.limiter }));
   await app.ready();
   return { app, mock };
 }

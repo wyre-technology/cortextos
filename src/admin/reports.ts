@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type postgres from 'postgres';
 import { requireAdmin } from '../lib/admin-auth.js';
 import { escapeHtml } from '../web/helpers.js';
 import { renderAdminPage } from './layout.js';
+import { getSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -70,14 +70,13 @@ interface InactiveUsersFilter {
 }
 
 async function fetchInactiveUsers(
-  sql: postgres.Sql,
   filter: InactiveUsersFilter,
 ): Promise<InactiveUserRow[]> {
   const status = filter.status ?? 'all';
   const minDays = filter.minDays ?? 0;
   const maxDays = filter.maxDays ?? 3650;
 
-  return sql<InactiveUserRow[]>`
+  return getSql()<InactiveUserRow[]>`
     WITH user_orgs AS (
       SELECT
         u.id         AS user_id,
@@ -89,7 +88,7 @@ async function fetchInactiveUsers(
       FROM users u
       LEFT JOIN org_members om ON om.user_id = u.id
       WHERE NOT EXISTS (
-        SELECT 1 FROM unnest(${sql.array(EXCLUDED_DOMAINS)}::text[]) d
+        SELECT 1 FROM unnest(${getSql().array(EXCLUDED_DOMAINS)}::text[]) d
         WHERE u.email ILIKE '%@' || d
       )
       GROUP BY u.id
@@ -404,13 +403,7 @@ function parseFilter(qs: QueryString): InactiveUsersFilter {
 // Route plugin
 // ---------------------------------------------------------------------------
 
-interface Deps {
-  sql: postgres.Sql;
-}
-
-export function adminReportsRoutes(deps: Deps) {
-  const { sql } = deps;
-
+export function adminReportsRoutes() {
   return async function plugin(app: FastifyInstance): Promise<void> {
     app.get('/admin/reports', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
@@ -420,7 +413,7 @@ export function adminReportsRoutes(deps: Deps) {
     app.get<{ Querystring: QueryString }>('/admin/reports/inactive-users', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
       const filter = parseFilter(request.query);
-      const rows = await fetchInactiveUsers(sql, filter);
+      const rows = await fetchInactiveUsers(filter);
       const html = renderInactiveUsersPage(rows, filter, new Date().toISOString());
       return reply.type('text/html').send(html);
     });
@@ -430,7 +423,7 @@ export function adminReportsRoutes(deps: Deps) {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const filter = parseFilter(request.query);
-        const rows = await fetchInactiveUsers(sql, filter);
+        const rows = await fetchInactiveUsers(filter);
         const date = new Date().toISOString().slice(0, 10);
         return sendCsv(reply, `inactive-users-${date}.csv`, rowsToCsv(rows));
       },
@@ -441,7 +434,7 @@ export function adminReportsRoutes(deps: Deps) {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const filter = parseFilter(request.query);
-        const rows = await fetchInactiveUsers(sql, filter);
+        const rows = await fetchInactiveUsers(filter);
         return reply.send({ generated_at: new Date().toISOString(), filter, rows });
       },
     );

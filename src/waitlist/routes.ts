@@ -1,18 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
-import type postgres from 'postgres';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { sendWebhook } from '../monitoring/webhook.js';
+import { getSql } from '../db/context.js';
 
 /**
  * Waitlist routes — collects emails from interested users.
  * No authentication required. Rate-limited to prevent abuse.
  */
-export function waitlistRoutes(sql: postgres.Sql) {
+export function waitlistRoutes() {
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Ensure table exists
-    await sql`
+    await getSql()`
       CREATE TABLE IF NOT EXISTS waitlist (
         id         TEXT PRIMARY KEY,
         email      TEXT UNIQUE NOT NULL,
@@ -42,7 +42,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
         }
 
         try {
-          await sql`
+          await getSql()`
             INSERT INTO waitlist (id, email, name)
             VALUES (${nanoid()}, ${normalized}, ${name?.trim() || null})
             ON CONFLICT (email) DO NOTHING
@@ -65,7 +65,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
 
     // GET /waitlist — public signup page
     app.get('/waitlist', async (_request, reply) => {
-      const rows = await sql`SELECT COUNT(*)::int AS count FROM waitlist`;
+      const rows = await getSql()`SELECT COUNT(*)::int AS count FROM waitlist`;
       const count = rows[0].count as number;
       const countText = count > 0 ? `${count} ${count === 1 ? 'person has' : 'people have'} already joined.` : '';
 
@@ -327,7 +327,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
 
     // GET /waitlist/count — public count for social proof (no auth needed)
     app.get('/waitlist/count', async (_request, reply) => {
-      const rows = await sql`SELECT COUNT(*)::int AS count FROM waitlist`;
+      const rows = await getSql()`SELECT COUNT(*)::int AS count FROM waitlist`;
       return reply.send({ count: rows[0].count });
     });
 
@@ -338,7 +338,7 @@ export function waitlistRoutes(sql: postgres.Sql) {
       if (!config.adminApiKey || token !== config.adminApiKey) {
         return reply.code(401).send({ error: 'Unauthorized' });
       }
-      const rows = await sql<{ id: string; email: string; name: string | null; created_at: Date }[]>`
+      const rows = await getSql()<{ id: string; email: string; name: string | null; created_at: Date }[]>`
         SELECT id, email, name, created_at FROM waitlist ORDER BY created_at ASC
       `;
       return reply.send({ count: rows.length, signups: rows });

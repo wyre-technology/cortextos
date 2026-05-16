@@ -11,7 +11,7 @@
  * verifier is encrypted at rest using `src/credentials/crypto.ts`,
  * scope-bound to the user_id that started the flow.
  */
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { encrypt, decrypt } from '../credentials/crypto.js';
 
 export interface CreateStateParams {
@@ -50,11 +50,14 @@ interface FlowStateRow {
 }
 
 export class VendorOAuthStateStore {
-  private sql: postgres.Sql;
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   private masterKey: Buffer;
 
-  constructor(sql: postgres.Sql, masterKey: Buffer) {
-    this.sql = sql;
+  constructor(masterKey: Buffer) {
     this.masterKey = masterKey;
   }
 

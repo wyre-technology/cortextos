@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { runWithSql, enterTestContext } from '../db/context.js';
 
 // We test OrgService with a mock SQL that stores rows in Maps.
 // This verifies the CRUD contracts for orgs, members, and invitations.
@@ -327,9 +328,10 @@ describe('OrgService', () => {
 
   it('createOrg creates org and owner membership', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Acme Corp', 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Acme Corp', 'user_owner'));
 
     expect(org.name).toBe('Acme Corp');
     expect(org.ownerId).toBe('user_owner');
@@ -337,66 +339,70 @@ describe('OrgService', () => {
     expect(org.id).toBeDefined();
 
     // Owner should be a member
-    const membership = await service.getMembership(org.id, 'user_owner');
+    const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_owner'));
     expect(membership).not.toBeNull();
     expect(membership!.role).toBe('owner');
   });
 
   it('getOrg returns org or null', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Test Org', 'user_1');
-    const fetched = await service.getOrg(org.id);
+    const org = await runWithSql(sql, () => service.createOrg('Test Org', 'user_1'));
+    const fetched = await runWithSql(sql, () => service.getOrg(org.id));
     expect(fetched).not.toBeNull();
     expect(fetched!.name).toBe('Test Org');
 
-    const missing = await service.getOrg('nonexistent');
+    const missing = await runWithSql(sql, () => service.getOrg('nonexistent'));
     expect(missing).toBeNull();
   });
 
   it('getUserOrgs returns orgs for a user', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    await service.createOrg('Org A', 'user_1');
-    await service.createOrg('Org B', 'user_1');
-    await service.createOrg('Org C', 'user_2');
+    await runWithSql(sql, () => service.createOrg('Org A', 'user_1'));
+    await runWithSql(sql, () => service.createOrg('Org B', 'user_1'));
+    await runWithSql(sql, () => service.createOrg('Org C', 'user_2'));
 
-    const userOrgs = await service.getUserOrgs('user_1');
+    const userOrgs = await runWithSql(sql, () => service.getUserOrgs('user_1'));
     expect(userOrgs).toHaveLength(2);
     expect(userOrgs.map((o) => o.name).sort()).toEqual(['Org A', 'Org B']);
 
-    const user2Orgs = await service.getUserOrgs('user_2');
+    const user2Orgs = await runWithSql(sql, () => service.getUserOrgs('user_2'));
     expect(user2Orgs).toHaveLength(1);
     expect(user2Orgs[0].name).toBe('Org C');
   });
 
   it('updateOrg updates the name', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Old Name', 'user_1');
-    const updated = await service.updateOrg(org.id, 'New Name');
+    const org = await runWithSql(sql, () => service.createOrg('Old Name', 'user_1'));
+    const updated = await runWithSql(sql, () => service.updateOrg(org.id, 'New Name'));
     expect(updated).not.toBeNull();
     expect(updated!.name).toBe('New Name');
 
-    const notFound = await service.updateOrg('nonexistent', 'Nope');
+    const notFound = await runWithSql(sql, () => service.updateOrg('nonexistent', 'Nope'));
     expect(notFound).toBeNull();
   });
 
   it('deleteOrg removes the org', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Doomed Org', 'user_1');
-    const deleted = await service.deleteOrg(org.id);
+    const org = await runWithSql(sql, () => service.createOrg('Doomed Org', 'user_1'));
+    const deleted = await runWithSql(sql, () => service.deleteOrg(org.id));
     expect(deleted).toBe(true);
 
-    const gone = await service.getOrg(org.id);
+    const gone = await runWithSql(sql, () => service.getOrg(org.id));
     expect(gone).toBeNull();
 
-    const again = await service.deleteOrg(org.id);
+    const again = await runWithSql(sql, () => service.deleteOrg(org.id));
     expect(again).toBe(false);
   });
 
@@ -406,11 +412,12 @@ describe('OrgService', () => {
 
   it('getMembers returns members', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Team Org', 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Team Org', 'user_owner'));
 
-    const memberList = await service.getMembers(org.id);
+    const memberList = await runWithSql(sql, () => service.getMembers(org.id));
     expect(memberList).toHaveLength(1);
     expect(memberList[0].userId).toBe('user_owner');
     expect(memberList[0].role).toBe('owner');
@@ -418,44 +425,46 @@ describe('OrgService', () => {
 
   it('getMembership returns membership or null', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Membership Org', 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Membership Org', 'user_owner'));
 
-    const found = await service.getMembership(org.id, 'user_owner');
+    const found = await runWithSql(sql, () => service.getMembership(org.id, 'user_owner'));
     expect(found).not.toBeNull();
     expect(found!.role).toBe('owner');
 
-    const missing = await service.getMembership(org.id, 'user_stranger');
+    const missing = await runWithSql(sql, () => service.getMembership(org.id, 'user_stranger'));
     expect(missing).toBeNull();
   });
 
   it('removeMember removes member but not owner', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Remove Org', 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Remove Org', 'user_owner'));
 
     // Cannot remove the owner
-    const ownerRemoved = await service.removeMember(org.id, 'user_owner');
+    const ownerRemoved = await runWithSql(sql, () => service.removeMember(org.id, 'user_owner'));
     expect(ownerRemoved).toBe(false);
 
     // Owner should still be there
-    const ownerStillThere = await service.getMembership(org.id, 'user_owner');
+    const ownerStillThere = await runWithSql(sql, () => service.getMembership(org.id, 'user_owner'));
     expect(ownerStillThere).not.toBeNull();
 
     // Accept an invitation to add a regular member, then remove them
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(plainToken, 'user_member');
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
+    await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_member'));
 
-    const memberExists = await service.getMembership(org.id, 'user_member');
+    const memberExists = await runWithSql(sql, () => service.getMembership(org.id, 'user_member'));
     expect(memberExists).not.toBeNull();
     expect(memberExists!.role).toBe('member');
 
-    const memberRemoved = await service.removeMember(org.id, 'user_member');
+    const memberRemoved = await runWithSql(sql, () => service.removeMember(org.id, 'user_member'));
     expect(memberRemoved).toBe(true);
 
-    const memberGone = await service.getMembership(org.id, 'user_member');
+    const memberGone = await runWithSql(sql, () => service.getMembership(org.id, 'user_member'));
     expect(memberGone).toBeNull();
   });
 
@@ -465,10 +474,11 @@ describe('OrgService', () => {
 
   it('createInvitation generates token with default single-use and 7-day expiry', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Invite Org', 'user_owner');
-    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Invite Org', 'user_owner'));
+    const { invitation, plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
     expect(invitation.id).toBeDefined();
     expect(invitation.orgId).toBe(org.id);
@@ -491,57 +501,60 @@ describe('OrgService', () => {
   it('createInvitation stores SHA-256 hash, returns plaintext token (PRD §7.1, §8.4)', async () => {
     const { createHash } = await import('node:crypto');
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Hash Org', 'user_owner');
-    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Hash Org', 'user_owner'));
+    const { invitation, plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
     // Callers must receive the raw token once (for the email link).
     expect(plainToken).toMatch(/^[A-Za-z0-9_-]+$/);
 
     // Lookup by the raw token must resolve (hash-first path).
-    const byToken = await service.getInvitationByToken(plainToken);
+    const byToken = await runWithSql(sql, () => service.getInvitationByToken(plainToken));
     expect(byToken).not.toBeNull();
     expect(byToken!.id).toBe(invitation.id);
 
     // Lookup by the *hash* of the token must NOT resolve — the hash is
     // what the DB stores, but callers must present the plaintext.
     const hash = createHash('sha256').update(plainToken).digest('hex');
-    const byHash = await service.getInvitationByToken(hash);
+    const byHash = await runWithSql(sql, () => service.getInvitationByToken(hash));
     expect(byHash).toBeNull();
   });
 
   it('acceptInvitation creates membership', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Accept Org', 'user_owner');
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Accept Org', 'user_owner'));
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
-    const member = await service.acceptInvitation(plainToken, 'user_joiner');
+    const member = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_joiner'));
     expect(member).not.toBeNull();
     expect(member!.orgId).toBe(org.id);
     expect(member!.userId).toBe('user_joiner');
     expect(member!.role).toBe('member');
 
     // Verify membership persists
-    const membership = await service.getMembership(org.id, 'user_joiner');
+    const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_joiner'));
     expect(membership).not.toBeNull();
 
     // Using the same token again should return null (already accepted)
-    const again = await service.acceptInvitation(plainToken, 'user_other');
+    const again = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_other'));
     expect(again).toBeNull();
   });
 
   it('listInvitations returns pending invites', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('List Org', 'user_owner');
-    await service.createInvitation(org.id, 'user_owner');
-    await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('List Org', 'user_owner'));
+    await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
+    await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
-    const pending = await service.listInvitations(org.id);
+    const pending = await runWithSql(sql, () => service.listInvitations(org.id));
     expect(pending).toHaveLength(2);
     expect(pending[0].orgId).toBe(org.id);
     expect(pending[0].acceptedBy).toBeNull();
@@ -549,38 +562,40 @@ describe('OrgService', () => {
 
   it('revokeInvitation deletes invitation', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Revoke Org', 'user_owner');
-    const { invitation } = await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Revoke Org', 'user_owner'));
+    const { invitation } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
-    const revoked = await service.revokeInvitation(invitation.id, org.id);
+    const revoked = await runWithSql(sql, () => service.revokeInvitation(invitation.id, org.id));
     expect(revoked).toBe(true);
 
     // Should no longer appear in pending list
-    const pending = await service.listInvitations(org.id);
+    const pending = await runWithSql(sql, () => service.listInvitations(org.id));
     expect(pending).toHaveLength(0);
 
     // Revoking again returns false
-    const again = await service.revokeInvitation(invitation.id, org.id);
+    const again = await runWithSql(sql, () => service.revokeInvitation(invitation.id, org.id));
     expect(again).toBe(false);
   });
 
   it('revokeInvitation is a no-op for an invitation owned by another org', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const orgA = await service.createOrg('Org A', 'user_a');
-    const orgB = await service.createOrg('Org B', 'user_b');
-    const { invitation } = await service.createInvitation(orgB.id, 'user_b');
+    const orgA = await runWithSql(sql, () => service.createOrg('Org A', 'user_a'));
+    const orgB = await runWithSql(sql, () => service.createOrg('Org B', 'user_b'));
+    const { invitation } = await runWithSql(sql, () => service.createInvitation(orgB.id, 'user_b'));
 
     // Org A passing org B's invitation id — the DELETE is scoped by org_id,
     // so it matches zero rows: cross-tenant revoke cannot succeed.
-    const revoked = await service.revokeInvitation(invitation.id, orgA.id);
+    const revoked = await runWithSql(sql, () => service.revokeInvitation(invitation.id, orgA.id));
     expect(revoked).toBe(false);
 
     // Org B's invitation is untouched — still pending.
-    const pendingB = await service.listInvitations(orgB.id);
+    const pendingB = await runWithSql(sql, () => service.listInvitations(orgB.id));
     expect(pendingB).toHaveLength(1);
   });
 
@@ -589,69 +604,77 @@ describe('OrgService', () => {
   // -------------------------------------------------------------------------
 
   /** Helper: create an org with an owner and add a member, then promote to admin. */
-  async function setupWithAdmin(service: InstanceType<typeof OrgService>) {
-    const org = await service.createOrg('Admin Org', 'user_owner');
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(plainToken, 'user_admin');
-    await service.updateMemberRole(org.id, 'user_admin', 'admin');
+  async function setupWithAdmin(
+    service: InstanceType<typeof OrgService>,
+    sql: ReturnType<typeof createMockSql>,
+  ) {
+    const org = await runWithSql(sql, () => service.createOrg('Admin Org', 'user_owner'));
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
+    await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_admin'));
+    await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_admin', 'admin'));
     return org;
   }
 
   it('updateMemberRole promotes member to admin', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Role Org', 'user_owner');
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(plainToken, 'user_member');
+    const org = await runWithSql(sql, () => service.createOrg('Role Org', 'user_owner'));
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
+    await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_member'));
 
-    const updated = await service.updateMemberRole(org.id, 'user_member', 'admin');
+    const updated = await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_member', 'admin'));
     expect(updated).not.toBeNull();
     expect(updated!.role).toBe('admin');
 
-    const membership = await service.getMembership(org.id, 'user_member');
+    const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_member'));
     expect(membership!.role).toBe('admin');
   });
 
   it('updateMemberRole demotes admin to member', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await setupWithAdmin(service);
+    const org = await setupWithAdmin(service, sql);
 
-    const updated = await service.updateMemberRole(org.id, 'user_admin', 'member');
+    const updated = await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_admin', 'member'));
     expect(updated).not.toBeNull();
     expect(updated!.role).toBe('member');
   });
 
   it('updateMemberRole cannot change owner role', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Owner Protected Org', 'user_owner');
-    const result = await service.updateMemberRole(org.id, 'user_owner', 'admin');
+    const org = await runWithSql(sql, () => service.createOrg('Owner Protected Org', 'user_owner'));
+    const result = await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_owner', 'admin'));
     expect(result).toBeNull();
   });
 
   it('updateMemberRole cannot promote to owner', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('No Promote Org', 'user_owner');
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
-    await service.acceptInvitation(plainToken, 'user_member');
+    const org = await runWithSql(sql, () => service.createOrg('No Promote Org', 'user_owner'));
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
+    await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_member'));
 
-    const result = await service.updateMemberRole(org.id, 'user_member', 'owner');
+    const result = await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_member', 'owner'));
     expect(result).toBeNull();
   });
 
   it('admin membership is correctly returned', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await setupWithAdmin(service);
+    const org = await setupWithAdmin(service, sql);
 
-    const membership = await service.getMembership(org.id, 'user_admin');
+    const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_admin'));
     expect(membership).not.toBeNull();
     expect(membership!.role).toBe('admin');
   });
@@ -662,71 +685,75 @@ describe('OrgService', () => {
 
   it('single-use invite rejects second accept', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Single Use Org', 'user_owner');
-    const { plainToken } = await service.createInvitation(org.id, 'user_owner');
+    const org = await runWithSql(sql, () => service.createOrg('Single Use Org', 'user_owner'));
+    const { plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner'));
 
-    const member1 = await service.acceptInvitation(plainToken, 'user_a');
+    const member1 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_a'));
     expect(member1).not.toBeNull();
 
-    const member2 = await service.acceptInvitation(plainToken, 'user_b');
+    const member2 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_b'));
     expect(member2).toBeNull();
   });
 
   it('multi-use invite allows up to maxUses accepts', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Multi Use Org', 'user_owner');
-    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner', { maxUses: 3 });
+    const org = await runWithSql(sql, () => service.createOrg('Multi Use Org', 'user_owner'));
+    const { invitation, plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner', { maxUses: 3 }));
 
     expect(invitation.maxUses).toBe(3);
     expect(invitation.useCount).toBe(0);
 
-    const m1 = await service.acceptInvitation(plainToken, 'user_a');
+    const m1 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_a'));
     expect(m1).not.toBeNull();
 
-    const m2 = await service.acceptInvitation(plainToken, 'user_b');
+    const m2 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_b'));
     expect(m2).not.toBeNull();
 
-    const m3 = await service.acceptInvitation(plainToken, 'user_c');
+    const m3 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_c'));
     expect(m3).not.toBeNull();
 
     // 4th user should be rejected
-    const m4 = await service.acceptInvitation(plainToken, 'user_d');
+    const m4 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_d'));
     expect(m4).toBeNull();
   });
 
   it('unlimited invite (maxUses: null) allows multiple accepts', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Unlimited Org', 'user_owner');
-    const { invitation, plainToken } = await service.createInvitation(org.id, 'user_owner', { maxUses: null });
+    const org = await runWithSql(sql, () => service.createOrg('Unlimited Org', 'user_owner'));
+    const { invitation, plainToken } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner', { maxUses: null }));
 
     expect(invitation.maxUses).toBeNull();
 
-    const m1 = await service.acceptInvitation(plainToken, 'user_a');
+    const m1 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_a'));
     expect(m1).not.toBeNull();
 
-    const m2 = await service.acceptInvitation(plainToken, 'user_b');
+    const m2 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_b'));
     expect(m2).not.toBeNull();
 
-    const m3 = await service.acceptInvitation(plainToken, 'user_c');
+    const m3 = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_c'));
     expect(m3).not.toBeNull();
 
     // Should still appear in pending list
-    const pending = await service.listInvitations(org.id);
+    const pending = await runWithSql(sql, () => service.listInvitations(org.id));
     expect(pending).toHaveLength(1);
   });
 
   it('custom expiresInHours sets correct expiration', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await service.createOrg('Custom Expiry Org', 'user_owner');
-    const { invitation } = await service.createInvitation(org.id, 'user_owner', { expiresInHours: 24 });
+    const org = await runWithSql(sql, () => service.createOrg('Custom Expiry Org', 'user_owner'));
+    const { invitation } = await runWithSql(sql, () => service.createInvitation(org.id, 'user_owner', { expiresInHours: 24 }));
 
     const expiresMs = new Date(invitation.expiresAt).getTime() - Date.now();
     const oneDayMs = 24 * 60 * 60 * 1000;
@@ -736,19 +763,20 @@ describe('OrgService', () => {
 
   it('removeMember removes admin but not owner', async () => {
     const sql = createMockSql();
-    const service = new OrgService(sql);
+    enterTestContext(sql);
+    const service = new OrgService();
 
-    const org = await setupWithAdmin(service);
+    const org = await setupWithAdmin(service, sql);
 
     // Can remove admin
-    const removed = await service.removeMember(org.id, 'user_admin');
+    const removed = await runWithSql(sql, () => service.removeMember(org.id, 'user_admin'));
     expect(removed).toBe(true);
 
-    const gone = await service.getMembership(org.id, 'user_admin');
+    const gone = await runWithSql(sql, () => service.getMembership(org.id, 'user_admin'));
     expect(gone).toBeNull();
 
     // Still cannot remove owner
-    const ownerRemoved = await service.removeMember(org.id, 'user_owner');
+    const ownerRemoved = await runWithSql(sql, () => service.removeMember(org.id, 'user_owner'));
     expect(ownerRemoved).toBe(false);
   });
 
@@ -759,11 +787,12 @@ describe('OrgService', () => {
   describe('reseller hierarchy helpers', () => {
     it('isReseller returns true for reseller orgs', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP Inc', 'user_owner', 'free', {
         type: 'reseller',
-      });
+      }));
       expect(reseller.type).toBe('reseller');
       expect(reseller.parentOrgId).toBeNull();
 
@@ -772,54 +801,57 @@ describe('OrgService', () => {
 
     it('isReseller returns false for standalone orgs', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const standalone = await service.createOrg('Solo Co', 'user_owner');
+      const standalone = await runWithSql(sql, () => service.createOrg('Solo Co', 'user_owner'));
       expect(standalone.type).toBe('standalone');
       expect(await service.isReseller(standalone.id)).toBe(false);
     });
 
     it('isReseller returns false for customer orgs', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP Inc', 'user_owner', 'free', {
         type: 'reseller',
-      });
-      const customer = await service.createOrg('Client Corp', 'user_owner', 'free', {
+      }));
+      const customer = await runWithSql(sql, () => service.createOrg('Client Corp', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: reseller.id,
-      });
+      }));
       expect(await service.isReseller(customer.id)).toBe(false);
     });
 
     it('getCustomersOfReseller returns customers and excludes standalone / nested', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP Inc', 'user_owner', 'free', {
         type: 'reseller',
-      });
-      const c1 = await service.createOrg('Client A', 'user_owner', 'free', {
+      }));
+      const c1 = await runWithSql(sql, () => service.createOrg('Client A', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: reseller.id,
-      });
-      const c2 = await service.createOrg('Client B', 'user_owner', 'free', {
+      }));
+      const c2 = await runWithSql(sql, () => service.createOrg('Client B', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: reseller.id,
-      });
+      }));
       // Unrelated standalone (should NOT appear)
-      await service.createOrg('Unrelated Solo', 'user_owner');
+      await runWithSql(sql, () => service.createOrg('Unrelated Solo', 'user_owner'));
       // A second reseller with its own customer (should NOT appear under reseller #1)
-      const otherReseller = await service.createOrg('Other MSP', 'user_owner', 'free', {
+      const otherReseller = await runWithSql(sql, () => service.createOrg('Other MSP', 'user_owner', 'free', {
         type: 'reseller',
-      });
-      await service.createOrg('Other Client', 'user_owner', 'free', {
+      }));
+      await runWithSql(sql, () => service.createOrg('Other Client', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: otherReseller.id,
-      });
+      }));
 
-      const customers = await service.getCustomersOfReseller(reseller.id);
+      const customers = await runWithSql(sql, () => service.getCustomersOfReseller(reseller.id));
       expect(customers).toHaveLength(2);
       const ids = customers.map((c) => c.id).sort();
       expect(ids).toEqual([c1.id, c2.id].sort());
@@ -831,17 +863,18 @@ describe('OrgService', () => {
 
     it('getResellerOfCustomer returns the parent for a customer', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP Inc', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP Inc', 'user_owner', 'free', {
         type: 'reseller',
-      });
-      const customer = await service.createOrg('Client', 'user_owner', 'free', {
+      }));
+      const customer = await runWithSql(sql, () => service.createOrg('Client', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: reseller.id,
-      });
+      }));
 
-      const parent = await service.getResellerOfCustomer(customer.id);
+      const parent = await runWithSql(sql, () => service.getResellerOfCustomer(customer.id));
       expect(parent).not.toBeNull();
       expect(parent!.id).toBe(reseller.id);
       expect(parent!.type).toBe('reseller');
@@ -849,19 +882,21 @@ describe('OrgService', () => {
 
     it('getResellerOfCustomer returns null for a standalone org', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const solo = await service.createOrg('Solo', 'user_owner');
+      const solo = await runWithSql(sql, () => service.createOrg('Solo', 'user_owner'));
       expect(await service.getResellerOfCustomer(solo.id)).toBeNull();
     });
 
     it('getResellerOfCustomer returns null for a reseller org', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', {
         type: 'reseller',
-      });
+      }));
       expect(await service.getResellerOfCustomer(reseller.id)).toBeNull();
     });
   });
@@ -873,35 +908,36 @@ describe('OrgService', () => {
   describe('createOrg with hierarchy options', () => {
     it('creates a reseller with type=reseller and null parent', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', {
         type: 'reseller',
         parentOrgId: null,
-      });
+      }));
       expect(reseller.type).toBe('reseller');
       expect(reseller.parentOrgId).toBeNull();
     });
 
     it('creates a customer with valid reseller parent', async () => {
       const sql = createMockSql();
-      const service = new OrgService(sql);
+      enterTestContext(sql);
+      const service = new OrgService();
 
-      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', {
         type: 'reseller',
-      });
-      const customer = await service.createOrg('Client', 'user_owner', 'free', {
+      }));
+      const customer = await runWithSql(sql, () => service.createOrg('Client', 'user_owner', 'free', {
         type: 'customer',
         parentOrgId: reseller.id,
-      });
+      }));
       expect(customer.type).toBe('customer');
       expect(customer.parentOrgId).toBe(reseller.id);
     });
 
     it('rejects customer with null parent at the service layer (before DB trigger)', async () => {
-      const sql = createMockSql();
       const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
-      const service = new Svc(sql);
+      const service = new Svc();
 
       await expect(
         service.createOrg('Client', 'user_owner', 'free', {
@@ -913,10 +949,11 @@ describe('OrgService', () => {
 
     it('rejects customer whose parent is not a reseller', async () => {
       const sql = createMockSql();
+      enterTestContext(sql);
       const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
-      const service = new Svc(sql);
+      const service = new Svc();
 
-      const solo = await service.createOrg('Solo', 'user_owner');
+      const solo = await runWithSql(sql, () => service.createOrg('Solo', 'user_owner'));
       await expect(
         service.createOrg('Client', 'user_owner', 'free', {
           type: 'customer',
@@ -927,12 +964,13 @@ describe('OrgService', () => {
 
     it('rejects standalone with a parent at the service layer', async () => {
       const sql = createMockSql();
+      enterTestContext(sql);
       const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
-      const service = new Svc(sql);
+      const service = new Svc();
 
-      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', {
         type: 'reseller',
-      });
+      }));
       await expect(
         service.createOrg('Bad Solo', 'user_owner', 'free', {
           type: 'standalone',
@@ -943,12 +981,13 @@ describe('OrgService', () => {
 
     it('rejects reseller with a parent at the service layer', async () => {
       const sql = createMockSql();
+      enterTestContext(sql);
       const { OrgService: Svc, OrgHierarchyError } = await import('./org-service.js');
-      const service = new Svc(sql);
+      const service = new Svc();
 
-      const reseller = await service.createOrg('MSP', 'user_owner', 'free', {
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', {
         type: 'reseller',
-      });
+      }));
       await expect(
         service.createOrg('Nested MSP', 'user_owner', 'free', {
           type: 'reseller',

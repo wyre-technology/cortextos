@@ -30,6 +30,7 @@ import postgres from 'postgres';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ResellerPricingService } from '../../billing/reseller-pricing-service.js';
+import { enterTestContext, type Sql } from '../../db/context.js';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
@@ -153,6 +154,10 @@ async function asUser(userId: string | null): Promise<RlsConnection> {
   const reserved = await sql.reserve();
   await reserved.unsafe(`SET ROLE rls_test_user`);
   await reserved`SELECT set_config('conduit.current_user_id', ${userId ?? ''}, false)`;
+  // Install this role-switched connection as the request context so a service
+  // constructed in the test resolves getSql() to it — RLS enforces against
+  // rls_test_user, not the superuser pool.
+  enterTestContext(reserved as unknown as Sql);
   return {
     query: reserved as unknown as postgres.Sql,
     release: async () => {
@@ -288,7 +293,7 @@ describe('mig 026 — ServiceLayer.getCurrentPricing composes row-gating + colum
   it('subtenant: returns latest row with createdBy = null', async () => {
     const conn = await asUser('carol');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(result).not.toBeNull();
       expect(result!.id).toBe('cfg-new');
@@ -300,7 +305,7 @@ describe('mig 026 — ServiceLayer.getCurrentPricing composes row-gating + colum
   it('reseller-admin: returns latest row with real createdBy', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(result).not.toBeNull();
       expect(result!.id).toBe('cfg-new');
@@ -311,7 +316,7 @@ describe('mig 026 — ServiceLayer.getCurrentPricing composes row-gating + colum
   it('cross-reseller admin: returns null (no row-access via view)', async () => {
     const conn = await asUser('bob');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(result).toBeNull();
     } finally { await conn.release(); }
@@ -321,7 +326,7 @@ describe('mig 026 — ServiceLayer.getCurrentPricing composes row-gating + colum
     await sql`TRUNCATE reseller_pricing_config`;
     const conn = await asUser('carol');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(result).toBeNull();
     } finally { await conn.release(); }
@@ -357,7 +362,7 @@ describe('mig 026 — write-path unchanged by follow-up', () => {
   it('setPricing still inserts into base table and returns expected shape', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.setPricing({
         id: 'cfg-write-1',
         resellerOrgId: 'res-a',

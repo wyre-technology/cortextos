@@ -59,6 +59,7 @@ import {
 import { ResellerPricingService } from '../../billing/reseller-pricing-service.js';
 import type { BillingGate } from '../../billing/gate.js';
 import type { OrgService, Organization } from '../../org/org-service.js';
+import { runWithSql, enterTestContext } from '../../db/context.js';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
@@ -91,6 +92,9 @@ afterAll(async () => {
 beforeEach(async () => {
   await sql`TRUNCATE reseller_invoices, reseller_pricing_config CASCADE`;
   await sql`TRUNCATE credit_ledger`;
+  // Services built in these tests resolve getSql() to this testcontainer
+  // connection; also overrides any handle leaked from a prior test file.
+  enterTestContext(sql);
 });
 
 async function bootstrapSchema(): Promise<void> {
@@ -302,16 +306,15 @@ function makeStripeClient() {
 function makeLog() {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Parameters<
     typeof handleResellerInvoicePaymentSucceeded
-  >[2];
+  >[1];
 }
 
 function makeService(baseRates: Record<string, number>): ResellerInvoiceService {
   return new ResellerInvoiceService(
-    sql,
-    new ResellerPricingService(sql),
+    new ResellerPricingService(),
     makeBillingGate(true),
     makeOrgService(['cust-a', 'cust-b']),
-    new CreditLedgerUsageSource(sql),
+    new CreditLedgerUsageSource(),
     makeBaseRateSource(baseRates),
     makeStripeClient(),
     makeMspContactSource(),
@@ -329,7 +332,7 @@ function makeService(baseRates: Record<string, number>): ResellerInvoiceService 
 
 describe('surface-5 — CreditLedgerUsageSource period-boundary semantics', () => {
   it('inclusive lower / exclusive upper: counts rows in [start, end) only', async () => {
-    const usage = new CreditLedgerUsageSource(sql);
+    const usage = new CreditLedgerUsageSource();
 
     await seedUsage('cust-c', 13, '2026-04-30T23:59:59Z'); // just-before start → excluded
     await seedUsage('cust-c', 7, '2026-05-01T00:00:00Z');  // exactly AT start  → included
@@ -337,7 +340,7 @@ describe('surface-5 — CreditLedgerUsageSource period-boundary semantics', () =
     await seedUsage('cust-c', 11, '2026-06-01T00:00:00Z'); // exactly AT end    → excluded
     await seedUsage('cust-c', 17, '2026-06-01T00:00:01Z'); // just-after end    → excluded
 
-    const total = await usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END);
+    const total = await runWithSql(sql, () => usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END));
 
     // 7 (at start) + 5 (mid) = 12. The at-end row is excluded — that same
     // row IS the next period's at-start row, so exclusive-upper is what
@@ -346,30 +349,30 @@ describe('surface-5 — CreditLedgerUsageSource period-boundary semantics', () =
   });
 
   it('a row exactly AT period_end belongs to the NEXT period, not this one', async () => {
-    const usage = new CreditLedgerUsageSource(sql);
+    const usage = new CreditLedgerUsageSource();
     await seedUsage('cust-c', 100, '2026-06-01T00:00:00Z');
 
-    const may = await usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END);
-    const jun = await usage.fetchUsageUnits('cust-c', JUN_START, JUN_END);
+    const may = await runWithSql(sql, () => usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END));
+    const jun = await runWithSql(sql, () => usage.fetchUsageUnits('cust-c', JUN_START, JUN_END));
 
     expect(may).toBe(0);   // excluded from May (exclusive upper)
     expect(jun).toBe(100); // included in June (inclusive lower) — billed once
   });
 
   it('returns 0 (not null) when a subtenant has no usage in the period', async () => {
-    const usage = new CreditLedgerUsageSource(sql);
+    const usage = new CreditLedgerUsageSource();
     await seedUsage('cust-c', 50, '2026-04-15T00:00:00Z'); // out of period
 
-    expect(await usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END)).toBe(0);
+    expect(await runWithSql(sql, () => usage.fetchUsageUnits('cust-c', PERIOD_START, PERIOD_END))).toBe(0);
   });
 
   it('scopes the SUM to the requested org — does not bleed across subtenants', async () => {
-    const usage = new CreditLedgerUsageSource(sql);
+    const usage = new CreditLedgerUsageSource();
     await seedUsage('cust-a', 30, '2026-05-10T00:00:00Z');
     await seedUsage('cust-b', 70, '2026-05-10T00:00:00Z');
 
-    expect(await usage.fetchUsageUnits('cust-a', PERIOD_START, PERIOD_END)).toBe(30);
-    expect(await usage.fetchUsageUnits('cust-b', PERIOD_START, PERIOD_END)).toBe(70);
+    expect(await runWithSql(sql, () => usage.fetchUsageUnits('cust-a', PERIOD_START, PERIOD_END))).toBe(30);
+    expect(await runWithSql(sql, () => usage.fetchUsageUnits('cust-b', PERIOD_START, PERIOD_END))).toBe(70);
   });
 });
 
@@ -420,7 +423,7 @@ describe('surface-5 — end-to-end success flow (real CreditLedgerUsageSource)',
     expect(finalized.stripeInvoiceId).toBe('in_e2e');
 
     // --- webhook: invoice.payment_succeeded (system-path) -----------------
-    await handleResellerInvoicePaymentSucceeded('inv-e2e', sql, makeLog());
+    await handleResellerInvoicePaymentSucceeded('inv-e2e', makeLog(), sql);
 
     // --- terminal state ---------------------------------------------------
     const terminal = await svc.getInvoice('inv-e2e');
@@ -446,7 +449,7 @@ describe('surface-5 — end-to-end success flow (real CreditLedgerUsageSource)',
       mspOrgId: 'res-a', periodStart: PERIOD_START, periodEnd: PERIOD_END,
     });
     await svc.finalizeInvoice('inv-readback');
-    await handleResellerInvoicePaymentSucceeded('inv-readback', sql, makeLog());
+    await handleResellerInvoicePaymentSucceeded('inv-readback', makeLog(), sql);
 
     // rita (reseller_admin of res-a) reads the invoice through mig 027's
     // SELECT policy under the non-bypass role — request-path posture.
@@ -482,7 +485,7 @@ describe('surface-5 — end-to-end failure paths', () => {
     const finalized = await svc.finalizeInvoice('inv-fail');
     expect(finalized.status).toBe('open');
 
-    await handleResellerInvoicePaymentFailed('inv-fail', sql, makeLog());
+    await handleResellerInvoicePaymentFailed('inv-fail', makeLog(), sql);
 
     const after = await svc.getInvoice('inv-fail');
     expect(after!.status).toBe('past_due');
@@ -518,12 +521,12 @@ describe('surface-5 — end-to-end failure paths', () => {
       mspOrgId: 'res-a', periodStart: JUN_START, periodEnd: JUN_END,
     });
     await svc.finalizeInvoice('inv-recover');
-    await handleResellerInvoicePaymentFailed('inv-recover', sql, makeLog());
+    await handleResellerInvoicePaymentFailed('inv-recover', makeLog(), sql);
     expect((await svc.getInvoice('inv-recover'))!.status).toBe('past_due');
 
     // A later successful retry — succeeded handler matches status IN
     // ('open','past_due'), so a recovered payment lands as paid.
-    await handleResellerInvoicePaymentSucceeded('inv-recover', sql, makeLog());
+    await handleResellerInvoicePaymentSucceeded('inv-recover', makeLog(), sql);
     expect((await svc.getInvoice('inv-recover'))!.status).toBe('paid');
   });
 });

@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,10 @@ interface TeamServerAccessRow {
 // ---------------------------------------------------------------------------
 
 export class TeamService {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   // -------------------------------------------------------------------------
   // Schema

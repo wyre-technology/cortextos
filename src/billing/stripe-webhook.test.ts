@@ -5,13 +5,6 @@ import type { FastifyInstance } from 'fastify';
 import type { OrgService } from '../org/org-service.js';
 import type postgres from 'postgres';
 
-// Minimal sql tagged-template mock. Tests that exercise dunning paths
-// override this per-test to assert on the UPDATE query + returned rows.
-function createMockSql(): postgres.Sql {
-  const sql = vi.fn().mockResolvedValue([]) as unknown as postgres.Sql;
-  return sql;
-}
-
 // ---------------------------------------------------------------------------
 // Mock Stripe
 // ---------------------------------------------------------------------------
@@ -64,13 +57,19 @@ function createMockOrgService(): OrgService {
   } as unknown as OrgService;
 }
 
+// Stub sql for webhook tests that exercise no DB path (signature / plan
+// upserts go through the orgService mock; only dunning paths touch sql).
+function createStubSql(): postgres.Sql {
+  return vi.fn().mockResolvedValue([]) as unknown as postgres.Sql;
+}
+
 async function buildApp(orgService: OrgService): Promise<FastifyInstance> {
   vi.resetModules();
   stubStripeEnv();
 
   const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
   const app = Fastify({ logger: false });
-  await app.register(stripeWebhookRoutes(orgService, createMockSql()));
+  await app.register(stripeWebhookRoutes(orgService, createStubSql()));
   return app;
 }
 
@@ -98,7 +97,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createMockSql()));
+    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -120,7 +119,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createMockSql()));
+    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -660,7 +659,7 @@ describe('stripeWebhookRoutes', () => {
 
   it('200-acks (not 500) when reseller_invoice_id matches no row — permanent failure, retry cannot help', async () => {
     const orgService = createMockOrgService();
-    const sql = createCountingSql(0); // zero rows matched
+    const sql = createStubSql(); // zero rows matched
     mockConstructEvent.mockReturnValue({
       id: 'evt_rc_orphan',
       type: 'invoice.payment_succeeded',
@@ -684,7 +683,7 @@ describe('stripeWebhookRoutes', () => {
     const orgService = createMockOrgService();
     // Track A path: no reseller metadata → subscription-recovery logic.
     // subRaw is absent → the Track A handler breaks early; no Track C UPDATE.
-    const sql = createCountingSql(0);
+    const sql = createStubSql();
     mockConstructEvent.mockReturnValue({
       id: 'evt_ta',
       type: 'invoice.payment_succeeded',

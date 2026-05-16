@@ -13,14 +13,14 @@
 import { randomUUID } from 'node:crypto';
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
-import type postgres from 'postgres';
+import { systemPool } from '../db/context.js';
 import { config } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Plugin factory
 // ---------------------------------------------------------------------------
 
-export function adminConsentPlugin(sql: postgres.Sql) {
+export function adminConsentPlugin() {
   return fp(async function plugin(app: FastifyInstance): Promise<void> {
     // Skip if Azure AD is not configured
     if (!config.azureClientId) {
@@ -36,7 +36,7 @@ export function adminConsentPlugin(sql: postgres.Sql) {
     // Table: customer_tenants
     // -----------------------------------------------------------------------
 
-    await sql`
+    await systemPool()`
       CREATE TABLE IF NOT EXISTS customer_tenants (
         id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id       TEXT UNIQUE NOT NULL,
@@ -100,7 +100,7 @@ export function adminConsentPlugin(sql: postgres.Sql) {
       }
 
       // Upsert the customer tenant
-      await sql`
+      await systemPool()`
         INSERT INTO customer_tenants (tenant_id, customer_name)
         VALUES (${tenantId}, ${customerName})
         ON CONFLICT (tenant_id) DO UPDATE SET

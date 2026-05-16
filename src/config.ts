@@ -35,8 +35,17 @@ export const config = {
   // Master encryption key (32 bytes hex). MUST be set in production.
   masterKey: resolveKey('MASTER_KEY', 'master key'),
 
-  // PostgreSQL connection URL
+  // PostgreSQL connection URL — the system-path connection. Connects as a
+  // BYPASSRLS role: migrations, boot DDL, the Stripe webhook, cron sweeps.
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://gateway:gateway@localhost:5432/gateway',
+
+  // PostgreSQL request-path connection URL. Connects as a NOBYPASSRLS role so
+  // RLS policies enforce; used for every authenticated HTTP request via the
+  // request-context plugin. Defaults to DATABASE_URL when unset — which leaves
+  // RLS a no-op, the legacy posture — so production MUST set this to a
+  // distinct NOBYPASSRLS role. See migrations for the two-role provisioning.
+  databaseUrlRequest:
+    process.env.DATABASE_URL_REQUEST ?? process.env.DATABASE_URL ?? 'postgres://gateway:gateway@localhost:5432/gateway',
 
   // JWT signing key (separate from encryption master key)
   jwtSecret: resolveKey('JWT_SECRET', 'JWT secret'),

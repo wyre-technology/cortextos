@@ -5,6 +5,7 @@ import {
   ResellerMemberError,
   type ResellerRole,
 } from './reseller-member-service.js';
+import { enterTestContext } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Mock SQL
@@ -235,7 +236,8 @@ function setup(): Ctx {
   });
 
   const sql = createMockSql(members, users);
-  const service = new ResellerMemberService(sql);
+  enterTestContext(sql);
+  const service = new ResellerMemberService();
   return { service, members, users, actorIds };
 }
 

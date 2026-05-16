@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import type { OrgMember, OrgMemberWithProfile } from './org-service.js';
 
 interface MemberRow {
@@ -22,7 +22,10 @@ function toMember(row: MemberRow): OrgMember {
 }
 
 export class MemberService {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   async getMembers(orgId: string): Promise<OrgMember[]> {
     const rows = await this.sql<MemberRow[]>`

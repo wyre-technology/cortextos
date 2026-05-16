@@ -1,4 +1,5 @@
 import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { LogShippingDestination, LogSource, ShippableEvent } from './adapters/types.js';
 export type { LogShippingDestination, LogSource, ShippableEvent };
@@ -57,7 +58,10 @@ export function maskConfig(config: Record<string, string>): Record<string, strin
 // ---------------------------------------------------------------------------
 
 export class LogShippingService {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   // -------------------------------------------------------------------------
   // Schema

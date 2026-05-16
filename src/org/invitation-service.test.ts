@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
 import { InvitationService } from './invitation-service.js';
 import { MemberService } from './member-service.js';
+import { enterTestContext } from '../db/context.js';
 
 // =============================================================================
 // Tests pin the post-015 contract for InvitationService:
@@ -137,8 +138,9 @@ describe('InvitationService — post-015 contract', () => {
 
   beforeEach(() => {
     mock = createMockSql();
-    const memberSvc = new MemberService(mock.sql);
-    svc = new InvitationService(mock.sql, memberSvc);
+    enterTestContext(mock.sql);
+    const memberSvc = new MemberService();
+    svc = new InvitationService(memberSvc);
   });
 
   // ---------------------------------------------------------------------------

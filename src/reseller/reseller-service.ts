@@ -9,7 +9,7 @@
  * lacks access.
  */
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import type { OrgService, Organization } from '../org/org-service.js';
 import type { ResellerMember, ResellerRole } from './types.js';
 import { RESELLER_ROLE_LEVEL } from './types.js';
@@ -87,8 +87,12 @@ export class ResellerAccessError extends Error {
 }
 
 export class ResellerService {
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   constructor(
-    private readonly sql: postgres.Sql,
     private readonly orgService: OrgService,
   ) {}
 

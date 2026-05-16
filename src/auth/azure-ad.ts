@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import * as oidc from 'openid-client';
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type postgres from 'postgres';
+import { systemPool } from '../db/context.js';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
@@ -65,7 +65,7 @@ const RETURN_TO_COOKIE = 'azure_ad_return_to';
 // Plugin factory
 // ---------------------------------------------------------------------------
 
-export function azureAdPlugin(sql: postgres.Sql) {
+export function azureAdPlugin() {
   return fp(async function plugin(app: FastifyInstance): Promise<void> {
     // Skip registration if Azure AD is not configured.
     // Decoration is handled by registerAuthPlugin in src/auth/index.ts; this
@@ -98,7 +98,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // Tables (same schema as Auth0 plugin for compatibility)
     // -----------------------------------------------------------------------
 
-    await sql`
+    await systemPool()`
       CREATE TABLE IF NOT EXISTS users (
         id          TEXT PRIMARY KEY,
         email       TEXT UNIQUE NOT NULL,
@@ -116,14 +116,14 @@ export function azureAdPlugin(sql: postgres.Sql) {
     // up DEFAULT NOW() at apply-time. Mirrors the first_name/last_name/
     // display_name/tenant_id additive-ALTER pattern below — keeping the
     // discipline symmetric across all post-initial-schema columns.
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id TEXT`;
 
     // PKCE verifiers stored server-side, keyed by OAuth state parameter.
-    await sql`
+    await systemPool()`
       CREATE TABLE IF NOT EXISTS auth_state (
         state          TEXT PRIMARY KEY,
         code_verifier  TEXT NOT NULL,
@@ -132,7 +132,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
     `;
 
     // Clean up expired auth_state rows (older than 10 minutes)
-    await sql`DELETE FROM auth_state WHERE created_at < NOW() - INTERVAL '10 minutes'`;
+    await systemPool()`DELETE FROM auth_state WHERE created_at < NOW() - INTERVAL '10 minutes'`;
 
     // Request decoration is handled either by the Auth0 plugin (when Auth0
     // is also configured — same cookie format) or by the registerAuthPlugin
@@ -175,7 +175,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
       const state = randomUUID();
 
       // Store verifier server-side keyed by state
-      await sql`
+      await systemPool()`
         INSERT INTO auth_state (state, code_verifier)
         VALUES (${state}, ${codeVerifier})
       `;
@@ -229,7 +229,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
       }
 
       // Look up and consume the PKCE verifier (one-time use)
-      const rows = await sql`
+      const rows = await systemPool()`
         DELETE FROM auth_state WHERE state = ${state} RETURNING code_verifier
       `;
       if (rows.length === 0) {
@@ -299,14 +299,14 @@ export function azureAdPlugin(sql: postgres.Sql) {
       // emailVerified (trusted-tenant) inside findAdoptableUserId — see
       // adopt-by-email.ts for why a forged cross-tenant email must not adopt.
       let adopted = false;
-      const adoptableId = await findAdoptableUserId(sql, sub, email, emailVerified);
+      const adoptableId = await findAdoptableUserId(systemPool(), sub, email, emailVerified);
       if (adoptableId) {
         request.log.warn(
           { existingId: adoptableId, claimedSub: sub, email, tid },
           'azure-ad login: adopting existing user row by verified email (id mismatch)',
         );
         sub = adoptableId;
-        await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+        await systemPool()`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         adopted = true;
       }
 
@@ -317,7 +317,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
       let isNewUser = false;
       if (!adopted) {
        try {
-        const [{ is_new }] = await sql<{ is_new: boolean }[]>`
+        const [{ is_new }] = await systemPool()<{ is_new: boolean }[]>`
           INSERT INTO users (id, email, name, last_login)
           VALUES (${sub}, ${email}, ${name}, NOW())
           ON CONFLICT (id) DO UPDATE SET
@@ -332,7 +332,7 @@ export function azureAdPlugin(sql: postgres.Sql) {
           ? (insertErr as { code: string }).code
           : null;
         if (code !== '23505') throw insertErr;
-        const winner = await sql`
+        const winner = await systemPool()`
           SELECT id FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
         `;
         if (winner.length > 0 && winner[0].id !== sub) {
@@ -341,13 +341,13 @@ export function azureAdPlugin(sql: postgres.Sql) {
             'azure-ad login: email-unique race, adopting winner row id',
           );
           sub = winner[0].id as string;
-          await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+          await systemPool()`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         }
        }
       }
 
       if (tid) {
-        await sql`UPDATE users SET tenant_id = ${tid} WHERE id = ${sub}`;
+        await systemPool()`UPDATE users SET tenant_id = ${tid} WHERE id = ${sub}`;
       }
 
       if (isNewUser) enrollNewUserInLoops(app.log, email, name);

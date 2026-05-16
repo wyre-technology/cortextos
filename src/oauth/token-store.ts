@@ -7,7 +7,7 @@
  * All operations are asynchronous (postgres.js).
  */
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 
 // ---------------------------------------------------------------------------
@@ -58,10 +58,9 @@ export interface OAuthSession {
 // ---------------------------------------------------------------------------
 
 export class TokenStore {
-  private readonly sql: postgres.Sql;
-
-  constructor(sql: postgres.Sql) {
-    this.sql = sql;
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
   }
 
   // -----------------------------------------------------------------------

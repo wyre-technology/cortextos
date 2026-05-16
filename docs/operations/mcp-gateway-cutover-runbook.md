@@ -140,6 +140,45 @@ migrated user gets a fresh, empty, duplicate row on first login. That is the
 Phase-5 staging identity-binding bug, reproduced in prod at launch. Staging
 happens to already have this set; **prod must not be assumed to.**
 
+### 6.2b Provision the RLS request-path role (REQUIRED before the migration-029 image boots)
+
+**Before** deploying the Conduit image that carries migration
+`029_rls_request_role.sql` — create the `conduit_request` role on the Conduit
+prod database and point the gateway at it. This is the analogue of 6.2a for
+Row-Level Security: skip it and tenant isolation is silently off.
+
+As a superuser on the Conduit prod DB:
+
+```sql
+CREATE ROLE conduit_request LOGIN PASSWORD '<from Key Vault>' NOBYPASSRLS;
+```
+
+Then set `DATABASE_URL_REQUEST` on the Conduit prod gateway container app to a
+URL that authenticates as `conduit_request`:
+
+```
+DATABASE_URL_REQUEST=postgres://conduit_request:<password>@<host>:5432/<db>
+```
+
+Why this is load-bearing: Conduit opens two DB connection classes — a
+`BYPASSRLS` system pool and a `NOBYPASSRLS` request pool. RLS policies
+(migrations 007+) only filter rows on a connection that is non-owner AND
+`NOBYPASSRLS`. Two ways to get this wrong, both bad:
+
+- `DATABASE_URL_REQUEST` **unset** → it falls back to `DATABASE_URL` (the
+  `BYPASSRLS` system role) → every RLS policy is a silent no-op, the exact
+  cross-tenant-leak posture this was built to remove.
+- `conduit_request` created **with** `BYPASSRLS` (or as superuser) → same
+  silent no-op. Migration 029 has an audit that **fails the boot loudly** in
+  this case — a hard stop, not a quiet downgrade.
+
+`conduit_request` MUST exist before migration 029 first applies: the migration
+GRANTs privileges to it as a one-shot. Full detail, including the post-deploy
+verification (connect AS `conduit_request`, confirm a tenant-scoped table
+returns zero rows with no user context), is in
+`docs/operations/rls-request-role.md`. Staging has the same requirement — see
+that doc; do not assume prod == staging.
+
 ### 6.3 DNS flip
 
 Point the customer-facing hostname (e.g., `mcp.wyre.ai`) at Conduit

@@ -36,12 +36,12 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type postgres from 'postgres';
 import { nanoid } from 'nanoid';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { PAGE_STYLES } from '../web/styles.js';
 import { escapeHtml } from '../web/helpers.js';
+import { getSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -238,20 +238,18 @@ function buildAuthorizeUrl(params: {
 // ---------------------------------------------------------------------------
 
 export interface SignupRoutesDeps {
-  sql: postgres.Sql;
   /** Override for tests. */
   limiter?: InMemoryRateLimiter;
 }
 
 export function signupRoutes(deps: SignupRoutesDeps) {
-  const { sql } = deps;
   const limiter = deps.limiter ?? new InMemoryRateLimiter();
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Pre-auth signup intents. One row per submitted email + state pair.
     // Consumed by the Auth0 callback (follow-up task) and promoted to
     // onboarding_progress once a user + reseller org exist.
-    await sql`
+    await getSql()`
       CREATE TABLE IF NOT EXISTS signup_intents (
         id          TEXT PRIMARY KEY,
         email       TEXT NOT NULL,
@@ -304,7 +302,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
 
         const intentId = nanoid();
         try {
-          await sql`
+          await getSql()`
             INSERT INTO signup_intents (id, email, funnel, ip, user_agent)
             VALUES (
               ${intentId},

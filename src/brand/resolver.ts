@@ -21,7 +21,7 @@
 // does not hit the DB.
 // =============================================================================
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import type { BrandConfig } from './types.js';
 
 /** Stable primary-key of the seeded Wyre-default brand row (migration 008). */
@@ -164,12 +164,15 @@ interface CacheEntry {
 // -----------------------------------------------------------------------------
 
 export class BrandResolver {
-  private readonly sql: postgres.Sql;
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   private readonly ttlMs: number;
   private readonly cache: Map<string, CacheEntry> = new Map();
 
-  constructor(sql: postgres.Sql, cacheTtlSeconds: number = DEFAULT_CACHE_TTL_SECONDS) {
-    this.sql = sql;
+  constructor(cacheTtlSeconds: number = DEFAULT_CACHE_TTL_SECONDS) {
     this.ttlMs = Math.max(0, cacheTtlSeconds) * 1000;
   }
 

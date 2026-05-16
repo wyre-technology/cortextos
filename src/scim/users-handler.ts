@@ -18,6 +18,7 @@
 
 import { nanoid } from 'nanoid';
 import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { scimPatch } from 'scim-patch';
 import {
   scimUserCreateSchema,
@@ -43,7 +44,10 @@ const USER_COLS = `id, email, external_id, active, first_name, last_name,
 type UserRow = InternalUser;
 
 export class ScimUsersHandler {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   // -------------------------------------------------------------------------
   // GET /Users  (with optional ?filter=)

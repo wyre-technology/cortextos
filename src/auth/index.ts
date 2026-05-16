@@ -18,7 +18,6 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type postgres from 'postgres';
 import { config } from '../config.js';
 import { auth0Plugin } from './auth0.js';
 import { azureAdPlugin } from './azure-ad.js';
@@ -27,7 +26,7 @@ import { decodeSessionCookie } from '../lib/session-cookie.js';
 
 const SESSION_COOKIE = 'gateway_session';
 
-export async function registerAuthPlugin(app: FastifyInstance, sql: postgres.Sql): Promise<void> {
+export async function registerAuthPlugin(app: FastifyInstance): Promise<void> {
   const hasAuth0Creds = !!(config.auth0Domain && config.auth0ClientId && config.auth0ClientSecret);
   const hasAzureCreds = !!(config.azureClientId && config.azureClientSecret);
 
@@ -48,7 +47,7 @@ export async function registerAuthPlugin(app: FastifyInstance, sql: postgres.Sql
   }
 
   if (enableAuth0) {
-    await app.register(auth0Plugin(sql));
+    await app.register(auth0Plugin());
   } else {
     // Auth0 isn't registered, so the rest of the gateway needs the
     // decorator + hook to read sessions. Mirrors the Auth0 plugin's logic.
@@ -64,8 +63,8 @@ export async function registerAuthPlugin(app: FastifyInstance, sql: postgres.Sql
   }
 
   if (enableAzureAd) {
-    await app.register(azureAdPlugin(sql));
-    await app.register(adminConsentPlugin(sql));
+    await app.register(azureAdPlugin());
+    await app.register(adminConsentPlugin());
   }
 
   // If neither provider is configured, leave the decorator default in place

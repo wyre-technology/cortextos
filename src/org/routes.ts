@@ -19,7 +19,6 @@ interface OrgRouteDeps {
   credentialService: CredentialService;
   billingGate: BillingGate;
   adminAuditService: AdminAuditService;
-  sql: import('postgres').Sql;
 }
 
 /**
@@ -862,7 +861,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
 
         const { ScimConnectionsService } = await import('../scim/connections-service.js');
-        const connections = new ScimConnectionsService(deps.sql);
+        const connections = new ScimConnectionsService();
         const created = await connections.create({
           orgId: request.params.orgId,
           scope,
@@ -897,7 +896,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!user) return;
 
         const { ScimConnectionsService } = await import('../scim/connections-service.js');
-        const connections = new ScimConnectionsService(deps.sql);
+        const connections = new ScimConnectionsService();
         const rows = await connections.listForOrg(request.params.orgId);
         return reply.send(rows.map((c) => ({
           id: c.id,
@@ -920,7 +919,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!user) return;
 
         const { ScimConnectionsService } = await import('../scim/connections-service.js');
-        const connections = new ScimConnectionsService(deps.sql);
+        const connections = new ScimConnectionsService();
         const conn = await connections.getById(request.params.id);
         if (!conn || conn.orgId !== request.params.orgId) {
           return reply.code(404).send({ error: 'Connection not found' });

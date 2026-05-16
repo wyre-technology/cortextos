@@ -8,9 +8,9 @@ import type { BillingGate } from '../billing/gate.js';
 import type { CreditService } from '../billing/credit-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
-import type postgres from 'postgres';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
+import { getSql } from '../db/context.js';
 
 interface ProxyDeps {
   credentialService: CredentialService;
@@ -20,7 +20,6 @@ interface ProxyDeps {
    *  record one credit per call against the org. Personal-scope calls (no orgId)
    *  are not metered. Fire-and-forget. */
   creditService?: CreditService;
-  sql: postgres.Sql;
 }
 
 /**
@@ -31,7 +30,7 @@ interface ProxyDeps {
  * proxied to the corresponding MCP server container.
  */
 export function proxyRoutes(deps: ProxyDeps) {
-  const { credentialService, orgService, billingGate, creditService, sql } = deps;
+  const { credentialService, orgService, billingGate, creditService } = deps;
 
   const resultCache = new ResultCache();
 
@@ -194,7 +193,7 @@ export function proxyRoutes(deps: ProxyDeps) {
 
                   // Log the request
                   const responseTimeMs = Date.now() - startTime;
-                  sql`
+                  getSql()`
                     INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
                     VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName ?? null}, ${vendorRes.status}, ${responseTimeMs})
                   `.catch((err) => {
@@ -261,7 +260,7 @@ export function proxyRoutes(deps: ProxyDeps) {
             const responseTimeMs = Date.now() - startTime;
             const toolArgs = capture ? captureArguments((body as { params?: { arguments?: unknown } } | undefined)?.params?.arguments) : null;
             const respSummary = capture ? summarizeResponse(cachedOrFetched) : null;
-            sql`
+            getSql()`
               INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary)
               VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName ?? null}, ${200}, ${responseTimeMs}, ${toolArgs}, ${respSummary})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
@@ -298,7 +297,7 @@ export function proxyRoutes(deps: ProxyDeps) {
 
           reply.raw.on('finish', () => {
             const responseTimeMs = Date.now() - logEntry.startTime;
-            sql`
+            getSql()`
               INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments)
               VALUES (${logEntry.id}, ${logEntry.userId}, ${logEntry.orgId ?? null}, ${logEntry.vendorSlug}, ${logEntry.toolName ?? null}, ${reply.statusCode}, ${responseTimeMs}, ${logEntry.toolArgs})
             `.catch((err) => {

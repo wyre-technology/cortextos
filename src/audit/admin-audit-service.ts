@@ -1,4 +1,5 @@
 import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +78,10 @@ interface AdminAuditRow {
 // ---------------------------------------------------------------------------
 
 export class AdminAuditService {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   private toEntry(row: AdminAuditRow): AdminAuditEntry {
     return {

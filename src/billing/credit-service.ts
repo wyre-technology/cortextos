@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import type { BillingGate } from './gate.js';
 
 // ---------------------------------------------------------------------------
@@ -14,8 +14,12 @@ import type { BillingGate } from './gate.js';
 //   credit_blocks  — purchased overage blocks (FIFO depletion)
 
 export class CreditService {
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   constructor(
-    private sql: postgres.Sql,
     private billingGate: BillingGate,
   ) {}
 
@@ -137,7 +141,7 @@ export class CreditService {
   async deductFromBlock(orgId: string, amount: number): Promise<number> {
     if (amount <= 0) return 0;
     return this.sql.begin(async (txSql) => {
-      const sql = txSql as unknown as postgres.Sql;
+      const sql = txSql as unknown as Sql;
       const blocks = await sql<{ id: string; remaining: string }[]>`
         SELECT id, remaining::text
         FROM credit_blocks

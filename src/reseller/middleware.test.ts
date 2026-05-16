@@ -23,6 +23,7 @@ import {
   makeRequireResellerRole,
   makeRequireResellerOrCustomerAccess,
 } from './middleware.js';
+import { enterTestContext, type Sql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -77,7 +78,7 @@ function createMockSql(rows: Map<string, ResellerMemberRow>) {
   return handler;
 }
 
-type AnySql = ConstructorParameters<typeof ResellerService>[0];
+type AnySql = Sql;
 
 function seedMember(
   rows: Map<string, ResellerMemberRow>,
@@ -180,7 +181,8 @@ describe('makeRequireResellerAccess', () => {
   it('returns null and 404 when feature flag is off', async () => {
     (config.features as { resellerConsole: boolean }).resellerConsole = false;
     const rows = new Map<string, ResellerMemberRow>();
-    const service = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const service = new ResellerService(EMPTY_ORG_SERVICE);
     const mw = makeRequireResellerAccess(service);
 
     const req = makeRequest({}, USER);
@@ -193,7 +195,8 @@ describe('makeRequireResellerAccess', () => {
 
   it('returns null and 403 when the user has no reseller memberships', async () => {
     const rows = new Map<string, ResellerMemberRow>();
-    const service = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const service = new ResellerService(EMPTY_ORG_SERVICE);
     const mw = makeRequireResellerAccess(service);
 
     const req = makeRequest({}, USER);
@@ -207,7 +210,8 @@ describe('makeRequireResellerAccess', () => {
   it('returns a context when the user has a matching membership', async () => {
     const rows = new Map<string, ResellerMemberRow>();
     seedMember(rows, 'm1', 'reseller_a', 'user_alice', 'reseller_admin');
-    const service = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const service = new ResellerService(EMPTY_ORG_SERVICE);
     const mw = makeRequireResellerAccess(service);
 
     const req = makeRequest({}, USER);
@@ -237,7 +241,8 @@ describe('makeRequireResellerRole', () => {
     if (memberRole) {
       seedMember(rows, 'm1', RESELLER_ID, USER.sub, memberRole);
     }
-    const service = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const service = new ResellerService(EMPTY_ORG_SERVICE);
     return makeRequireResellerRole(service);
   }
 
@@ -278,7 +283,8 @@ describe('makeRequireResellerRole', () => {
   it('403s when the user has no membership in THIS reseller', async () => {
     const rows = new Map<string, ResellerMemberRow>();
     seedMember(rows, 'm1', 'different_reseller', USER.sub, 'reseller_owner');
-    const service = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const service = new ResellerService(EMPTY_ORG_SERVICE);
     const mw = makeRequireResellerRole(service)('reseller_support_agent');
     const reply = makeReply();
     const ctx = await mw(
@@ -360,7 +366,8 @@ describe('makeRequireResellerOrCustomerAccess', () => {
     if (args.resellerMemberRole) {
       seedMember(rows, 'rm1', RESELLER_ID, USER.sub, args.resellerMemberRole);
     }
-    const resellerService = new ResellerService(createMockSql(rows) as unknown as AnySql, EMPTY_ORG_SERVICE);
+    enterTestContext(createMockSql(rows) as unknown as AnySql);
+    const resellerService = new ResellerService(EMPTY_ORG_SERVICE);
 
     const parentId = args.customerParentId;
     const orgService = makeOrgServiceStub({

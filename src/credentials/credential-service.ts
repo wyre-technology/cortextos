@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import { config } from '../config.js';
 import { encrypt as encryptPayload, decrypt as decryptPayload } from './crypto.js';
@@ -112,11 +112,14 @@ interface ServiceClientCredentialRow {
  * derived from the application master key via PBKDF2.
  */
 export class CredentialService {
-  private sql: postgres.Sql;
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   private masterKey: Buffer;
 
-  constructor(sql: postgres.Sql) {
-    this.sql = sql;
+  constructor() {
     this.masterKey = Buffer.from(config.masterKey, 'hex');
   }
 

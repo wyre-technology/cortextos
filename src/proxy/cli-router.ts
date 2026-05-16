@@ -24,14 +24,13 @@ import type { BillingGate } from '../billing/gate.js';
 import type { ToolCache } from './tool-cache.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
-import type postgres from 'postgres';
+import { getSql } from '../db/context.js';
 
 interface CliRouterDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
   toolCache: ToolCache;
-  sql: postgres.Sql;
 }
 
 /**
@@ -72,7 +71,7 @@ async function parseVendorResponse(res: Response): Promise<{ result?: unknown; e
  * Fastify plugin that registers the CLI REST endpoints.
  */
 export function cliRoutes(deps: CliRouterDeps) {
-  const { credentialService, orgService, billingGate, toolCache, sql } = deps;
+  const { credentialService, orgService, billingGate, toolCache } = deps;
   const sessionPool = new McpSessionPool();
   const resultCache = new ResultCache();
 
@@ -273,7 +272,7 @@ export function cliRoutes(deps: CliRouterDeps) {
               promptCtx = body.context;
             }
           }
-          sql`
+          getSql()`
             INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, prompt_context, source)
             VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${toolName}, ${200}, ${t3 - t0}, ${cliToolArgs}, ${promptCtx}, ${'cli'})
           `.catch((err) => {

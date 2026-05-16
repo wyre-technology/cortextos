@@ -84,6 +84,7 @@ vi.mock('nanoid', () => ({
 import { injectCredentials, resolveUserId, AuthError } from './credential-injector.js';
 import { ResultCache } from './result-cache.js';
 import type { ToolCache } from './tool-cache.js';
+import { enterTestContext } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -135,6 +136,7 @@ function createMockCredentialService(connectedVendors: string[] = []) {
 
 async function buildApp(toolCache: ToolCache, connectedVendors: string[] = ['autotask', 'datto-rmm']) {
   const app = Fastify({ logger: false });
+  enterTestContext(createMockSql());
 
   await app.register(
     unifiedProxyRoutes({
@@ -142,7 +144,6 @@ async function buildApp(toolCache: ToolCache, connectedVendors: string[] = ['aut
       orgService: createMockOrgService(),
       billingGate: createMockBillingGate(),
       toolCache,
-      sql: createMockSql(),
     }),
   );
 
@@ -463,14 +464,14 @@ describe('Unified MCP Router', () => {
       ]);
 
       const customApp = Fastify({ logger: false });
+      enterTestContext(createMockSql());
       await customApp.register(
         unifiedProxyRoutes({
           credentialService: createMockCredentialService(['autotask']),
           orgService,
           billingGate: createMockBillingGate(),
           toolCache,
-          sql: createMockSql(),
-        }),
+            }),
       );
       await customApp.ready();
 
@@ -507,14 +508,14 @@ describe('Unified MCP Router', () => {
       } as never);
 
       const customApp = Fastify({ logger: false });
+      enterTestContext(createMockSql());
       await customApp.register(
         unifiedProxyRoutes({
           credentialService: createMockCredentialService(),
           orgService,
           billingGate: createMockBillingGate(),
           toolCache,
-          sql: createMockSql(),
-        }),
+            }),
       );
       await customApp.ready();
 
@@ -550,14 +551,14 @@ describe('Unified MCP Router', () => {
       });
 
       const customApp = Fastify({ logger: false });
+      enterTestContext(createMockSql());
       await customApp.register(
         unifiedProxyRoutes({
           credentialService: createMockCredentialService(['autotask']),
           orgService,
           billingGate: createMockBillingGate(),
           toolCache,
-          sql: createMockSql(),
-        }),
+            }),
       );
       await customApp.ready();
 

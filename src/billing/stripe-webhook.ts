@@ -1,10 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type postgres from 'postgres';
 import Stripe from 'stripe';
 import { config } from '../config.js';
 import type { OrgService } from '../org/org-service.js';
 import { sendLoopsEvent } from '../email/loops.js';
 import { notifyBillingAnomaly } from './sales-notifier.js';
+import type { Sql } from '../db/context.js';
 
 /**
  * Webhook handler for a Track C reseller-channel invoice payment success.
@@ -38,8 +38,8 @@ import { notifyBillingAnomaly } from './sales-notifier.js';
  */
 export async function handleResellerInvoicePaymentSucceeded(
   resellerInvoiceId: string,
-  sql: postgres.Sql,
   log: FastifyInstance['log'],
+  sql: Sql,
 ): Promise<void> {
   const result = await sql`
     UPDATE reseller_invoices
@@ -71,8 +71,8 @@ export async function handleResellerInvoicePaymentSucceeded(
  */
 export async function handleResellerInvoicePaymentFailed(
   resellerInvoiceId: string,
-  sql: postgres.Sql,
   log: FastifyInstance['log'],
+  sql: Sql,
 ): Promise<void> {
   const result = await sql`
     UPDATE reseller_invoices
@@ -116,7 +116,7 @@ export async function handleResellerInvoicePaymentFailed(
  *     'free' ONLY on canceled; past_due/unpaid keep plan='pro' so the
  *     grace-period UI surfaces correctly.
  */
-export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
+export function stripeWebhookRoutes(orgService: OrgService, sql: Sql) {
   return async function plugin(app: FastifyInstance): Promise<void> {
     if (!config.stripeSecretKey || !config.stripeWebhookSecret) {
       app.log.warn('Stripe not configured — skipping webhook registration');
@@ -247,7 +247,7 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
             // Track A subscription-dunning path.
             const resellerInvoiceIdF = invoice.metadata?.reseller_invoice_id;
             if (resellerInvoiceIdF) {
-              await handleResellerInvoicePaymentFailed(resellerInvoiceIdF, sql, app.log);
+              await handleResellerInvoicePaymentFailed(resellerInvoiceIdF, app.log, sql);
               break;
             }
 
@@ -322,7 +322,7 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: postgres.Sql) {
             // Track A subscription-recovery path.
             const resellerInvoiceIdS = invoice.metadata?.reseller_invoice_id;
             if (resellerInvoiceIdS) {
-              await handleResellerInvoicePaymentSucceeded(resellerInvoiceIdS, sql, app.log);
+              await handleResellerInvoicePaymentSucceeded(resellerInvoiceIdS, app.log, sql);
               break;
             }
 

@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { OrgInvitation, OrgMember, CreatedInvitation } from './org-service.js';
 import { MemberService } from './member-service.js';
@@ -52,9 +52,14 @@ function toMember(row: MemberRow): OrgMember {
 }
 
 export class InvitationService {
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   private memberService: MemberService;
 
-  constructor(private sql: postgres.Sql, memberService: MemberService) {
+  constructor(memberService: MemberService) {
     this.memberService = memberService;
   }
 

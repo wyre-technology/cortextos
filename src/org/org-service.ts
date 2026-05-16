@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { PlanSlug } from '../billing/plan-catalog.js';
 import { MemberService } from './member-service.js';
@@ -176,11 +176,16 @@ export class OrgService {
   private toolAllowlistService: ToolAllowlistService;
   private teamService: TeamService;
 
-  constructor(private sql: postgres.Sql) {
-    this.memberService = new MemberService(sql);
-    this.invitationService = new InvitationService(sql, this.memberService);
-    this.toolAllowlistService = new ToolAllowlistService(sql);
-    this.teamService = new TeamService(sql);
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
+  constructor() {
+    this.memberService = new MemberService();
+    this.invitationService = new InvitationService(this.memberService);
+    this.toolAllowlistService = new ToolAllowlistService();
+    this.teamService = new TeamService();
   }
 
   // -------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 import { waitlistRoutes } from './routes.js';
+import { enterTestContext } from '../db/context.js';
 
 function createMockSql() {
   const rows: Record<string, unknown>[] = [];
@@ -25,7 +26,7 @@ function createMockSql() {
     return Promise.resolve([]);
   }) as unknown as import('postgres').Sql;
 
-  return { sql, rows };
+  return { rows, sql };
 }
 
 describe('waitlist routes', () => {
@@ -35,7 +36,8 @@ describe('waitlist routes', () => {
   beforeEach(async () => {
     mockSql = createMockSql();
     app = Fastify();
-    await app.register(waitlistRoutes(mockSql.sql));
+    enterTestContext(mockSql.sql);
+    await app.register(waitlistRoutes());
     await app.ready();
   });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { runWithSql, enterTestContext } from '../db/context.js';
 
 // We test the CredentialService with a mock SQL that captures queries.
 // This verifies encryption round-trips and the store/get contract.
@@ -317,7 +318,8 @@ describe('CredentialService', () => {
 
   it('encrypts and decrypts credential data correctly', async () => {
     const sql = createMockSql();
-    const service = new CredentialService(sql);
+    enterTestContext(sql);
+    const service = new CredentialService();
 
     const creds = {
       apiKey: 'my-api-key-12345',
@@ -325,37 +327,40 @@ describe('CredentialService', () => {
       platform: 'concord',
     };
 
-    await service.store('user_abc', 'datto-rmm', creds);
+    await runWithSql(sql, () => service.store('user_abc', 'datto-rmm', creds));
 
-    const retrieved = await service.get('user_abc', 'datto-rmm');
+    const retrieved = await runWithSql(sql, () => service.get('user_abc', 'datto-rmm'));
     expect(retrieved).toEqual(creds);
   });
 
   it('returns null for non-existent credentials', async () => {
     const sql = createMockSql();
-    const service = new CredentialService(sql);
+    enterTestContext(sql);
+    const service = new CredentialService();
 
-    const result = await service.get('unknown_user', 'datto-rmm');
+    const result = await runWithSql(sql, () => service.get('unknown_user', 'datto-rmm'));
     expect(result).toBeNull();
   });
 
   it('overwrites credentials on upsert (same user+vendor)', async () => {
     const sql = createMockSql();
-    const service = new CredentialService(sql);
+    enterTestContext(sql);
+    const service = new CredentialService();
 
-    await service.store('user_abc', 'datto-rmm', { apiKey: 'old-key' });
-    await service.store('user_abc', 'datto-rmm', { apiKey: 'new-key' });
+    await runWithSql(sql, () => service.store('user_abc', 'datto-rmm', { apiKey: 'old-key' }));
+    await runWithSql(sql, () => service.store('user_abc', 'datto-rmm', { apiKey: 'new-key' }));
 
-    const retrieved = await service.get('user_abc', 'datto-rmm');
+    const retrieved = await runWithSql(sql, () => service.get('user_abc', 'datto-rmm'));
     expect(retrieved).toEqual({ apiKey: 'new-key' });
   });
 
   it('isolates credentials between users', async () => {
     const sql = createMockSql();
-    const service = new CredentialService(sql);
+    enterTestContext(sql);
+    const service = new CredentialService();
 
-    await service.store('user_a', 'itglue', { apiKey: 'key-a' });
-    await service.store('user_b', 'itglue', { apiKey: 'key-b' });
+    await runWithSql(sql, () => service.store('user_a', 'itglue', { apiKey: 'key-a' }));
+    await runWithSql(sql, () => service.store('user_b', 'itglue', { apiKey: 'key-b' }));
 
     expect(await service.get('user_a', 'itglue')).toEqual({ apiKey: 'key-a' });
     expect(await service.get('user_b', 'itglue')).toEqual({ apiKey: 'key-b' });
@@ -363,10 +368,11 @@ describe('CredentialService', () => {
 
   it('isolates credentials between vendors', async () => {
     const sql = createMockSql();
-    const service = new CredentialService(sql);
+    enterTestContext(sql);
+    const service = new CredentialService();
 
-    await service.store('user_abc', 'datto-rmm', { apiKey: 'datto-key' });
-    await service.store('user_abc', 'itglue', { apiKey: 'itglue-key' });
+    await runWithSql(sql, () => service.store('user_abc', 'datto-rmm', { apiKey: 'datto-key' }));
+    await runWithSql(sql, () => service.store('user_abc', 'itglue', { apiKey: 'itglue-key' }));
 
     expect(await service.get('user_abc', 'datto-rmm')).toEqual({ apiKey: 'datto-key' });
     expect(await service.get('user_abc', 'itglue')).toEqual({ apiKey: 'itglue-key' });
@@ -379,7 +385,8 @@ describe('CredentialService', () => {
   describe('Org credentials', () => {
     it('encrypts and decrypts org credential data correctly', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       const creds = {
         apiKey: 'org-api-key-99999',
@@ -387,26 +394,28 @@ describe('CredentialService', () => {
         subdomain: 'acme-corp',
       };
 
-      await service.storeOrgCredential('org_123', 'datto-rmm', creds, 'user_admin');
+      await runWithSql(sql, () => service.storeOrgCredential('org_123', 'datto-rmm', creds, 'user_admin'));
 
-      const retrieved = await service.getOrgCredential('org_123', 'datto-rmm');
+      const retrieved = await runWithSql(sql, () => service.getOrgCredential('org_123', 'datto-rmm'));
       expect(retrieved).toEqual(creds);
     });
 
     it('returns null for non-existent org credentials', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      const result = await service.getOrgCredential('org_unknown', 'datto-rmm');
+      const result = await runWithSql(sql, () => service.getOrgCredential('org_unknown', 'datto-rmm'));
       expect(result).toBeNull();
     });
 
     it('isolates org credentials between orgs', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeOrgCredential('org_a', 'itglue', { apiKey: 'org-a-key' }, 'admin_a');
-      await service.storeOrgCredential('org_b', 'itglue', { apiKey: 'org-b-key' }, 'admin_b');
+      await runWithSql(sql, () => service.storeOrgCredential('org_a', 'itglue', { apiKey: 'org-a-key' }, 'admin_a'));
+      await runWithSql(sql, () => service.storeOrgCredential('org_b', 'itglue', { apiKey: 'org-b-key' }, 'admin_b'));
 
       expect(await service.getOrgCredential('org_a', 'itglue')).toEqual({ apiKey: 'org-a-key' });
       expect(await service.getOrgCredential('org_b', 'itglue')).toEqual({ apiKey: 'org-b-key' });
@@ -414,12 +423,13 @@ describe('CredentialService', () => {
 
     it('isolates personal and org credentials for same vendor', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       // Store a personal credential for a user
-      await service.store('user_abc', 'datto-rmm', { apiKey: 'personal-key' });
+      await runWithSql(sql, () => service.store('user_abc', 'datto-rmm', { apiKey: 'personal-key' }));
       // Store an org credential for a different scope
-      await service.storeOrgCredential('org_123', 'datto-rmm', { apiKey: 'org-key' }, 'user_abc');
+      await runWithSql(sql, () => service.storeOrgCredential('org_123', 'datto-rmm', { apiKey: 'org-key' }, 'user_abc'));
 
       // Each scope returns its own credential, uncontaminated by the other
       expect(await service.get('user_abc', 'datto-rmm')).toEqual({ apiKey: 'personal-key' });
@@ -434,37 +444,41 @@ describe('CredentialService', () => {
   describe('Team credentials', () => {
     it('encrypts and decrypts team credential data correctly', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       const creds = { apiKey: 'team-key-123', subdomain: 'acme' };
-      await service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', creds, 'admin_1');
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', creds, 'admin_1'));
 
       expect(await service.getTeamCredential('team_1', 'datto-rmm')).toEqual(creds);
     });
 
     it('returns null for non-existent team credential', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      expect(await service.getTeamCredential('team_unknown', 'datto-rmm')).toBeNull();
+      expect(await runWithSql(sql, () => service.getTeamCredential('team_unknown', 'datto-rmm'))).toBeNull();
     });
 
     it('overwrites on upsert (same team+vendor)', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'old' }, 'admin');
-      await service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'new' }, 'admin');
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'old' }, 'admin'));
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'new' }, 'admin'));
 
       expect(await service.getTeamCredential('team_1', 'itglue')).toEqual({ apiKey: 'new' });
     });
 
     it('isolates credentials between teams', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeTeamCredential('team_a', 'org_1', 'itglue', { apiKey: 'a-key' }, 'admin');
-      await service.storeTeamCredential('team_b', 'org_1', 'itglue', { apiKey: 'b-key' }, 'admin');
+      await runWithSql(sql, () => service.storeTeamCredential('team_a', 'org_1', 'itglue', { apiKey: 'a-key' }, 'admin'));
+      await runWithSql(sql, () => service.storeTeamCredential('team_b', 'org_1', 'itglue', { apiKey: 'b-key' }, 'admin'));
 
       expect(await service.getTeamCredential('team_a', 'itglue')).toEqual({ apiKey: 'a-key' });
       expect(await service.getTeamCredential('team_b', 'itglue')).toEqual({ apiKey: 'b-key' });
@@ -472,19 +486,21 @@ describe('CredentialService', () => {
 
     it('deletes correctly', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', { apiKey: 'k' }, 'admin');
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', { apiKey: 'k' }, 'admin'));
       expect(await service.deleteTeamCredential('team_1', 'datto-rmm')).toBe(true);
       expect(await service.deleteTeamCredential('team_1', 'datto-rmm')).toBe(false);
     });
 
     it('listTeamVendors returns sorted slugs', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'a' }, 'admin');
-      await service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', { apiKey: 'b' }, 'admin');
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'itglue', { apiKey: 'a' }, 'admin'));
+      await runWithSql(sql, () => service.storeTeamCredential('team_1', 'org_1', 'datto-rmm', { apiKey: 'b' }, 'admin'));
 
       expect(await service.listTeamVendors('team_1')).toEqual(['datto-rmm', 'itglue']);
     });
@@ -497,37 +513,41 @@ describe('CredentialService', () => {
   describe('Service client credentials', () => {
     it('encrypts and decrypts service client credential data correctly', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       const creds = { apiKey: 'svc-key-456', platform: 'concord' };
-      await service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', creds, 'admin_1');
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', creds, 'admin_1'));
 
       expect(await service.getServiceClientCredential('client_1', 'datto-rmm')).toEqual(creds);
     });
 
     it('returns null for non-existent service client credential', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      expect(await service.getServiceClientCredential('client_unknown', 'datto-rmm')).toBeNull();
+      expect(await runWithSql(sql, () => service.getServiceClientCredential('client_unknown', 'datto-rmm'))).toBeNull();
     });
 
     it('overwrites on upsert (same client+vendor)', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'old' }, 'admin');
-      await service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'new' }, 'admin');
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'old' }, 'admin'));
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'new' }, 'admin'));
 
       expect(await service.getServiceClientCredential('client_1', 'itglue')).toEqual({ apiKey: 'new' });
     });
 
     it('isolates credentials between service clients', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeServiceClientCredential('client_a', 'org_1', 'itglue', { apiKey: 'a' }, 'admin');
-      await service.storeServiceClientCredential('client_b', 'org_1', 'itglue', { apiKey: 'b' }, 'admin');
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_a', 'org_1', 'itglue', { apiKey: 'a' }, 'admin'));
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_b', 'org_1', 'itglue', { apiKey: 'b' }, 'admin'));
 
       expect(await service.getServiceClientCredential('client_a', 'itglue')).toEqual({ apiKey: 'a' });
       expect(await service.getServiceClientCredential('client_b', 'itglue')).toEqual({ apiKey: 'b' });
@@ -535,19 +555,21 @@ describe('CredentialService', () => {
 
     it('deletes correctly', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', { apiKey: 'k' }, 'admin');
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', { apiKey: 'k' }, 'admin'));
       expect(await service.deleteServiceClientCredential('client_1', 'datto-rmm')).toBe(true);
       expect(await service.deleteServiceClientCredential('client_1', 'datto-rmm')).toBe(false);
     });
 
     it('listServiceClientVendors returns sorted slugs', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'a' }, 'admin');
-      await service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', { apiKey: 'b' }, 'admin');
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'itglue', { apiKey: 'a' }, 'admin'));
+      await runWithSql(sql, () => service.storeServiceClientCredential('client_1', 'org_1', 'datto-rmm', { apiKey: 'b' }, 'admin'));
 
       expect(await service.listServiceClientVendors('client_1')).toEqual(['datto-rmm', 'itglue']);
     });
@@ -560,16 +582,17 @@ describe('CredentialService', () => {
   describe('resolveForOrgAndVendor', () => {
     it('returns the customer org credential when one exists', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeOrgCredential(
+      await runWithSql(sql, () => service.storeOrgCredential(
         'cust_1',
         'datto-rmm',
         { apiKey: 'customer-key' },
         'admin_1',
-      );
+      ));
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).not.toBeNull();
       expect(resolved?.source).toBe('customer');
       expect(resolved?.ownerOrgId).toBe('cust_1');
@@ -579,15 +602,16 @@ describe('CredentialService', () => {
 
     it('falls back to the reseller credential when only a grant exists', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       // Reseller has a shared credential; customer has none of its own.
-      await service.storeOrgCredential(
+      await runWithSql(sql, () => service.storeOrgCredential(
         'reseller_1',
         'datto-rmm',
         { apiKey: 'shared-reseller-key' },
         'reseller_admin',
-      );
+      ));
       seedGrant(sql, {
         id: 'grant_abc',
         resellerOrgId: 'reseller_1',
@@ -596,7 +620,7 @@ describe('CredentialService', () => {
         enabled: true,
       });
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).not.toBeNull();
       expect(resolved?.source).toBe('reseller_grant');
       expect(resolved?.ownerOrgId).toBe('reseller_1');
@@ -606,20 +630,21 @@ describe('CredentialService', () => {
 
     it('prefers the customer credential when both a grant and an own cred exist', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeOrgCredential(
+      await runWithSql(sql, () => service.storeOrgCredential(
         'reseller_1',
         'datto-rmm',
         { apiKey: 'shared-reseller-key' },
         'reseller_admin',
-      );
-      await service.storeOrgCredential(
+      ));
+      await runWithSql(sql, () => service.storeOrgCredential(
         'cust_1',
         'datto-rmm',
         { apiKey: 'customer-key' },
         'cust_admin',
-      );
+      ));
       seedGrant(sql, {
         id: 'grant_abc',
         resellerOrgId: 'reseller_1',
@@ -628,21 +653,22 @@ describe('CredentialService', () => {
         enabled: true,
       });
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved?.source).toBe('customer');
       expect(resolved?.data).toEqual({ apiKey: 'customer-key' });
     });
 
     it('ignores a disabled (revoked) grant and returns null when the customer has no own cred', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeOrgCredential(
+      await runWithSql(sql, () => service.storeOrgCredential(
         'reseller_1',
         'datto-rmm',
         { apiKey: 'shared-reseller-key' },
         'reseller_admin',
-      );
+      ));
       seedGrant(sql, {
         id: 'grant_abc',
         resellerOrgId: 'reseller_1',
@@ -651,20 +677,21 @@ describe('CredentialService', () => {
         enabled: false,
       });
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).toBeNull();
     });
 
     it('falls back to the customer own cred when the grant is disabled but the customer has its own', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      await service.storeOrgCredential(
+      await runWithSql(sql, () => service.storeOrgCredential(
         'cust_1',
         'datto-rmm',
         { apiKey: 'customer-key' },
         'cust_admin',
-      );
+      ));
       seedGrant(sql, {
         id: 'grant_abc',
         resellerOrgId: 'reseller_1',
@@ -673,22 +700,24 @@ describe('CredentialService', () => {
         enabled: false,
       });
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved?.source).toBe('customer');
       expect(resolved?.data).toEqual({ apiKey: 'customer-key' });
     });
 
     it('returns null when no credential exists anywhere', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).toBeNull();
     });
 
     it('returns null when a grant references a reseller that has no credential stored', async () => {
       const sql = createMockSql();
-      const service = new CredentialService(sql);
+      enterTestContext(sql);
+      const service = new CredentialService();
 
       seedGrant(sql, {
         id: 'grant_abc',
@@ -698,7 +727,7 @@ describe('CredentialService', () => {
         enabled: true,
       });
 
-      const resolved = await service.resolveForOrgAndVendor('cust_1', 'datto-rmm');
+      const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).toBeNull();
     });
   });

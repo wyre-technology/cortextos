@@ -1,5 +1,6 @@
 import type { LogShippingService } from './log-shipping-service.js';
 import type { LogShippingAdapter } from './adapters/types.js';
+import { runAsSystem } from '../db/context.js';
 
 const SOURCES = ['request_log', 'admin_audit_log'] as const;
 
@@ -27,16 +28,22 @@ export class LogShipper {
   }
 
   async flush(): Promise<void> {
-    const destinations = await this.service.listEnabled().catch((err) => {
-      this.logger.warn({ err }, 'log-shipper: failed to list destinations');
-      return [];
+    // The shipper runs on a timer with no request context — it is a
+    // system-path background job. runAsSystem establishes the system DB
+    // context so getSql() inside the service resolves; the context
+    // propagates into the shipDestination() calls below.
+    await runAsSystem(async () => {
+      const destinations = await this.service.listEnabled().catch((err) => {
+        this.logger.warn({ err }, 'log-shipper: failed to list destinations');
+        return [];
+      });
+
+      if (destinations.length === 0) return;
+
+      await Promise.allSettled(
+        destinations.map((dest) => this.shipDestination(dest.id, dest.orgId, dest.platform)),
+      );
     });
-
-    if (destinations.length === 0) return;
-
-    await Promise.allSettled(
-      destinations.map((dest) => this.shipDestination(dest.id, dest.orgId, dest.platform)),
-    );
   }
 
   private async shipDestination(

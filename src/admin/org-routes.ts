@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type postgres from 'postgres';
 import { requireAdmin, requireAdminMutation, getOrSetCsrfToken, csrfHiddenInput } from '../lib/admin-auth.js';
 import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
@@ -7,6 +6,7 @@ import type { CreditService } from '../billing/credit-service.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { renderAdminPage } from './layout.js';
 import { FEATURES, PLAN_RANK, type FeatureKey, type Plan } from '../billing/features.js';
+import { getSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,7 +60,6 @@ function shortId(id: string | null | undefined, n = 14): string {
 // ---------------------------------------------------------------------------
 
 interface AdminOrgRoutesDeps {
-  sql: postgres.Sql;
   orgService: OrgService;
   billingGate: BillingGate;
   creditService: CreditService;
@@ -102,7 +101,7 @@ interface AuditEntryRow {
 }
 
 export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
-  const { sql, orgService, billingGate, creditService, adminAuditService } = deps;
+  const { orgService, billingGate, creditService, adminAuditService } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -117,7 +116,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         let rows: OrgListRow[];
         if (q) {
           const like = `%${q}%`;
-          rows = await sql<OrgListRow[]>`
+          rows = await getSql()<OrgListRow[]>`
             SELECT
               o.id, o.name, o.plan, o.owner_id, o.stripe_customer_id, o.stripe_subscription_id, o.created_at,
               u.email AS owner_email, u.name AS owner_name,
@@ -132,7 +131,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
             LIMIT 50
           `;
         } else {
-          rows = await sql<OrgListRow[]>`
+          rows = await getSql()<OrgListRow[]>`
             SELECT
               o.id, o.name, o.plan, o.owner_id, o.stripe_customer_id, o.stripe_subscription_id, o.created_at,
               u.email AS owner_email, u.name AS owner_name,
@@ -202,7 +201,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     // -----------------------------------------------------------------------
     app.get('/admin/orgs/new', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const rows = await sql<NewOrgRow[]>`
+      const rows = await getSql()<NewOrgRow[]>`
         SELECT
           o.id, o.name, o.plan, o.created_at,
           u.email AS owner_email, u.name AS owner_name,
@@ -264,7 +263,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     // -----------------------------------------------------------------------
     app.get('/admin/audit', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const rows = await sql<AuditEntryRow[]>`
+      const rows = await getSql()<AuditEntryRow[]>`
         SELECT
           a.id, a.org_id, a.actor_id, a.event_type, a.metadata, a.created_at,
           o.name AS org_name
@@ -351,10 +350,10 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
               ]),
             ) as Record<FeatureKey, boolean>,
           ),
-          sql<{ email: string | null; name: string | null }[]>`
+          getSql()<{ email: string | null; name: string | null }[]>`
             SELECT email, name FROM users WHERE id = ${org.ownerId} LIMIT 1
           `,
-          sql<{ created_at: string; vendor_slug: string; tool_name: string | null; status_code: number; user_email: string | null }[]>`
+          getSql()<{ created_at: string; vendor_slug: string; tool_name: string | null; status_code: number; user_email: string | null }[]>`
             SELECT rl.created_at, rl.vendor_slug, rl.tool_name, rl.status_code, u.email AS user_email
             FROM request_log rl
             LEFT JOIN users u ON u.id = rl.user_id
@@ -365,7 +364,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
             ORDER BY rl.created_at DESC
             LIMIT 20
           `,
-          sql<AuditEntryRow[]>`
+          getSql()<AuditEntryRow[]>`
             SELECT id, org_id, actor_id, event_type, metadata, created_at,
                    NULL::text AS org_name
             FROM admin_audit_log

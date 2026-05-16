@@ -12,6 +12,7 @@
 
 import { nanoid } from 'nanoid';
 import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import { scimPatch } from 'scim-patch';
 import {
   scimGroupCreateSchema,
@@ -37,7 +38,10 @@ interface MemberRefRow {
 }
 
 export class ScimGroupsHandler {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   // -------------------------------------------------------------------------
   // GET /Groups

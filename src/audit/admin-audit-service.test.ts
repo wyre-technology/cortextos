@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AdminAuditEntry } from './admin-audit-service.js';
+import { runWithSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -93,15 +94,15 @@ describe('AdminAuditService', () => {
   describe('log()', () => {
     it('inserts an audit entry with all fields', async () => {
       const { sql, calls } = createMockSql();
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.log({
+      await runWithSql(sql, () => service.log({
         orgId: 'org_1',
         actorId: 'user_1',
         targetId: 'user_2',
         eventType: 'member_invited',
         metadata: { email: 'test@example.com' },
-      });
+      }));
 
       const insertCall = calls.find((c) => c.query.includes('INSERT INTO'));
       expect(insertCall).toBeDefined();
@@ -113,13 +114,13 @@ describe('AdminAuditService', () => {
 
     it('inserts with null targetId and metadata when omitted', async () => {
       const { sql, calls } = createMockSql();
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.log({
+      await runWithSql(sql, () => service.log({
         orgId: 'org_1',
         actorId: 'user_1',
         eventType: 'org_updated',
-      });
+      }));
 
       const insertCall = calls.find((c) => c.query.includes('INSERT INTO'));
       expect(insertCall).toBeDefined();
@@ -135,9 +136,9 @@ describe('AdminAuditService', () => {
     it('returns entries with default pagination', async () => {
       const row = makeRow();
       const { sql, calls } = createMockSql({ rows: [row], count: 1 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const result = await service.query({ orgId: 'org_1' });
+      const result = await runWithSql(sql, () => service.query({ orgId: 'org_1' }));
 
       expect(result.entries).toHaveLength(1);
       expect(result.total).toBe(1);
@@ -165,9 +166,9 @@ describe('AdminAuditService', () => {
 
     it('respects custom limit and offset', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({ orgId: 'org_1', limit: 10, offset: 20 });
+      await runWithSql(sql, () => service.query({ orgId: 'org_1', limit: 10, offset: 20 }));
 
       const selectCall = calls.find((c) => c.query.includes('SELECT a.*'));
       const vals = selectCall!.values;
@@ -177,9 +178,9 @@ describe('AdminAuditService', () => {
 
     it('clamps limit to max 200', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({ orgId: 'org_1', limit: 999 });
+      await runWithSql(sql, () => service.query({ orgId: 'org_1', limit: 999 }));
 
       const selectCall = calls.find((c) => c.query.includes('SELECT a.*'));
       const vals = selectCall!.values;
@@ -188,9 +189,9 @@ describe('AdminAuditService', () => {
 
     it('always filters by orgId', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({ orgId: 'org_42' });
+      await runWithSql(sql, () => service.query({ orgId: 'org_42' }));
 
       const fragmentCall = calls.find((c) => c.query.includes('a.org_id'));
       expect(fragmentCall).toBeDefined();
@@ -199,9 +200,9 @@ describe('AdminAuditService', () => {
 
     it('filters by eventType', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({ orgId: 'org_1', eventType: 'member_removed' });
+      await runWithSql(sql, () => service.query({ orgId: 'org_1', eventType: 'member_removed' }));
 
       const fragmentCall = calls.find((c) => c.query.includes('a.event_type'));
       expect(fragmentCall).toBeDefined();
@@ -210,9 +211,9 @@ describe('AdminAuditService', () => {
 
     it('filters by actorId', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({ orgId: 'org_1', actorId: 'user_99' });
+      await runWithSql(sql, () => service.query({ orgId: 'org_1', actorId: 'user_99' }));
 
       const fragmentCall = calls.find((c) => c.query.includes('a.actor_id'));
       expect(fragmentCall).toBeDefined();
@@ -221,13 +222,13 @@ describe('AdminAuditService', () => {
 
     it('filters by date range', async () => {
       const { sql, calls } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.query({
+      await runWithSql(sql, () => service.query({
         orgId: 'org_1',
         startDate: '2026-01-01T00:00:00Z',
         endDate: '2026-01-31T23:59:59Z',
-      });
+      }));
 
       const startCall = calls.find((c) => c.query.includes('a.created_at >='));
       expect(startCall).toBeDefined();
@@ -240,9 +241,9 @@ describe('AdminAuditService', () => {
 
     it('returns empty results when no matches', async () => {
       const { sql } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const result = await service.query({ orgId: 'org_1' });
+      const result = await runWithSql(sql, () => service.query({ orgId: 'org_1' }));
 
       expect(result.entries).toEqual([]);
       expect(result.total).toBe(0);
@@ -256,9 +257,9 @@ describe('AdminAuditService', () => {
   describe('exportCsv()', () => {
     it('returns CSV with header row', async () => {
       const { sql } = createMockSql({ rows: [], count: 0 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const csv = await service.exportCsv({ orgId: 'org_1' });
+      const csv = await runWithSql(sql, () => service.exportCsv({ orgId: 'org_1' }));
       const lines = csv.split('\n');
 
       expect(lines[0]).toBe('timestamp,org_id,actor,actor_email,target,target_email,event_type,metadata');
@@ -267,9 +268,9 @@ describe('AdminAuditService', () => {
     it('includes all entry fields in correct order', async () => {
       const row = makeRow({ metadata: null });
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const csv = await service.exportCsv({ orgId: 'org_1' });
+      const csv = await runWithSql(sql, () => service.exportCsv({ orgId: 'org_1' }));
       const lines = csv.split('\n');
 
       expect(lines).toHaveLength(2);
@@ -279,9 +280,9 @@ describe('AdminAuditService', () => {
     it('handles null targetId as empty string', async () => {
       const row = makeRow({ target_id: null, target_email: null, target_name: null, metadata: null });
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const csv = await service.exportCsv({ orgId: 'org_1' });
+      const csv = await runWithSql(sql, () => service.exportCsv({ orgId: 'org_1' }));
       const lines = csv.split('\n');
 
       expect(lines[1]).toBe('2026-02-23T12:00:00Z,org_1,user_1,actor@example.com,,,member_invited,');
@@ -290,9 +291,9 @@ describe('AdminAuditService', () => {
     it('escapes commas in metadata JSON', async () => {
       const row = makeRow({ metadata: { key: 'a,b' } });
       const { sql } = createMockSql({ rows: [row], count: 1 });
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const csv = await service.exportCsv({ orgId: 'org_1' });
+      const csv = await runWithSql(sql, () => service.exportCsv({ orgId: 'org_1' }));
       const lines = csv.split('\n');
 
       // Commas in JSON should be replaced with semicolons
@@ -308,9 +309,9 @@ describe('AdminAuditService', () => {
   describe('cleanupAdminAuditLog()', () => {
     it('deletes old entries and returns count', async () => {
       const { sql, calls } = createMockSql();
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      const count = await service.cleanupAdminAuditLog(90);
+      const count = await runWithSql(sql, () => service.cleanupAdminAuditLog(90));
 
       expect(count).toBe(5);
       const deleteCall = calls.find((c) => c.query.includes('DELETE FROM'));
@@ -320,9 +321,9 @@ describe('AdminAuditService', () => {
 
     it('uses default 90-day retention', async () => {
       const { sql, calls } = createMockSql();
-      const service = new AdminAuditService(sql);
+      const service = new AdminAuditService();
 
-      await service.cleanupAdminAuditLog();
+      await runWithSql(sql, () => service.cleanupAdminAuditLog());
 
       const deleteCall = calls.find((c) => c.query.includes('DELETE FROM'));
       expect(deleteCall!.values).toContain('90 days');

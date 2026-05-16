@@ -28,6 +28,7 @@ import postgres from 'postgres';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ResellerPricingService } from '../../billing/reseller-pricing-service.js';
+import { enterTestContext, type Sql } from '../../db/context.js';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
@@ -177,6 +178,10 @@ async function asUser(userId: string | null): Promise<RlsConnection> {
   const reserved = await sql.reserve();
   await reserved.unsafe(`SET ROLE rls_test_user`);
   await reserved`SELECT set_config('conduit.current_user_id', ${userId ?? ''}, false)`;
+  // Install this role-switched connection as the request context so a service
+  // constructed in the test resolves getSql() to it — RLS policies then
+  // enforce against rls_test_user, not the superuser pool.
+  enterTestContext(reserved as unknown as Sql);
   return {
     query: reserved as unknown as postgres.Sql,
     release: async () => {
@@ -222,7 +227,7 @@ describe('mig 025 — RLS INSERT path', () => {
   it('reseller-admin can set pricing for their depth-1 subtenant', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.setPricing(makePctInput({ subtenant: 'cust-a' }));
       expect(result.resellerOrgId).toBe('res-a');
       expect(result.subtenantOrgId).toBe('cust-a');
@@ -234,7 +239,7 @@ describe('mig 025 — RLS INSERT path', () => {
   it('reseller-admin can set pricing for their depth-2 sub-customer (mig 023 helper)', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.setPricing(makePctInput({ subtenant: 'sub-cust-a' }));
       expect(result.subtenantOrgId).toBe('sub-cust-a');
     } finally { await conn.release(); }
@@ -243,7 +248,7 @@ describe('mig 025 — RLS INSERT path', () => {
   it('reseller-admin cannot set pricing on a different reseller\'s subtenant (RLS reject)', async () => {
     const conn = await asUser('bob'); // admin of res-b, not res-a
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       await expect(
         svc.setPricing(makePctInput({ reseller: 'res-a', subtenant: 'cust-a', by: 'bob' })),
       ).rejects.toThrow();
@@ -253,7 +258,7 @@ describe('mig 025 — RLS INSERT path', () => {
   it('reseller_billing_viewer (non-admin) cannot set pricing (RLS reject)', async () => {
     const conn = await asUser('vera'); // billing_viewer on res-a, not admin
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       await expect(
         svc.setPricing(makePctInput({ subtenant: 'cust-a', by: 'vera' })),
       ).rejects.toThrow();
@@ -263,7 +268,7 @@ describe('mig 025 — RLS INSERT path', () => {
   it('customer org member cannot set pricing on their own org (RLS reject)', async () => {
     const conn = await asUser('carol'); // owner of cust-a, not reseller_member
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       await expect(
         svc.setPricing(makePctInput({ subtenant: 'cust-a', by: 'carol' })),
       ).rejects.toThrow();
@@ -399,7 +404,7 @@ describe('mig 025 — append-only supersession', () => {
   it('getCurrentPricing returns the latest effective row', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       await svc.setPricing(makePctInput({ id: 'cfg-1', subtenant: 'cust-a', bp: 500 }));
       // Insert second row directly with later effective_at for deterministic
       // ordering even on same-millisecond inserts. Done as superuser (sql)
@@ -419,7 +424,7 @@ describe('mig 025 — append-only supersession', () => {
 
     const readConn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(readConn.query);
+      const svc = new ResellerPricingService();
       const current = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(current).not.toBeNull();
       expect(current!.id).toBe('cfg-2');
@@ -430,7 +435,7 @@ describe('mig 025 — append-only supersession', () => {
   it('getCurrentPricing returns null when no config exists', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const current = await svc.getCurrentPricing('res-a', 'cust-a');
       expect(current).toBeNull();
     } finally { await conn.release(); }
@@ -484,7 +489,7 @@ describe('mig 025 — service-layer round-trip', () => {
   it('setPricing returns the inserted shape (percentage)', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.setPricing(makePctInput({ id: 'cfg-rt-1', bp: 1250 }));
       expect(result).toMatchObject({
         id: 'cfg-rt-1',
@@ -504,7 +509,7 @@ describe('mig 025 — service-layer round-trip', () => {
   it('setPricing returns the inserted shape (absolute_per_seat)', async () => {
     const conn = await asUser('rita');
     try {
-      const svc = new ResellerPricingService(conn.query);
+      const svc = new ResellerPricingService();
       const result = await svc.setPricing({
         id: 'cfg-rt-2',
         resellerOrgId: 'res-a',

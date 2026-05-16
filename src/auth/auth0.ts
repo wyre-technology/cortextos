@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 import * as oidc from 'openid-client';
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import type postgres from 'postgres';
+import { systemPool } from '../db/context.js';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
@@ -69,7 +69,7 @@ declare module 'fastify' {
 // Plugin factory
 // ---------------------------------------------------------------------------
 
-export function auth0Plugin(sql: postgres.Sql) {
+export function auth0Plugin() {
   return fp(async function plugin(app: FastifyInstance): Promise<void> {
     // Skip registration if Auth0 is not configured
     if (!config.auth0Domain || !config.auth0ClientId || !config.auth0ClientSecret) {
@@ -103,7 +103,7 @@ export function auth0Plugin(sql: postgres.Sql) {
     // Tables
     // -----------------------------------------------------------------------
 
-    await sql`
+    await systemPool()`
       CREATE TABLE IF NOT EXISTS users (
         id          TEXT PRIMARY KEY,
         email       TEXT UNIQUE NOT NULL,
@@ -119,17 +119,17 @@ export function auth0Plugin(sql: postgres.Sql) {
     // /auth/microsoft/callback path's UPDATE fails with 42703 in
     // production-like envs. Idempotent IF NOT EXISTS; existing rows pick
     // up DEFAULT NOW() at apply-time. Same fix landed in azure-ad.ts.
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
 
     // Profile fields (added after initial schema)
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
+    await systemPool()`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`;
 
     // PKCE verifiers stored server-side, keyed by OAuth state parameter.
     // This avoids cookie race conditions when multiple concurrent login
     // requests overwrite the same cookie.
-    await sql`
+    await systemPool()`
       CREATE TABLE IF NOT EXISTS auth_state (
         state          TEXT PRIMARY KEY,
         code_verifier  TEXT NOT NULL,
@@ -138,7 +138,7 @@ export function auth0Plugin(sql: postgres.Sql) {
     `;
 
     // Clean up expired auth_state rows (older than 10 minutes)
-    await sql`DELETE FROM auth_state WHERE created_at < NOW() - INTERVAL '10 minutes'`;
+    await systemPool()`DELETE FROM auth_state WHERE created_at < NOW() - INTERVAL '10 minutes'`;
 
     // -----------------------------------------------------------------------
     // Request decorator — parse session cookie on every request
@@ -195,7 +195,7 @@ export function auth0Plugin(sql: postgres.Sql) {
       const state = randomUUID();
 
       // Store verifier server-side keyed by state (no cookie race condition)
-      await sql`
+      await systemPool()`
         INSERT INTO auth_state (state, code_verifier)
         VALUES (${state}, ${codeVerifier})
       `;
@@ -259,7 +259,7 @@ export function auth0Plugin(sql: postgres.Sql) {
       }
 
       // Look up and consume the PKCE verifier (one-time use)
-      const rows = await sql`
+      const rows = await systemPool()`
         DELETE FROM auth_state WHERE state = ${state} RETURNING code_verifier
       `;
       if (rows.length === 0) {
@@ -310,7 +310,7 @@ export function auth0Plugin(sql: postgres.Sql) {
       // field MUST fail closed.
       const emailVerified = claims.email_verified === true;
 
-      await bindShadowUserOnLogin(sql, sub, email);
+      await bindShadowUserOnLogin(systemPool(), sub, email);
 
       // Adopt-by-email: if a user row already exists for this email
       // (case-insensitive), this login belongs to that row regardless of
@@ -319,14 +319,14 @@ export function auth0Plugin(sql: postgres.Sql) {
       // duplicate). Gated on emailVerified inside findAdoptableUserId — see
       // adopt-by-email.ts for why an unverified-email adopt is unsafe.
       let adopted = false;
-      const adoptableId = await findAdoptableUserId(sql, sub, email, emailVerified);
+      const adoptableId = await findAdoptableUserId(systemPool(), sub, email, emailVerified);
       if (adoptableId) {
         request.log.warn(
           { existingId: adoptableId, claimedSub: sub, email },
           'auth0 login: adopting existing user row by verified email (id mismatch)',
         );
         sub = adoptableId;
-        await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+        await systemPool()`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         adopted = true;
       }
 
@@ -338,7 +338,7 @@ export function auth0Plugin(sql: postgres.Sql) {
       let isNewUser = false;
       if (!adopted) {
        try {
-        const [{ is_new }] = await sql<{ is_new: boolean }[]>`
+        const [{ is_new }] = await systemPool()<{ is_new: boolean }[]>`
           INSERT INTO users (id, email, name, last_login)
           VALUES (${sub}, ${email}, ${name}, NOW())
           ON CONFLICT (id) DO UPDATE SET
@@ -356,7 +356,7 @@ export function auth0Plugin(sql: postgres.Sql) {
         // Email-unique race: another request inserted the same email first.
         // Re-fetch by lowercased email and adopt that row's sub. The winner's
         // path enrolled in Loops; this loser stays isNewUser=false.
-        const winner = await sql`
+        const winner = await systemPool()`
           SELECT id FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
         `;
         if (winner.length > 0 && winner[0].id !== sub) {
@@ -365,7 +365,7 @@ export function auth0Plugin(sql: postgres.Sql) {
             'auth0 login: email-unique race, adopting winner row id',
           );
           sub = winner[0].id as string;
-          await sql`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
+          await systemPool()`UPDATE users SET last_login = NOW() WHERE id = ${sub}`;
         }
        }
       }

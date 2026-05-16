@@ -18,17 +18,16 @@ import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import { getVendor, getVendorSlugs } from '../credentials/vendor-config.js';
 import { config } from '../config.js';
-import type postgres from 'postgres';
 import { ToolCache, type McpTool } from './tool-cache.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
+import { getSql } from '../db/context.js';
 
 interface UnifiedProxyDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
   toolCache: ToolCache;
-  sql: postgres.Sql;
 }
 
 /**
@@ -42,7 +41,7 @@ function truncateDescription(desc: string, maxLen = 200): string {
 }
 
 export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
-  const { credentialService, orgService, billingGate, toolCache, sql } = deps;
+  const { credentialService, orgService, billingGate, toolCache } = deps;
   const resultCache = new ResultCache();
 
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -155,7 +154,7 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
 
             // Log (fire-and-forget)
             const responseTimeMs = Date.now() - startTime;
-            sql`
+            getSql()`
               INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
               VALUES (${nanoid()}, ${userId}, ${null}, ${'_unified'}, ${'tools/list'}, ${200}, ${responseTimeMs})
             `.catch((err) => {
@@ -302,7 +301,7 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               const responseTimeMs = Date.now() - startTime;
               const toolArgs = capture ? captureArguments(body?.params?.arguments) : null;
               const respSummary = capture ? summarizeResponse(cachedOrFetched) : null;
-              sql`
+              getSql()`
                 INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary, source)
                 VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${200}, ${responseTimeMs}, ${toolArgs}, ${respSummary}, ${'mcp'})
               `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });
@@ -329,7 +328,7 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
             const vendorData = await vendorRes.json();
             const toolArgsForLog = capture ? captureArguments(body?.params?.arguments) : null;
             const respSummaryForLog = capture && vendorRes.status < 400 ? summarizeResponse(vendorData) : null;
-            sql`
+            getSql()`
               INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, tool_arguments, response_summary, source)
               VALUES (${nanoid()}, ${injection.userId}, ${injection.orgId ?? null}, ${vendorSlug}, ${originalToolName}, ${vendorRes.status}, ${responseTimeMs}, ${toolArgsForLog}, ${respSummaryForLog}, ${'mcp'})
             `.catch((err) => { app.log.warn({ err }, 'Failed to log request'); });

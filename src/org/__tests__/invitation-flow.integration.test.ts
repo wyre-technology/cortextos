@@ -25,6 +25,7 @@ import { nanoid } from 'nanoid';
 import { InvitationService } from '../invitation-service.js';
 import { MemberService } from '../member-service.js';
 import { hashInvitationToken } from '../invitation-token-hash.js';
+import { enterTestContext } from '../../db/context.js';
 
 let container: StartedPostgreSqlContainer;
 let sql: postgres.Sql;
@@ -87,7 +88,7 @@ beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:15-alpine').start();
   sql = postgres(container.getConnectionUri(), { max: 4, onnotice: () => undefined });
   await bootstrap();
-  svc = new InvitationService(sql, new MemberService(sql));
+  svc = new InvitationService(new MemberService());
 }, 60_000);
 
 afterAll(async () => {
@@ -98,6 +99,7 @@ afterAll(async () => {
 beforeEach(async () => {
   // Fresh state per test — keeps assertions independent.
   await sql`TRUNCATE org_invitations, org_members, organizations, users CASCADE`;
+  enterTestContext(sql);
 });
 
 describe('invitation flow — end-to-end against real Postgres', () => {

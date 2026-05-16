@@ -19,6 +19,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ScimUsersHandler } from '../users-handler.js';
 import type { ScimConnection } from '../types.js';
 import { seedOwner, startIntegrationDb, type IntegrationDb } from './integration-harness.js';
+import { enterTestContext } from '../../db/context.js';
 
 let db: IntegrationDb;
 let handler: ScimUsersHandler;
@@ -43,7 +44,7 @@ function buildConnection(over: Partial<ScimConnection> & { orgId: string; scope:
 
 beforeAll(async () => {
   db = await startIntegrationDb();
-  handler = new ScimUsersHandler(db.sql);
+  handler = new ScimUsersHandler();
 }, 90_000);
 
 afterAll(async () => {
@@ -52,6 +53,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.reset();
+  enterTestContext(db.sql);
 });
 
 describe('SCIM /Users (tenant scope)', () => {

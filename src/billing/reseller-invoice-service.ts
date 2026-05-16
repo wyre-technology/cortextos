@@ -29,7 +29,7 @@
  *     rolls back cleanly. Caller decides whether to void-and-recreate.
  */
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 import type { ResellerPricingService, ResellerPricingConfig } from './reseller-pricing-service.js';
 import type { BillingGate } from './gate.js';
 import type { OrgService } from '../org/org-service.js';
@@ -114,7 +114,10 @@ export interface UsageSource {
  * doesn't extend lock duration over the credit_ledger table.
  */
 export class CreditLedgerUsageSource implements UsageSource {
-  constructor(private readonly sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   async fetchUsageUnits(
     subtenantOrgId: string,
@@ -357,8 +360,12 @@ export function applyMarkup(
 }
 
 export class ResellerInvoiceService {
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
+
   constructor(
-    private readonly sql: postgres.Sql,
     private readonly pricingService: ResellerPricingService,
     private readonly billingGate: BillingGate,
     private readonly orgService: OrgService,

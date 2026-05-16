@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import type postgres from 'postgres';
 import { requireAdmin } from '../lib/admin-auth.js';
 import { escapeHtml } from '../web/helpers.js';
 import { THEME_VARS } from '../web/styles.js';
+import { getSql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,10 +70,10 @@ interface MetricsResponse {
 // Queries — all run concurrently, no N+1
 // ---------------------------------------------------------------------------
 
-async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
+async function fetchMetrics(): Promise<MetricsResponse> {
   const [activeOrgs, topTools, creditBurn, newOrgs, newOrgsRecent, planDist] = await Promise.all([
     // 1. Active orgs — at least one tool call in the last 30 days
-    sql<ActiveOrg[]>`
+    getSql()<ActiveOrg[]>`
       SELECT
         o.id          AS org_id,
         o.name        AS org_name,
@@ -90,7 +90,7 @@ async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
     `,
 
     // 2. Top tools — most-called vendor+tool combinations (last 30 days)
-    sql<TopTool[]>`
+    getSql()<TopTool[]>`
       SELECT
         vendor_slug,
         tool_name,
@@ -105,7 +105,7 @@ async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
     `,
 
     // 3. Credit burn rate — credits per day per plan (last 30 days)
-    sql<CreditBurnDay[]>`
+    getSql()<CreditBurnDay[]>`
       SELECT
         date_trunc('day', cl.recorded_at)::date::text AS day,
         o.plan,
@@ -118,7 +118,7 @@ async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
     `,
 
     // 4. New org signups per day (last 14 days) — for the trend chart
-    sql<NewOrgDay[]>`
+    getSql()<NewOrgDay[]>`
       SELECT
         date_trunc('day', created_at)::date::text AS day,
         COUNT(*)::text AS signups
@@ -129,7 +129,7 @@ async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
     `,
 
     // 4b. New org signups (per-org, last 14 days) — for the "who signed up" list
-    sql<NewOrgRecent[]>`
+    getSql()<NewOrgRecent[]>`
       SELECT
         o.id   AS org_id,
         o.name AS org_name,
@@ -145,7 +145,7 @@ async function fetchMetrics(sql: postgres.Sql): Promise<MetricsResponse> {
     `,
 
     // 5. Plan distribution — count of orgs per plan
-    sql<PlanDistribution[]>`
+    getSql()<PlanDistribution[]>`
       SELECT plan, COUNT(*)::text AS count
       FROM organizations
       GROUP BY plan
@@ -619,20 +619,14 @@ function renderDashboard(metrics: MetricsResponse): string {
 // Route plugin
 // ---------------------------------------------------------------------------
 
-interface Deps {
-  sql: postgres.Sql;
-}
-
-export function adminMetricsRoutes(deps: Deps) {
-  const { sql } = deps;
-
+export function adminMetricsRoutes() {
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -------------------------------------------------------------------------
     // GET /api/admin/metrics — JSON metrics payload
     // -------------------------------------------------------------------------
     app.get('/api/admin/metrics', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const metrics = await fetchMetrics(sql);
+      const metrics = await fetchMetrics();
       return reply.send(metrics);
     });
 
@@ -641,7 +635,7 @@ export function adminMetricsRoutes(deps: Deps) {
     // -------------------------------------------------------------------------
     app.get('/admin/dashboard', async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const metrics = await fetchMetrics(sql);
+      const metrics = await fetchMetrics();
       return reply.type('text/html').send(renderDashboard(metrics));
     });
   };

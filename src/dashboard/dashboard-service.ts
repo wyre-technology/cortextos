@@ -5,7 +5,7 @@
  * provides typed query methods for the dashboard API and web UI.
  */
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 
 export interface DateRange {
   start?: string; // ISO 8601
@@ -38,7 +38,10 @@ export interface VendorBreakdown {
 }
 
 export class DashboardService {
-  constructor(private sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   async getUsageSummary(orgId: string, range: DateRange = {}): Promise<UsageSummary> {
     const where = this.buildWhere(orgId, range);

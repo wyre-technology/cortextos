@@ -14,6 +14,7 @@ import {
   BrandResolverError,
   WYRE_DEFAULT_BRAND_ID,
 } from './resolver.js';
+import { runWithSql } from '../db/context.js';
 
 // -----------------------------------------------------------------------------
 // Fake DB
@@ -190,9 +191,9 @@ describe('BrandResolver', () => {
         { id: 'org-reseller', parent_org_id: null },
       ],
     });
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    const brand = await resolver.resolveBrand('org-customer');
+    const brand = await runWithSql(db.sql, () => resolver.resolveBrand('org-customer'));
 
     expect(brand.name).toBe('CustomerCo');
     expect(brand.id).toBe('brand-customer');
@@ -215,9 +216,9 @@ describe('BrandResolver', () => {
         { id: 'org-reseller', parent_org_id: null },
       ],
     });
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    const brand = await resolver.resolveBrand('org-customer');
+    const brand = await runWithSql(db.sql, () => resolver.resolveBrand('org-customer'));
 
     expect(brand.name).toBe('ResellerCo');
     expect(brand.id).toBe('brand-reseller');
@@ -228,9 +229,9 @@ describe('BrandResolver', () => {
     const db = createFakeDb({
       orgs: [{ id: 'org-standalone', parent_org_id: null }],
     });
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    const brand = await resolver.resolveBrand('org-standalone');
+    const brand = await runWithSql(db.sql, () => resolver.resolveBrand('org-standalone'));
 
     expect(brand.id).toBe(WYRE_DEFAULT_BRAND_ID);
     expect(brand.isWyreDefault).toBe(true);
@@ -239,9 +240,9 @@ describe('BrandResolver', () => {
 
   it('returns wyre-default when orgId is null', async () => {
     const db = createFakeDb();
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    const brand = await resolver.resolveBrand(null);
+    const brand = await runWithSql(db.sql, () => resolver.resolveBrand(null));
 
     expect(brand.id).toBe(WYRE_DEFAULT_BRAND_ID);
     expect(brand.isWyreDefault).toBe(true);
@@ -257,9 +258,9 @@ describe('BrandResolver', () => {
       });
     }
     const db = createFakeDb({ orgs });
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    await expect(resolver.resolveBrand('org-0')).rejects.toMatchObject({
+    await expect(runWithSql(db.sql, () => resolver.resolveBrand('org-0'))).rejects.toMatchObject({
       name: 'BrandResolverError',
       code: 'MAX_DEPTH_EXCEEDED',
     });
@@ -270,12 +271,12 @@ describe('BrandResolver', () => {
       includeWyreDefault: false,
       orgs: [{ id: 'org-standalone', parent_org_id: null }],
     });
-    const resolver = new BrandResolver(db.sql);
+    const resolver = new BrandResolver();
 
-    await expect(resolver.resolveBrand('org-standalone')).rejects.toBeInstanceOf(
+    await expect(runWithSql(db.sql, () => resolver.resolveBrand('org-standalone'))).rejects.toBeInstanceOf(
       BrandResolverError,
     );
-    await expect(resolver.resolveBrand(null)).rejects.toMatchObject({
+    await expect(runWithSql(db.sql, () => resolver.resolveBrand(null))).rejects.toMatchObject({
       code: 'FALLBACK_MISSING',
     });
   });
@@ -292,11 +293,11 @@ describe('BrandResolver', () => {
       ],
       orgs: [{ id: 'org-x', parent_org_id: null }],
     });
-    const resolver = new BrandResolver(db.sql, 60);
+    const resolver = new BrandResolver(60);
 
-    const first = await resolver.resolveBrand('org-x');
+    const first = await runWithSql(db.sql, () => resolver.resolveBrand('org-x'));
     const callsAfterFirst = db.callCount;
-    const second = await resolver.resolveBrand('org-x');
+    const second = await runWithSql(db.sql, () => resolver.resolveBrand('org-x'));
 
     expect(second).toBe(first); // reference-equal — served from cache
     expect(db.callCount).toBe(callsAfterFirst); // no new DB calls
@@ -315,21 +316,21 @@ describe('BrandResolver', () => {
       orgs: [{ id: 'org-y', parent_org_id: null }],
     });
     // 1-second TTL to keep the test fast.
-    const resolver = new BrandResolver(db.sql, 1);
+    const resolver = new BrandResolver(1);
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 
-    await resolver.resolveBrand('org-y');
+    await runWithSql(db.sql, () => resolver.resolveBrand('org-y'));
     const callsAfterFirst = db.callCount;
 
     // Second call within TTL window — no DB.
-    await resolver.resolveBrand('org-y');
+    await runWithSql(db.sql, () => resolver.resolveBrand('org-y'));
     expect(db.callCount).toBe(callsAfterFirst);
 
     // Advance past TTL.
     vi.setSystemTime(new Date('2026-01-01T00:00:02Z'));
-    await resolver.resolveBrand('org-y');
+    await runWithSql(db.sql, () => resolver.resolveBrand('org-y'));
     expect(db.callCount).toBeGreaterThan(callsAfterFirst);
 
     vi.useRealTimers();

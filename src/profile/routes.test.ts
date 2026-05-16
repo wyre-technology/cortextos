@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import { enterTestContext, type Sql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -57,7 +58,8 @@ function createMockSql(rows: Record<string, unknown>[] = [PROFILE_ROW]) {
 async function buildApp(mockSql?: unknown): Promise<FastifyInstance> {
   const { profileRoutes } = await import('./routes.js');
   const app = Fastify({ logger: false });
-  await app.register(profileRoutes({ sql: (mockSql ?? createMockSql()) as any }));
+  enterTestContext((mockSql ?? createMockSql()) as Sql);
+  await app.register(profileRoutes());
   return app;
 }
 

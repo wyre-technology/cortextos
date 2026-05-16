@@ -6,12 +6,8 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type postgres from 'postgres';
 import { requireAuth0 } from '../auth/auth0.js';
-
-export interface ProfileRouteDeps {
-  sql: postgres.Sql;
-}
+import { getSql } from '../db/context.js';
 
 interface ProfileRow {
   id: string;
@@ -42,16 +38,14 @@ function toProfileResponse(row: ProfileRow): ProfileResponse {
   };
 }
 
-export function profileRoutes(deps: ProfileRouteDeps) {
-  const { sql } = deps;
-
+export function profileRoutes() {
   return async function (app: FastifyInstance): Promise<void> {
     // GET /api/profile
     app.get('/api/profile', async (request, reply) => {
       const user = requireAuth0(request, reply);
       if (!user) return;
 
-      const rows = await sql<ProfileRow[]>`
+      const rows = await getSql()<ProfileRow[]>`
         SELECT id, email, name, first_name, last_name, display_name
         FROM users
         WHERE id = ${user.sub}
@@ -91,17 +85,17 @@ export function profileRoutes(deps: ProfileRouteDeps) {
 
       // Use individual column updates since postgres.js doesn't support dynamic SET easily
       if (updates.first_name !== undefined) {
-        await sql`UPDATE users SET first_name = ${updates.first_name} WHERE id = ${user.sub}`;
+        await getSql()`UPDATE users SET first_name = ${updates.first_name} WHERE id = ${user.sub}`;
       }
       if (updates.last_name !== undefined) {
-        await sql`UPDATE users SET last_name = ${updates.last_name} WHERE id = ${user.sub}`;
+        await getSql()`UPDATE users SET last_name = ${updates.last_name} WHERE id = ${user.sub}`;
       }
       if (updates.display_name !== undefined) {
-        await sql`UPDATE users SET display_name = ${updates.display_name} WHERE id = ${user.sub}`;
+        await getSql()`UPDATE users SET display_name = ${updates.display_name} WHERE id = ${user.sub}`;
       }
 
       // Return updated profile
-      const rows = await sql<ProfileRow[]>`
+      const rows = await getSql()<ProfileRow[]>`
         SELECT id, email, name, first_name, last_name, display_name
         FROM users
         WHERE id = ${user.sub}

@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { OrgService } from './org-service.js';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import { enterTestContext, type Sql } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -142,13 +143,13 @@ async function buildApp(
 
   const { orgRoutes } = await import('./routes.js');
   const app = Fastify({ logger: false });
+  enterTestContext({} as Sql);
   await app.register(
     orgRoutes({
       orgService,
       credentialService: credentialService ?? createMockCredentialService(),
       billingGate: billingGate ?? createMockBillingGate(),
-      adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any,
-      sql: {} as any,
+      adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any //sql: {} as any,
     }),
   );
   return app;

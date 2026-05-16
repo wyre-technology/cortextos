@@ -14,7 +14,6 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import postgres from 'postgres';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -32,6 +31,8 @@ import { webRoutes } from './web/routes.js';
 import { VendorOAuthStateStore } from './oauth/vendor-state-store.js';
 import { CreditService } from './billing/credit-service.js';
 import { runMigrations } from './db/migrate.js';
+import { initPools, runAsSystem, systemPool, getSql, closePools } from './db/context.js';
+import { requestContextPlugin } from './db/request-context-plugin.js';
 import { orgRoutes } from './org/routes.js';
 import { billingRoutes } from './billing/checkout.js';
 import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
@@ -93,105 +94,119 @@ await app.register(rateLimit, {
 // ---------------------------------------------------------------------------
 // Database connection (PostgreSQL via postgres.js)
 // ---------------------------------------------------------------------------
+// Two connection classes — see src/db/context.ts. The request pool connects
+// as a NOBYPASSRLS role so RLS policies enforce on the HTTP request path; the
+// system pool connects as BYPASSRLS for boot DDL, migrations, and sweeps.
 
-const sql = postgres(config.databaseUrl, {
-  max: 10,
-  idle_timeout: 20,
-  connect_timeout: 10,
+initPools({
+  systemUrl: config.databaseUrl,
+  requestUrl: config.databaseUrlRequest,
 });
 
 // ---------------------------------------------------------------------------
 // Services
 // ---------------------------------------------------------------------------
+// Service constructors do no DB work — each resolves its connection lazily via
+// getSql() at query time. Boot-time DB work (DDL, initTables, migrations,
+// sweeps) runs below inside runAsSystem so getSql() resolves to the system
+// pool; HTTP requests resolve it to a request-path transaction instead.
 
-// Ensure core tables exist before services init (auth plugins may skip if unconfigured)
-await sql`
-  CREATE TABLE IF NOT EXISTS users (
-    id         TEXT PRIMARY KEY,
-    auth0_sub  TEXT UNIQUE,
-    email      TEXT NOT NULL DEFAULT '',
-    name       TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    tenant_id  TEXT
-  )
-`;
-await sql`
-  CREATE TABLE IF NOT EXISTS auth_state (
-    state         TEXT PRIMARY KEY,
-    code_verifier TEXT NOT NULL,
-    return_to     TEXT NOT NULL DEFAULT '/',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )
-`;
-
-// Auth plugin (may be no-op if not configured, but tables above guarantee deps)
-await registerAuthPlugin(app, sql);
-
-// OrgService creates organizations, org_teams, etc. (must be before credentials)
-const orgService = new OrgService(sql);
-await orgService.initTables();
-
-// CredentialService references org_teams + users (must be after auth + org)
-const credentialService = new CredentialService(sql);
-await credentialService.initTables();
-await credentialService.initTeamCredentialTables();
-await credentialService.initServiceClientCredentialTables();
-
-const tokenStore = new TokenStore(sql);
-await tokenStore.initTables();
-
+const orgService = new OrgService();
+const credentialService = new CredentialService();
+const tokenStore = new TokenStore();
 const billingGate = new DefaultBillingGate(orgService);
-const creditService = new CreditService(sql, billingGate);
-const vendorOAuthStates = new VendorOAuthStateStore(
-  sql,
-  Buffer.from(config.masterKey, 'hex'),
-);
-const auditService = new AuditService(sql);
-const adminAuditService = new AdminAuditService(sql);
+const creditService = new CreditService(billingGate);
+const vendorOAuthStates = new VendorOAuthStateStore(Buffer.from(config.masterKey, 'hex'));
+const auditService = new AuditService();
+const adminAuditService = new AdminAuditService();
 const toolCache = new ToolCache();
-
-const dashboardService = new DashboardService(sql);
+const dashboardService = new DashboardService();
 
 // Reseller (MSP Admin Console) — dark-shipped behind RESELLER_CONSOLE_ENABLED.
 // Tables (`reseller_members` et al.) are owned by migrations 002–007; no
 // initTables() here.
-const resellerService = new ResellerService(sql, orgService);
-const resellerMemberService = new ResellerMemberService(sql);
+const resellerService = new ResellerService(orgService);
+const resellerMemberService = new ResellerMemberService();
 
-const logShippingService = new LogShippingService(sql);
-await logShippingService.initTables();
-
-// Migration runner — applies any unapplied migrations from migrations/*.sql
-// after the inline initTables() calls have created the base schema. Idempotent
-// and safe to run on every boot (skips files already in schema_migrations).
-// See src/db/migrate.ts.
-await runMigrations(sql, { log: app.log });
+const logShippingService = new LogShippingService();
 
 const logShippingAdapters = new Map<string, import('./log-shipping/adapters/types.js').LogShippingAdapter>([
   ['loki', new LokiAdapter()],
   ['graylog', new GraylogAdapter()],
   ['logscale', new LogScaleAdapter()],
 ]);
-
 const logShipper = new LogShipper(logShippingService, logShippingAdapters, app.log);
-logShipper.start();
-
 const vendorMonitor = new VendorMonitor(app.log);
+
+// ---------------------------------------------------------------------------
+// Boot-time DB initialisation — system-path (BYPASSRLS)
+// ---------------------------------------------------------------------------
+// DDL, per-service schema init, and the migration runner all connect as the
+// BYPASSRLS system role. runAsSystem establishes that context so every
+// getSql() below — including those inside the initTables() methods —
+// resolves to the system pool. The auth plugin is registered here too: it
+// performs CREATE TABLE at registration time.
+
+await runAsSystem(async () => {
+  // Core tables — auth plugins depend on `users` / `auth_state` existing.
+  await getSql()`
+    CREATE TABLE IF NOT EXISTS users (
+      id         TEXT PRIMARY KEY,
+      auth0_sub  TEXT UNIQUE,
+      email      TEXT NOT NULL DEFAULT '',
+      name       TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      tenant_id  TEXT
+    )
+  `;
+  await getSql()`
+    CREATE TABLE IF NOT EXISTS auth_state (
+      state         TEXT PRIMARY KEY,
+      code_verifier TEXT NOT NULL,
+      return_to     TEXT NOT NULL DEFAULT '/',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  // Auth plugin — registers /auth/* routes + the session onRequest hook, and
+  // performs its own CREATE TABLE. Must be registered before the request-
+  // context plugin so `request.auth0User` is populated when the request-
+  // context onRequest hook reads it.
+  await registerAuthPlugin(app);
+
+  // Request-context plugin — opens a request-path RLS transaction per
+  // non-exempt HTTP request. Registered immediately after auth so its
+  // onRequest hook runs after the auth session hook.
+  await app.register(requestContextPlugin());
+
+  // Per-service schema init.
+  await orgService.initTables();
+  await credentialService.initTables();
+  await credentialService.initTeamCredentialTables();
+  await credentialService.initServiceClientCredentialTables();
+  await tokenStore.initTables();
+  await logShippingService.initTables();
+
+  // Migration runner — applies unapplied migrations/*.sql after initTables()
+  // has created the base schema. Idempotent. See src/db/migrate.ts.
+  await runMigrations(systemPool(), { log: app.log });
+
+  // Background sweeps (fire-and-forget). Initiated inside runAsSystem so the
+  // system context propagates into their detached promise chains.
+  orgService.cleanupRequestLog(90).then((count) => {
+    if (count > 0) app.log.info(`Cleaned up ${count} request_log entries older than 90 days`);
+  }).catch((err) => {
+    app.log.warn({ err }, 'Failed to cleanup request_log');
+  });
+  orgService.migrateServerAccessForExistingMembers().then(() => {
+    app.log.info('Server access migration complete');
+  }).catch((err) => {
+    app.log.warn({ err }, 'Failed to migrate server access for existing members');
+  });
+});
+
+logShipper.start();
 vendorMonitor.start();
-
-// Cleanup old request log entries on startup (fire-and-forget)
-orgService.cleanupRequestLog(90).then((count) => {
-  if (count > 0) app.log.info(`Cleaned up ${count} request_log entries older than 90 days`);
-}).catch((err) => {
-  app.log.warn({ err }, 'Failed to cleanup request_log');
-});
-
-// Backfill server access grants for existing members (fire-and-forget, idempotent)
-orgService.migrateServerAccessForExistingMembers().then(() => {
-  app.log.info('Server access migration complete');
-}).catch((err) => {
-  app.log.warn({ err }, 'Failed to migrate server access for existing members');
-});
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -208,12 +223,12 @@ app.get('/health/vendors', async () => ({
 
 // Waitlist (conditionally registered if webhook URL configured)
 if (config.features.waitlist) {
-  await app.register(waitlistRoutes(sql));
+  await app.register(waitlistRoutes());
 }
 
 // Public reseller signup (Funnel A) — dark by default; gated on SIGNUP_ENABLED.
 if (config.features.signup) {
-  await app.register(signupRoutes({ sql }));
+  await app.register(signupRoutes({}));
 }
 
 // Auth plugin already registered above (before service init for table ordering)
@@ -221,10 +236,9 @@ if (config.features.signup) {
 // Platform admin (WYRE-internal) — gated by ADMIN_API_KEY (script/CI) or by
 // a logged-in browser session whose email is in config.adminEmails AND has
 // emailVerified=true. See src/lib/admin-auth.ts.
-await app.register(adminMetricsRoutes({ sql }));
-await app.register(adminReportsRoutes({ sql }));
+await app.register(adminMetricsRoutes());
+await app.register(adminReportsRoutes());
 await app.register(adminOrgRoutes({
-  sql,
   orgService,
   billingGate,
   creditService,
@@ -241,7 +255,7 @@ await app.register(landingRoutes());
 // MUST be registered before @fastify/static because it needs its own
 // content type parser for raw body verification.
 if (config.features.billing) {
-  await app.register(stripeWebhookRoutes(orgService, sql));
+  await app.register(stripeWebhookRoutes(orgService, systemPool()));
 }
 
 // Static files — serves Astro docs site from public/.
@@ -258,7 +272,7 @@ await app.register(fastifyStatic, {
 await app.register(oauthRoutes(tokenStore, credentialService, orgService));
 
 // SCIM 2.0 inbound provisioning (tenant + reseller scopes)
-await app.register(scimPlugin({ sql }));
+await app.register(scimPlugin());
 
 // Unified MCP endpoint well-known metadata (RFC 9728 + RFC 8414)
 app.get('/.well-known/oauth-protected-resource/v1/mcp', async (_request, reply) => {
@@ -269,7 +283,7 @@ app.get('/.well-known/oauth-authorization-server/v1/mcp', async (_request, reply
 });
 
 // Profile API routes
-await app.register(profileRoutes({ sql }));
+await app.register(profileRoutes());
 
 // Credential entry web UI
 const completeAuth = async (sessionId: string, userId: string) => {
@@ -281,7 +295,6 @@ await app.register(webRoutes({
   credentialService,
   orgService,
   billingGate,
-  sql,
   vendorOAuthStates,
   completeAuth,
   logShippingService,
@@ -293,7 +306,6 @@ await app.register(orgRoutes({
   credentialService,
   billingGate,
   adminAuditService,
-  sql,
 }));
 
 // Tool access API (discover tools, manage allowlists per vendor/role)
@@ -364,7 +376,6 @@ await app.register(cliRoutes({
   orgService,
   billingGate,
   toolCache,
-  sql,
 }));
 
 // Unified MCP endpoint — single URL for all vendors (/v1/mcp)
@@ -373,7 +384,6 @@ await app.register(unifiedProxyRoutes({
   orgService,
   billingGate,
   toolCache,
-  sql,
 }));
 
 // Per-vendor MCP reverse proxy (deprecated — catches /v1/:vendor/mcp)
@@ -382,7 +392,6 @@ await app.register(proxyRoutes({
   orgService,
   billingGate,
   creditService,
-  sql,
 }));
 
 // ---------------------------------------------------------------------------
@@ -394,7 +403,7 @@ const shutdown = async () => {
   logShipper.stop();
   vendorMonitor.stop();
   await app.close();
-  await sql.end();
+  await closePools();
   process.exit(0);
 };
 

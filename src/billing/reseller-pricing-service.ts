@@ -17,7 +17,7 @@
  * both rest on this invariant.
  */
 
-import type postgres from 'postgres';
+import { getSql, type Sql } from '../db/context.js';
 
 export type PricingMode = 'percentage' | 'absolute_per_seat';
 
@@ -105,7 +105,10 @@ function rowToConfig(row: PricingRow): ResellerPricingConfig {
 }
 
 export class ResellerPricingService {
-  constructor(private readonly sql: postgres.Sql) {}
+  /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
+  private get sql(): Sql {
+    return getSql();
+  }
 
   /**
    * Insert a new pricing-config row. RLS gates the INSERT by the caller's

@@ -27,6 +27,7 @@ import {
 import { ResellerPricingService } from '../../billing/reseller-pricing-service.js';
 import type { BillingGate } from '../../billing/gate.js';
 import type { OrgService, Organization } from '../../org/org-service.js';
+import { enterTestContext } from '../../db/context.js';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
@@ -53,6 +54,8 @@ afterAll(async () => {
 beforeEach(async () => {
   // CASCADE on both: reseller_invoice_line_items has FKs to both.
   await sql`TRUNCATE reseller_invoices, reseller_pricing_config CASCADE`;
+  // Services built in tests resolve getSql() to this testcontainer connection.
+  enterTestContext(sql);
 });
 
 async function bootstrapSchema(): Promise<void> {
@@ -251,8 +254,7 @@ function makeService(opts: {
 }): ResellerInvoiceService {
   const stripe = opts.stripe ?? makeStripeClient();
   return new ResellerInvoiceService(
-    sql,
-    new ResellerPricingService(sql),
+    new ResellerPricingService(),
     makeBillingGate(opts.canAccess ?? true),
     makeOrgService(opts.children),
     makeUsageSource(opts.usage ?? {}),

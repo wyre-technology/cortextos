@@ -17,11 +17,9 @@
 import fp from 'fastify-plugin';
 import type {
   FastifyInstance,
-  FastifyPluginOptions,
   FastifyRequest,
   FastifyReply,
 } from 'fastify';
-import type postgres from 'postgres';
 
 import { ScimConnectionsService } from './connections-service.js';
 import { ScimUsersHandler } from './users-handler.js';
@@ -31,10 +29,6 @@ import type { ScimConnection, ScimScope } from './types.js';
 import { scimError } from './types.js';
 
 const SCIM_CONTENT_TYPE = 'application/scim+json';
-
-interface ScimPluginOptions extends FastifyPluginOptions {
-  sql: postgres.Sql;
-}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -52,12 +46,11 @@ function sendScim(
   return body === null ? reply.send() : reply.send(body);
 }
 
-export const scimPlugin = (opts: ScimPluginOptions) =>
+export const scimPlugin = () =>
   fp(async function plugin(app: FastifyInstance): Promise<void> {
-    const sql = opts.sql;
-    const connections = new ScimConnectionsService(sql);
-    const users = new ScimUsersHandler(sql);
-    const groups = new ScimGroupsHandler(sql);
+    const connections = new ScimConnectionsService();
+    const users = new ScimUsersHandler();
+    const groups = new ScimGroupsHandler();
 
     // -----------------------------------------------------------------------
     // Discovery (unauthenticated; no tenant context)
