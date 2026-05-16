@@ -232,7 +232,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
 
-        await orgService.revokeInvitation(id);
+        const revoked = await orgService.revokeInvitation(id, orgId);
+        if (!revoked) {
+          // No row matched (id, orgId) — the invitation does not exist or
+          // belongs to another org. Honest 404, not a silent 204: a 204
+          // would hand a cross-tenant caller a false success signal.
+          return reply.code(404).send({ error: 'Invitation not found' });
+        }
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: id, eventType: 'invitation_revoked' }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.code(204).send();
       },

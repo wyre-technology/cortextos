@@ -158,9 +158,16 @@ export class InvitationService {
     return rows.map((r) => toInvitation(r));
   }
 
-  async revokeInvitation(invitationId: string): Promise<boolean> {
+  /**
+   * Revoke a pending invitation. The DELETE is scoped by `orgId` as well as
+   * `invitationId`: the route authorizes the caller against :orgId, but the
+   * invitation id alone is not org-bound, so an unscoped DELETE lets an admin
+   * of one org revoke another org's invitations. Scoping at the SQL layer
+   * makes a cross-org id match zero rows; the caller treats that as not-found.
+   */
+  async revokeInvitation(invitationId: string, orgId: string): Promise<boolean> {
     const result = await this.sql`
-      DELETE FROM org_invitations WHERE id = ${invitationId}
+      DELETE FROM org_invitations WHERE id = ${invitationId} AND org_id = ${orgId}
     `;
     return result.count > 0;
   }

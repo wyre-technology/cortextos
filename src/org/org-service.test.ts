@@ -304,9 +304,14 @@ describe('OrgService', () => {
       }
 
       if (query.includes('DELETE FROM org_invitations')) {
+        // Scoped DELETE: WHERE id = $1 AND org_id = $2 — a row matches only
+        // when both the id and the org match, mirroring the SQL.
         const invId = values[0] as string;
-        const existed = invitations.delete(invId);
-        return Promise.resolve(resultWithCount([], existed ? 1 : 0));
+        const orgId = values[1] as string;
+        const row = invitations.get(invId);
+        const matched = row !== undefined && row.org_id === orgId;
+        if (matched) invitations.delete(invId);
+        return Promise.resolve(resultWithCount([], matched ? 1 : 0));
       }
 
       // Fallback
@@ -549,7 +554,7 @@ describe('OrgService', () => {
     const org = await service.createOrg('Revoke Org', 'user_owner');
     const { invitation } = await service.createInvitation(org.id, 'user_owner');
 
-    const revoked = await service.revokeInvitation(invitation.id);
+    const revoked = await service.revokeInvitation(invitation.id, org.id);
     expect(revoked).toBe(true);
 
     // Should no longer appear in pending list
@@ -557,8 +562,26 @@ describe('OrgService', () => {
     expect(pending).toHaveLength(0);
 
     // Revoking again returns false
-    const again = await service.revokeInvitation(invitation.id);
+    const again = await service.revokeInvitation(invitation.id, org.id);
     expect(again).toBe(false);
+  });
+
+  it('revokeInvitation is a no-op for an invitation owned by another org', async () => {
+    const sql = createMockSql();
+    const service = new OrgService(sql);
+
+    const orgA = await service.createOrg('Org A', 'user_a');
+    const orgB = await service.createOrg('Org B', 'user_b');
+    const { invitation } = await service.createInvitation(orgB.id, 'user_b');
+
+    // Org A passing org B's invitation id — the DELETE is scoped by org_id,
+    // so it matches zero rows: cross-tenant revoke cannot succeed.
+    const revoked = await service.revokeInvitation(invitation.id, orgA.id);
+    expect(revoked).toBe(false);
+
+    // Org B's invitation is untouched — still pending.
+    const pendingB = await service.listInvitations(orgB.id);
+    expect(pendingB).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------

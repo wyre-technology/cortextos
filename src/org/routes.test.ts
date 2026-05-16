@@ -566,7 +566,30 @@ describe('orgRoutes', () => {
       });
 
       expect(response.statusCode).toBe(204);
-      expect(orgService.revokeInvitation).toHaveBeenCalledWith('inv-1');
+      // Both the invitation id AND the path org id are passed so the
+      // service can scope the DELETE — the route is authorized against
+      // :orgId but the invitation id alone is not org-bound.
+      expect(orgService.revokeInvitation).toHaveBeenCalledWith('inv-1', 'org-1');
+    });
+
+    it('returns 404 when the invitation does not belong to the org (cross-tenant guard)', async () => {
+      authenticateAs();
+      // revokeInvitation returns false: the scoped DELETE matched no row —
+      // the invitation belongs to another org (or does not exist). The route
+      // must surface an honest 404, not a silent 204 success.
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        revokeInvitation: vi.fn().mockResolvedValue(false),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1/invitations/inv-from-org-2',
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(orgService.revokeInvitation).toHaveBeenCalledWith('inv-from-org-2', 'org-1');
     });
   });
 

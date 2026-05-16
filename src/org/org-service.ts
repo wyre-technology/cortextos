@@ -668,7 +668,7 @@ export class OrgService {
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
   acceptInvitation(token: string, userId: string) { return this.invitationService.acceptInvitation(token, userId); }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
-  revokeInvitation(invitationId: string) { return this.invitationService.revokeInvitation(invitationId); }
+  revokeInvitation(invitationId: string, orgId: string) { return this.invitationService.revokeInvitation(invitationId, orgId); }
 
   // -------------------------------------------------------------------------
   // Tool allowlist (delegated to ToolAllowlistService)
