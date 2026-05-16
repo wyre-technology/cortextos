@@ -210,6 +210,20 @@ mcp-gateway CHANGELOG.
   `POST /api/webhooks/stripe` ingest endpoint. The legacy
   `docs/api-reference.md` is retained as engineering reference with a
   "MIGRATED" pointer.
+- New `docs/src/content/docs/guides/billing.mdx` — customer-facing
+  Billing & Plans guide: the Free/Pro/Business plan comparison (built
+  from `src/billing/plan-catalog.ts`), credit model, upgrade paths,
+  subscription management, and the dunning lifecycle (payment-failing →
+  past-due → final-warning → suspended, with the 7-day grace window).
+  Sidebar-linked under **Guides**.
+
+#### Fixed
+- Corrected the Pro-tier feature list in
+  `docs/src/content/docs/guides/msp-onboarding.mdx`. The list (carried
+  from the pre-Business-tier legacy guide) wrongly attributed audit log
+  CSV export and service clients to the Pro plan; per
+  `src/billing/plan-catalog.ts` those are **Business**-tier features.
+  Service-client setup is now flagged as Business-tier.
 
 #### Changed
 - Docker tagging strategy pinned to `ghcr.io/wyre-technology/conduit` (distinct from upstream image path)

@@ -1,0 +1,84 @@
+---
+title: Billing & Plans
+description: Conduit's subscription plans — Free, Pro, and Business — what each unlocks, how billing works, and what happens when a payment fails.
+---
+
+This guide covers Conduit's **subscription billing** — the plan an MSP organization is on and how that subscription is managed.
+
+:::note
+This page covers subscription billing (the plan an MSP pays for). **Reseller-channel billing** — how an MSP marks up and bills its own customers — is a separate system; see the [Subtenant Model](/docs/reference/subtenants/#reseller-scoped-pricing).
+:::
+
+---
+
+## Plans
+
+Conduit ships with three plans. The values below are the **default catalog** — a deployment can override them via the `PLAN_CATALOG` environment variable, so a self-hosted or white-label deployment may differ.
+
+| | Free | Pro | Business |
+|---|------|-----|----------|
+| Vendor connections | 3 | Unlimited | Unlimited |
+| Requests / hour / vendor | 100 | 1,000 | 5,000 |
+| Members | 1 | Unlimited | Unlimited |
+| Monthly credits | 500 (flat) | 1,500 / seat | 4,000 / seat |
+| Team features (teams, roles, invitations) | — | ✓ | ✓ |
+| Tool allowlists (RBAC) | — | ✓ | ✓ |
+| Log shipping (Loki, Graylog, LogScale) | — | ✓ | ✓ |
+| Prompt capture | — | ✓ | ✓ |
+| Audit log access | — | ✓ | ✓ |
+| Audit log CSV export | — | — | ✓ |
+| SSO | — | — | ✓ |
+| Service clients (M2M) | — | — | ✓ |
+
+### Credits
+
+Monthly credits are pooled across all members of an organization. The allocation is interpreted differently by tier:
+
+- **Free** — a flat 500 credits per month for the org.
+- **Pro / Business** — a per-seat allocation (1,500 or 4,000 credits) multiplied by the org's member count, then pooled.
+
+---
+
+## Upgrading
+
+A new organization starts on the **Free** plan. There are two paths to a paid plan:
+
+1. **Stripe checkout** — from the billing page at **`/org/billing`**, start a checkout session. Conduit creates a Stripe Checkout session and redirects to Stripe's hosted payment page.
+2. **Invite code** — an alpha invite code redeemed at org creation (or later via the billing page) upgrades the org immediately, without going through Stripe checkout.
+
+Conduit never stores card data — only the Stripe customer ID and subscription state. See [Security § Billing & Payment Security](/docs/reference/security/#billing--payment-security) for how the payment integration is secured.
+
+## Managing a subscription
+
+From **`/org/billing`**, an org owner can open the **Stripe Customer Portal** — Stripe's hosted surface for updating the card on file, viewing invoices, and cancelling. Conduit creates a portal session and redirects to it.
+
+---
+
+## When a payment fails — the dunning lifecycle
+
+If a subscription renewal fails (expired card, insufficient funds), the organization moves through a **dunning lifecycle** rather than being cut off immediately. The lifecycle is designed so a billing hiccup does not instantly break an MSP's operations.
+
+The states, in order:
+
+| State | When | What the customer sees |
+|-------|------|------------------------|
+| **Payment failing** | First failure, within ~24h | A warning banner; full access retained while Stripe retries |
+| **Past due** | 24h – 7d after first failure | A more prominent warning; full access still retained |
+| **Final warning** | Inside the WYRE grace window, approaching its end | An urgent banner; full access still retained |
+| **Suspended** | Grace window expired, or the subscription is canceled | Paid features are gated |
+
+While in any pre-suspension state, the organization keeps full access — the grace window exists precisely so a failed renewal does not interrupt service. Once the grace window expires, plan-gated features are disabled at the service layer.
+
+### The grace window
+
+The grace window defaults to **7 days** and is configurable per deployment via the `WYRE_DUNNING_GRACE_DAYS` environment variable. The first-failure timestamp is persisted, so the lifecycle survives service restarts and resumes from the correct point.
+
+### Recovery
+
+When a failed payment is recovered (the customer updates their card and Stripe successfully charges it), the organization returns to normal. A recently-recovered org briefly shows a "recovered" confirmation, then returns to the standard no-banner state.
+
+---
+
+## Plan downgrades and cancellation
+
+Cancelling a subscription through the Stripe Customer Portal ends the paid plan at the end of the current billing period. After that, the organization returns to Free-plan limits — note that an org with more than one member, or more than three vendor connections, will be over the Free-plan limits and should reduce usage before the downgrade takes effect.

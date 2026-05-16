@@ -74,9 +74,13 @@ The Pro plan unlocks:
 - 1,000 requests/hour/vendor
 - Team features (members, roles, invitations)
 - Tool allowlists (RBAC)
-- Audit log access and CSV export
+- Audit log access
 - Log shipping to SIEM (Loki, Graylog, LogScale)
-- Service clients for machine-to-machine automation
+- Prompt capture
+
+Audit log **CSV export**, SSO, and service clients are **Business**-tier
+features. See the [Billing & Plans guide](/docs/guides/billing/) for the
+full plan comparison.
 
 ### 3. Connect vendor credentials
 
@@ -140,9 +144,9 @@ PATCH /api/orgs/:orgId/members/:userId/role
 { "role": "admin" }
 ```
 
-### 8. Create service clients (optional)
+### 8. Create service clients (optional, Business tier)
 
-For machine-to-machine automation (AI agents, scripts, integrations), create service clients from **`/org/service-clients`**:
+Service clients are a **Business**-tier feature. For machine-to-machine automation (AI agents, scripts, integrations), create service clients from **`/org/service-clients`**:
 
 ```
 POST /api/orgs/:orgId/service-clients
@@ -165,7 +169,7 @@ For compliance or monitoring, ship audit logs to an external SIEM from **`/org/l
 - [ ] Tool allowlists set for restricted roles (if needed)
 - [ ] Team members invited and accepted
 - [ ] An MCP client (Claude Desktop or Claude Code) configured with the Conduit server URL
-- [ ] Service clients created for any automation workflows
+- [ ] Service clients created for any automation workflows (Business tier)
 - [ ] Audit log verified — make a test tool call and check **`/org/audit`**
 - [ ] Log shipping tested (if configured)
 - [ ] MSP owner has verified access to the billing portal at **`/org/billing`**

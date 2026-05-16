@@ -43,6 +43,7 @@ export default defineConfig({
             { label: 'Customer Provisioning', slug: 'guides/customer-provisioning' },
             { label: 'Vendor Connections', slug: 'guides/vendor-connections' },
             { label: 'White-label Setup', slug: 'guides/white-label-setup' },
+            { label: 'Billing & Plans', slug: 'guides/billing' },
           ],
         },
         {
