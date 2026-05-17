@@ -182,16 +182,17 @@ describe('(A) mechanism — runAsSystem vs request-path RLS', () => {
   });
 });
 
-describe('(B) route — GET /api/admin/metrics as an ADMIN_API_KEY caller', () => {
-  async function buildApp(): Promise<FastifyInstance> {
-    const app = Fastify();
-    app.decorateRequest('auth0User', null);
-    await app.register(requestContextPlugin());
-    await app.register(adminMetricsRoutes());
-    await app.ready();
-    return app;
-  }
+/** A Fastify app with the request-context plugin + real adminMetricsRoutes. */
+async function buildApp(): Promise<FastifyInstance> {
+  const app = Fastify();
+  app.decorateRequest('auth0User', null);
+  await app.register(requestContextPlugin());
+  await app.register(adminMetricsRoutes());
+  await app.ready();
+  return app;
+}
 
+describe('(B) route — GET /api/admin/metrics as an ADMIN_API_KEY caller', () => {
   it('returns platform-wide metrics — non-empty across both orgs', async () => {
     const app = await buildApp();
     try {
@@ -216,6 +217,70 @@ describe('(B) route — GET /api/admin/metrics as an ADMIN_API_KEY caller', () =
     try {
       const res = await app.inject({ method: 'GET', url: '/api/admin/metrics' });
       expect(res.statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('(C) app-observability — the performance aggregation', () => {
+  // Runs after (A)/(B). Replaces request_log with a controlled set so the
+  // percentile / error-rate / throughput assertions are deterministic.
+  beforeAll(async () => {
+    await admin`TRUNCATE request_log`;
+    // 10 in-window rows, all 100ms latency → p50/p95/p99 all 100 exactly.
+    // 8×200, 1×503, 1×404 → 5xx rate 10%, 4xx+ rate 20% (503 counts in both).
+    for (let i = 0; i < 8; i++) {
+      await admin`INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
+        VALUES (${'perf-ok-' + i}, 'user-a', 'org-a', 'datto-rmm', 'devices.list', 200, 100)`;
+    }
+    await admin`INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
+      VALUES ('perf-5xx', 'user-a', 'org-a', 'datto-rmm', 'devices.list', 503, 100)`;
+    await admin`INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms)
+      VALUES ('perf-4xx', 'user-a', 'org-a', 'datto-rmm', 'devices.list', 404, 100)`;
+    // One row OUTSIDE the 24h window — must NOT be counted.
+    await admin`INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, created_at)
+      VALUES ('perf-stale', 'user-a', 'org-a', 'datto-rmm', 'devices.list', 500, 9999, NOW() - INTERVAL '48 hours')`;
+  });
+
+  it('computes latency percentiles, error rates and throughput over the window', async () => {
+    const app = await buildApp();
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/admin/metrics',
+        headers: { authorization: `Bearer ${ADMIN_API_KEY}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const perf = res.json().performance;
+
+      expect(perf.window_hours).toBe(24);
+      // The 48h-stale row is excluded — 10 rows in window, not 11.
+      expect(perf.requests).toBe(10);
+      expect(perf.latency_ms).toEqual({ p50: 100, p95: 100, p99: 100 });
+      expect(perf.error_rate_5xx_pct).toBe(10);
+      // 503 + 404 both count as >= 400.
+      expect(perf.error_rate_4xx_plus_pct).toBe(20);
+      expect(perf.throughput_per_min).toBe(0.01);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('reports zeros for an empty window rather than nulls', async () => {
+    await admin`TRUNCATE request_log`;
+    const app = await buildApp();
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/admin/metrics',
+        headers: { authorization: `Bearer ${ADMIN_API_KEY}` },
+      });
+      const perf = res.json().performance;
+      expect(perf.requests).toBe(0);
+      expect(perf.latency_ms).toEqual({ p50: 0, p95: 0, p99: 0 });
+      expect(perf.error_rate_5xx_pct).toBe(0);
+      expect(perf.throughput_per_min).toBe(0);
     } finally {
       await app.close();
     }

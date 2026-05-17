@@ -46,6 +46,19 @@ interface PlanDistribution {
   count: string;
 }
 
+/** One-row aggregate of gateway request performance over the recent window. */
+interface PerfRow {
+  total: string;
+  errors_5xx: string;
+  errors_4xx_plus: string;
+  p50: string;
+  p95: string;
+  p99: string;
+}
+
+/** The performance window, in hours — an operational (not business) lens. */
+const PERF_WINDOW_HOURS = 24;
+
 interface MetricsResponse {
   generated_at: string;
   active_orgs: {
@@ -64,6 +77,18 @@ interface MetricsResponse {
     created_at: string;
   }>;
   plan_distribution: Array<{ plan: string; count: number }>;
+  /**
+   * App-level observability — gateway request latency / error rate /
+   * throughput over the last PERF_WINDOW_HOURS. WYRE-internal only.
+   */
+  performance: {
+    window_hours: number;
+    requests: number;
+    throughput_per_min: number;
+    error_rate_5xx_pct: number;
+    error_rate_4xx_plus_pct: number;
+    latency_ms: { p50: number; p95: number; p99: number };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +96,7 @@ interface MetricsResponse {
 // ---------------------------------------------------------------------------
 
 async function fetchMetrics(): Promise<MetricsResponse> {
-  const [activeOrgs, topTools, creditBurn, newOrgs, newOrgsRecent, planDist] = await Promise.all([
+  const [activeOrgs, topTools, creditBurn, newOrgs, newOrgsRecent, planDist, perfRows] = await Promise.all([
     // 1. Active orgs — at least one tool call in the last 30 days
     getSql()<ActiveOrg[]>`
       SELECT
@@ -151,9 +176,29 @@ async function fetchMetrics(): Promise<MetricsResponse> {
       GROUP BY plan
       ORDER BY plan
     `,
+
+    // 6. App-level performance — gateway request latency / error rate /
+    //    throughput over the last PERF_WINDOW_HOURS. percentile_cont ignores
+    //    NULL response_time_ms; COALESCE keeps a zero-traffic window at 0
+    //    rather than null. One row always (aggregate, no GROUP BY).
+    getSql()<PerfRow[]>`
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE status_code >= 500)::text AS errors_5xx,
+        COUNT(*) FILTER (WHERE status_code >= 400)::text AS errors_4xx_plus,
+        COALESCE(percentile_cont(0.5)  WITHIN GROUP (ORDER BY response_time_ms), 0)::int::text AS p50,
+        COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time_ms), 0)::int::text AS p95,
+        COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY response_time_ms), 0)::int::text AS p99
+      FROM request_log
+      WHERE created_at >= NOW() - (${PERF_WINDOW_HOURS} || ' hours')::interval
+    `,
   ]);
 
   const n = (s: string) => parseInt(s, 10);
+  const perf = perfRows[0];
+  const perfTotal = n(perf.total);
+  const pct = (part: number) =>
+    perfTotal === 0 ? 0 : Math.round((part / perfTotal) * 10000) / 100;
   return {
     generated_at: new Date().toISOString(),
     active_orgs: {
@@ -172,6 +217,17 @@ async function fetchMetrics(): Promise<MetricsResponse> {
       created_at: r.created_at,
     })),
     plan_distribution: planDist.map((r) => ({ plan: r.plan, count: n(r.count) })),
+    performance: {
+      window_hours: PERF_WINDOW_HOURS,
+      requests: perfTotal,
+      throughput_per_min:
+        perfTotal === 0
+          ? 0
+          : Math.round((perfTotal / (PERF_WINDOW_HOURS * 60)) * 100) / 100,
+      error_rate_5xx_pct: pct(n(perf.errors_5xx)),
+      error_rate_4xx_plus_pct: pct(n(perf.errors_4xx_plus)),
+      latency_ms: { p50: n(perf.p50), p95: n(perf.p95), p99: n(perf.p99) },
+    },
   };
 }
 
@@ -467,6 +523,25 @@ function renderDashboard(metrics: MetricsResponse): string {
         <div class="kpi-label">Credits Used</div>
         <div class="kpi-value">${totalCredits30d.toLocaleString()}</div>
         <div class="kpi-sub">last 30d (all plans)</div>
+      </div>
+    </div>
+
+    <!-- App performance (gateway request latency / error rate / throughput) -->
+    <div class="section" style="margin-bottom:36px">
+      <div class="section-title">Gateway Performance — last ${metrics.performance.window_hours}h</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Metric</th><th class="num">Value</th></tr></thead>
+          <tbody>
+            <tr><td>Requests</td><td class="num">${metrics.performance.requests.toLocaleString()}</td></tr>
+            <tr><td>Throughput</td><td class="num">${metrics.performance.throughput_per_min.toLocaleString()} / min</td></tr>
+            <tr><td>Error rate — 5xx</td><td class="num">${metrics.performance.error_rate_5xx_pct}%</td></tr>
+            <tr><td>Error rate — 4xx+</td><td class="num">${metrics.performance.error_rate_4xx_plus_pct}%</td></tr>
+            <tr><td>Latency p50</td><td class="num">${metrics.performance.latency_ms.p50.toLocaleString()} ms</td></tr>
+            <tr><td>Latency p95</td><td class="num">${metrics.performance.latency_ms.p95.toLocaleString()} ms</td></tr>
+            <tr><td>Latency p99</td><td class="num">${metrics.performance.latency_ms.p99.toLocaleString()} ms</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
