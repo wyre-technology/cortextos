@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   resolve:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, wyre-private]
     # Auto-deploy to staging on Release/CI success on main; allow manual
     # dispatch to either environment.
     if: >-
@@ -53,7 +53,7 @@ jobs:
 
   deploy:
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, wyre-private]
     environment: ${{ needs.resolve.outputs.environment }}
 
     permissions:
