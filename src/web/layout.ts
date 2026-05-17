@@ -77,7 +77,13 @@ const ORGANIZATION_SUBNAV: NavItem[] = [
 // Subtenant Experience", Surface 1 sidebar). "Customers" lists the
 // customer orgs nested under the reseller — distinct from "Members"
 // (members of the reseller org itself).
-const RESELLER_CUSTOMERS_NAV_ITEM: NavItem = { label: 'Customers', href: '/org/customers' };
+// Inserted after Overview, matching the Figma S1/S4 sidebar order:
+// Overview · Customers · Hierarchy. "Hierarchy" is the tenant tree view
+// (Track C Surface 4) — distinct from the flat "Customers" list.
+const RESELLER_CONSOLE_NAV: NavItem[] = [
+  { label: 'Customers', href: '/org/customers' },
+  { label: 'Hierarchy', href: '/org/hierarchy' },
+];
 
 // Reseller-settings nav — a distinct sidebar context (not Personal +
 // Team). Shown on the reseller-settings shell (Track C Surface 5,
@@ -98,7 +104,7 @@ export const ALL_NAV_HREFS: ReadonlyArray<string> = [
   ...PERSONAL_NAV.map((i) => i.href),
   ...TEAM_NAV.map((i) => i.href),
   ...ORGANIZATION_SUBNAV.map((i) => i.href),
-  RESELLER_CUSTOMERS_NAV_ITEM.href,
+  ...RESELLER_CONSOLE_NAV.map((i) => i.href),
   ...RESELLER_SETTINGS_NAV.map((i) => i.href),
 ];
 
@@ -386,10 +392,11 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
       ? `<span style="font-size:10px;font-weight:600;background:rgba(0,201,219,0.15);color:var(--accent-text);padding:1px 5px;border-radius:3px;margin-left:6px">RESELLER</span>`
       : '';
 
-    // Reseller orgs get a "Customers" item after Overview — the customer
-    // orgs nested under the reseller. Faithful to Track C Surface 1.
+    // Reseller orgs get "Customers" + "Hierarchy" after Overview — the
+    // flat customer list and the tenant tree view. Faithful to the Track
+    // C Surface 1 / Surface 4 sidebar.
     const consoleNav = isReseller
-      ? [TEAM_NAV[0], RESELLER_CUSTOMERS_NAV_ITEM, ...TEAM_NAV.slice(1)]
+      ? [TEAM_NAV[0], ...RESELLER_CONSOLE_NAV, ...TEAM_NAV.slice(1)]
       : TEAM_NAV;
 
     // Organization sub-nav is active when activePath is any of its hrefs.

@@ -51,6 +51,12 @@ import {
   RESELLER_BRANDING_STYLES,
   type ResellerBranding,
 } from './templates/reseller-branding.js';
+import {
+  renderResellerHierarchy,
+  RESELLER_HIERARCHY_STYLES,
+  RESELLER_HIERARCHY_SCRIPT,
+  type TenantNode,
+} from './templates/reseller-hierarchy.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -634,6 +640,59 @@ export function webRoutes(deps: WebRouteDeps) {
           pageScripts: RESELLER_CUSTOMERS_SCRIPT,
         },
         renderResellerCustomers({ org, customers }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/hierarchy (Track C Surface 4 — Nested Hierarchy) ----------
+    //
+    // Tenant tree below a reseller. Mock-data-first: the tree below is
+    // shaped like the Track A org-hierarchy read model (reseller →
+    // customer → subtenant). When that endpoint lands, the mock builder
+    // is the single swap-in point — the template renders unchanged.
+    app.get('/org/hierarchy', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const root: TenantNode = {
+        id: org.id,
+        name: org.name,
+        kind: 'reseller',
+        meta: '4 customers · 8 users · BUSINESS',
+        children: [
+          {
+            id: 'cust_mock_1', name: 'AM3 Technology', kind: 'customer',
+            meta: '12 users · BUSINESS',
+            children: [
+              { id: 'sub_mock_1', name: 'AM3 — Internal IT',     kind: 'subtenant', meta: '5 users', children: [] },
+              { id: 'sub_mock_2', name: 'AM3 — Client Services', kind: 'subtenant', meta: '7 users', children: [] },
+            ],
+          },
+          { id: 'cust_mock_2', name: 'Team DNS Solutions', kind: 'customer', meta: '8 users · PRO', children: [] },
+          {
+            id: 'cust_mock_3', name: 'Mountain MSP Group', kind: 'customer',
+            meta: '6 users · PRO',
+            children: [
+              { id: 'sub_mock_3', name: 'Mountain — Healthcare', kind: 'subtenant', meta: '3 users', children: [] },
+              { id: 'sub_mock_4', name: 'Mountain — Legal',      kind: 'subtenant', meta: '2 users', children: [] },
+              { id: 'sub_mock_5', name: 'Mountain — SMB Pool',   kind: 'subtenant', meta: '1 user',  children: [] },
+            ],
+          },
+          { id: 'cust_mock_4', name: 'Coastal IT Partners', kind: 'customer', meta: '15 users · BUSINESS', children: [] },
+        ],
+      };
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/hierarchy',
+          title: `${org.name} - Hierarchy`,
+          pageStyles: RESELLER_HIERARCHY_STYLES,
+          pageScripts: RESELLER_HIERARCHY_SCRIPT,
+        },
+        renderResellerHierarchy({ org, root }),
       );
       return reply.type('text/html').send(html);
     });
