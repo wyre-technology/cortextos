@@ -28,12 +28,15 @@ import {
 import {
   makeRequireResellerAccess,
   makeRequireResellerRole,
+  makeRequireResellerOrCustomerAccess,
 } from './middleware.js';
+import type { DashboardService } from '../dashboard/dashboard-service.js';
 
 export interface ResellerRoutesDeps {
   resellerService: ResellerService;
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
+  dashboardService: DashboardService;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,9 +168,13 @@ function parsePagination(query: unknown): Pagination | { error: string } {
 // ---------------------------------------------------------------------------
 
 export function resellerRoutes(deps: ResellerRoutesDeps) {
-  const { resellerService, resellerMemberService, orgService } = deps;
+  const { resellerService, resellerMemberService, orgService, dashboardService } = deps;
   const requireResellerAccess = makeRequireResellerAccess(resellerService);
   const requireResellerRole = makeRequireResellerRole(resellerService);
+  const requireResellerOrCustomerAccess = makeRequireResellerOrCustomerAccess(
+    resellerService,
+    orgService,
+  )();
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Feature-flag gate — keeps the entire /admin/reseller/* surface dark.
@@ -370,6 +377,68 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
         }
       },
     );
+
+    // -----------------------------------------------------------------------
+    // Reseller-scoped customer dashboard (Track C S2)
+    //
+    // The same usage payload as /api/dashboard/* but for a target customer
+    // org rather than the caller's own org. Authorized by
+    // requireResellerOrCustomerAccess: the caller is a reseller_member of
+    // :resellerId AND :customerId's parent_org_id == :resellerId, OR the
+    // caller is a direct member of :customerId. The reseller→customer
+    // boundary is also enforced underneath by RLS on the request-path
+    // connection (request_log_select carries the reseller-membership clause),
+    // so this is defense in depth, not an app-only check.
+    //
+    // Unlike /api/dashboard/*, this does NOT re-apply a plan / dunning gate:
+    // every /admin/reseller/* route is gated by reseller membership + the
+    // RESELLER_CONSOLE_ENABLED flag, not by the target org's plan tier — a
+    // reseller must see every customer they own, on any tier or billing state.
+    // -----------------------------------------------------------------------
+    const dashboardBase =
+      '/admin/reseller/:resellerId/customers/:customerId/dashboard';
+
+    app.get<{
+      Params: { resellerId: string; customerId: string };
+      Querystring: { start?: string; end?: string };
+    }>(`${dashboardBase}/usage`, async (request, reply) => {
+      const ctx = await requireResellerOrCustomerAccess(request, reply);
+      if (!ctx) return;
+
+      const summary = await dashboardService.getUsageSummary(ctx.customerId, {
+        start: request.query.start,
+        end: request.query.end,
+      });
+      return reply.send(summary);
+    });
+
+    app.get<{
+      Params: { resellerId: string; customerId: string };
+      Querystring: { start?: string; end?: string };
+    }>(`${dashboardBase}/savings`, async (request, reply) => {
+      const ctx = await requireResellerOrCustomerAccess(request, reply);
+      if (!ctx) return;
+
+      const savings = await dashboardService.getTokenSavings(ctx.customerId, {
+        start: request.query.start,
+        end: request.query.end,
+      });
+      return reply.send(savings);
+    });
+
+    app.get<{
+      Params: { resellerId: string; customerId: string };
+      Querystring: { start?: string; end?: string };
+    }>(`${dashboardBase}/vendors`, async (request, reply) => {
+      const ctx = await requireResellerOrCustomerAccess(request, reply);
+      if (!ctx) return;
+
+      const vendors = await dashboardService.getVendorBreakdown(ctx.customerId, {
+        start: request.query.start,
+        end: request.query.end,
+      });
+      return reply.send({ vendors });
+    });
   };
 }
 

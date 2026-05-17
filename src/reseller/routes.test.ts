@@ -20,6 +20,7 @@ import type {
 } from '../org/reseller-member-service.js';
 import { ResellerMemberError } from '../org/reseller-member-service.js';
 import type { OrgService, Organization } from '../org/org-service.js';
+import type { DashboardService } from '../dashboard/dashboard-service.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -37,6 +38,7 @@ vi.mock('../auth/auth0.js', () => ({
 
 const TEST_USER = { sub: 'user_alice', email: 'alice@example.com', name: 'Alice' };
 const RESELLER_ID = 'reseller_a';
+const CUSTOMER_ID = 'customer_x';
 const MEMBER_ID = 'm1';
 
 function makeResellerOrg(id = RESELLER_ID, name = 'Acme MSP'): Organization {
@@ -93,6 +95,7 @@ interface MockDeps {
   resellerService: ResellerService;
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
+  dashboardService: DashboardService;
 }
 
 function makeMocks(options: {
@@ -104,12 +107,18 @@ function makeMocks(options: {
   updateRoleImpl?: ResellerMemberService['updateRole'];
   deleteImpl?: ResellerMemberService['delete'];
   updateOrgImpl?: OrgService['updateOrg'];
+  /** Whether CUSTOMER_ID's parent_org_id resolves to RESELLER_ID. */
+  customerLinkedToReseller?: boolean;
+  /** Whether the caller is a direct org_member of CUSTOMER_ID. */
+  customerSelfMember?: boolean;
 } = {}): MockDeps {
   const {
     actorRole = 'reseller_admin',
     org = makeResellerOrg(),
     customers = [],
     memberList = [],
+    customerLinkedToReseller = true,
+    customerSelfMember = false,
   } = options;
 
   const resellerService = {
@@ -145,9 +154,25 @@ function makeMocks(options: {
         if (!org) return null;
         return { ...org, id, name, updatedAt: '2024-02-01T00:00:00.000Z' };
       }),
+    // requireResellerOrCustomerAccess: customer's reseller parent.
+    getResellerOfCustomer: vi.fn(async (customerId: string) =>
+      customerLinkedToReseller && customerId === CUSTOMER_ID ? org : null,
+    ),
+    // requireResellerOrCustomerAccess: customer-side self-membership.
+    getMembership: vi.fn(async (orgId: string, userId: string) =>
+      customerSelfMember && orgId === CUSTOMER_ID && userId === TEST_USER.sub
+        ? { id: 'om1', orgId, userId, role: 'member' }
+        : null,
+    ),
   } as unknown as OrgService;
 
-  return { resellerService, resellerMemberService, orgService };
+  const dashboardService = {
+    getUsageSummary: vi.fn(async (orgId: string) => ({ orgId, totalCalls: 42 })),
+    getTokenSavings: vi.fn(async (orgId: string) => ({ orgId, tokensSaved: 7 })),
+    getVendorBreakdown: vi.fn(async () => [{ vendor: 'datto-rmm', calls: 12 }]),
+  } as unknown as DashboardService;
+
+  return { resellerService, resellerMemberService, orgService, dashboardService };
 }
 
 async function buildApp(deps: MockDeps, featureEnabled = true): Promise<FastifyInstance> {
@@ -603,6 +628,87 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Reseller-scoped customer dashboard (Track C S2)
+  // -------------------------------------------------------------------------
+
+  describe('GET /admin/reseller/:resellerId/customers/:customerId/dashboard/*', () => {
+    const usageUrl = `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/dashboard/usage`;
+
+    it('returns the customer usage summary for a reseller member of the parent', async () => {
+      authenticateAs();
+      const mocks = makeMocks({ actorRole: 'reseller_support_agent' });
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+
+      expect(res.statusCode).toBe(200);
+      // The payload is scoped to the TARGET customer org, not the caller's.
+      expect(res.json()).toMatchObject({ orgId: CUSTOMER_ID, totalCalls: 42 });
+      expect(mocks.dashboardService.getUsageSummary).toHaveBeenCalledWith(
+        CUSTOMER_ID,
+        expect.anything(),
+      );
+    });
+
+    it('serves savings and vendors for the target customer too', async () => {
+      authenticateAs();
+      const mocks = makeMocks();
+      app = await buildApp(mocks);
+
+      const savings = await app.inject({
+        method: 'GET',
+        url: `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/dashboard/savings`,
+      });
+      const vendors = await app.inject({
+        method: 'GET',
+        url: `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/dashboard/vendors`,
+      });
+
+      expect(savings.statusCode).toBe(200);
+      expect(savings.json()).toMatchObject({ orgId: CUSTOMER_ID });
+      expect(vendors.statusCode).toBe(200);
+      expect(vendors.json()).toEqual({ vendors: [{ vendor: 'datto-rmm', calls: 12 }] });
+    });
+
+    it('403s when the customer does not belong to the reseller', async () => {
+      authenticateAs();
+      // Caller is a reseller member, but CUSTOMER_ID is not their customer
+      // and they have no direct membership in it.
+      app = await buildApp(makeMocks({ customerLinkedToReseller: false }));
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('403s a caller with no reseller membership and no customer membership', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: null }));
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('allows customer-side self-access (direct member of the customer org)', async () => {
+      authenticateAs();
+      // Not a reseller member, but a direct member of CUSTOMER_ID.
+      app = await buildApp(
+        makeMocks({ actorRole: null, customerSelfMember: true }),
+      );
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('rejects an unauthenticated caller', async () => {
+      unauthenticated();
+      app = await buildApp(makeMocks());
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Feature flag
   // -------------------------------------------------------------------------
 
@@ -611,6 +717,16 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       authenticateAs();
       app = await buildApp(makeMocks(), false);
       const res = await app.inject({ method: 'GET', url: `/admin/reseller/${RESELLER_ID}` });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('404s the customer-dashboard route when disabled', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks(), false);
+      const res = await app.inject({
+        method: 'GET',
+        url: `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/dashboard/usage`,
+      });
       expect(res.statusCode).toBe(404);
     });
   });
