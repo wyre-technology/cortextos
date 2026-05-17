@@ -7,6 +7,30 @@ on:
     branches: [main]
 
 jobs:
+  # Fast, container-free front-line gate for schema-vs-harness drift (the
+  # mig-030 regression class). Runs on the self-hosted runner so it works
+  # regardless of GitHub Actions billing state — it is a plain vitest run,
+  # no Postgres and no docker. The container-backed `integration` job below
+  # remains the thorough downstream backstop; this job is the fast,
+  # unmissable PR-time check. See src/scim/__tests__/migration-drift-check.ts.
+  schema-harness-drift:
+    runs-on: [self-hosted, wyre-private]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Schema-vs-harness drift gate
+        run: npx vitest run src/scim/__tests__/migration-harness-drift.test.ts
+
   build:
     runs-on: ubuntu-latest
 
