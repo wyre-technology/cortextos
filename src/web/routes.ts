@@ -46,6 +46,11 @@ import {
   RESELLER_CUSTOMERS_SCRIPT,
   type ResellerCustomer,
 } from './templates/reseller-customers.js';
+import {
+  renderResellerBranding,
+  RESELLER_BRANDING_STYLES,
+  type ResellerBranding,
+} from './templates/reseller-branding.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -652,10 +657,49 @@ export function webRoutes(deps: WebRouteDeps) {
       };
 
     app.get('/org/reseller/general',  resellerSettingsStub('/org/reseller/general', 'General'));
-    app.get('/org/reseller/branding', resellerSettingsStub('/org/reseller/branding', 'Branding'));
     app.get('/org/reseller/billing',  resellerSettingsStub('/org/reseller/billing', 'Billing & Plans'));
     app.get('/org/reseller/api',      resellerSettingsStub('/org/reseller/api', 'API & Webhooks'));
     app.get('/org/reseller/audit',    resellerSettingsStub('/org/reseller/audit', 'Audit Log'));
+
+    // ---------- GET /org/reseller/branding (Track C Surface 5 — White-Label Branding) ----------
+    //
+    // The reseller-settings "Branding" tab. Mock-data-first: the `branding`
+    // record below is shaped like the Track A reseller-settings read model.
+    // When that endpoint lands, the mock builder is the single swap-in point
+    // — the template renders unchanged. v1 ships the layout with a disabled
+    // "Save changes" affordance (no dead persistence route).
+    app.get('/org/reseller/branding', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const slug = org.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const branding: ResellerBranding = {
+        defaultUrl: `conduit.wyre.ai/v1/mcp/${slug}/am3-technology`,
+        brandAlias: 'mcp.wyretechnology.com',
+        aliasVerified: true,
+        logoUrl: null,
+        colors: { accent: '#D93232', textOnDark: '#F2F2F5', textOnLight: '#212126' },
+        emailFromName: org.name,
+        emailFromAddress: 'notifications@conduit.wyre.ai',
+        emailAuthStatus: 'SPF + DKIM verified · DMARC pending',
+        emailAuthVerified: false,
+        directBillingEnabled: false,
+      };
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/reseller/branding',
+          title: `${org.name} - Branding`,
+          navMode: 'reseller-settings',
+          pageStyles: RESELLER_BRANDING_STYLES,
+        },
+        renderResellerBranding({ org, branding, sampleCustomerName: 'AM3 Technology' }),
+      );
+      return reply.type('text/html').send(html);
+    });
 
     // =====================================================================
     // Team management pages (sidebar layout, Pro plan + admin/owner)
