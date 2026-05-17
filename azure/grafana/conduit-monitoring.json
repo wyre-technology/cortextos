@@ -1,0 +1,310 @@
+{
+  "uid": "conduit-monitoring",
+  "title": "Conduit Gateway — Cost & Infra Performance",
+  "description": "Infra-performance and cost monitoring for the Conduit MCP gateway. Metric panels mirror the alert set in azure/modules/observability.bicep. Data source is selected at import time via the ${DS_AZURE_MONITOR} variable; the gateway resource is parameterized so the dashboard survives the June rg-conduit-prod re-point.",
+  "tags": ["conduit", "mcp-gateway", "infra", "cost"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_AZURE_MONITOR",
+        "label": "Azure Monitor data source",
+        "type": "datasource",
+        "query": "grafana-azure-monitor-datasource",
+        "current": { "text": "Azure Monitor", "value": "azure-monitor-oob" },
+        "hide": 0
+      },
+      {
+        "name": "subscription",
+        "label": "Subscription",
+        "type": "constant",
+        "query": "d1fd92e8-6084-4dae-83dd-6a9a705f4a1d",
+        "current": { "text": "d1fd92e8-6084-4dae-83dd-6a9a705f4a1d", "value": "d1fd92e8-6084-4dae-83dd-6a9a705f4a1d" },
+        "hide": 2
+      },
+      {
+        "name": "resourceGroup",
+        "label": "Resource group",
+        "type": "textbox",
+        "query": "mcp-gateway-prod",
+        "current": { "text": "mcp-gateway-prod", "value": "mcp-gateway-prod" },
+        "description": "Re-point to rg-conduit-prod after the June conduit-prod-stack stand-up.",
+        "hide": 0
+      },
+      {
+        "name": "gatewayApp",
+        "label": "Gateway container app",
+        "type": "textbox",
+        "query": "mcpgw-prod-gateway",
+        "current": { "text": "mcpgw-prod-gateway", "value": "mcpgw-prod-gateway" },
+        "hide": 0
+      },
+      {
+        "name": "logAnalytics",
+        "label": "Log Analytics workspace resource ID",
+        "type": "constant",
+        "query": "/subscriptions/d1fd92e8-6084-4dae-83dd-6a9a705f4a1d/resourceGroups/mcp-gateway-prod/providers/Microsoft.OperationalInsights/workspaces/mcpgw-prod-logs",
+        "current": {},
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Gateway — Infra Performance",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "CPU utilization (%)",
+      "description": "Gateway CPU as a percentage of allocation. Mirrors the gateway-cpu-high alert (observability.bicep) — fires at >80% sustained 15m. The percentage metric auto-tracks an allocation resize, so the panel and the alert stay consistent.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 80 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Monitor",
+          "subscription": "${subscription}",
+          "azureMonitor": {
+            "metricNamespace": "microsoft.app/containerapps",
+            "metricName": "CpuPercentage",
+            "aggregation": "Average",
+            "timeGrain": "auto",
+            "resources": [
+              { "subscription": "${subscription}", "resourceGroup": "${resourceGroup}", "resourceName": "${gatewayApp}", "metricNamespace": "microsoft.app/containerapps" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "Memory utilization (%)",
+      "description": "Gateway memory as a percentage of allocation. Mirrors the gateway-memory-high alert (observability.bicep) — fires at >85% sustained 15m. The percentage metric auto-tracks an allocation resize, so the panel and the alert stay consistent.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 85 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Monitor",
+          "subscription": "${subscription}",
+          "azureMonitor": {
+            "metricNamespace": "microsoft.app/containerapps",
+            "metricName": "MemoryPercentage",
+            "aggregation": "Average",
+            "timeGrain": "auto",
+            "resources": [
+              { "subscription": "${subscription}", "resourceGroup": "${resourceGroup}", "resourceName": "${gatewayApp}", "metricNamespace": "microsoft.app/containerapps" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "Replica count",
+      "description": "Active replicas. Scale bounds: min 1, max 3. Sustained 3 = saturation (alert at 30m); sustained <1 = unhealthy (alert at 10m).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 4,
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 15 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 }, { "color": "orange", "value": 3 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Monitor",
+          "subscription": "${subscription}",
+          "azureMonitor": {
+            "metricNamespace": "microsoft.app/containerapps",
+            "metricName": "Replicas",
+            "aggregation": "Maximum",
+            "timeGrain": "auto",
+            "resources": [
+              { "subscription": "${subscription}", "resourceGroup": "${resourceGroup}", "resourceName": "${gatewayApp}", "metricNamespace": "microsoft.app/containerapps" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "Container restarts (RestartCount)",
+      "description": "Restart count. observability.bicep alerts on >2 restarts in 5m.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Monitor",
+          "subscription": "${subscription}",
+          "azureMonitor": {
+            "metricNamespace": "microsoft.app/containerapps",
+            "metricName": "RestartCount",
+            "aggregation": "Total",
+            "timeGrain": "auto",
+            "resources": [
+              { "subscription": "${subscription}", "resourceGroup": "${resourceGroup}", "resourceName": "${gatewayApp}", "metricNamespace": "microsoft.app/containerapps" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 6,
+      "title": "Gateway — Request Health",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "HTTP 5xx responses (5m bins)",
+      "description": "Gateway 5xx count from console logs. observability.bicep alerts when >10 in a 5m bin.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 10 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["${logAnalytics}"],
+            "resultFormat": "time_series",
+            "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '${gatewayApp}'\n| where Log_s has '\"statusCode\":5' or Log_s has '\"res\":{\"statusCode\":5'\n| summarize Errors = count() by bin(TimeGenerated, 5m)\n| order by TimeGenerated asc"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "P95 response time (ms, 5m bins)",
+      "description": "Gateway P95 latency from console logs. observability.bicep alerts when P95 > 5000ms.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5000 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["${logAnalytics}"],
+            "resultFormat": "time_series",
+            "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '${gatewayApp}'\n| where Log_s has '\"responseTime\"'\n| extend responseTime = todouble(parse_json(Log_s).responseTime)\n| where isnotnull(responseTime)\n| summarize P95 = percentile(responseTime, 95) by bin(TimeGenerated, 5m)\n| order by TimeGenerated asc"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Auth failures — 401 / 403 (5m bins)",
+      "description": "Gateway 401/403 count from console logs. observability.bicep alerts when >20 in a 5m bin.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 20 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-azure-monitor-datasource", "uid": "${DS_AZURE_MONITOR}" },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "resources": ["${logAnalytics}"],
+            "resultFormat": "time_series",
+            "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '${gatewayApp}'\n| where Log_s has '\"statusCode\":401' or Log_s has '\"statusCode\":403' or Log_s has '\"res\":{\"statusCode\":401' or Log_s has '\"res\":{\"statusCode\":403'\n| summarize AuthFailures = count() by bin(TimeGenerated, 5m)\n| order by TimeGenerated asc"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 10,
+      "title": "Cost",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }
+    },
+    {
+      "type": "text",
+      "id": 11,
+      "title": "Cost budgets",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 35 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Cost monitoring\n\nCost is tracked by two `Microsoft.Consumption/budgets` resources, each with **80% Actual / 100% Actual / 100% Forecasted** notifications routed to the `mcpgw-prod-alerts` action group:\n\n- **Resource-group budget** — `mcpgw-prod-monthly-budget`, defined in `azure/modules/observability.bicep`. Scope: the `mcp-gateway-prod` resource group.\n- **Subscription budget** — `wyre-subscription-monthly-budget`, defined in `azure/subscription-budget.bicep`. Scope: the whole subscription.\n\nThe budget amounts are the source of truth in those Bicep files — not duplicated here, so this panel cannot drift from them.\n\nAzure Cost Management data is not exposed as a first-class Grafana panel without the Cost Management plugin, so live spend is read in the Azure portal — **Cost analysis** scoped to the RG or the subscription, and **Budgets** for the two budget resources above.\n\n_If a richer in-Grafana cost panel is wanted later, add the Azure Cost Management data source plugin and a follow-up panel here._"
+      }
+    }
+  ]
+}
