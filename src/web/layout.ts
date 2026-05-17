@@ -10,8 +10,17 @@ import { escapeHtml } from './helpers.js';
  *  - 'default'           — Personal + Team(+Customers if reseller) + Org sub-nav.
  *  - 'reseller-settings' — the reseller-settings shell (Track C Surface 5):
  *                          a single RESELLER SETTINGS section, no Personal/Team.
+ *  - 'customer-detail'   — a reseller drilled into one customer org (Track C
+ *                          Surface 2): the sidebar swaps to customer context
+ *                          (VIEWING AS RESELLER banner + customer sub-nav).
  */
-export type NavMode = 'default' | 'reseller-settings';
+export type NavMode = 'default' | 'reseller-settings' | 'customer-detail';
+
+/** Customer being viewed in 'customer-detail' navMode. */
+export interface CustomerContext {
+  id: string;
+  name: string;
+}
 
 export interface LayoutContext {
   user: Auth0User;
@@ -22,6 +31,8 @@ export interface LayoutContext {
   pageScripts?: string;
   /** Defaults to 'default'. */
   navMode?: NavMode;
+  /** Required when navMode is 'customer-detail'. */
+  customerContext?: CustomerContext;
 }
 
 interface NavItem {
@@ -183,6 +194,46 @@ const LAYOUT_STYLES = `
     border-left-color: var(--accent);
     background: rgba(0,201,219,0.08);
   }
+  /* Customer-detail sub-nav: tabs not yet built render disabled — no
+     href, muted, non-interactive. Honest about what exists. */
+  .sidebar-item-disabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+  .sidebar-item-disabled:hover { background: none; color: var(--text-muted); }
+
+  /* VIEWING AS RESELLER banner card atop the customer-detail sidebar
+     (Track C Surface 2, design note #1 — a persistent reminder that
+     actions here affect the customer's data, not the reseller's). */
+  .sidebar-customer-banner {
+    margin: 4px 12px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: rgba(0,201,219,0.08);
+  }
+  .sidebar-customer-tag {
+    display: block;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--accent-text);
+  }
+  .sidebar-customer-name {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .sidebar-customer-back {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--accent-text);
+    text-decoration: none;
+  }
+  .sidebar-customer-back:hover { text-decoration: underline; }
   /* Sub-nav (PR #73 IA restructure): Organization parent label + indented
      sub-items. Parent label uses same typographic anchor as sidebar-item
      so it sits in the visual rhythm of the nav, but with muted color +
@@ -365,8 +416,36 @@ function renderResellerSettingsNav(orgName: string, activePath: string): string 
     </div>`;
 }
 
+// Customer-detail sub-nav (Track C Surface 2). Only "Overview" is built —
+// it's the one designed frame. The remaining tabs render as disabled
+// items (no href): honest about what exists, and — unlike a stub route —
+// nothing to keep lock-step with. They light up when their surfaces land.
+const CUSTOMER_DETAIL_TABS: ReadonlyArray<string> = [
+  'MCPs', 'Users', 'Usage', 'Tool Access', 'Audit Log', 'Billing', 'Settings',
+];
+
+/** Renders the customer-context sidebar (Track C Surface 2). */
+function renderCustomerDetailNav(customer: CustomerContext, activePath: string): string {
+  const overviewHref = `/org/customers/${encodeURIComponent(customer.id)}`;
+  const overviewActive = activePath === overviewHref;
+  const name = escapeHtml(customer.name);
+  return `
+    <div class="sidebar-section">
+      <div class="sidebar-customer-banner">
+        <span class="sidebar-customer-tag">VIEWING AS RESELLER</span>
+        <span class="sidebar-customer-name">${name}</span>
+        <a class="sidebar-customer-back" href="/org/customers">&larr; Back to customers</a>
+      </div>
+      <div class="sidebar-section-label">${name}</div>
+      <a class="sidebar-item ${overviewActive ? 'active' : ''}" href="${escapeHtml(overviewHref)}">Overview</a>
+      ${CUSTOMER_DETAIL_TABS.map(
+        (label) => `<span class="sidebar-item sidebar-item-disabled" title="Lands in a follow-up surface">${escapeHtml(label)}</span>`,
+      ).join('')}
+    </div>`;
+}
+
 export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
-  const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
+  const { user, org, activePath, title, pageStyles, pageScripts, customerContext } = ctx;
   const navMode: NavMode = ctx.navMode ?? 'default';
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
@@ -470,6 +549,8 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 
       ${navMode === 'reseller-settings'
         ? renderResellerSettingsNav(orgName || 'Reseller', activePath)
+        : navMode === 'customer-detail' && customerContext
+        ? renderCustomerDetailNav(customerContext, activePath)
         : `<div class="sidebar-section">
         <div class="sidebar-section-label">Personal</div>
         ${personalNav}

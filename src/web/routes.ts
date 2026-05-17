@@ -63,6 +63,11 @@ import {
   RESELLER_ONBOARD_MCP_STYLES,
   type OnboardMcpData,
 } from './templates/reseller-onboard-mcp.js';
+import {
+  renderResellerCustomerDetail,
+  RESELLER_CUSTOMER_DETAIL_STYLES,
+  type CustomerSummary,
+} from './templates/reseller-customer-detail.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -646,6 +651,46 @@ export function webRoutes(deps: WebRouteDeps) {
           pageScripts: RESELLER_CUSTOMERS_SCRIPT,
         },
         renderResellerCustomers({ org, customers }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/customers/:id (Track C Surface 2 — Customer Detail) ----------
+    //
+    // A reseller drilled into one customer org. Analytics are wired LIVE:
+    // the template renders a shell and fetches the reseller-scoped
+    // customer-dashboard endpoints (conduit PR #130/#136) client-side.
+    // Customer identity is mock until the Track A customer-detail
+    // endpoint lands — same gap Surface 1 carries.
+    app.get('/org/customers/:id', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const customerId = (request.params as { id: string }).id;
+      const customer: CustomerSummary = {
+        id: customerId,
+        name: 'AM3 Technology & Cybersecurity',
+        plan: 'BUSINESS',
+        userCount: 12,
+        mcpCount: 4,
+        subdomain: 'am3.conduit.wyre.ai',
+      };
+
+      const { body, pageScripts } = renderResellerCustomerDetail({ org, customer });
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: `/org/customers/${customerId}`,
+          title: `${org.name} - ${customer.name}`,
+          navMode: 'customer-detail',
+          customerContext: { id: customer.id, name: customer.name },
+          pageStyles: RESELLER_CUSTOMER_DETAIL_STYLES,
+          pageScripts,
+        },
+        body,
       );
       return reply.type('text/html').send(html);
     });
