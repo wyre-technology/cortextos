@@ -275,6 +275,15 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUri}secrets/slack-sales-webhook-url'
           identity: 'system'
         }
+        {
+          // Rootly vendor-down webhook URL — consumed by VendorMonitor
+          // (src/monitoring/rootly.ts) as ROOTLY_WEBHOOK_URL. The URL carries
+          // a secret query param, so it is a KV reference resolved at runtime
+          // by the gateway's managed identity — never inline.
+          name: 'rootly-webhook-url'
+          keyVaultUrl: '${keyVaultUri}secrets/rootly-vendor-webhook-url'
+          identity: 'system'
+        }
       ]
     }
     template: {
@@ -327,6 +336,10 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             // Live env order places these after the VENDOR_URL_* block.
             { name: 'STRIPE_BUSINESS_PRICE_ID', secretRef: 'stripe-business-price-id' }
             { name: 'SLACK_SALES_WEBHOOK_URL', secretRef: 'slack-sales-webhook-url' }
+            // VendorMonitor pages Rootly on vendor-container down/recovery.
+            // Unset == logged no-op (src/monitoring/rootly.ts), so this is
+            // safe to add ahead of any Rootly-side config.
+            { name: 'ROOTLY_WEBHOOK_URL', secretRef: 'rootly-webhook-url' }
           ])
           probes: [
             {

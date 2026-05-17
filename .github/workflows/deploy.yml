@@ -111,6 +111,22 @@ jobs:
           echo "vendorenv=$VENDOR_ENV" >> "$GITHUB_OUTPUT"
           echo "Preserving $(echo "$DOMAINS" | jq 'length') custom-domain binding(s), $(echo "$VENDOR_ENV" | jq 'length') VENDOR_URL_* var(s)"
 
+      # Production: fetch the Rootly Azure Monitor webhook URL from Key Vault.
+      # The URL carries a secret query param — it lives only in mcpgw-prod-kv,
+      # never as a repo secret or an inline param. Requires the deploy SP to
+      # hold the "Key Vault Secrets User" role on mcpgw-prod-kv.
+      - name: Fetch Rootly webhook URL (production)
+        id: rootly
+        if: needs.resolve.outputs.environment == 'production'
+        run: |
+          set -euo pipefail
+          URL=$(az keyvault secret show \
+            --vault-name mcpgw-prod-kv \
+            --name rootly-azuremonitor-webhook-url \
+            --query value -o tsv)
+          echo "::add-mask::$URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
       # Production: inline params (legacy shape, unchanged from pre-staging)
       - name: Deploy Bicep (production)
         if: needs.resolve.outputs.environment == 'production'
@@ -128,6 +144,7 @@ jobs:
             threadAppId=19ea2482-5f02-41c1-b723-220ecdaefde5
             entraTrustedTenantIds=d92c73a4-ccc2-4277-8c5d-73c2849adfa4
             alertEmail=engineering@wyretechnology.com
+            rootlyWebhookUrl=${{ steps.rootly.outputs.url }}
             masterKey=${{ secrets.MASTER_KEY }}
             jwtSecret=${{ secrets.JWT_SECRET }}
             pgPassword=${{ secrets.PG_PASSWORD }}
