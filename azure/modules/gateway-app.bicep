@@ -129,6 +129,24 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
+// Container Apps Environment diagnostic setting — routes the environment metrics
+// stream to Log Analytics. Console/system logs already route via the env's
+// appLogsConfiguration above; this adds AllMetrics so platform metrics are
+// queryable alongside the logs.
+resource envDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: '${prefix}-env-diagnostics'
+  scope: containerEnv
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
+}
+
 resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${prefix}-gateway'
   location: location

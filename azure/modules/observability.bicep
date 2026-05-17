@@ -6,9 +6,15 @@
 // workspace resource id as a parameter.
 //
 // Deploys:
-//   - Action Group (email receiver)
+//   - Action Group (email receiver + optional Rootly webhook)
 //   - Tier 1 alerts: gateway restarts, 5xx rate, health failures, DB connectivity
 //   - Tier 2 alerts: high latency, MCP server restarts, rate-limit exhaustion, auth failures
+//   - Infra-perf alerts: gateway CPU / memory / replica saturation
+//   - Resource-group monthly cost budget
+//
+// Scope note: the conduit Bicep owns the gateway + the managed environment, not
+// the vendor MCP fleet (gwp-* container apps deploy via their own pipelines).
+// The infra-perf alerts here are gateway-only for that reason.
 
 @description('Azure region')
 param location string
@@ -25,6 +31,16 @@ param gatewayId string
 @description('Log Analytics workspace resource ID (scope for scheduled-query alert rules)')
 param workspaceId string
 
+@secure()
+@description('Rootly Azure Monitor webhook URL (contains a secret query param). Supplied at deploy time from Key Vault secret rootly-azuremonitor-webhook-url — never a literal in git. When set, alert + budget notifications also POST to Rootly alongside email; empty == email-only.')
+param rootlyWebhookUrl string = ''
+
+@description('Monthly cost budget for the resource group, in USD.')
+param monthlyBudget int = 1200
+
+@description('Budget period start date — must be the first of a month. Defaults to the current month.')
+param budgetStartDate string = utcNow('yyyy-MM-01')
+
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
   name: '${prefix}-alerts'
   location: 'global'
@@ -35,6 +51,15 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
       {
         name: 'Engineering'
         emailAddress: alertEmail
+        useCommonAlertSchema: true
+      }
+    ]
+    // Rootly webhook receiver — wired only when rootlyWebhookUrl is supplied.
+    // Empty array == email-only, the current default.
+    webhookReceivers: empty(rootlyWebhookUrl) ? [] : [
+      {
+        name: 'Rootly'
+        serviceUri: rootlyWebhookUrl
         useCommonAlertSchema: true
       }
     ]
@@ -353,6 +378,178 @@ resource alertAuthFailures 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     }
     actions: {
       actionGroups: [actionGroup.id]
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Infra-perf — Gateway CPU saturation (> 80% of allocation, 15 min)
+// ---------------------------------------------------------------------------
+
+resource alertGatewayCpu 'Microsoft.Insights/metricAlerts@2018-03-01' = {
+  name: '${prefix}-gateway-cpu-high'
+  location: 'global'
+  properties: {
+    description: 'Gateway CPU above 80% of its allocation, sustained over 15 minutes'
+    severity: 2
+    enabled: true
+    scopes: [gatewayId]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT15M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'CpuHigh'
+          metricName: 'CpuPercentage'
+          metricNamespace: 'Microsoft.App/containerApps'
+          operator: 'GreaterThan'
+          threshold: 80
+          timeAggregation: 'Average'
+          criterionType: 'StaticThresholdCriterion'
+        }
+      ]
+    }
+    actions: [{ actionGroupId: actionGroup.id }]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Infra-perf — Gateway memory saturation (> 85% of allocation, 15 min)
+// ---------------------------------------------------------------------------
+
+resource alertGatewayMemory 'Microsoft.Insights/metricAlerts@2018-03-01' = {
+  name: '${prefix}-gateway-memory-high'
+  location: 'global'
+  properties: {
+    description: 'Gateway memory above 85% of its allocation, sustained over 15 minutes'
+    severity: 2
+    enabled: true
+    scopes: [gatewayId]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT15M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'MemoryHigh'
+          metricName: 'MemoryPercentage'
+          metricNamespace: 'Microsoft.App/containerApps'
+          operator: 'GreaterThan'
+          threshold: 85
+          timeAggregation: 'Average'
+          criterionType: 'StaticThresholdCriterion'
+        }
+      ]
+    }
+    actions: [{ actionGroupId: actionGroup.id }]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Infra-perf — Gateway replicas maxed (>= maxReplicas of 3, sustained 30 min)
+// ---------------------------------------------------------------------------
+
+resource alertGatewayReplicasMaxed 'Microsoft.Insights/metricAlerts@2018-03-01' = {
+  name: '${prefix}-gateway-replicas-maxed'
+  location: 'global'
+  properties: {
+    description: 'Gateway pinned at its 3-replica maximum for 30 minutes — sustained load, no headroom to scale'
+    severity: 2
+    enabled: true
+    scopes: [gatewayId]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT30M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'ReplicasMaxed'
+          metricName: 'Replicas'
+          metricNamespace: 'Microsoft.App/containerApps'
+          operator: 'GreaterThanOrEqual'
+          threshold: 3
+          timeAggregation: 'Minimum'
+          criterionType: 'StaticThresholdCriterion'
+        }
+      ]
+    }
+    actions: [{ actionGroupId: actionGroup.id }]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Infra-perf — Gateway replicas starved (< minReplicas of 1, 10 min)
+// ---------------------------------------------------------------------------
+
+resource alertGatewayReplicasStarved 'Microsoft.Insights/metricAlerts@2018-03-01' = {
+  name: '${prefix}-gateway-replicas-starved'
+  location: 'global'
+  properties: {
+    description: 'Gateway running below its 1-replica minimum for 10 minutes — likely unhealthy, not a scale event'
+    severity: 1
+    enabled: true
+    scopes: [gatewayId]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT10M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'ReplicasStarved'
+          metricName: 'Replicas'
+          metricNamespace: 'Microsoft.App/containerApps'
+          operator: 'LessThan'
+          threshold: 1
+          timeAggregation: 'Maximum'
+          criterionType: 'StaticThresholdCriterion'
+        }
+      ]
+    }
+    actions: [{ actionGroupId: actionGroup.id }]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cost — Resource-group monthly budget
+// ---------------------------------------------------------------------------
+// 80% Actual / 100% Actual / 100% Forecasted, all routed to the action group so
+// budget breaches surface on the same path as infra alerts.
+
+resource costBudget 'Microsoft.Consumption/budgets@2023-11-01' = {
+  name: '${prefix}-monthly-budget'
+  properties: {
+    category: 'Cost'
+    amount: monthlyBudget
+    timeGrain: 'Monthly'
+    timePeriod: {
+      startDate: '${budgetStartDate}T00:00:00Z'
+    }
+    notifications: {
+      Actual_80_Percent: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 80
+        thresholdType: 'Actual'
+        contactEmails: []
+        contactGroups: [actionGroup.id]
+      }
+      Actual_100_Percent: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 100
+        thresholdType: 'Actual'
+        contactEmails: []
+        contactGroups: [actionGroup.id]
+      }
+      Forecasted_100_Percent: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 100
+        thresholdType: 'Forecasted'
+        contactEmails: []
+        contactGroups: [actionGroup.id]
+      }
     }
   }
 }

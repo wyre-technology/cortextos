@@ -89,6 +89,13 @@ param managedCertName string = 'mc-mcpgw-prod-env-mcp-wyretechnolo-7568'
 @description('Email address for alert notifications')
 param alertEmail string = ''
 
+@secure()
+@description('Rootly Azure Monitor webhook URL (contains a secret query param). Supplied at deploy time from Key Vault secret rootly-azuremonitor-webhook-url — never a literal in git.')
+param rootlyWebhookUrl string = ''
+
+@description('Resource-group monthly cost budget in USD')
+param monthlyBudget int = 1200
+
 @description('Whether to deploy the Key Vault role assignment (set false if it already exists)')
 param deployRoleAssignment bool = false
 
@@ -141,6 +148,8 @@ module observability './modules/observability.bicep' = {
     alertEmail: alertEmail
     gatewayId: gatewayApp.outputs.gatewayId
     workspaceId: logAnalytics.outputs.workspaceId
+    rootlyWebhookUrl: rootlyWebhookUrl
+    monthlyBudget: monthlyBudget
   }
 }
 
