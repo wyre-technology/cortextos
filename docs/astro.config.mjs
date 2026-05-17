@@ -43,6 +43,7 @@ export default defineConfig({
             { label: 'Vendor Connections', slug: 'guides/vendor-connections' },
             { label: 'White-label Setup', slug: 'guides/white-label-setup' },
             { label: 'Billing & Plans', slug: 'guides/billing' },
+            { label: 'Monitoring Your Tenant', slug: 'guides/monitoring' },
             { label: 'SCIM Provisioning', slug: 'guides/scim' },
           ],
         },

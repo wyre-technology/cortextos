@@ -577,6 +577,41 @@ Query the admin audit log (administrative actions).
 
 ---
 
+## Usage Dashboard
+
+Usage analytics for an organization. All three endpoints require a **paid plan** (Pro or Business) and **admin+ role**, and resolve to the caller's primary organization. They read from the `request_log` — the same metadata described in [Prompt Capture & Privacy](/docs/reference/prompt-capture/).
+
+### GET /api/dashboard/usage
+
+Aggregate tool-call usage for the org.
+
+**Auth:** Auth0 session (admin+, paid plan)
+**Query Parameters:**
+- `start` -- ISO 8601 range start
+- `end` -- ISO 8601 range end
+
+**Response:** total calls, unique users, average response time, plus breakdowns by vendor, by user, by day, and by source (`mcp` / `cli`).
+
+### GET /api/dashboard/savings
+
+Estimated token and cost savings from CLI-wrapper calls versus raw MCP calls.
+
+**Auth:** Auth0 session (admin+, paid plan)
+**Query Parameters:** `start`, `end`
+
+**Response:** `{ "totalMcpCalls": ..., "totalCliCalls": ..., "estimatedTokensSaved": ..., "estimatedCostSavedUsd": ... }`. The savings figures are a **heuristic estimate**, not a metered measurement.
+
+### GET /api/dashboard/vendors
+
+Per-vendor usage breakdown.
+
+**Auth:** Auth0 session (admin+, paid plan)
+**Query Parameters:** `start`, `end`
+
+**Response:** `{ "vendors": [ ... ] }` — each entry has total calls, unique users, average response time, and the vendor's top 5 tools by call count.
+
+---
+
 ## Billing
 
 :::note
