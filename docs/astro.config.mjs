@@ -39,7 +39,6 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'MSP Onboarding', slug: 'guides/msp-onboarding' },
-            { label: 'Adding Customers', slug: 'guides/adding-customers' },
             { label: 'Customer Provisioning', slug: 'guides/customer-provisioning' },
             { label: 'Vendor Connections', slug: 'guides/vendor-connections' },
             { label: 'White-label Setup', slug: 'guides/white-label-setup' },

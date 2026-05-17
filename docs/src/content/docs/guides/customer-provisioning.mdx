@@ -22,7 +22,7 @@ refresh.
   customer is isolated from every other customer by tenant-scoping at
   the database layer.
 - **User** — an authenticated individual inside a customer. Users have
-  a role (`admin` or `user`) and may belong to one or more teams.
+  a role (`admin` or `member`) and may belong to one or more teams.
 - **Team** — an optional grouping inside a customer org, used to scope
   vendor access and connections.
 - **Connection** — a credential that authorizes Conduit to call a
@@ -73,7 +73,7 @@ on `slug`.
 3. Pick a role:
    - **admin** — can manage users, connections, and team settings for
      this customer.
-   - **user** — can call vendor tools they have been granted.
+   - **member** — can call vendor tools they have been granted.
 4. (Optional) Assign to one or more teams.
 5. Send the invite.
 
@@ -133,7 +133,7 @@ Inside a vendor integration, each tool (for example
 3. Add tools to the allowlist. An empty allowlist means **all tools
    are allowed** for that role.
 
-Admins always have full access; tool allowlists only affect the `user`
+Admins always have full access; tool allowlists only affect the `member`
 role (and teams within it).
 
 ## Revoke access

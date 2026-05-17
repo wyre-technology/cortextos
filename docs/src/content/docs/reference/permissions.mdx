@@ -1,11 +1,89 @@
 ---
 title: Permissions
-description: Conduit's role and permission model across MSP and customer scopes.
+description: Conduit's role and permission model — the org-member roles, the reseller-scope roles, and how vendor and tool access is granted.
 ---
 
-**Coming soon.**
+Conduit controls who can do what through **roles**. This page covers the role model an organization sees day to day: the org-member roles, what each one can do, and how vendor and tool access is scoped on top of them.
 
-This page will document Conduit's role model: MSP-level roles (owner, admin,
-support), customer-level roles, and how vendor-scoped permissions are
-delegated. See `design-docs/custom-roles-exploration.md` for the current
-design exploration.
+Two related pages go deeper on adjacent topics:
+
+- [Subtenant Model](/docs/reference/subtenants/) — the reseller → customer hierarchy and transitive admin.
+- [Security](/docs/reference/security/) — credential isolation, tenant boundaries, and the audit log.
+
+---
+
+## Two role spaces
+
+Conduit has **two disjoint role systems**. A role in one space grants nothing in the other.
+
+- **Org-member roles** — `owner` / `admin` / `member`. Every organization has them. They govern who can manage *that* organization.
+- **Reseller-scope roles** — `reseller_owner` / `reseller_admin` / `reseller_billing_viewer` / `reseller_support_agent`. These exist only on reseller organizations and govern authority *down the customer hierarchy*. See [Subtenant Model § Two role spaces](/docs/reference/subtenants/#two-role-spaces).
+
+The rest of this page is about the org-member roles. The reseller roles are summarized at the bottom.
+
+## Org-member roles
+
+Every membership in an organization carries exactly one of three roles. They are strictly ranked — each role can do everything the role below it can, plus more.
+
+| Role | Rank | What it can do |
+|------|------|----------------|
+| **owner** | highest | Everything `admin` can do, **plus** change other members' roles. The owner cannot be removed or demoted through the API. |
+| **admin** | middle | Manage members (invite and remove), vendor connections, teams, tool allowlists, and org settings. Can export the audit log. |
+| **member** | lowest | Call the vendor tools they have been granted. Read access to the org they belong to. No management capability. |
+
+A user's role is **per-organization**. The same person can be an `owner` of Org A and a `member` of Org B — the roles are independent.
+
+New users invited to an org join as `member`. Promotion to `admin` is an explicit, owner-only action.
+
+### What requires which role
+
+API routes are gated with a minimum role:
+
+- **`member` or higher** — read the org, call granted tools.
+- **`admin` or higher** — invite/remove members, manage connections, teams, tool allowlists, settings; export audit logs.
+- **`owner` only** — change another member's role (`PATCH /api/orgs/:orgId/members/:userId/role`).
+
+### Member-management guardrails
+
+A few rules constrain even privileged roles, so no single admin can quietly take over an org:
+
+- **Admins cannot remove other admins.** Removing an admin is an owner-only action. An admin removing a `member` is fine.
+- **Only the owner can change roles.** Promoting a member to admin, or demoting an admin, is owner-only. Admins cannot change roles at all.
+- **The owner is protected.** The owner cannot be removed, and the owner's role cannot be changed through the API.
+- **You cannot change your own role.** Even the owner.
+
+All member-management actions (invites, removals, role changes, allowlist edits) are written to the admin audit log — see [Security § Audit Logging](/docs/reference/security/#audit-logging).
+
+## Vendor and tool permissions
+
+Roles decide who can *administer* the org. A second, finer layer decides which **vendor tools** a member can actually call.
+
+### Tool allowlists
+
+For any connected vendor, an admin can configure a **tool allowlist** that restricts which of that vendor's tools the `member` role may call. This is how you keep sensitive operations — credential retrieval, delete actions — away from members who don't need them.
+
+- Allowlists apply to the **`member`** role. **Admins and owners always have full tool access** and are not affected by allowlists.
+- Restricting credential-retrieval tools (password lookups in IT Glue, Hudu, etc.) is the recommended default — it limits the blast radius of a compromised agent. See [Security § Prompt Injection Defense](/docs/reference/security/#prompt-injection-defense).
+
+### Connection scoping
+
+A vendor connection can be scoped at three levels, which determines which members can use it:
+
+1. **User** — a personal credential, usable only by one member.
+2. **Team** — shared by every member of a team.
+3. **Customer (org)** — shared by every member of the organization.
+
+Credential *resolution* walks these from most to least specific. The full resolution order is documented in [Security § Credential Resolution Hierarchy](/docs/reference/security/#credential-resolution-hierarchy).
+
+## Reseller-scope roles
+
+Reseller organizations carry an additional, disjoint role space. These roles do **not** grant org-member authority — a `reseller_admin` is not automatically an `admin` on a customer org. What they grant is authority *across the customer hierarchy*.
+
+| Reseller role | What it grants |
+|---------------|----------------|
+| **reseller_owner** | Top-level authority over the reseller's entire customer estate, including managing all reseller member roles. |
+| **reseller_admin** | Administer customers and their sub-customers transitively. Cannot touch `reseller_owner` rows or elevate anyone to owner. |
+| **reseller_billing_viewer** | Read-only access to billing data across the reseller's estate. |
+| **reseller_support_agent** | Read-only; can act on a customer only through a short-lived, audit-logged support grant. |
+
+The mechanics — transitive admin, the ancestor walk, support grants, and reseller-shared vendor credentials — are covered in full in [Subtenant Model](/docs/reference/subtenants/).
