@@ -19,12 +19,15 @@ param adminUser string = 'gatewayadmin'
 @description('Administrator password')
 param adminPassword string
 
-@description('SKU name (e.g. Standard_B1ms)')
-param skuName string = 'Standard_B1ms'
+// Defaults mirror the live prod server (mcpgw-prod-pg). The scaffold defaults
+// were Burstable/Standard_B1ms — deploying those would DOWNSIZE the production
+// database. Reconciled to the live GeneralPurpose/Standard_D2ds_v4 sku.
+@description('SKU name (e.g. Standard_D2ds_v4)')
+param skuName string = 'Standard_D2ds_v4'
 
 @description('SKU tier (Burstable or GeneralPurpose)')
 @allowed(['Burstable', 'GeneralPurpose', 'MemoryOptimized'])
-param skuTier string = 'Burstable'
+param skuTier string = 'GeneralPurpose'
 
 @description('Storage size in GB')
 param storageSizeGB int = 32

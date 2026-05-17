@@ -15,6 +15,9 @@ param location string
 @description('Resource name prefix (e.g. mcpgw-prod)')
 param prefix string
 
+@description('Managed environment name. Defaults to {prefix}-env; override to match an environment provisioned out-of-band (e.g. mcpgw-prod-env-v2).')
+param containerEnvName string = ''
+
 @description('Log Analytics workspace resource ID')
 param logAnalyticsWorkspaceId string
 
@@ -37,6 +40,9 @@ param customDomain string = ''
 @description('Managed certificate name in the environment')
 param managedCertName string
 
+@description('Existing custom-domain bindings on the gateway container app, passed through from the deploy workflow so they survive subsequent deploys. Each entry: {name, certificateId, bindingType}. The deploy workflow reads this via `az containerapp show ... --query properties.configuration.ingress.customDomains`. Empty on first deploy. Restores the 2ea4d56 preservation fix that regressed out of main.')
+param existingCustomDomains array = []
+
 @description('Redeploy trigger value (forces new revision)')
 param redeployTrigger string = ''
 
@@ -55,6 +61,18 @@ param microsoftClientId string = ''
 @secure()
 param microsoftClientSecret string = ''
 
+@description('Comma-separated host allowlist (e.g. mcp.wyre.ai,mcp.wyretechnology.com)')
+param allowedHosts string = ''
+
+@description('Comma-separated admin email addresses')
+param adminEmails string = ''
+
+@description('Thread (Microsoft Teams) application ID')
+param threadAppId string = ''
+
+@description('Comma-separated Entra tenant IDs trusted for admin access')
+param entraTrustedTenantIds string = ''
+
 @description('PostgreSQL FQDN')
 param pgFqdn string
 
@@ -68,17 +86,12 @@ param pgPassword string
 @description('PostgreSQL database name')
 param pgDbName string
 
-@description('Vendor definitions; used to emit VENDOR_URL_* env vars')
-param vendors array
-
-var vendorEnvVars = [for vendor in vendors: {
-  name: 'VENDOR_URL_${replace(toUpper(vendor.slug), '-', '_')}'
-  value: 'http://${prefix}-${vendor.slug}'
-}]
+@description('Existing VENDOR_URL_* env vars on the gateway container app, passed through from the deploy workflow so they survive subsequent deploys. The conduit Bicep does not own the vendor fleet — vendor MCP container apps (gwp-*) are deployed by per-vendor release pipelines, and the gateway is wired to them out-of-band. The deploy workflow reads the live VENDOR_URL_* env entries via `az containerapp show` and passes them through here. Empty on first deploy.')
+param existingVendorEnv array = []
 
 // Shared Container Apps Environment
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${prefix}-env'
+  name: empty(containerEnvName) ? '${prefix}-env' : containerEnvName
   location: location
   properties: {
     appLogsConfiguration: {
@@ -86,6 +99,31 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
       logAnalyticsConfiguration: {
         customerId: logAnalyticsCustomerId
         sharedKey: logAnalyticsSharedKey
+      }
+    }
+    // Mirror the live mcpgw-prod-env-v2 environment: the Consumption profile
+    // plus a Dedicated-D8 workload profile. Declaring these so a deploy does
+    // not strip the Dedicated profile or the peer-traffic settings.
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+      {
+        name: 'Dedicated-D8'
+        workloadProfileType: 'D8'
+        minimumCount: 1
+        maximumCount: 3
+      }
+    ]
+    peerAuthentication: {
+      mtls: {
+        enabled: false
+      }
+    }
+    peerTrafficConfiguration: {
+      encryption: {
+        enabled: false
       }
     }
   }
@@ -105,13 +143,23 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'http'
         allowInsecure: false
-        customDomains: empty(customDomain) ? [] : [
-          {
-            name: customDomain
-            certificateId: '${containerEnv.id}/managedCertificates/${managedCertName}'
-            bindingType: 'SniEnabled'
-          }
-        ]
+        // Preserve any pre-existing custom-domain bindings (managed certs for
+        // mcp.wyre.ai + mcp.wyretechnology.com, or a manually uploaded cert)
+        // so deploys do not silently wipe them. The deploy workflow reads the
+        // current bindings via az CLI and passes them as existingCustomDomains.
+        // The managed-cert binding for `customDomain` is merged in, deduped by
+        // hostname (the managed one wins), so a fresh first-time deploy still
+        // works.
+        customDomains: concat(
+          empty(customDomain) ? [] : [
+            {
+              name: customDomain
+              certificateId: '${containerEnv.id}/managedCertificates/${managedCertName}'
+              bindingType: 'SniEnabled'
+            }
+          ],
+          filter(existingCustomDomains, d => d.name != customDomain)
+        )
       }
       registries: [
         {
@@ -120,9 +168,18 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           passwordSecretRef: 'ghcr-token'
         }
       ]
+      // Order mirrors the live prod gateway's secrets array so a deploy is a
+      // clean no-op. admin-api-key is KV-referenced (mcpgw-prod-kv holds it) —
+      // the live gateway stores it inline; the resolved value is identical and
+      // KV-ref avoids threading another deploy-time secret param.
       secrets: [
         { name: 'master-key', value: masterKey }
         { name: 'jwt-secret', value: jwtSecret }
+        {
+          name: 'admin-api-key'
+          keyVaultUrl: '${keyVaultUri}secrets/admin-api-key'
+          identity: 'system'
+        }
         { name: 'database-url', value: 'postgres://${pgUser}:${pgPassword}@${pgFqdn}:5432/${pgDbName}?sslmode=require' }
         { name: 'ghcr-token', value: ghcrToken }
         {
@@ -156,8 +213,48 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
         {
+          name: 'stripe-credits-1000-price-id'
+          keyVaultUrl: '${keyVaultUri}secrets/stripe-credits-1000-price-id'
+          identity: 'system'
+        }
+        {
+          name: 'stripe-credits-2500-price-id'
+          keyVaultUrl: '${keyVaultUri}secrets/stripe-credits-2500-price-id'
+          identity: 'system'
+        }
+        {
+          name: 'stripe-credits-5000-price-id'
+          keyVaultUrl: '${keyVaultUri}secrets/stripe-credits-5000-price-id'
+          identity: 'system'
+        }
+        {
           name: 'alpha-invite-codes'
           keyVaultUrl: '${keyVaultUri}secrets/alpha-invite-codes'
+          identity: 'system'
+        }
+        {
+          name: 'azure-ad-client-id'
+          keyVaultUrl: '${keyVaultUri}secrets/azure-ad-client-id'
+          identity: 'system'
+        }
+        {
+          name: 'azure-ad-client-secret'
+          keyVaultUrl: '${keyVaultUri}secrets/azure-ad-client-secret'
+          identity: 'system'
+        }
+        {
+          name: 'azure-ad-tenant-id'
+          keyVaultUrl: '${keyVaultUri}secrets/azure-ad-tenant-id'
+          identity: 'system'
+        }
+        {
+          name: 'stripe-business-price-id'
+          keyVaultUrl: '${keyVaultUri}secrets/stripe-business-price-id'
+          identity: 'system'
+        }
+        {
+          name: 'slack-sales-webhook-url'
+          keyVaultUrl: '${keyVaultUri}secrets/slack-sales-webhook-url'
           identity: 'system'
         }
       ]
@@ -175,8 +272,10 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PORT', value: '8080' }
             { name: 'HOST', value: '0.0.0.0' }
             { name: 'BASE_URL', value: empty(customDomain) ? 'https://${prefix}-gateway.${containerEnv.properties.defaultDomain}' : 'https://${customDomain}' }
+            { name: 'ALLOWED_HOSTS', value: allowedHosts }
             { name: 'MASTER_KEY', secretRef: 'master-key' }
             { name: 'JWT_SECRET', secretRef: 'jwt-secret' }
+            { name: 'ADMIN_API_KEY', secretRef: 'admin-api-key' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'LOG_LEVEL', value: 'info' }
             { name: 'AUTH0_DOMAIN', secretRef: 'auth0-domain' }
@@ -186,11 +285,31 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
             { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
             { name: 'STRIPE_PRO_PRICE_ID', secretRef: 'stripe-pro-price-id' }
+            { name: 'STRIPE_CREDITS_1000_PRICE_ID', secretRef: 'stripe-credits-1000-price-id' }
+            { name: 'STRIPE_CREDITS_2500_PRICE_ID', secretRef: 'stripe-credits-2500-price-id' }
+            { name: 'STRIPE_CREDITS_5000_PRICE_ID', secretRef: 'stripe-credits-5000-price-id' }
             { name: 'ALPHA_INVITE_CODES', secretRef: 'alpha-invite-codes' }
+            { name: 'AZURE_AD_CLIENT_ID', secretRef: 'azure-ad-client-id' }
+            { name: 'AZURE_AD_CLIENT_SECRET', secretRef: 'azure-ad-client-secret' }
+            { name: 'AZURE_AD_TENANT_ID', secretRef: 'azure-ad-tenant-id' }
             { name: 'MICROSOFT_CLIENT_ID', value: microsoftClientId }
             { name: 'MICROSOFT_CLIENT_SECRET', value: microsoftClientSecret }
+            { name: 'QBO_CLIENT_ID', value: '' }
+            { name: 'QBO_CLIENT_SECRET', value: '' }
+            { name: 'XERO_CLIENT_ID', value: '' }
+            { name: 'XERO_CLIENT_SECRET', value: '' }
+            { name: 'HUBSPOT_CLIENT_ID', value: '' }
+            { name: 'HUBSPOT_CLIENT_SECRET', value: '' }
+            { name: 'LOOPS_API_KEY', value: '' }
+            { name: 'THREAD_APP_ID', value: threadAppId }
+            { name: 'ADMIN_EMAILS', value: adminEmails }
+            { name: 'ENTRA_TRUSTED_TENANT_IDS', value: entraTrustedTenantIds }
             { name: 'REDEPLOY_TRIGGER', value: redeployTrigger }
-          ], vendorEnvVars)
+          ], existingVendorEnv, [
+            // Live env order places these after the VENDOR_URL_* block.
+            { name: 'STRIPE_BUSINESS_PRICE_ID', secretRef: 'stripe-business-price-id' }
+            { name: 'SLACK_SALES_WEBHOOK_URL', secretRef: 'slack-sales-webhook-url' }
+          ])
           probes: [
             {
               type: 'Liveness'
@@ -210,6 +329,16 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: 1
         maxReplicas: 3
+        rules: [
+          {
+            name: 'http-rule'
+            http: {
+              metadata: {
+                concurrentRequests: '10'
+              }
+            }
+          }
+        ]
       }
     }
   }

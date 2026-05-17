@@ -10,8 +10,11 @@
 //   - modules/postgres.bicep       PostgreSQL Flexible Server + DB + firewall
 //   - modules/log-analytics.bicep  Log Analytics workspace (no dependencies)
 //   - modules/gateway-app.bicep    Container Apps Env + gateway app
-//   - modules/vendor-app.bicep     Per-vendor MCP server container apps
 //   - modules/observability.bicep  Action group + alert rules
+//
+// The conduit Bicep does not own the vendor MCP fleet. Vendor container apps
+// (gwp-*) are deployed by their own per-vendor release pipelines; the gateway's
+// VENDOR_URL_* env is preserved across deploys via existingVendorEnv.
 
 targetScope = 'resourceGroup'
 
@@ -31,6 +34,9 @@ param namePrefix string = ''
 
 @description('Key Vault name override (KV names are globally unique)')
 param kvName string = ''
+
+@description('Managed environment name override. Defaults to {prefix}-env; set to match an environment provisioned out-of-band (e.g. mcpgw-prod-env-v2).')
+param containerEnvName string = ''
 
 @description('Gateway Docker image')
 param gatewayImage string = 'ghcr.io/wyre-technology/mcp-gateway:latest'
@@ -62,6 +68,18 @@ param microsoftClientId string = ''
 @description('Microsoft Entra app client secret for M365 OAuth (optional)')
 param microsoftClientSecret string = ''
 
+@description('Comma-separated host allowlist for the gateway')
+param allowedHosts string = ''
+
+@description('Comma-separated admin email addresses')
+param adminEmails string = ''
+
+@description('Thread (Microsoft Teams) application ID')
+param threadAppId string = ''
+
+@description('Comma-separated Entra tenant IDs trusted for admin access')
+param entraTrustedTenantIds string = ''
+
 @description('Public hostname for the gateway')
 param customDomain string = ''
 
@@ -74,24 +92,16 @@ param alertEmail string = ''
 @description('Whether to deploy the Key Vault role assignment (set false if it already exists)')
 param deployRoleAssignment bool = false
 
-@description('MCP server vendors to deploy')
-param vendors array = [
-  { slug: 'datto-rmm', image: 'ghcr.io/wyre-technology/datto-rmm-mcp:latest' }
-  { slug: 'itglue', image: 'ghcr.io/wyre-technology/itglue-mcp:latest' }
-  { slug: 'autotask', image: 'ghcr.io/wyre-technology/autotask-mcp:latest' }
-  { slug: 'syncro', image: 'ghcr.io/wyre-technology/syncro-mcp:latest' }
-  { slug: 'atera', image: 'ghcr.io/wyre-technology/atera-mcp:latest' }
-  { slug: 'superops', image: 'ghcr.io/wyre-technology/superops-mcp:latest' }
-  { slug: 'liongard', image: 'ghcr.io/wyre-technology/liongard-mcp:latest' }
-  { slug: 'halopsa', image: 'ghcr.io/wyre-technology/halopsa-mcp:latest' }
-  { slug: 'ninjaone', image: 'ghcr.io/wyre-technology/ninjaone-mcp:latest' }
-  { slug: 'connectwise-automate', image: 'ghcr.io/wyre-technology/connectwise-automate-mcp:latest' }
-  { slug: 'connectwise-manage', image: 'ghcr.io/wyre-technology/connectwise-manage-mcp:latest' }
-  { slug: 'salesbuildr', image: 'ghcr.io/wyre-technology/salesbuildr-mcp:latest' }
-  { slug: 'hudu', image: 'ghcr.io/wyre-technology/hudu-mcp:latest' }
-  { slug: 'rocketcyber', image: 'ghcr.io/wyre-technology/rocketcyber-mcp:latest' }
-  { slug: 'm365', image: 'ghcr.io/wyre-technology/m365-mcp:latest' }
-]
+// The conduit Bicep does not own the vendor fleet. Vendor MCP container apps
+// (gwp-*) are deployed by their own per-vendor release pipelines, and the
+// gateway's VENDOR_URL_* env vars are wired to them. The deploy workflow reads
+// the live VENDOR_URL_* set off the gateway and passes it through as
+// existingVendorEnv so a deploy preserves it.
+@description('Existing custom-domain bindings, read off the live gateway by the deploy workflow and passed through to preserve them.')
+param existingCustomDomains array = []
+
+@description('Existing VENDOR_URL_* env vars, read off the live gateway by the deploy workflow and passed through to preserve them.')
+param existingVendorEnv array = []
 
 // ---------------------------------------------------------------------------
 // Naming
@@ -150,6 +160,7 @@ module gatewayApp './modules/gateway-app.bicep' = {
   params: {
     location: location
     prefix: prefix
+    containerEnvName: containerEnvName
     logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
     logAnalyticsCustomerId: logAnalytics.outputs.customerId
     logAnalyticsSharedKey: logAnalytics.outputs.primarySharedKey
@@ -163,11 +174,16 @@ module gatewayApp './modules/gateway-app.bicep' = {
     ghcrToken: ghcrToken
     microsoftClientId: microsoftClientId
     microsoftClientSecret: microsoftClientSecret
+    allowedHosts: allowedHosts
+    adminEmails: adminEmails
+    threadAppId: threadAppId
+    entraTrustedTenantIds: entraTrustedTenantIds
     pgFqdn: postgres.outputs.fqdn
     pgUser: postgres.outputs.adminUser
     pgPassword: pgPassword
     pgDbName: postgres.outputs.databaseName
-    vendors: vendors
+    existingCustomDomains: existingCustomDomains
+    existingVendorEnv: existingVendorEnv
   }
 }
 
@@ -181,17 +197,6 @@ module identity './modules/identity.bicep' = {
   }
 }
 
-module vendorApps './modules/vendor-app.bicep' = {
-  name: 'vendor-apps'
-  params: {
-    location: location
-    prefix: prefix
-    containerEnvId: gatewayApp.outputs.containerEnvId
-    ghcrToken: ghcrToken
-    vendors: vendors
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Outputs (preserved from pre-modularization shape)
 // ---------------------------------------------------------------------------
@@ -200,4 +205,3 @@ output gatewayFqdn string = gatewayApp.outputs.gatewayFqdn
 output gatewayUrl string = 'https://${customDomain}'
 output pgFqdn string = postgres.outputs.fqdn
 output keyVaultUri string = keyvault.outputs.vaultUri
-output mcpServerNames array = vendorApps.outputs.mcpServerNames

@@ -84,6 +84,33 @@ jobs:
           fi
           echo "short=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
+      # Read the live gateway's custom-domain bindings and VENDOR_URL_* env so
+      # the Bicep deploy preserves them. The conduit Bicep does not own the
+      # vendor fleet (gwp-* CAs are deployed by per-vendor pipelines) and the
+      # custom-domain managed certs are bound out-of-band — without this, a
+      # deploy would wipe both. Empty on first-ever deploy. See azure/modules/
+      # gateway-app.bicep (existingCustomDomains / existingVendorEnv params).
+      - name: Read existing gateway state
+        id: gw-state
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_NAME: mcpgw-${{ needs.resolve.outputs.environment }}-gateway
+        run: |
+          set -euo pipefail
+          if az containerapp show -n "$APP_NAME" -g "$RG" --only-show-errors >/dev/null 2>&1; then
+            DOMAINS=$(az containerapp show -n "$APP_NAME" -g "$RG" --only-show-errors \
+              --query 'properties.configuration.ingress.customDomains' -o json | jq -c '. // []')
+            VENDOR_ENV=$(az containerapp show -n "$APP_NAME" -g "$RG" --only-show-errors \
+              --query 'properties.template.containers[0].env' -o json \
+              | jq -c '[.[] | select(.name | startswith("VENDOR_URL_"))]')
+          else
+            DOMAINS='[]'
+            VENDOR_ENV='[]'
+          fi
+          echo "domains=$DOMAINS" >> "$GITHUB_OUTPUT"
+          echo "vendorenv=$VENDOR_ENV" >> "$GITHUB_OUTPUT"
+          echo "Preserving $(echo "$DOMAINS" | jq 'length') custom-domain binding(s), $(echo "$VENDOR_ENV" | jq 'length') VENDOR_URL_* var(s)"
+
       # Production: inline params (legacy shape, unchanged from pre-staging)
       - name: Deploy Bicep (production)
         if: needs.resolve.outputs.environment == 'production'
@@ -95,10 +122,18 @@ jobs:
           parameters: >-
             gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
             redeployTrigger=${{ github.run_id }}
+            containerEnvName=mcpgw-prod-env-v2
+            allowedHosts=mcp.wyre.ai,mcp.wyretechnology.com
+            adminEmails=aaron@wyretechnology.com,tyork@wyretechnology.com
+            threadAppId=19ea2482-5f02-41c1-b723-220ecdaefde5
+            entraTrustedTenantIds=d92c73a4-ccc2-4277-8c5d-73c2849adfa4
+            alertEmail=engineering@wyretechnology.com
             masterKey=${{ secrets.MASTER_KEY }}
             jwtSecret=${{ secrets.JWT_SECRET }}
             pgPassword=${{ secrets.PG_PASSWORD }}
             ghcrToken=${{ secrets.GHCR_TOKEN }}
+            existingCustomDomains=${{ steps.gw-state.outputs.domains }}
+            existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
           failOnStdErr: false
 
       # Staging: bicepparam file + secret overrides
@@ -117,4 +152,6 @@ jobs:
             jwtSecret=${{ secrets.JWT_SECRET }}
             pgPassword=${{ secrets.PG_PASSWORD }}
             ghcrToken=${{ secrets.GHCR_TOKEN }}
+            existingCustomDomains=${{ steps.gw-state.outputs.domains }}
+            existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
           failOnStdErr: false
