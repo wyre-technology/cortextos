@@ -263,6 +263,13 @@ resource alertHighLatency 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pre
 
 // ---------------------------------------------------------------------------
 // Tier 2 — MCP server restarts
+//
+// Conduit's vendor MCP container apps use the 'gwp-' name prefix (gwp-cipp,
+// gwp-autotask, … — 40 of them). That prefix is distinct from the gateway
+// (mcpgw-prod-gateway) and from the legacy mcp-gateway sidecars (mcpgw-prod-*),
+// so the query filters on 'gwp-'. Filtering on '${prefix}-' (mcpgw-prod-)
+// matched the legacy sidecars and never the conduit vendor fleet — a
+// silent-blind monitor for conduit until this fix.
 // ---------------------------------------------------------------------------
 
 resource alertMcpServerRestarts 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
@@ -280,7 +287,7 @@ resource alertMcpServerRestarts 'Microsoft.Insights/scheduledQueryRules@2023-03-
         {
           query: '''
             ContainerAppSystemLogs_CL
-            | where ContainerAppName_s startswith '${prefix}-' and ContainerAppName_s != '${prefix}-gateway'
+            | where ContainerAppName_s startswith 'gwp-'
             | where Reason_s == 'BackOff' or Reason_s == 'CrashLoopBackOff' or Reason_s has 'restart'
             | summarize restarts = count() by ContainerAppName_s, bin(TimeGenerated, 5m)
             | where restarts > 2
