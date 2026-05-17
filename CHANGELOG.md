@@ -241,8 +241,19 @@ mcp-gateway CHANGELOG.
   (previously a "Coming soon" stub) — the supported-vendor catalog,
   credential scopes, connecting/rotating vendors, and a
   connection-failure troubleshooting table.
+- New `docs/src/content/docs/reference/vendor-health.mdx` — documents
+  the tenant-scoped vendor-health feature: the four health states
+  (healthy/degraded/down/unknown), the cached-polling model, the
+  `GET /api/orgs/:orgId/vendor-health` endpoint, and what vendor
+  health does and does not cover. Sidebar-linked under **Reference**.
 
 #### Fixed
+- Corrected the `/health/vendors` entry in the API reference. The doc
+  said "No authentication required"; the endpoint is now admin-gated
+  (`X-Admin-API-Key`) — it was hardened to remove a cross-tenant
+  information-disclosure. Added the tenant-facing
+  `GET /api/orgs/:orgId/vendor-health` endpoint, which the API
+  reference did not previously list.
 - Corrected the Pro-tier feature list in
   `docs/src/content/docs/guides/msp-onboarding.mdx`. The list (carried
   from the pre-Business-tier legacy guide) wrongly attributed audit log

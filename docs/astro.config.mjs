@@ -56,6 +56,7 @@ export default defineConfig({
             { label: 'Permissions', slug: 'reference/permissions' },
             { label: 'Security', slug: 'reference/security' },
             { label: 'Subtenant Model', slug: 'reference/subtenants' },
+            { label: 'Vendor Health', slug: 'reference/vendor-health' },
             { label: 'Prompt Capture & Privacy', slug: 'reference/prompt-capture' },
             { label: 'Agents', slug: 'reference/agents-concepts' },
           ],

@@ -22,7 +22,9 @@ Health check endpoint. No authentication required.
 
 ### GET /health/vendors
 
-Vendor container health status. No authentication required.
+Global vendor-container health status across all tenants.
+
+**Auth:** `X-Admin-API-Key` header (WYRE-internal — admin-gated). This endpoint is **not** the tenant-facing vendor-health surface; it was admin-gated to remove a cross-tenant information-disclosure. Tenants should use `GET /api/orgs/:orgId/vendor-health` (below), which is org-scoped.
 
 **Response:**
 ```json
@@ -34,6 +36,31 @@ Vendor container health status. No authentication required.
   }
 }
 ```
+
+### GET /api/orgs/:orgId/vendor-health
+
+Tenant-scoped vendor-container health — returns only the vendors **this org has connected**. See the [Vendor Health reference](/docs/reference/vendor-health/) for the full feature description.
+
+**Auth:** Auth0 session (member+)
+
+**Response:**
+```json
+{
+  "vendors": [
+    {
+      "vendorSlug": "datto-rmm",
+      "displayName": "Datto RMM",
+      "status": "healthy",
+      "lastChecked": "2026-05-17T13:00:00.000Z",
+      "latencyMs": 142,
+      "version": "1.4.0",
+      "errorDetail": null
+    }
+  ]
+}
+```
+
+`status` is one of `healthy` / `degraded` / `down` / `unknown`. `errorDetail` is populated only when `degraded` or `down`.
 
 ---
 
