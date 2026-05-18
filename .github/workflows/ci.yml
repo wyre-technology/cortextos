@@ -148,3 +148,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Static-analysis gate (CI-QW-5). Diff-aware — only findings this PR
+  # INTRODUCES count, computed against the PR merge-base, so the pre-existing
+  # backlog never wedges a PR. ERROR findings block; WARNING/INFO are
+  # informational (printed, non-blocking). Token-free Semgrep OSS — no
+  # Semgrep Cloud upload, no licence.
+  semgrep:
+    name: SAST (semgrep)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep@sha256:9349edbadf90c3f3c0c3f55867625354e89680e6fa10d9034042af52fdb0e0d0  # 1.162.0
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff baseline (PR merge-base)
+        id: baseline
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin "$BASE_REF"
+          echo "sha=$(git merge-base HEAD FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Semgrep - new findings, all severities (informational)
+        env:
+          BASELINE_SHA: ${{ steps.baseline.outputs.sha }}
+        run: semgrep scan --config p/default --baseline-commit "$BASELINE_SHA" --disable-version-check
+
+      - name: Semgrep - ERROR gate (blocks the PR)
+        env:
+          BASELINE_SHA: ${{ steps.baseline.outputs.sha }}
+        run: semgrep scan --config p/default --baseline-commit "$BASELINE_SHA" --severity ERROR --error --disable-version-check
