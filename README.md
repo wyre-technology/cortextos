@@ -71,6 +71,13 @@ docker compose up --build
 
 Gateway runs on `http://localhost:8080`. PostgreSQL on `localhost:5432`.
 
+> **Pulling the published image directly:** the GHCR image
+> `ghcr.io/wyre-technology/conduit` ships with build provenance + SBOM
+> attestations and is published as a single-platform (`linux/amd64`) OCI
+> image index. On a non-amd64 host (e.g. Apple Silicon), a direct pull needs
+> an explicit platform:
+> `docker pull --platform linux/amd64 ghcr.io/wyre-technology/conduit:latest`.
+
 ## Configuration
 
 All configuration is via environment variables. See [`.env.example`](.env.example) for the complete reference.
