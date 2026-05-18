@@ -507,6 +507,8 @@ export const VENDORS: Record<string, VendorConfig> = {
     docsUrl: 'https://developer.connectwise.com/Products/ConnectWise_Automate/Automate_APIs',
     async validate(creds) {
       const serverUrl = creds.serverUrl.replace(/\/+$/, '');
+      const urlError = await rejectIfUnsafeBaseUrl(serverUrl, 'Server URL');
+      if (urlError) return urlError;
       const res = await fetch(`${serverUrl}/cwa/api/v1/APIToken`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -589,6 +591,8 @@ export const VENDORS: Record<string, VendorConfig> = {
     docsUrl: 'https://support.hudu.com/hc/en-us/articles/how-to-use-the-hudu-api',
     async validate(creds) {
       const baseUrl = creds.baseUrl.replace(/\/+$/, '');
+      const urlError = await rejectIfUnsafeBaseUrl(baseUrl, 'Base URL');
+      if (urlError) return urlError;
       const res = await fetch(`${baseUrl}/api/v1/companies?page=1&page_size=1`, {
         headers: { 'x-api-key': creds.apiKey, Accept: 'application/json' },
         signal: AbortSignal.timeout(10_000),
