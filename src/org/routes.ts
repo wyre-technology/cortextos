@@ -482,6 +482,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
 
+        // Verify the target user is actually a member of this org. Without
+        // this check an admin can write server-access rows for arbitrary
+        // user ids and emit misleading server_access_* audit entries — the
+        // credential-injector refuses a non-member grant at runtime, but the
+        // audit record is the lie (gateway PR #78 M10).
+        const targetMembership = await orgService.getMembership(orgId, userId);
+        if (!targetMembership) {
+          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
+        }
+
         const grant = await orgService.grantServerAccess(orgId, userId, vendorSlug, user.sub);
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_granted', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.send(grant);
@@ -495,6 +505,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const { orgId, userId, vendor: vendorSlug } = request.params;
         const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
+
+        // Target-membership check — same rationale as the grant handler
+        // (gateway PR #78 M10): no audit entry for a non-member user id.
+        const targetMembership = await orgService.getMembership(orgId, userId);
+        if (!targetMembership) {
+          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
+        }
 
         await orgService.revokeServerAccess(orgId, userId, vendorSlug);
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_revoked', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
@@ -513,6 +530,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const { vendors } = request.body;
         if (!Array.isArray(vendors)) {
           return reply.code(400).send({ error: 'vendors must be an array of vendor slugs' });
+        }
+
+        // Target-membership check — same rationale as the grant handler
+        // (gateway PR #78 M10).
+        const targetMembership = await orgService.getMembership(orgId, userId);
+        if (!targetMembership) {
+          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
         }
 
         await orgService.bulkSetServerAccess(orgId, userId, vendors, user.sub);

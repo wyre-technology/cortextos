@@ -217,6 +217,26 @@ function adminMembership(orgId = 'org-1', userId = 'user-1') {
   });
 }
 
+/**
+ * getMembership that is target-aware: admin for the requester (user-1) and
+ * null for anyone else. Used by the #78 M10 tests — the requester passes the
+ * requireOrgRole admin check, but a non-member target must 404.
+ */
+function targetAwareMembership() {
+  return vi.fn(async (orgId: string, userId: string) =>
+    userId === 'user-1'
+      ? {
+          id: 'mem-3',
+          orgId,
+          userId,
+          role: 'admin' as const,
+          joinedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        }
+      : null,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1428,6 +1448,24 @@ describe('orgRoutes', () => {
       const response = await app.inject({ method: 'PUT', url: '/api/orgs/org-1/members/user-2/server-access/datto-rmm' });
       expect(response.statusCode).toBe(403);
     });
+
+    it('returns 404 when the target user is not a member of the org', async () => {
+      // #78 M10 — pre-fix an admin could grant access to any userId,
+      // writing server-access rows for non-members and emitting
+      // misleading server_access_granted audit entries. getMembership is
+      // admin for the requester (user-1) and null for the stranger.
+      authenticateAs();
+      const grantServerAccess = vi.fn();
+      const orgService = createMockOrgService({
+        getMembership: targetAwareMembership(),
+        grantServerAccess,
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({ method: 'PUT', url: '/api/orgs/org-1/members/stranger/server-access/datto-rmm' });
+      expect(response.statusCode).toBe(404);
+      expect(grantServerAccess).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /api/orgs/:orgId/members/:userId/server-access/:vendor', () => {
@@ -1442,6 +1480,21 @@ describe('orgRoutes', () => {
       const response = await app.inject({ method: 'DELETE', url: '/api/orgs/org-1/members/user-2/server-access/datto-rmm' });
       expect(response.statusCode).toBe(204);
       expect(orgService.revokeServerAccess).toHaveBeenCalledWith('org-1', 'user-2', 'datto-rmm');
+    });
+
+    it('returns 404 when the target user is not a member of the org', async () => {
+      // #78 M10 — same target-membership check on revoke.
+      authenticateAs();
+      const revokeServerAccess = vi.fn();
+      const orgService = createMockOrgService({
+        getMembership: targetAwareMembership(),
+        revokeServerAccess,
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({ method: 'DELETE', url: '/api/orgs/org-1/members/stranger/server-access/datto-rmm' });
+      expect(response.statusCode).toBe(404);
+      expect(revokeServerAccess).not.toHaveBeenCalled();
     });
   });
 
@@ -1476,6 +1529,25 @@ describe('orgRoutes', () => {
         payload: { vendors: 'datto-rmm' },
       });
       expect(response.statusCode).toBe(400);
+    });
+
+    it('returns 404 when the target user is not a member of the org', async () => {
+      // #78 M10 — same target-membership check on bulk-set.
+      authenticateAs();
+      const bulkSetServerAccess = vi.fn();
+      const orgService = createMockOrgService({
+        getMembership: targetAwareMembership(),
+        bulkSetServerAccess,
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/api/orgs/org-1/members/stranger/server-access',
+        payload: { vendors: ['datto-rmm'] },
+      });
+      expect(response.statusCode).toBe(404);
+      expect(bulkSetServerAccess).not.toHaveBeenCalled();
     });
   });
 
