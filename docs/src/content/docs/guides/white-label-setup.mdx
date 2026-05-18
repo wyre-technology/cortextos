@@ -1,144 +1,57 @@
 ---
 title: White-label setup
-description: Configure the MSP-facing brand that customers see on invites, consent screens, and error pages.
+description: How Conduit's white-label branding is configured today — deployment-level environment variables that theme the customer-facing surfaces.
 ---
 
-Conduit lets each MSP present the product under its own brand.
-Customers who accept an invite, connect a vendor, or see an error page
-see **your** MSP's name, logo, and colors — not Conduit's.
+Conduit can be presented under a custom brand: the name, logo, colors, and fonts customers see on the landing, sign-in, and consent surfaces are configurable.
 
-This guide covers what you can change, how to change it, and the
-files that drive the defaults.
+This guide describes how white-label branding works **today**. It is honest about the current shape of the feature: branding is configured at the **deployment level**, by whoever operates the Conduit deployment — there is not yet a self-service branding UI or API.
 
-## What white-label controls
+:::note[Current state]
+Per-organization, self-service white-label — each MSP or customer setting its own brand from the dashboard — is designed (the `brand_profiles` data model exists, migration `008`) but **not yet wired up**. Until it ships, use the deployment-level configuration below. This page will be updated when self-service branding lands.
+:::
 
-| Surface | Element | Source |
-|---|---|---|
-| Invitation email | Sender name, logo header, footer support links | MSP brand + template |
-| Consent screen | Display name, logo, primary color, support URL | MSP brand |
-| Connection / OAuth landing | Display name, logo, primary color | MSP brand |
-| Success and error pages | Display name, support email, support URL | MSP brand |
-| Audit export PDF footer | Display name | MSP brand |
+---
 
-Conduit's own product surfaces (admin dashboard, docs) are **not**
-rebranded per MSP — those stay Conduit. White-label applies only to
-customer-facing surfaces.
+## What branding controls
 
-## Brand fields
+The brand themes Conduit's customer-facing surfaces — the landing page, the Auth0 sign-in and consent screens, and the vendor-connection pages. It sets the product name, tagline, logo, color palette, fonts, and corner radius shown there.
 
-| Field | Required | Description |
-|---|---|---|
-| `displayName` | yes | Shown everywhere a name appears. Sentence case. |
-| `logoUrl` | no | HTTPS URL to SVG or PNG. Replaces text wordmark where a logo fits. |
-| `faviconUrl` | no | HTTPS URL to a 32×32 favicon. Falls back to Conduit's. |
-| `primaryColor` | no | Hex color used for buttons, links, and active states. Contrast against white is validated. |
-| `supportEmail` | yes | Shown on error pages and consent screens. |
-| `supportUrl` | no | Linked from footer of customer-facing pages. |
+## Deployment-level brand
 
-The full schema lives in
-[`src/brand/types.ts`](https://github.com/wyre-technology/wyre-mcp-gateway-platform/blob/main/src/brand/types.ts).
-Built-in MSP brand presets live in
-[`src/brand/customers.ts`](https://github.com/wyre-technology/wyre-mcp-gateway-platform/blob/main/src/brand/customers.ts).
+The brand is set with environment variables on the Conduit deployment. Each variable has a default; unset variables fall back to the Wyre defaults.
 
-## Configure your MSP brand
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `BRAND_NAME` | Product / company name shown in the UI | `Wyre Technology` |
+| `BRAND_TAGLINE` | Short tagline in meta descriptions | `Customer MCP Gateway` |
+| `BRAND_LOGO_URL` | URL to the logo image | Wyre logo |
+| `BRAND_SUPPORT_URL` | Support / help URL | *(empty)* |
+| `BRAND_DOCS_URL` | Documentation URL | `/` |
+| `BRAND_ISSUES_URL` | URL for filing bug reports | Wyre repo issues |
+| `BRAND_PRIMARY_COLOR` | Primary accent color (hex) | `#EDE947` |
+| `BRAND_ACCENT_COLOR` | Secondary accent color (hex) | `#00C9DB` |
+| `BRAND_HEADING_FONT` | Heading font family (Google Fonts) | `Oswald` |
+| `BRAND_BODY_FONT` | Body font family (Google Fonts) | `Nunito Sans` |
+| `BRAND_BORDER_RADIUS` | Global border-radius | `2px` |
+| `BRAND_DOMAIN` | Public domain | derived from `BASE_URL` |
 
-1. Sign in as an MSP admin.
-2. Open **Settings → Branding**.
-3. Fill in the fields above. The preview panel renders a sample
-   consent screen with your values applied.
-4. Click **Save**. Brand changes apply on the next customer-facing
-   page render; no restart is required.
+Set these in the deployment's environment and restart the gateway; the new brand applies on the next page render.
 
-### API
+## Per-customer brand variants
 
-```bash
-curl -X PUT https://<your-conduit-host>/api/msps/<msp-slug>/brand \
-  -H "Authorization: Bearer <msp-admin-jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "displayName": "TechForce Solutions",
-    "logoUrl": "https://cdn.techforce.example/logo.svg",
-    "primaryColor": "#10b981",
-    "supportEmail": "support@techforce.example",
-    "supportUrl": "https://support.techforce.example"
-  }'
-```
+A single deployment can also serve more than one brand. Conduit keeps a registry of customer brand variants keyed by URL path prefix (`src/brand/customers.ts`) — each entry produces a fully branded landing and sign-in experience at `/<key>`. This registry is a code-level configuration maintained by the deployment operator; it is the mechanism behind multi-brand deployments today, not a self-service feature.
 
-## Preview before you ship
+## Message templates
 
-Before sending the first real customer invite:
+Conduit's docs include four customer-facing message templates you can adapt as reference copy for your own onboarding and notification emails:
 
-1. Create a **staging customer** under your MSP with an email you
-   control.
-2. Accept the invite from that email and walk every page — consent,
-   connect, success, error (trigger with an intentionally bad OAuth
-   redirect).
-3. Verify your logo renders on light **and** dark backgrounds (Conduit
-   does not auto-invert SVGs — upload a light-mode variant if needed).
-4. Verify the support email and URL work.
-
-## Templates
-
-Conduit ships four customer-facing message templates you can fork and
-customize. Each template uses brand tokens that are interpolated at
-send time.
-
-| Template | When it fires | Path |
-|---|---|---|
-| Onboarding email | A new customer admin is invited | [`templates/onboarding-email`](/templates/onboarding-email/) |
-| OAuth consent copy | A customer user completes vendor OAuth | [`templates/oauth-consent`](/templates/oauth-consent/) |
-| Revocation notice | An MSP admin revokes a customer's access | [`templates/revocation-notice`](/templates/revocation-notice/) |
-| Security notice | A credential rotation or breach notification goes out | [`templates/security-notice`](/templates/security-notice/) |
-
-### Available tokens
-
-Every template supports the tokens below. Unrecognized tokens are
-left as-is so you can spot typos in review.
-
-| Token | Example value |
-|---|---|
-| `{{msp.name}}` | "TechForce Solutions" |
-| `{{msp.supportEmail}}` | "support@techforce.example" |
-| `{{msp.supportUrl}}` | "https://support.techforce.example" |
-| `{{msp.logoUrl}}` | "https://cdn.techforce.example/logo.svg" |
-| `{{customer.name}}` | "Acme Corp" |
-| `{{customer.adminEmail}}` | "admin@acme.example" |
-| `{{user.email}}` | "jane@acme.example" |
-| `{{user.name}}` | "Jane Doe" |
-| `{{invite.url}}` | "https://conduit.example/invite/abc123" |
-| `{{invite.expiresAt}}` | "2026-05-01T12:00:00Z" |
-| `{{vendor.name}}` | "Datto RMM" |
-| `{{now}}` | "2026-04-20" |
-
-## Upgrading your brand
-
-Brand changes are audited. Every update to
-`/api/msps/<slug>/brand` appears in the admin audit log with the
-previous and new values. Review the
-[CHANGELOG](https://github.com/wyre-technology/wyre-mcp-gateway-platform/blob/main/CHANGELOG.md)
-for brand-schema changes before upgrading Conduit — new fields are
-always additive but default values may change.
-
-## Troubleshooting
-
-**Logo is pixelated on retina displays.** Upload an SVG; Conduit does
-not resize raster images.
-
-**Primary color fails contrast validation.** Pick a shade with at
-least 4.5:1 contrast against white. Conduit rejects colors that
-would fail WCAG AA on buttons.
-
-**Invite email came from Conduit, not my MSP.** The sender address
-is fixed to Conduit's domain for SPF/DKIM reasons; the *display
-name* is your MSP. To send from your own domain, configure a custom
-SMTP relay — see the operations docs (forthcoming).
+- [Onboarding email](/docs/templates/onboarding-email/)
+- [OAuth consent](/docs/templates/oauth-consent/)
+- [Revocation notice](/docs/templates/revocation-notice/)
+- [Security notice](/docs/templates/security-notice/)
 
 ## Related
 
-- [Getting Started](/getting-started/) — branding step in context.
-- [Customer provisioning](/guides/customer-provisioning/) — where
-  brand fields surface.
-- [Onboarding email template](/templates/onboarding-email/)
-- [OAuth consent template](/templates/oauth-consent/)
-- [Revocation notice template](/templates/revocation-notice/)
-- [Security notice template](/templates/security-notice/)
+- [Getting Started](/docs/getting-started/) — where branding fits in the onboarding flow.
+- [Architecture](/docs/reference/architecture/) — how the deployment is configured.

@@ -1,17 +1,19 @@
 ---
 title: Prompt Capture & Privacy
-description: What Conduit's audit log records about MCP tool calls — and, importantly, what it deliberately does not.
+description: What Conduit's audit log records about MCP tool calls by default, and what changes when an organization turns on the optional prompt-capture feature.
 ---
 
-Conduit records metadata about every MCP tool call so that an organization has visibility into how AI tools are being used. This page is about the **privacy boundary** of that capture — what is recorded and, just as importantly, what is not.
+Conduit records **metadata** about every MCP tool call so an organization has visibility into how its AI tools are used. It also has an **optional, opt-in prompt-capture feature** that records more — the tool's arguments and a summary of what the vendor returned.
 
-For the audit log API and retention behavior, see the [API reference](/docs/reference/api/#audit) and the [Security guide](/docs/reference/security/#audit-logging).
+This page covers both: the default privacy boundary, and exactly what changes when an organization chooses to turn capture on.
+
+For the audit log API and retention, see the [API reference](/docs/reference/api/#audit) and the [Security guide](/docs/reference/security/#audit-logging).
 
 ---
 
-## What is captured
+## What is always captured
 
-Each tool call generates a `request_log` entry:
+Every tool call generates a `request_log` entry with this metadata — regardless of whether prompt capture is on:
 
 | Field | Description |
 |-------|-------------|
@@ -21,41 +23,46 @@ Each tool call generates a `request_log` entry:
 | `tool_name` | The specific tool invoked (e.g. `datto_list_devices`) |
 | `status_code` | HTTP status of the response |
 | `response_time_ms` | End-to-end latency |
+| `source` | Whether the call came in over MCP or the CLI wrapper |
 | `created_at` | Timestamp |
 
-## What is NOT captured
+This metadata answers *what tool was used, by whom, and when*.
 
-Conduit does **not** capture:
+## What is captured only when prompt capture is ON
 
-- The user's prompt or conversation context
-- Tool call **arguments** (the parameters passed to the tool)
-- Tool call **results** (the data returned by the vendor)
-- The AI model's reasoning or chain-of-thought
+By **default, prompt capture is off**, and Conduit does **not** record:
 
-This is a deliberate privacy decision. The audit log records *what tool was used, by whom, and when* — not the content of the interaction. A search query, a ticket ID, a customer's data returned by a vendor API — none of it is logged.
+- The tool call's **arguments** (the parameters passed to the tool)
+- A **summary of the tool's result** (the data the vendor returned)
 
-:::note
-Because arguments and results are never captured, the audit log cannot be used to reconstruct what data an AI agent saw. That is a privacy guarantee, and also a deliberate limit — the audit log answers "was this tool used?", not "what did it return?".
+When an organization **opts in** (see below), Conduit additionally records, for each tool call:
+
+- **`tool_arguments`** — the full arguments passed to the tool, as JSON.
+- **`response_summary`** — a summary of the vendor's response, as JSON, truncated to a **8 KB** cap.
+
+Conduit never captures the user's prompt, conversation history, or the AI model's reasoning — that content never reaches the gateway. But it is important to be precise: **when prompt capture is on, tool arguments and response summaries *are* stored** in the audit log and *are* included in the audit-log CSV export. A search query, a ticket ID, or customer data returned by a vendor API can appear there. Capture is a deliberate visibility-vs-privacy trade-off, made per organization — not a fixed platform guarantee.
+
+## Turning prompt capture on
+
+Prompt capture is gated two ways, and **both** must be satisfied for any data to be captured:
+
+1. **Plan** — the organization must be on a plan that permits capture. **Free does not; Pro and Business do.**
+2. **Org opt-in** — an `owner` or `admin` must explicitly enable it with the prompt-capture toggle on the organization's **Audit log** page (`/org/audit`).
+
+Until an admin turns the toggle on, capture stays off and only the metadata above is recorded. Personal-scope calls — calls made without an organization context — are never captured, because there is no org to gate on.
+
+:::caution
+Enabling prompt capture means tool arguments and response summaries for every subsequent call are written to the audit log. Enable it when you need that level of visibility (debugging, detailed usage review) and your data-handling policy allows it; leave it off when the metadata is enough.
 :::
-
-## Privacy summary
-
-- **No prompt content** — Conduit never sees or stores the user's prompt, conversation history, or model output.
-- **No tool arguments** — call parameters (search queries, record IDs) are not logged.
-- **No response content** — data returned by vendor APIs is not stored.
-- **Metadata only** — who used what tool, when, and how long it took.
-- **Encrypted at rest** — the database storing audit logs is encrypted at rest (enabled by default on Azure Database for PostgreSQL Flexible Server).
-- **Access controlled** — see below.
-- **Auto-cleanup** — request log entries are purged after 90 days.
 
 ## Access control
 
 Audit log access is gated three ways:
 
-1. **Plan** — audit log access requires a paid plan (Pro or Business). Audit log **CSV export** is a Business-tier feature.
+1. **Plan** — audit log access requires a paid plan (Pro or Business).
 2. **Role** — only `admin` and `owner` roles can view the audit log.
 3. **Scope** — users only ever see logs for their own organization.
 
 ## Retention
 
-Request log entries older than **90 days** are automatically cleaned up. For longer retention or SIEM integration, configure [log shipping](/docs/guides/msp-onboarding/) to Loki, Graylog, or LogScale — the audit log is forwarded as it is written, and the SIEM's own retention policy then applies.
+Conduit purges `request_log` entries older than **90 days**. For longer retention or SIEM integration, configure [log shipping](/docs/guides/msp-onboarding/) to Loki, Graylog, or LogScale — the audit log is forwarded as it is written, and the SIEM's own retention policy then applies.

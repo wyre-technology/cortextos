@@ -5,7 +5,7 @@ description: Email sent to a customer contact when an MSP revokes a user, connec
 
 Fork this template to set the tone of revocation notifications. Tokens
 are interpolated at send time; see
-[white-label setup](/guides/white-label-setup/) for the full token
+[white-label setup](/docs/guides/white-label-setup/) for the full token
 list.
 
 The same template is used for user removal, connection revocation, and

@@ -6,7 +6,7 @@ description: Copy shown on the Conduit consent screen when a customer user autho
 Fork this template to control the words a customer sees when Conduit
 asks them to authorize a vendor OAuth connection (for example Xero,
 QuickBooks, HubSpot, Microsoft 365). Tokens are interpolated at render
-time; see [white-label setup](/guides/white-label-setup/) for the full
+time; see [white-label setup](/docs/guides/white-label-setup/) for the full
 token list.
 
 ## Heading

@@ -11,40 +11,62 @@ For the step-by-step place in the onboarding flow, see [MSP Onboarding § Connec
 
 ## Supported vendors
 
-Conduit ships with **no pre-configured vendors** — the vendors enabled in a deployment depend on the customer's tool stack, decided during discovery. The integrations built so far:
+Conduit ships with **no pre-configured vendors** — the vendors enabled in a deployment depend on the customer's tool stack, decided during discovery. The vendor catalog currently covers **50 integrations**:
 
-| Vendor | Slug | Category | Auth type |
-|--------|------|----------|-----------|
-| Datto RMM | `datto-rmm` | RMM | API Key + Secret |
-| Syncro | `syncro` | RMM | API Key |
-| Atera | `atera` | RMM | API Key |
-| SuperOps | `superops` | RMM | API Token |
-| ConnectWise Automate | `connectwise-automate` | RMM | Client Credentials |
-| NinjaOne | `ninjaone` | RMM | Client Credentials |
-| Autotask PSA | `autotask` | PSA | Username + Secret |
-| HaloPSA | `halopsa` | PSA | Client Credentials |
-| ConnectWise PSA | `connectwise-psa` | PSA | Public/Private Key |
-| IT Glue | `itglue` | Documentation | API Key |
-| Hudu | `hudu` | Documentation | API Key |
-| Liongard | `liongard` | Documentation | Access Key |
-| Domotz | `domotz` | Network | API Key |
-| RocketCyber | `rocketcyber` | Security | API Key |
-| SentinelOne | `sentinelone` | Security | API Token |
-| Huntress | `huntress` | Security | API Key + Secret |
-| Blumira | `blumira` | Security | JWT Token |
-| runZero | `runzero` | Security | API Token |
-| Avanan | `avanan` | Email Security | API Key |
-| Proofpoint | `proofpoint` | Email Security | API Key |
-| KnowBe4 | `knowbe4` | Email Security | API Key |
-| SalesBuildr | `salesbuildr` | Sales | API Key |
-| PandaDoc | `pandadoc` | Sales | API Key |
-| Pax8 | `pax8` | Sales | MCP Token |
-| Xero | `xero` | Accounting | OAuth 2.0 |
-| QuickBooks Online | `qbo` | Accounting | OAuth 2.0 |
-| HubSpot | `hubspot` | CRM | OAuth 2.0 |
-| Microsoft 365 | `m365` | Productivity | OAuth 2.0 |
+| Vendor | Slug | Category |
+|--------|------|----------|
+| Datto RMM | `datto-rmm` | RMM |
+| Action1 | `action1` | RMM |
+| Atera | `atera` | RMM |
+| Syncro | `syncro` | RMM |
+| SuperOps | `superops` | RMM |
+| ConnectWise Automate | `connectwise-automate` | RMM |
+| NinjaOne | `ninjaone` | RMM |
+| ImmyBot | `immybot` | RMM |
+| Kaseya VSA | `kaseya-vsa` | RMM |
+| Autotask PSA | `autotask` | PSA |
+| HaloPSA | `halopsa` | PSA |
+| HaloPSA (First-Party MCP) | `halopsa-official` | PSA |
+| ConnectWise PSA | `connectwise-psa` | PSA |
+| Kaseya BMS | `kaseya-bms` | PSA |
+| IT Glue | `itglue` | Documentation |
+| Hudu | `hudu` | Documentation |
+| Liongard | `liongard` | Documentation |
+| RocketCyber | `rocketcyber` | Security |
+| SentinelOne | `sentinelone` | Security |
+| Huntress | `huntress` | Security |
+| Blumira | `blumira` | Security |
+| runZero | `runzero` | Security |
+| PagerDuty | `pagerduty` | Security |
+| Rootly | `rootly` | Security |
+| Abnormal Security | `abnormal-security` | Security |
+| Blackpoint Cyber | `blackpoint` | Security |
+| ThreatLocker | `threatlocker` | Security |
+| Ironscales | `ironscales` | Security |
+| Mimecast | `mimecast` | Security |
+| SpamTitan | `spamtitan` | Security |
+| Checkpoint Avanan | `avanan` | Email Security |
+| Proofpoint | `proofpoint` | Email Security |
+| KnowBe4 | `knowbe4` | Email Security |
+| Domotz | `domotz` | Network |
+| BetterStack | `betterstack` | Network |
+| Datto BCDR | `datto-bcdr` | BCDR |
+| Datto SaaS Protection | `datto-saas-protection` | BCDR |
+| Spanning | `spanning` | BCDR |
+| Unitrends | `unitrends` | BCDR |
+| Microsoft 365 | `m365` | Productivity |
+| CIPP | `cipp` | Productivity |
+| Crewhu | `crewhu` | Productivity |
+| TimeZest | `timezest` | Productivity |
+| SalesBuildr | `salesbuildr` | Sales |
+| PandaDoc | `pandadoc` | Sales |
+| Pax8 | `pax8` | Sales |
+| Xero | `xero` | Accounting |
+| QuickBooks Online | `qbo` | Accounting |
+| HubSpot | `hubspot` | CRM |
+| Sherweb | `sherweb` | Marketplace |
 
-Adding a vendor not on this list is a development task — see the engineering vendor-integration guide.
+Each vendor's required credentials (API key, secret, OAuth, etc.) are shown on its connect form — see [Connecting a vendor](#connecting-a-vendor) below. Adding a vendor not in this catalog is a development task — see the engineering vendor-integration guide.
 
 ## Credential scopes
 

@@ -11,13 +11,9 @@ export default defineConfig({
       title: 'Conduit Docs',
       description:
         'Conduit is the white-label MSP channel gateway that connects AI agents to the vendor MCP servers MSPs already rely on.',
-      social: [
-        {
-          icon: 'github',
-          label: 'GitHub',
-          href: 'https://github.com/wyre-technology/wyre-mcp-gateway-platform',
-        },
-      ],
+      social: {
+        github: 'https://github.com/wyre-technology/conduit',
+      },
       logo: {
         // Placeholder — replace with real Conduit mark when brand asset lands.
         src: './src/assets/logo-placeholder.svg',
@@ -25,7 +21,7 @@ export default defineConfig({
       },
       editLink: {
         baseUrl:
-          'https://github.com/wyre-technology/wyre-mcp-gateway-platform/edit/main/docs/',
+          'https://github.com/wyre-technology/conduit/edit/main/docs/',
       },
       sidebar: [
         {
@@ -39,7 +35,6 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'MSP Onboarding', slug: 'guides/msp-onboarding' },
-            { label: 'Customer Provisioning', slug: 'guides/customer-provisioning' },
             { label: 'Vendor Connections', slug: 'guides/vendor-connections' },
             { label: 'White-label Setup', slug: 'guides/white-label-setup' },
             { label: 'Billing & Plans', slug: 'guides/billing' },

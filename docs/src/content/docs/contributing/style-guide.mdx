@@ -110,9 +110,12 @@ only when the consequence is real.
 
 ### Links
 
-- **Internal links** use absolute paths from the docs root with a
-  trailing slash: `/guides/msp-onboarding/`. Do not link to `.md` or
-  `.mdx` files.
+- **Internal links** use absolute paths that include the `/docs` base
+  prefix, with a trailing slash: `/docs/guides/msp-onboarding/`. The
+  site is served under `/docs` (`base: '/docs'` in `astro.config.mjs`),
+  and Astro does **not** prepend the base to Markdown links — a bare
+  `/guides/...` link renders without the prefix and 404s. Do not link
+  to `.md` or `.mdx` files.
 - **External links** use full URLs with `https://`. Prefer the
   canonical source (vendor docs, RFC, GitHub) over a blog mirror.
 - **Link text** must describe the destination. Never write "click

@@ -5,7 +5,7 @@ description: Customer-facing email template sent when an MSP invites a new custo
 
 Fork this template when you want an MSP-specific onboarding email
 tone. Tokens are interpolated at send time; see
-[white-label setup](/guides/white-label-setup/) for the full token
+[white-label setup](/docs/guides/white-label-setup/) for the full token
 list.
 
 ## Subject
