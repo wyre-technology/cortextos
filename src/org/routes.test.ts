@@ -29,6 +29,22 @@ vi.mock('../credentials/vendor-config.js', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock the SCIM connections service
+// ---------------------------------------------------------------------------
+// POST /api/orgs/:orgId/scim/connections dynamically imports this and calls
+// new ScimConnectionsService().create(). Mocked so the SSO-gate tests can
+// exercise the Business-tier pass path without a live database.
+
+const mockScimCreate = vi.fn();
+
+vi.mock('../scim/connections-service.js', () => ({
+  ScimConnectionsService: vi.fn(() => ({
+    create: mockScimCreate,
+    listForOrg: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -952,6 +968,133 @@ describe('orgRoutes', () => {
       });
 
       expect(response.statusCode).toBe(403);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/orgs/:orgId/service-clients — Business-tier gate
+  // -------------------------------------------------------------------------
+  // Regression guard for P1-8: canUseServiceClients was defined but never
+  // called, so any org admin — including a below-Business org — could create
+  // a service client by hitting the API directly. The gate is enforced at the
+  // API layer (the /org/service-clients web page gate is not enough).
+
+  describe('POST /api/orgs/:orgId/service-clients', () => {
+    it('returns 402 when the org is below the Business plan', async () => {
+      authenticateAs();
+      const createServiceClient = vi.fn();
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        createServiceClient,
+      } as unknown as Partial<OrgService>);
+      const billingGate = createMockBillingGate({
+        canUseServiceClients: vi.fn().mockResolvedValue(false),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/service-clients',
+        payload: { name: 'ci-bot' },
+      });
+
+      expect(response.statusCode).toBe(402);
+      expect(response.json().error).toBe('Service clients require the Business plan');
+      // The gate must short-circuit before the client is ever created.
+      expect(createServiceClient).not.toHaveBeenCalled();
+    });
+
+    it('creates a service client when the org is on the Business plan', async () => {
+      authenticateAs();
+      const createServiceClient = vi.fn().mockResolvedValue({
+        id: 'sc-1',
+        name: 'ci-bot',
+        expiresAt: undefined,
+        createdAt: new Date().toISOString(),
+      });
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        createServiceClient,
+      } as unknown as Partial<OrgService>);
+      const billingGate = createMockBillingGate({
+        canUseServiceClients: vi.fn().mockResolvedValue(true),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/service-clients',
+        payload: { name: 'ci-bot' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      // client_secret is surfaced once, at create time.
+      expect(response.json().client_secret).toBeTruthy();
+      expect(createServiceClient).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/orgs/:orgId/scim/connections — Business-tier (SSO) gate
+  // -------------------------------------------------------------------------
+  // Regression guard for P1-8: canUseSso was defined but never called, and
+  // this endpoint gated only on requireOrgRole(admin) — no plan gate at all —
+  // so even a Free-org admin could provision a SCIM/SSO connection via the
+  // API. The gate is enforced at the API layer.
+
+  describe('POST /api/orgs/:orgId/scim/connections', () => {
+    beforeEach(() => mockScimCreate.mockReset());
+
+    it('returns 402 when the org is below the Business plan', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({ getMembership: ownerMembership() });
+      const billingGate = createMockBillingGate({
+        canUseSso: vi.fn().mockResolvedValue(false),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/scim/connections',
+        payload: { idp_type: 'entra', default_role: 'member' },
+      });
+
+      expect(response.statusCode).toBe(402);
+      expect(response.json().error).toBe('SSO / SCIM provisioning requires the Business plan');
+      // The gate must short-circuit before the connection is ever created.
+      expect(mockScimCreate).not.toHaveBeenCalled();
+    });
+
+    it('creates a SCIM connection when the org is on the Business plan', async () => {
+      authenticateAs();
+      mockScimCreate.mockResolvedValue({
+        connection: {
+          id: 'scim-1',
+          idpType: 'entra',
+          scope: 'tenant',
+          defaultRole: 'member',
+          createdAt: new Date().toISOString(),
+        },
+        token: 'scim-token-abc',
+      });
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+      });
+      const billingGate = createMockBillingGate({
+        canUseSso: vi.fn().mockResolvedValue(true),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/scim/connections',
+        payload: { idp_type: 'entra', default_role: 'member' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().token).toBe('scim-token-abc');
+      expect(mockScimCreate).toHaveBeenCalled();
     });
   });
 

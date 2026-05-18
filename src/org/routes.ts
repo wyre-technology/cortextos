@@ -861,6 +861,17 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
         if (!user) return;
 
+        // Business-tier gate. Enforced at the API layer (not just the
+        // /org/service-clients web page, which gates on requireTeamAccess)
+        // so a below-Business org admin cannot create a service client by
+        // calling this endpoint directly. List + revoke stay ungated so a
+        // downgraded org can still see and wind down existing clients.
+        if (!(await billingGate.canUseServiceClients(request.params.orgId))) {
+          return reply
+            .code(402)
+            .send({ error: 'Service clients require the Business plan' });
+        }
+
         const { name, expires_in_days: expiresInDays } = request.body;
         if (!name?.trim()) {
           return reply.code(400).send({ error: 'Service client name is required' });
@@ -958,6 +969,17 @@ export function orgRoutes(deps: OrgRouteDeps) {
       async (request, reply) => {
         const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
         if (!user) return;
+
+        // Business-tier gate. Enforced at the API layer (not just the
+        // /org/scim web page, which gates on requireTeamAccess) so a
+        // below-Business org admin cannot create a SCIM/SSO connection by
+        // calling this endpoint directly. List + revoke stay ungated so a
+        // downgraded org can still see and wind down existing connections.
+        if (!(await billingGate.canUseSso(request.params.orgId))) {
+          return reply
+            .code(402)
+            .send({ error: 'SSO / SCIM provisioning requires the Business plan' });
+        }
 
         const { idp_type: idpType, default_role: defaultRole } = request.body;
         const allowedIdps = ['entra', 'okta', 'jumpcloud', 'google', 'generic'];
