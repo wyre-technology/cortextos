@@ -187,9 +187,11 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       // Order mirrors the live prod gateway's secrets array so a deploy is a
-      // clean no-op. admin-api-key is KV-referenced (mcpgw-prod-kv holds it) —
-      // the live gateway stores it inline; the resolved value is identical and
-      // KV-ref avoids threading another deploy-time secret param.
+      // clean no-op. admin-api-key is KV-referenced — resolved from THIS
+      // stack's own Key Vault (`${prefix}-kv`, via keyVaultUri), not a
+      // hard-coded vault. The live gateway stores it inline; the resolved
+      // value is identical and the KV-ref avoids threading another
+      // deploy-time secret param.
       secrets: [
         { name: 'master-key', value: masterKey }
         { name: 'jwt-secret', value: jwtSecret }
