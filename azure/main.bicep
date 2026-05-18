@@ -148,6 +148,7 @@ module observability './modules/observability.bicep' = {
     alertEmail: alertEmail
     gatewayId: gatewayApp.outputs.gatewayId
     workspaceId: logAnalytics.outputs.workspaceId
+    keyVaultId: keyvault.outputs.id
     rootlyWebhookUrl: rootlyWebhookUrl
     monthlyBudget: monthlyBudget
   }

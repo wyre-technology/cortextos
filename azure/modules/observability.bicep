@@ -31,6 +31,9 @@ param gatewayId string
 @description('Log Analytics workspace resource ID (scope for scheduled-query alert rules)')
 param workspaceId string
 
+@description('Key Vault resource ID — target for the security audit-log diagnostic setting (QW-3). Empty disables the KV diagnostic-setting + KV access alert wiring.')
+param keyVaultId string = ''
+
 @secure()
 @description('Rootly Azure Monitor webhook URL (contains a secret query param). Supplied at deploy time from Key Vault secret rootly-azuremonitor-webhook-url — never a literal in git. When set, alert + budget notifications also POST to Rootly alongside email; empty == email-only.')
 param rootlyWebhookUrl string = ''
@@ -579,6 +582,211 @@ resource alertGatewayReplicasStarved 'Microsoft.Insights/metricAlerts@2018-03-01
 // ---------------------------------------------------------------------------
 // 80% Actual / 100% Actual / 100% Forecasted, all routed to the action group so
 // budget breaches surface on the same path as infra alerts.
+
+// ===========================================================================
+// Security alerting — QW-3 / QW-4 / QW-5
+//
+// Quick-wins from the 2026-05-18 security-monitoring posture assessment
+// (task_1779129094851). These raise SECURITY alerting on the same Azure
+// Monitor rails the operational alerts above already use. They complement —
+// they do not replace — Microsoft Defender for Key Vault and Defender for
+// Resource Manager (enabled subscription-side the same day): Defender does
+// the ML-anomaly detection, these give a deterministic, owned, in-IaC catch
+// that routes to the same action group / Rootly path as every other alert.
+// ===========================================================================
+
+// QW-3 — Key Vault audit-log diagnostic setting.
+// Routes the Key Vault AuditEvent log (every secret/key access) into the Log
+// Analytics workspace, so KV access is retained, queryable for forensics, and
+// alertable. The vault holds the platform's crown-jewel secrets; before this
+// its access log was not in the workspace at all.
+resource targetKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (!empty(keyVaultId)) {
+  name: last(split(keyVaultId, '/'))
+}
+
+resource keyVaultAuditDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(keyVaultId)) {
+  name: 'kv-audit-to-law'
+  scope: targetKeyVault
+  properties: {
+    workspaceId: workspaceId
+    logs: [
+      { category: 'AuditEvent', enabled: true }
+      { category: 'AzurePolicyEvaluationDetails', enabled: true }
+    ]
+    metrics: [
+      { category: 'AllMetrics', enabled: true }
+    ]
+  }
+}
+
+// QW-3 — Key Vault denied-access alert.
+// Any forbidden (403) operation against the vault — a secret/key access that
+// was rejected — is high signal on a credential store and fires immediately.
+// Defender for Key Vault catches the subtle anomaly patterns; this catches the
+// blunt one (denied access) deterministically. Depends on the diagnostic
+// setting above; until KV logs flow the AzureDiagnostics rows simply do not
+// exist and the rule is a no-op.
+resource alertKeyVaultDeniedAccess 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = if (!empty(keyVaultId)) {
+  name: '${prefix}-sec-keyvault-denied-access'
+  location: location
+  properties: {
+    description: 'A forbidden (403) access to the Key Vault — denied secret/key operation on the credential store'
+    severity: 1
+    enabled: true
+    scopes: [workspaceId]
+    evaluationFrequency: 'PT15M'
+    windowSize: 'PT15M'
+    criteria: {
+      allOf: [
+        {
+          query: '''
+            AzureDiagnostics
+            | where ResourceProvider == 'MICROSOFT.KEYVAULT'
+            | where Category == 'AuditEvent'
+            | where httpStatusCode_d == 403
+            | summarize denied = count() by bin(TimeGenerated, 15m)
+            | where denied > 0
+          '''
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [actionGroup.id]
+    }
+  }
+}
+
+// QW-4 — Activity-Log security alerts.
+// Control-plane tampering detection: an attacker (or a mistake) that grants a
+// role, opens the Key Vault, or swaps a container image shows up in the Azure
+// Activity Log. These activityLogAlerts fire on the successful administrative
+// operation and route to the same action group. Scoped to this resource group.
+resource alertSecRbacChange 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+  name: '${prefix}-sec-rbac-change'
+  location: 'global'
+  properties: {
+    enabled: true
+    scopes: [resourceGroup().id]
+    description: 'An RBAC role assignment was created or removed in the resource group'
+    condition: {
+      allOf: [
+        { field: 'category', equals: 'Administrative' }
+        { field: 'status', equals: 'Succeeded' }
+        {
+          anyOf: [
+            { field: 'operationName', equals: 'Microsoft.Authorization/roleAssignments/write' }
+            { field: 'operationName', equals: 'Microsoft.Authorization/roleAssignments/delete' }
+          ]
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [
+        { actionGroupId: actionGroup.id }
+      ]
+    }
+  }
+}
+
+resource alertSecKeyVaultChange 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+  name: '${prefix}-sec-keyvault-change'
+  location: 'global'
+  properties: {
+    enabled: true
+    scopes: [resourceGroup().id]
+    description: 'A Key Vault configuration or access-policy change in the resource group'
+    condition: {
+      allOf: [
+        { field: 'category', equals: 'Administrative' }
+        { field: 'status', equals: 'Succeeded' }
+        {
+          anyOf: [
+            { field: 'operationName', equals: 'Microsoft.KeyVault/vaults/write' }
+            { field: 'operationName', equals: 'Microsoft.KeyVault/vaults/accessPolicies/write' }
+            { field: 'operationName', equals: 'Microsoft.KeyVault/vaults/delete' }
+          ]
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [
+        { actionGroupId: actionGroup.id }
+      ]
+    }
+  }
+}
+
+resource alertSecContainerAppChange 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+  name: '${prefix}-sec-containerapp-change'
+  location: 'global'
+  properties: {
+    enabled: true
+    scopes: [resourceGroup().id]
+    description: 'A Container App was created or updated — image / ingress / config change in the resource group'
+    condition: {
+      allOf: [
+        { field: 'category', equals: 'Administrative' }
+        { field: 'status', equals: 'Succeeded' }
+        { field: 'operationName', equals: 'Microsoft.App/containerApps/write' }
+      ]
+    }
+    actions: {
+      actionGroups: [
+        { actionGroupId: actionGroup.id }
+      ]
+    }
+  }
+}
+
+// QW-5 — Low-and-slow auth-failure detector.
+// alertAuthFailures (above) catches a 5-minute spike (> 20 401/403). It
+// structurally cannot see credential spraying paced to stay under that bar.
+// This rule sums 401/403 over a 6-hour window: a sustained-elevated failure
+// rate that never spikes is the classic slow-spray signature. The two alerts
+// are complementary — spike vs slow-burn — not redundant.
+resource alertAuthFailuresSlowBurn 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: '${prefix}-sec-auth-failures-slow-burn'
+  location: location
+  properties: {
+    description: 'More than 100 authentication failures (401/403) over 6 hours — sustained low-and-slow credential spraying that stays under the 5-minute spike threshold'
+    severity: 2
+    enabled: true
+    scopes: [workspaceId]
+    evaluationFrequency: 'PT1H'
+    windowSize: 'PT6H'
+    criteria: {
+      allOf: [
+        {
+          query: '''
+            ContainerAppConsoleLogs_CL
+            | where ContainerAppName_s == '${prefix}-gateway'
+            | where Log_s has '"statusCode":401' or Log_s has '"statusCode":403'
+              or Log_s has '"res":{"statusCode":401' or Log_s has '"res":{"statusCode":403'
+            | summarize slowBurn = count()
+            | where slowBurn > 100
+          '''
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [actionGroup.id]
+    }
+  }
+}
 
 resource costBudget 'Microsoft.Consumption/budgets@2023-11-01' = {
   name: '${prefix}-monthly-budget'
