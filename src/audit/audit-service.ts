@@ -86,11 +86,26 @@ export class AuditService {
     const conditions: ReturnType<typeof this.sql>[] = [];
 
     if (params.orgId) {
-      // Include entries with matching org_id OR personal-credential entries
-      // (org_id IS NULL) from users who belong to this org
-      conditions.push(this.sql`(r.org_id = ${params.orgId} OR (r.org_id IS NULL AND r.user_id IN (
-        SELECT user_id FROM org_members WHERE org_id = ${params.orgId}
-      )))`);
+      // Include entries with matching org_id PLUS personal-credential entries
+      // (org_id IS NULL) from current org members — but ONLY for the window
+      // during which they were members. Without the joined_at filter, a user
+      // who used personal credentials elsewhere before joining would have
+      // those historic, unrelated entries become visible to org admins the
+      // moment they accept the invite — surprising both the user (history
+      // they thought private) and the admin (entries unrelated to this org).
+      // Gateway PR #88.
+      conditions.push(this.sql`(
+        r.org_id = ${params.orgId}
+        OR (
+          r.org_id IS NULL
+          AND r.user_id IN (
+            SELECT user_id
+            FROM org_members
+            WHERE org_id = ${params.orgId}
+              AND joined_at <= r.created_at
+          )
+        )
+      )`);
     }
     if (params.userId) {
       conditions.push(this.sql`r.user_id = ${params.userId}`);

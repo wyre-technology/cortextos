@@ -12,6 +12,38 @@ import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 import { getSql } from '../db/context.js';
 
+/**
+ * Build the upstream header set for a request proxied to a vendor MCP
+ * container. The incoming client headers are NOT forwarded wholesale —
+ * only `mcp-session-id` is carried through (the MCP Streamable HTTP
+ * protocol needs it for session continuity). Everything else — Cookie,
+ * the gateway Authorization JWT, X-Forwarded-*, arbitrary client headers —
+ * is dropped. The result is a fixed allowlist plus the injected vendor
+ * credentials, matching the manual-fetch path's containerHeaders in this
+ * same file and gateway PR #88 M1.
+ *
+ * The previous `reply.from` rewriteRequestHeaders spread every client
+ * header verbatim (stripping only Authorization), leaking client headers
+ * into the per-vendor container. Exported so the allowlist contract is
+ * unit-tested directly: a regression that re-forwards client headers
+ * wholesale surfaces as a non-allowlisted key in the output.
+ */
+export function buildUpstreamHeaders(
+  clientHeaders: Record<string, string | string[] | undefined>,
+  injectionHeaders: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {
+    accept: 'application/json, text/event-stream',
+    'content-type': 'application/json',
+    ...injectionHeaders,
+  };
+  const sessionId = clientHeaders['mcp-session-id'];
+  if (typeof sessionId === 'string' && sessionId) {
+    out['mcp-session-id'] = sessionId;
+  }
+  return out;
+}
+
 interface ProxyDeps {
   credentialService: CredentialService;
   orgService: OrgService;
@@ -326,11 +358,7 @@ export function proxyRoutes(deps: ProxyDeps) {
           });
 
           return reply.from(`${vendorConfig.containerUrl}${vendorConfig.mcpPath ?? '/mcp'}`, {
-            rewriteRequestHeaders: (_req, headers) => {
-              // Strip the gateway JWT; inject vendor credentials instead
-              delete headers.authorization;
-              return { ...headers, ...injection.headers };
-            },
+            rewriteRequestHeaders: (_req, headers) => buildUpstreamHeaders(headers, injection.headers),
           });
         } catch (err) {
           if (err instanceof AuthError) {
