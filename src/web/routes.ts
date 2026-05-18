@@ -29,6 +29,8 @@ import { renderTeamToolAccess, TEAM_TOOL_ACCESS_STYLES } from './templates/team-
 import { renderTeamServerAccess, TEAM_SERVER_ACCESS_STYLES } from './templates/team-server-access.js';
 import { renderTeamServiceClients, TEAM_SERVICE_CLIENTS_STYLES } from './templates/team-service-clients.js';
 import { renderTeamScim, TEAM_SCIM_STYLES } from './templates/team-scim.js';
+import { renderTeamDomains, TEAM_DOMAINS_STYLES } from './templates/team-domains.js';
+import { OrgDomainService } from '../org/domain-service.js';
 import { ScimConnectionsService } from '../scim/connections-service.js';
 import { renderTeamAudit, TEAM_AUDIT_STYLES } from './templates/team-audit.js';
 import { renderTeamTeams, TEAM_TEAMS_STYLES } from './templates/team-teams.js';
@@ -767,6 +769,31 @@ export function webRoutes(deps: WebRouteDeps) {
             lastSyncAt: c.lastSyncAt,
             lastError: c.lastError,
             createdAt: c.createdAt,
+          })),
+        }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/domains ----------
+    app.get('/org/domains', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const domainService = new OrgDomainService();
+      const domains = await domainService.list(org.id);
+
+      const html = renderLayout(
+        { user, org, activePath: '/org/domains', title: `${org.name} - Domains`, pageStyles: TEAM_DOMAINS_STYLES },
+        renderTeamDomains({
+          orgId: org.id,
+          domains: domains.map((d) => ({
+            id: d.id,
+            domain: d.domain,
+            verificationToken: d.verificationToken,
+            verifiedAt: d.verifiedAt,
+            autoJoinRole: d.autoJoinRole,
           })),
         }),
       );

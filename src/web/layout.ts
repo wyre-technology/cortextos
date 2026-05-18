@@ -42,6 +42,7 @@ const TEAM_NAV: NavItem[] = [
   { label: 'Tool Access', href: '/org/tool-access' },
   { label: 'Server Access', href: '/org/server-access' },
   { label: 'Provisioning', href: '/org/scim' },
+  { label: 'Domains', href: '/org/domains' },
   { label: 'Log Shipping', href: '/org/log-shipping' },
   { label: 'Audit Log', href: '/org/audit' },
 ];

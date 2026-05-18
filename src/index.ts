@@ -35,6 +35,8 @@ import { runMigrations } from './db/migrate.js';
 import { initPools, runAsSystem, systemPool, getSql, closePools } from './db/context.js';
 import { requestContextPlugin } from './db/request-context-plugin.js';
 import { orgRoutes } from './org/routes.js';
+import { domainRoutes } from './org/domain-routes.js';
+import { OrgDomainService } from './org/domain-service.js';
 import { billingRoutes } from './billing/checkout.js';
 import { stripeWebhookRoutes } from './billing/stripe-webhook.js';
 import { auditRoutes } from './audit/routes.js';
@@ -114,6 +116,7 @@ initPools({
 // pool; HTTP requests resolve it to a request-path transaction instead.
 
 const orgService = new OrgService();
+const domainService = new OrgDomainService();
 const credentialService = new CredentialService();
 const tokenStore = new TokenStore();
 const billingGate = new DefaultBillingGate(orgService);
@@ -329,6 +332,10 @@ await app.register(orgRoutes({
   adminAuditService,
   vendorMonitor,
 }));
+
+// Domain claim / verify — org-admin domain management + the current-user
+// claim flow (GAP-1 staging-parity port from mcp-gateway).
+await app.register(domainRoutes({ orgService, domainService }));
 
 // Tool access API (discover tools, manage allowlists per vendor/role)
 await app.register(toolAccessRoutes({ orgService, credentialService, toolCache }));
