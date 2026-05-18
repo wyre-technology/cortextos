@@ -9,9 +9,11 @@ name: Trivy Vulnerability Scan
 #      against the :latest tag, and on workflow_dispatch for ad-hoc
 #      re-scans after a fix.
 #
-# Both paths upload SARIF to the Security tab. Non-blocking: alerts
-# surface in code-scanning, they do not fail the build. See
-# docs/operations/security-scanning.md.
+# The filesystem scan runs two steps: an informational pass
+# (CRITICAL/HIGH/MEDIUM, never blocks) for visibility, and a CRITICAL
+# gate (exit-code 1) that fails the PR on a fixable CRITICAL CVE
+# (CI-QW-4). The image scan uploads SARIF to the Security tab and does
+# not block. See docs/operations/security-scanning.md.
 
 on:
   push:
@@ -53,6 +55,17 @@ jobs:
           ignore-unfixed: true
           # Always exit 0 — informational scan, don't block PRs.
           exit-code: '0'
+
+      - name: Run Trivy (fs) — CRITICAL gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          # Blocking — a fixable CRITICAL CVE fails the PR (CI-QW-4).
+          exit-code: '1'
 
   image-scan:
     name: Container image scan
