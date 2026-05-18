@@ -153,6 +153,22 @@ jobs:
             existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
           failOnStdErr: false
 
+      # Production: subscription-scoped monthly cost budget. Deployed on its
+      # own — a Microsoft.Consumption/budgets at subscription scope cannot be
+      # created by the resource-group deployment above. Requires the deploy SP
+      # to hold the "Cost Management Contributor" role at subscription scope.
+      - name: Deploy subscription budget (production)
+        if: needs.resolve.outputs.environment == 'production'
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          az deployment sub create \
+            --name "conduit-subscription-budget-${RUN_ID}" \
+            --location eastus2 \
+            --template-file ./azure/subscription-budget.bicep \
+            --parameters actionGroupId="/subscriptions/d1fd92e8-6084-4dae-83dd-6a9a705f4a1d/resourceGroups/mcp-gateway-prod/providers/microsoft.insights/actionGroups/mcpgw-prod-alerts"
+
       # Staging: bicepparam file + secret overrides
       - name: Deploy Bicep (staging)
         if: needs.resolve.outputs.environment == 'staging'
