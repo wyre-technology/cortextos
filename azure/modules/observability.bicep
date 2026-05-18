@@ -309,6 +309,63 @@ resource alertMcpServerRestarts 'Microsoft.Insights/scheduledQueryRules@2023-03-
 }
 
 // ---------------------------------------------------------------------------
+// Tier 2 — Vendor MCP container CPU / memory saturation (fleet-wide)
+//
+// One log-search alert covering the whole gwp-* vendor fleet (~40 container
+// apps). It is a LOG alert, not a metric alert, on purpose: Azure does not
+// support multi-resource metric alerts for Microsoft.App/containerApps (the
+// metric-alert multi-resource allowlist excludes Container Apps), so the
+// only one-rule-for-the-fleet shape is a workspace-scoped scheduled query.
+//
+// Data path: each gwp-* container app has an AllMetrics diagnostic setting
+// routing its platform metrics to this workspace's AzureMetrics table. That
+// diagnostic setting is applied by the shared deploy workflow
+// (wyre-technology/.github -> mcp-server-deploy.yml) — see the companion PR.
+// Until that setting exists on a given CA, that CA simply contributes no
+// rows here: the alert fails safe (no coverage, never a false alarm).
+//
+// Thresholds mirror the gateway alerts: CPU > 80%, memory > 85%.
+// ---------------------------------------------------------------------------
+
+resource alertVendorResourceSaturation 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: '${prefix}-vendor-resource-saturation'
+  location: location
+  properties: {
+    description: 'A vendor MCP container app sustained CPU > 80% or memory > 85% over 15 minutes'
+    severity: 2
+    enabled: true
+    scopes: [workspaceId]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT15M'
+    criteria: {
+      allOf: [
+        {
+          query: '''
+            AzureMetrics
+            | where ResourceProvider == 'MICROSOFT.APP'
+            | where Resource startswith 'GWP-'
+            | where MetricName in ('CpuPercentage', 'MemoryPercentage')
+            | summarize avgValue = avg(Average) by Resource, MetricName, bin(TimeGenerated, 15m)
+            | where (MetricName == 'CpuPercentage' and avgValue > 80)
+                 or (MetricName == 'MemoryPercentage' and avgValue > 85)
+          '''
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [actionGroup.id]
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tier 2 — Rate limit exhaustion
 // ---------------------------------------------------------------------------
 
