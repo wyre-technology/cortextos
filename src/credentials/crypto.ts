@@ -56,7 +56,9 @@ export function encrypt(
   const key = deriveKey(masterKey, scopeId, salt);
   const iv = randomBytes(16);
 
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipher = createCipheriv('aes-256-gcm', key, iv, {
+    authTagLength: 16,
+  });
   const encrypted = Buffer.concat([
     cipher.update(plaintext, 'utf8'),
     cipher.final(),
@@ -88,7 +90,9 @@ export function decrypt(
   const authTag = Buffer.from(payload.authTag, 'base64');
   const ciphertext = Buffer.from(payload.ciphertext, 'base64');
 
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = createDecipheriv('aes-256-gcm', key, iv, {
+    authTagLength: 16,
+  });
   decipher.setAuthTag(authTag);
   const decrypted = Buffer.concat([
     decipher.update(ciphertext),
