@@ -22,6 +22,18 @@ vi.mock('stripe', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Stub runAsSystem to a pass-through.
+// ---------------------------------------------------------------------------
+// The webhook handler wraps its switch in runAsSystem (the fix for the #118
+// getSql-no-context bug). runAsSystem resolves the real system pool, which
+// these routing tests do not initialise; orgService is mocked here so no real
+// DB handle is needed. The real getSql path through the webhook is covered by
+// stripe-webhook-system-context.integration.test.ts.
+vi.mock('../db/context.js', () => ({
+  runAsSystem: <T>(fn: () => Promise<T>) => fn(),
+}));
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import type { OrgService } from '../org/org-service.js';
 import { sendLoopsEvent } from '../email/loops.js';
 import { notifyBillingAnomaly } from './sales-notifier.js';
-import type { Sql } from '../db/context.js';
+import { runAsSystem, type Sql } from '../db/context.js';
 
 /**
  * Webhook handler for a Track C reseller-channel invoice payment success.
@@ -152,7 +152,18 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: Sql) {
 
       app.log.info({ type: event.type, id: event.id }, 'Stripe webhook received');
 
+      // The /api/webhooks/stripe route is exempt from the request-context
+      // plugin (no user session) — so it carries no DB context of its own.
+      // Every orgService.* call in the switch below is getSql()-based and
+      // throws "getSql() called with no DB context" without one. PR #118
+      // (two-connection-class RLS) made getSql() context-required but did not
+      // wrap this handler — the request-context-plugin docstring already
+      // specifies the webhook "runs system-path explicitly via runAsSystem()".
+      // This restores that intent: runAsSystem opens the BYPASSRLS system-path
+      // context for the whole switch. (The switch body is intentionally not
+      // re-indented, to keep this bug-fix diff minimal and reviewable.)
       try {
+        await runAsSystem(async () => {
         switch (event.type) {
           case 'checkout.session.completed': {
             const session = event.data.object as Stripe.Checkout.Session;
@@ -369,6 +380,7 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: Sql) {
           default:
             app.log.debug({ type: event.type }, 'Unhandled Stripe event type');
         }
+        });
       } catch (err) {
         app.log.error({ err, type: event.type, id: event.id }, 'Stripe webhook handler failed');
         return reply.code(500).send({ error: 'Webhook handler failed' });
