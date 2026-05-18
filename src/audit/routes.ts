@@ -40,27 +40,33 @@ export function auditRoutes(deps: AuditRouteDeps) {
         return reply.code(402).send({ error: 'Audit log requires Pro plan' });
       }
 
-      // Determine which org to query
+      // Resolve the target org FIRST so the role + billing checks both apply
+      // to the same org the query will read. Pre-fix, getMembership and
+      // canAccessPaidFeatures ran against orgs[0] while params.orgId used the
+      // ?org_id= target — letting an admin in org A read org B's audit log
+      // (cross-tenant disclosure, gateway PR #78 H3).
       const orgs = await orgService.getUserOrgs(user.sub);
-      const org = orgs[0];
-      if (!org) {
+      const orgId = request.query.org_id ?? orgs[0]?.id;
+      if (!orgId) {
         return reply.code(404).send({ error: 'No organization found' });
       }
 
-      // Dunning-aware gate (Track A, mig 024). Audit access is suspended when
-      // service is past grace, matching requireTeamAccess + dashboard semantics.
-      if (!(await billingGate.canAccessPaidFeatures(org.id))) {
-        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
-      }
-
-      // Require admin+ role
-      const membership = await orgService.getMembership(org.id, user.sub);
+      // Require admin+ role in the RESOLVED org — before any billing gate, so
+      // a foreign org_id is rejected here and can't probe org B's billing
+      // state via the 402.
+      const membership = await orgService.getMembership(orgId, user.sub);
       if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
         return reply.code(403).send({ error: 'Only admins and owners can view the audit log' });
       }
 
+      // Dunning-aware gate (Track A, mig 024). Audit access is suspended when
+      // service is past grace, matching requireTeamAccess + dashboard semantics.
+      if (!(await billingGate.canAccessPaidFeatures(orgId))) {
+        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
+      }
+
       const params = {
-        orgId: request.query.org_id || org.id,
+        orgId,
         userId: request.query.user_id,
         vendorSlug: request.query.vendor,
         startDate: request.query.start,
@@ -109,26 +115,29 @@ export function auditRoutes(deps: AuditRouteDeps) {
         return reply.code(402).send({ error: 'Admin audit log requires Pro plan' });
       }
 
+      // Resolve the target org FIRST — same cross-tenant fix as /api/audit
+      // (gateway PR #78 H3): role + billing must check the org the query
+      // reads, not orgs[0].
       const orgs = await orgService.getUserOrgs(user.sub);
-      const org = orgs[0];
-      if (!org) {
+      const orgId = request.query.org_id ?? orgs[0]?.id;
+      if (!orgId) {
         return reply.code(404).send({ error: 'No organization found' });
       }
 
-      // Dunning-aware gate (Track A, mig 024). Admin audit gated same as
-      // /api/audit — suspended service blocks audit access regardless of role.
-      if (!(await billingGate.canAccessPaidFeatures(org.id))) {
-        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
-      }
-
-      // Require admin+ role
-      const membership = await orgService.getMembership(org.id, user.sub);
+      // Require admin+ role in the RESOLVED org — before the billing gate.
+      const membership = await orgService.getMembership(orgId, user.sub);
       if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
         return reply.code(403).send({ error: 'Only admins and owners can view the admin audit log' });
       }
 
+      // Dunning-aware gate (Track A, mig 024). Admin audit gated same as
+      // /api/audit — suspended service blocks audit access regardless of role.
+      if (!(await billingGate.canAccessPaidFeatures(orgId))) {
+        return reply.code(402).send({ error: 'Service suspended — update billing to resume audit access' });
+      }
+
       const params = {
-        orgId: request.query.org_id || org.id,
+        orgId,
         eventType: request.query.event_type,
         actorId: request.query.actor_id,
         startDate: request.query.start,

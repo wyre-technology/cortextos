@@ -15,6 +15,7 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { systemPool } from '../db/context.js';
 import { config } from '../config.js';
+import { requireAdmin } from '../lib/admin-auth.js';
 
 // ---------------------------------------------------------------------------
 // Plugin factory
@@ -53,6 +54,14 @@ export function adminConsentPlugin() {
     app.get<{ Querystring: { customer_name?: string } }>(
       '/auth/admin-consent',
       async (request, reply) => {
+        // Admin-gate the initiator. The callback consumes this redirect's
+        // `state` as its only authorization, so an unauthenticated visitor
+        // could otherwise (a) flip customer_name on any already-onboarded
+        // tenant via the callback's ON CONFLICT path, and (b) use the
+        // redirect to login.microsoftonline.com as a phishing pivot with
+        // attacker-controlled state (gateway PR #78 C3).
+        if (!requireAdmin(request, reply)) return;
+
         const customerName = request.query.customer_name || 'Unknown';
         const state = `${randomUUID()}:${Buffer.from(customerName).toString('base64')}`;
 
@@ -99,14 +108,17 @@ export function adminConsentPlugin() {
         // Keep default
       }
 
-      // Upsert the customer tenant
+      // Upsert the customer tenant. Re-onboarding an existing tenant flips
+      // `active` back on but does NOT overwrite customer_name — a rename
+      // must go through an admin endpoint that can log who renamed what,
+      // not happen silently as a side effect of a consent redirect
+      // (gateway PR #78 C3).
       await systemPool()`
         INSERT INTO customer_tenants (tenant_id, customer_name)
         VALUES (${tenantId}, ${customerName})
         ON CONFLICT (tenant_id) DO UPDATE SET
-          customer_name = EXCLUDED.customer_name,
-          active        = true,
-          onboarded_at  = NOW()
+          active       = true,
+          onboarded_at = NOW()
       `;
 
       app.log.info({ tenantId, customerName }, 'Customer tenant onboarded via admin consent');
