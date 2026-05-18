@@ -5,6 +5,7 @@ import type { OrgService } from '../org/org-service.js';
 import { sendLoopsEvent } from '../email/loops.js';
 import { notifyBillingAnomaly } from './sales-notifier.js';
 import { runAsSystem, type Sql } from '../db/context.js';
+import type { CreditService } from './credit-service.js';
 
 /**
  * Webhook handler for a Track C reseller-channel invoice payment success.
@@ -116,7 +117,11 @@ export async function handleResellerInvoicePaymentFailed(
  *     'free' ONLY on canceled; past_due/unpaid keep plan='pro' so the
  *     grace-period UI surfaces correctly.
  */
-export function stripeWebhookRoutes(orgService: OrgService, sql: Sql) {
+export function stripeWebhookRoutes(
+  orgService: OrgService,
+  creditService: CreditService,
+  sql: Sql,
+) {
   return async function plugin(app: FastifyInstance): Promise<void> {
     if (!config.stripeSecretKey || !config.stripeWebhookSecret) {
       app.log.warn('Stripe not configured — skipping webhook registration');
@@ -204,6 +209,37 @@ export function stripeWebhookRoutes(orgService: OrgService, sql: Sql) {
                 },
                 app.log,
               ).catch((err) => app.log.warn({ err }, 'notifyBillingAnomaly failed'));
+              break;
+            }
+
+            // One-off credit-pack purchase (mode:'payment') — add a credit
+            // block, do NOT touch the plan. `credits` is carried in the
+            // session metadata by the checkout-credits route (port-and-tighten
+            // vs mcp-gateway, which reverse-mapped a Stripe line-item price).
+            //
+            // Money-path guardrail: validate `credits` is a positive integer
+            // BEFORE addBlock. A missing/malformed value is logged as an error
+            // and skipped — never an addBlock of NaN/zero, never a throw that
+            // aborts the webhook mid-switch.
+            if (session.mode === 'payment') {
+              const rawCredits = session.metadata?.credits;
+              const credits = Number(rawCredits);
+              if (!rawCredits || !Number.isInteger(credits) || credits <= 0) {
+                app.log.error(
+                  { orgId, sessionId: session.id, rawCredits },
+                  'checkout.session.completed (payment): missing/invalid credits metadata — skipping addBlock',
+                );
+                break;
+              }
+              // addBlock is idempotent on stripe_payment_intent_id
+              // (ON CONFLICT DO NOTHING) — a redelivered webhook cannot
+              // double-credit.
+              await creditService.addBlock(
+                orgId,
+                credits,
+                (session.payment_intent as string | null) ?? null,
+              );
+              app.log.info({ orgId, credits }, 'Credit block added');
               break;
             }
 

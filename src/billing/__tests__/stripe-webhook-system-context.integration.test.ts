@@ -82,7 +82,12 @@ afterAll(async () => {
 
 async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify();
-  await app.register(stripeWebhookRoutes(new OrgService(), systemPool()));
+  // creditService is unused on the subscription path this test exercises —
+  // a stub keeps the guard focused on the DB-context wiring.
+  const creditStub = { addBlock: async () => undefined } as unknown as Parameters<
+    typeof stripeWebhookRoutes
+  >[1];
+  await app.register(stripeWebhookRoutes(new OrgService(), creditStub, systemPool()));
   await app.ready();
   return app;
 }

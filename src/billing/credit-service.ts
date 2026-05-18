@@ -105,10 +105,20 @@ export class CreditService {
   // -------------------------------------------------------------------------
 
   async addBlock(orgId: string, credits: number, stripePaymentIntentId: string | null): Promise<void> {
+    // The unique index on stripe_payment_intent_id (migration 017) is PARTIAL
+    // — `WHERE stripe_payment_intent_id IS NOT NULL`. Postgres only infers a
+    // partial index as the ON CONFLICT arbiter when the statement REPEATS that
+    // predicate; a bare `ON CONFLICT (col)` finds no matching non-partial
+    // index and raises "no unique or exclusion constraint matching the ON
+    // CONFLICT specification". Repeating the predicate is what makes this
+    // INSERT genuinely idempotent — without it the first credit-pack purchase
+    // throws rather than no-ops on a redelivered Stripe webhook.
     await this.sql`
       INSERT INTO credit_blocks (org_id, credits, remaining, stripe_payment_intent_id)
       VALUES (${orgId}, ${credits}, ${credits}, ${stripePaymentIntentId})
-      ON CONFLICT (stripe_payment_intent_id) DO NOTHING
+      ON CONFLICT (stripe_payment_intent_id)
+        WHERE stripe_payment_intent_id IS NOT NULL
+        DO NOTHING
     `;
   }
 

@@ -49,6 +49,7 @@ function mockData(dunning: DunningView): TeamBillingData {
     invoices: [],
     dunning,
     firstName: 'Aaron',
+    availableCreditPacks: [1000, 2500, 5000],
   };
 }
 

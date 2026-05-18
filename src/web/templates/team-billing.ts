@@ -57,6 +57,11 @@ export interface TeamBillingData {
   dunning: DunningView;
   /** First name for personalised copy; null falls back to "there". */
   firstName: string | null;
+  /**
+   * One-off credit-pack sizes purchasable right now — only the packs with a
+   * configured Stripe price ID. Empty => the Buy-credits section is hidden.
+   */
+  availableCreditPacks: number[];
 }
 
 // =============================================================================
@@ -369,6 +374,71 @@ function renderCredits(used: number, allocated: number): string {
   `;
 }
 
+/**
+ * One-off credit-pack purchase cards (GAP-5). Each card POSTs the pack size
+ * to /api/billing/checkout-credits and redirects to the returned Stripe
+ * Checkout URL. Only packs with a configured price ID are passed in.
+ */
+function renderCreditPacks(orgId: string, packs: number[]): string {
+  if (packs.length === 0) return '';
+  const cards = packs
+    .map(
+      (n) => `
+      <button type="button" class="credit-pack-card" data-credits="${n}">
+        <span class="credit-pack-amount">${n.toLocaleString()}</span>
+        <span class="credit-pack-label">credits</span>
+      </button>`,
+    )
+    .join('');
+  return `
+    <section class="billing-card">
+      <h2 class="section-title">Buy credits</h2>
+      <p class="section-desc">
+        One-off credit packs carry over and are used after your monthly plan
+        allocation runs out.
+      </p>
+      <div class="credit-pack-grid">${cards}</div>
+      <div class="credit-pack-status" id="creditPackStatus" role="status"></div>
+    </section>
+    <script>
+      (function () {
+        var orgId = ${JSON.stringify(orgId)};
+        var status = document.getElementById('creditPackStatus');
+        var cards = document.querySelectorAll('.credit-pack-card');
+        function lock(on) {
+          cards.forEach(function (c) {
+            c.disabled = on;
+            c.style.opacity = on ? '0.6' : '';
+          });
+        }
+        cards.forEach(function (card) {
+          card.addEventListener('click', async function () {
+            var credits = parseInt(card.getAttribute('data-credits') || '0', 10);
+            lock(true);
+            status.textContent = 'Opening checkout…';
+            try {
+              var res = await fetch('/api/billing/checkout-credits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ org_id: orgId, credits: credits }),
+              });
+              var data = await res.json().catch(function () { return {}; });
+              if (res.ok && data.url) {
+                window.location.href = data.url;
+                return;
+              }
+              status.textContent = data.error || 'Could not start checkout.';
+            } catch (e) {
+              status.textContent = 'Could not start checkout.';
+            }
+            lock(false);
+          });
+        });
+      })();
+    </script>
+  `;
+}
+
 function renderPaymentMethod(pm: PaymentMethodView | null): string {
   if (!pm) {
     return `
@@ -439,7 +509,7 @@ function renderInvoices(invoices: InvoiceView[]): string {
  *     body-end (empty string when not applicable).
  */
 export function renderTeamBilling(data: TeamBillingData): string {
-  const { org, plan, memberCount, creditsUsed, creditsAllocated, paymentMethod, nextInvoice, invoices, dunning, firstName } = data;
+  const { org, plan, memberCount, creditsUsed, creditsAllocated, paymentMethod, nextInvoice, invoices, dunning, firstName, availableCreditPacks } = data;
   const orgName = escapeHtml(org.name);
 
   const banner = renderDunningBanner(dunning, firstName);
@@ -496,6 +566,8 @@ export function renderTeamBilling(data: TeamBillingData): string {
         <h2 class="section-title">Usage this month</h2>
         ${renderCredits(creditsUsed, creditsAllocated)}
       </section>
+
+      ${renderCreditPacks(org.id, availableCreditPacks)}
 
       <section class="billing-card">
         <h2 class="section-title">Payment method</h2>
@@ -920,4 +992,34 @@ export const TEAM_BILLING_STYLES = `
       max-width: none;
     }
   }
+
+  /* Credit-pack purchase cards (GAP-5) */
+  .credit-pack-grid {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .credit-pack-card {
+    flex: 1 1 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 16px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated, #fff);
+    cursor: pointer;
+    font: inherit;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .credit-pack-card:hover:not(:disabled) {
+    border-color: var(--accent, #2563eb);
+    background: var(--bg-muted, #f4f4f5);
+  }
+  .credit-pack-card:disabled { cursor: default; }
+  .credit-pack-amount { font-size: 20px; font-weight: 700; }
+  .credit-pack-label { font-size: 12px; color: var(--text-muted); }
+  .credit-pack-status { font-size: 13px; color: var(--text-muted); margin-top: 8px; min-height: 18px; }
 `;

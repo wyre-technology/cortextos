@@ -75,13 +75,34 @@ function createStubSql(): postgres.Sql {
   return vi.fn().mockResolvedValue([]) as unknown as postgres.Sql;
 }
 
+/** Mock CreditService — only addBlock is reached by the webhook handler. */
+function createMockCreditService() {
+  return { addBlock: vi.fn().mockResolvedValue(undefined) } as unknown as import(
+    './credit-service.js'
+  ).CreditService;
+}
+
 async function buildApp(orgService: OrgService): Promise<FastifyInstance> {
   vi.resetModules();
   stubStripeEnv();
 
   const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
   const app = Fastify({ logger: false });
-  await app.register(stripeWebhookRoutes(orgService, createStubSql()));
+  await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
+  return app;
+}
+
+/** buildApp variant that takes an explicit creditService so a test can
+ *  assert on its addBlock mock. */
+async function buildAppWithCredit(
+  orgService: OrgService,
+  creditService: ReturnType<typeof createMockCreditService>,
+): Promise<FastifyInstance> {
+  vi.resetModules();
+  stubStripeEnv();
+  const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
+  const app = Fastify({ logger: false });
+  await app.register(stripeWebhookRoutes(orgService, creditService, createStubSql()));
   return app;
 }
 
@@ -109,7 +130,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
+    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -131,7 +152,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
+    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -237,6 +258,90 @@ describe('stripeWebhookRoutes', () => {
       'sub_test_subscription',
     );
     await app.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // checkout.session.completed (mode: payment) -> add a credit block (GAP-5)
+  // -------------------------------------------------------------------------
+
+  it('adds a credit block on a mode:payment checkout.session.completed', async () => {
+    const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'org_abc',
+      name: 'Test Org',
+      plan: 'free',
+      stripeCustomerId: null,
+    });
+    const creditService = createMockCreditService();
+
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_credits',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_credits',
+          mode: 'payment',
+          payment_intent: 'pi_abc',
+          metadata: { org_id: 'org_abc', credits: '2500' },
+        },
+      },
+    });
+
+    const app = await buildAppWithCredit(orgService, creditService);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    // credits parsed from metadata; idempotency key is the payment_intent.
+    expect(creditService.addBlock).toHaveBeenCalledWith('org_abc', 2500, 'pi_abc');
+    // A credit-pack purchase must NOT touch the plan.
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('skips addBlock when a mode:payment session has missing/invalid credits metadata', async () => {
+    // Money-path guardrail: a malformed credits value must not addBlock a
+    // NaN/zero and must not throw mid-webhook — log + skip, still 200.
+    const orgService = createMockOrgService();
+    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'org_abc',
+      name: 'Test Org',
+      plan: 'free',
+      stripeCustomerId: null,
+    });
+    const creditService = createMockCreditService();
+
+    for (const badCredits of [undefined, 'abc', '0', '-100', '12.5']) {
+      mockConstructEvent.mockReturnValue({
+        id: 'evt_bad_credits',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_bad',
+            mode: 'payment',
+            payment_intent: 'pi_bad',
+            metadata:
+              badCredits === undefined
+                ? { org_id: 'org_abc' }
+                : { org_id: 'org_abc', credits: badCredits },
+          },
+        },
+      });
+      const app = await buildAppWithCredit(orgService, creditService);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/stripe',
+        headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+        payload: Buffer.from('{}'),
+      });
+      expect(response.statusCode).toBe(200);
+      await app.close();
+    }
+    expect(creditService.addBlock).not.toHaveBeenCalled();
   });
 
   it('skips upgrade when checkout.session.completed org is not found', async () => {
@@ -621,7 +726,7 @@ describe('stripeWebhookRoutes', () => {
     stubStripeEnv();
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, sql));
+    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), sql));
     return app;
   }
 

@@ -539,6 +539,14 @@ export function webRoutes(deps: WebRouteDeps) {
         ],
         dunning,
         firstName: (user.name || '').split(/\s+/)[0] || null,
+        // Only offer packs that have a configured Stripe price ID — the
+        // checkout-credits route 500s on an unconfigured pack, so do not
+        // surface it as a button.
+        availableCreditPacks: [
+          config.stripeCredits1000PriceId ? 1000 : 0,
+          config.stripeCredits2500PriceId ? 2500 : 0,
+          config.stripeCredits5000PriceId ? 5000 : 0,
+        ].filter((n) => n > 0),
       };
 
       const pageScripts = data.dunning.state === 'recovered' ? DUNNING_TOAST_SCRIPT : undefined;

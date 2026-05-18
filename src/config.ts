@@ -91,6 +91,11 @@ export const config = {
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
   stripeProPriceId: process.env.STRIPE_PRO_PRICE_ID ?? '',
+  // One-off credit-pack price IDs (GAP-5). Each maps a pack size to its
+  // Stripe Price. Unset packs are simply unavailable for purchase.
+  stripeCredits1000PriceId: process.env.STRIPE_CREDITS_1000_PRICE_ID ?? '',
+  stripeCredits2500PriceId: process.env.STRIPE_CREDITS_2500_PRICE_ID ?? '',
+  stripeCredits5000PriceId: process.env.STRIPE_CREDITS_5000_PRICE_ID ?? '',
 
   // Vendor health monitor
   monitorWebhookUrl: process.env.MONITOR_WEBHOOK_URL ?? '',
