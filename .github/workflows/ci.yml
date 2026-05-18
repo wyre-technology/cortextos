@@ -31,6 +31,35 @@ jobs:
       - name: Schema-vs-harness drift gate
         run: npx vitest run src/scim/__tests__/migration-harness-drift.test.ts
 
+  # Fast, container-free front-line gate for the docs site build. docs/ is a
+  # separate package (own package.json — Astro/Starlight) that the `build`
+  # job below does NOT touch; it only type-checks/builds the conduit app.
+  # A Starlight config break once 404'd conduit.wyre.ai/docs entirely and
+  # reached prod because nothing CI-gated the docs build (P1-1). This job
+  # closes that class: a docs-site build break now fails at PR time. Runs on
+  # the self-hosted runner — plain node + astro build, no docker — so it is
+  # billing-immune, same as schema-harness-drift above.
+  docs-build:
+    runs-on: [self-hosted, wyre-private]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm ci
+        working-directory: docs
+
+      - name: Build docs site
+        run: npm run build
+        working-directory: docs
+
   build:
     runs-on: ubuntu-latest
 
