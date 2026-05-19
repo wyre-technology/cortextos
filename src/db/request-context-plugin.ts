@@ -134,9 +134,14 @@ export const requestContextPlugin = () =>
         // exhaustion rather than letting it surface as a generic 500.
         request.raw.off('close', onClose);
         if (err instanceof RequestPoolBusyError) {
+          // Static message — do NOT echo err.message into the response body.
+          // The RequestPoolBusyError constructor accepts an argument, so a
+          // future call site that passed user data (a vendor slug, a tenant
+          // id, a path) would leak it via 503. Mapping a fixed string here
+          // makes the no-info-leak property STRUCTURAL, not by-convention.
           return reply.code(503).send({
             error: 'request_pool_busy',
-            message: err.message,
+            message: 'Request pool exhausted; please retry shortly.',
           });
         }
         throw err;
