@@ -24,6 +24,7 @@ import { TokenStore } from './token-store.js';
 import type { AuthCode, OAuthSession } from './token-store.js';
 import type { Auth0User } from '../auth/auth0.js';
 import type { OrgService } from '../org/org-service.js';
+import { runAsSystem } from '../db/context.js';
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -238,10 +239,17 @@ export function oauthRoutes(
   orgService?: OrgService,
 ) {
   return async function plugin(app: FastifyInstance): Promise<void> {
-    // Run cleanup on startup and then every 5 minutes
-    await tokenStore.cleanupExpired();
-    const cleanupInterval = setInterval(async () => {
-      await tokenStore.cleanupExpired();
+    // Run cleanup on startup and then every 5 minutes. Both the boot call and
+    // the interval tick run with NO request context — cleanupExpired's
+    // getSql() would throw "getSql() called with no DB context" — so each is
+    // wrapped in runAsSystem(), the explicit system-path entry point. This is
+    // the getSql()-no-context class (same as #157's webhook fix); see the
+    // sweep in this PR for the full set.
+    await runAsSystem(() => tokenStore.cleanupExpired());
+    const cleanupInterval = setInterval(() => {
+      runAsSystem(() => tokenStore.cleanupExpired()).catch((err) => {
+        app.log.error({ err }, 'oauth token cleanup sweep failed');
+      });
     }, 5 * 60 * 1000);
 
     app.addHook('onClose', () => {

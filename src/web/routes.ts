@@ -8,6 +8,7 @@ import { isPaidPlan } from '../billing/gate.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { renderConnectPage } from './templates/connect.js';
 import { requireAuth0 } from '../auth/auth0.js';
+import { runAsSystem } from '../db/context.js';
 import { config } from '../config.js';
 import {
   buildAuthorizeUrl,
@@ -121,7 +122,11 @@ export function webRoutes(deps: WebRouteDeps) {
   const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
 
   const sweepInterval = setInterval(() => {
-    void vendorOAuthStates.sweepExpired().catch(() => {
+    // The interval tick has NO request context — sweepExpired()'s getSql()
+    // would throw "getSql() called with no DB context", so the sweep is
+    // wrapped in runAsSystem() (the explicit system-path entry point).
+    // getSql()-no-context class — see the sweep in this PR.
+    void runAsSystem(() => vendorOAuthStates.sweepExpired()).catch(() => {
       /* sweep errors are non-fatal; expired-on-read still enforced */
     });
   }, 5 * 60 * 1000);
