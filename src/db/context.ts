@@ -191,6 +191,30 @@ export function runInRequestContext<T>(userId: string, fn: () => Promise<T>): Pr
 type Reserved = Awaited<ReturnType<Sql['reserve']>>;
 
 /**
+ * Maximum time openRequestContext() will wait on requestPool().reserve()
+ * before giving up. postgres.js's reserve() has no built-in acquire timeout,
+ * so a pool-exhausted gateway would otherwise hang every new request forever.
+ * Distinct from `connect_timeout` (TCP connect to Postgres) — this bounds the
+ * application-side wait for an in-pool slot.
+ */
+export const RESERVE_TIMEOUT_MS = 5_000;
+
+/**
+ * Thrown by openRequestContext() when the request pool's reserve() does not
+ * acquire a connection within {@link RESERVE_TIMEOUT_MS}. The request-context
+ * plugin maps this to HTTP 503 — fail loud and fast on pool exhaustion rather
+ * than hang the listener thread. The `statusCode` property is the contract
+ * with the plugin's catch arm; nothing else relies on instanceof.
+ */
+export class RequestPoolBusyError extends Error {
+  readonly statusCode = 503;
+  constructor(message = `request pool busy: reserve() did not acquire within ${RESERVE_TIMEOUT_MS}ms`) {
+    super(message);
+    this.name = 'RequestPoolBusyError';
+  }
+}
+
+/**
  * Handle for an open request-path context. Opaque to callers — pass it back to
  * closeRequestContext(). The `settled` flag is the settle-once guard: the
  * Fastify plugin calls closeRequestContext() from BOTH onResponse and a
@@ -232,7 +256,52 @@ export async function openRequestContext(userId: string): Promise<RequestContext
   const ctx: DbContext = { sql: null, kind: 'request' };
   als.enterWith(ctx);
 
-  const reserved = await requestPool().reserve();
+  // Bounded reserve(): postgres.js's reserve() has no acquire timeout, so a
+  // pool-exhausted gateway would otherwise hang each new request indefinitely.
+  // Race the reserve against a {@link RESERVE_TIMEOUT_MS} timer and surface a
+  // typed {@link RequestPoolBusyError} (mapped to HTTP 503 by the
+  // request-context plugin) so callers fail fast and visibly. Two corners
+  // load-bearing here:
+  //   - clearTimeout fires on BOTH outcomes via `finally`, otherwise a fast
+  //     reserve leaves a pending Timer keeping the Node process alive.
+  //   - on timeout, the losing reservePromise may STILL resolve later with a
+  //     real reserved connection; we attach a release on it so a late
+  //     acquisition does not silently strand a pool slot — same
+  //     acquire-without-guaranteed-release class this PR also fixes in the
+  //     request-context plugin's close-listener ordering.
+  const reservePromise = requestPool().reserve();
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new RequestPoolBusyError()),
+      RESERVE_TIMEOUT_MS,
+    );
+  });
+
+  let reserved: Reserved;
+  try {
+    reserved = await Promise.race([reservePromise, timeoutPromise]);
+  } catch (err) {
+    // Detach: if the timeout won the race, the underlying reserve may still
+    // resolve. Release it then to keep the pool slot reusable.
+    void reservePromise.then(
+      (r) => {
+        try {
+          r.release();
+        } catch {
+          /* release errors are swallowed — best-effort cleanup of a connection
+             we never got to use */
+        }
+      },
+      () => {
+        /* the reserve itself failed — nothing to release */
+      },
+    );
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
   try {
     await reserved.unsafe('BEGIN');
     // is_local => true: transaction-scoped, cleared by Postgres at txn end.
@@ -294,6 +363,18 @@ export function runWithSql<T>(sql: Sql, fn: () => Promise<T>): Promise<T> {
  */
 export function enterTestContext(sql: Sql): void {
   testHandle.__conduitDbTestSql = sql;
+}
+
+/**
+ * Test-only: install (or clear) the request-pool handle directly. Unit tests
+ * for openRequestContext's reserve() timeout / late-release behavior need to
+ * inject a controllable fake `Sql` whose `reserve()` returns a promise the
+ * test resolves on its own schedule — `initPools()` is not usable for that
+ * because it requires a real Postgres URL. Pass `null` to clear. Always null
+ * in production.
+ */
+export function __setRequestPoolForTest(sql: Sql | null): void {
+  requestPoolRef = sql;
 }
 
 /** Test-only: clear the handle installed by enterTestContext. */
