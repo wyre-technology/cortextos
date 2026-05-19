@@ -16,6 +16,12 @@ export interface UsageSummary {
   totalCalls: number;
   uniqueUsers: number;
   avgResponseTimeMs: number;
+  /**
+   * Fraction (0–1) of requests in the window whose HTTP status_code is an
+   * error (>= 400). 0 when there is no traffic. Consumers render as a
+   * percentage (errorRate * 100).
+   */
+  errorRate: number;
   byVendor: Array<{ vendor: string; count: number }>;
   byUser: Array<{ userId: string; email: string | null; count: number }>;
   byDay: Array<{ date: string; count: number }>;
@@ -47,11 +53,16 @@ export class DashboardService {
     const where = this.buildWhere(orgId, range);
 
     const [totals, byVendor, byUser, byDay, bySource] = await Promise.all([
-      this.sql<{ total_calls: number; unique_users: number; avg_ms: number }[]>`
+      this.sql<{ total_calls: number; unique_users: number; avg_ms: number; error_rate: number }[]>`
         SELECT
           COUNT(*)::int AS total_calls,
           COUNT(DISTINCT user_id)::int AS unique_users,
-          COALESCE(AVG(response_time_ms), 0)::int AS avg_ms
+          COALESCE(AVG(response_time_ms), 0)::int AS avg_ms,
+          COALESCE(
+            COUNT(*) FILTER (WHERE r.status_code >= 400)::float
+              / NULLIF(COUNT(*), 0),
+            0
+          )::float AS error_rate
         FROM request_log r ${where}
       `,
       this.sql<{ vendor: string; count: number }[]>`
@@ -82,6 +93,7 @@ export class DashboardService {
       totalCalls: totals[0]?.total_calls ?? 0,
       uniqueUsers: totals[0]?.unique_users ?? 0,
       avgResponseTimeMs: totals[0]?.avg_ms ?? 0,
+      errorRate: totals[0]?.error_rate ?? 0,
       byVendor: byVendor.map((r) => ({ vendor: r.vendor, count: r.count })),
       byUser: byUser.map((r) => ({ userId: r.user_id, email: r.email, count: r.count })),
       byDay: byDay.map((r) => ({ date: String(r.date), count: r.count })),
