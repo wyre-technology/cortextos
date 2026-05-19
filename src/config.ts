@@ -29,7 +29,11 @@ export const config = {
   // getRequestBaseUrl() to derive per-request base URLs for OAuth callbacks,
   // discovery metadata, and cookie scoping. Override via ALLOWED_HOSTS env
   // (comma-separated). The first entry is the canonical fallback.
-  allowedHosts: (process.env.ALLOWED_HOSTS ?? 'mcp.wyre.ai,staging.conduit.wyre.ai,mcp.wyretechnology.com,localhost:8080')
+  // `??` does not catch an empty string — an explicitly-empty ALLOWED_HOSTS
+  // (`ALLOWED_HOSTS=""`, or a bicep param that was never populated) would
+  // otherwise yield [] and strand getRequestBaseUrl's fallback. Treat
+  // empty/whitespace as unset and use the default list.
+  allowedHosts: ((process.env.ALLOWED_HOSTS ?? '').trim() || 'mcp.wyre.ai,staging.conduit.wyre.ai,mcp.wyretechnology.com,localhost:8080')
     .split(',').map((h) => h.trim()).filter(Boolean),
 
   // Master encryption key (32 bytes hex). MUST be set in production.

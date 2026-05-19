@@ -55,12 +55,6 @@ param jwtSecret string
 @secure()
 param ghcrToken string
 
-@secure()
-param microsoftClientId string = ''
-
-@secure()
-param microsoftClientSecret string = ''
-
 @description('Comma-separated host allowlist (e.g. mcp.wyre.ai,mcp.wyretechnology.com)')
 param allowedHosts string = ''
 
@@ -328,8 +322,6 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_AD_CLIENT_ID', secretRef: 'azure-ad-client-id' }
             { name: 'AZURE_AD_CLIENT_SECRET', secretRef: 'azure-ad-client-secret' }
             { name: 'AZURE_AD_TENANT_ID', secretRef: 'azure-ad-tenant-id' }
-            { name: 'MICROSOFT_CLIENT_ID', value: microsoftClientId }
-            { name: 'MICROSOFT_CLIENT_SECRET', value: microsoftClientSecret }
             { name: 'QBO_CLIENT_ID', value: '' }
             { name: 'QBO_CLIENT_SECRET', value: '' }
             { name: 'XERO_CLIENT_ID', value: '' }

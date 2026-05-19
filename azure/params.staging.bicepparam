@@ -66,8 +66,6 @@ param jwtSecret = readEnvironmentVariable('JWT_SECRET')
 param pgPassword = readEnvironmentVariable('PG_PASSWORD')
 param ghcrToken = readEnvironmentVariable('GHCR_TOKEN')
 
-// Optional (main.bicep defaults to ''):
-//   microsoftClientId, microsoftClientSecret
 // Image:
 //   gatewayImage  — set by CI to ghcr.io/<repo>:sha-<short>
 //   redeployTrigger — set by CI to the run id

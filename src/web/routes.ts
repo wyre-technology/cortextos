@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
@@ -20,7 +20,7 @@ import {
 } from '../oauth/vendor-oauth.js';
 import { nanoid } from 'nanoid';
 import { renderLayout } from './layout.js';
-import { renderSuccessPage } from './helpers.js';
+import { renderSuccessPage, escapeHtml } from './helpers.js';
 import { renderPersonalConnections } from './templates/personal-connections.js';
 import { renderTeamOverview, TEAM_OVERVIEW_STYLES } from './templates/team-overview.js';
 import { renderTeamMembers, TEAM_MEMBERS_STYLES } from './templates/team-members.js';
@@ -40,6 +40,46 @@ import { renderTeamTeamConnections, TEAM_TEAM_CONNECTIONS_STYLES } from './templ
 import { renderTeamServiceClientConnections, TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES } from './templates/team-service-client-connections.js';
 import { renderProfileSettings, PROFILE_SETTINGS_STYLES } from './templates/profile-settings.js';
 import { renderTeamDashboard } from './templates/team-dashboard.js';
+import {
+  renderResellerCustomers,
+  RESELLER_CUSTOMERS_STYLES,
+  RESELLER_CUSTOMERS_SCRIPT,
+  type ResellerCustomer,
+} from './templates/reseller-customers.js';
+import {
+  renderResellerBranding,
+  RESELLER_BRANDING_STYLES,
+  type ResellerBranding,
+} from './templates/reseller-branding.js';
+import {
+  renderResellerHierarchy,
+  RESELLER_HIERARCHY_STYLES,
+  RESELLER_HIERARCHY_SCRIPT,
+  type TenantNode,
+} from './templates/reseller-hierarchy.js';
+import {
+  renderOnboardMcp,
+  coerceStep,
+  RESELLER_ONBOARD_MCP_STYLES,
+  type OnboardMcpData,
+} from './templates/reseller-onboard-mcp.js';
+import {
+  renderResellerCustomerDetail,
+  RESELLER_CUSTOMER_DETAIL_STYLES,
+  type CustomerSummary,
+} from './templates/reseller-customer-detail.js';
+import {
+  renderNewCustomer,
+  coerceNewCustomerStep,
+  NEW_CUSTOMER_STYLES,
+  type NewCustomerData,
+} from './templates/reseller-new-customer.js';
+import {
+  renderCustomerTab,
+  CUSTOMER_TAB_STYLES,
+  type CustomerTabId,
+  type CustomerTabData,
+} from './templates/reseller-customer-tabs.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -112,6 +152,36 @@ async function requireTeamAccess(
   }
 
   return { user, org, membership };
+}
+
+/**
+ * Helper: require team access AND that the caller's org is a reseller.
+ * Gate for every reseller-console route (Track C) — the customer list,
+ * customer detail, onboarding wizards, hierarchy, and reseller settings.
+ *
+ * requireTeamAccess alone admits any paid admin of any org; a non-reseller
+ * admin could otherwise load the reseller console by URL. For a
+ * multi-tenant surface that is the wrong default — and it is the seam the
+ * Track A swap-ins would leak through (a real customer-list/ownership
+ * query dropped behind a reseller-only gate is contained; behind a
+ * paid-admin-of-anything gate it is not). See warden's review of the
+ * Track C stack, Finding 1.
+ *
+ * Returns { user, org, membership } or redirects (to /org) and returns null.
+ */
+async function requireResellerAccess(
+  request: Parameters<typeof requireAuth0>[0],
+  reply: Parameters<typeof requireAuth0>[1],
+  orgService: OrgService,
+  billingGate: BillingGate,
+) {
+  const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+  if (!ctx) return null;
+  if (ctx.org.type !== 'reseller') {
+    reply.redirect('/org', 302);
+    return null;
+  }
+  return ctx;
 }
 
 /**
@@ -561,6 +631,515 @@ export function webRoutes(deps: WebRouteDeps) {
         renderTeamBilling(data),
       );
 
+      return reply.type('text/html').send(html);
+    });
+
+    // =====================================================================
+    // Reseller-console shell — stub routes (Track C)
+    // =====================================================================
+    //
+    // The reseller-channel UX (Track C "Conduit — Subtenant Experience"
+    // Figma, 5 surfaces) is built surface-by-surface in follow-up PRs.
+    // This PR pours the layout foundation: the reseller-console nav
+    // ("Customers") + the reseller-settings nav (General / Branding /
+    // Billing & Plans / API & Webhooks / Audit Log).
+    //
+    // The PR #70 lock-step invariant requires a registered handler for
+    // every nav href. These stubs honor it — each renders the layout
+    // shell + a "coming soon" body so a sidebar click resolves to a 200,
+    // not a 404. Real surfaces replace each stub in its own PR (same
+    // play as the /org/billing stub → IA shell progression).
+
+    function resellerStubBody(surface: string): string {
+      // `surface` is a literal label today, but escape it anyway — a
+      // latent injection point the moment a dynamic value is ever wired
+      // through (analyst review of the Track C stack).
+      const label = escapeHtml(surface);
+      return `
+        <section style="max-width:560px;margin:48px auto;padding:24px">
+          <h1 style="font-size:22px;font-weight:700;margin-bottom:12px">${label}</h1>
+          <p style="color:var(--text-secondary);line-height:1.6">
+            This is part of the Conduit reseller console. The ${label}
+            surface is in active development and will land in a follow-up
+            release.
+          </p>
+        </section>
+      `;
+    }
+
+    // ---------- GET /org/customers (Track C Surface 1 — Reseller Dashboard) ----------
+    //
+    // Customer-organization list for a reseller. Mock-data-first: the
+    // customer rows below are placeholders shaped like the Track A
+    // customer-list read model. When that endpoint lands, the mock builder
+    // is the single swap-in point — the template renders unchanged.
+    // SWAP-IN CONTRACT: the real customer-list query MUST be reseller-scoped
+    // (only orgs whose parent_org_id === the caller's reseller). A bare
+    // SELECT here leaks every org. See warden Track C review, Finding 2.
+    app.get('/org/customers', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const now = Date.now();
+      const min = 60 * 1000;
+      const customers: ResellerCustomer[] = [
+        { id: 'cust_mock_1', name: 'AM3 Technology & Cybersecurity', subdomain: 'am3.conduit.wyre.ai',     plan: 'business', userCount: 12, mcpCalls30d: 8247,  lastActivity: new Date(now - 2 * min).toISOString() },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions',             subdomain: 'teamdns.conduit.wyre.ai', plan: 'pro',      userCount: 8,  mcpCalls30d: 3182,  lastActivity: new Date(now - 47 * min).toISOString() },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group',             subdomain: 'mtnmsp.conduit.wyre.ai',  plan: 'pro',      userCount: 6,  mcpCalls30d: 1094,  lastActivity: new Date(now - 3 * 60 * min).toISOString() },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners',            subdomain: 'coastal.conduit.wyre.ai', plan: 'business', userCount: 15, mcpCalls30d: 12403, lastActivity: new Date(now - 24 * 60 * min).toISOString() },
+      ];
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/customers',
+          title: `${org.name} - Customers`,
+          pageStyles: RESELLER_CUSTOMERS_STYLES,
+          pageScripts: RESELLER_CUSTOMERS_SCRIPT,
+        },
+        renderResellerCustomers({ org, customers }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/customers/new (Track C Area 2 — sub-customer onboarding) ----------
+    //
+    // 3-step wizard to provision a new customer org under the reseller.
+    // Registered before /org/customers/:id — Fastify resolves the static
+    // segment first, so "new" never falls through to the :id handler.
+    // Mock-data-first: a fixed example draft; the final "Create customer"
+    // CTA is disabled until the Track A provisioning endpoint lands.
+    app.get('/org/customers/new', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const step = coerceNewCustomerStep((request.query as { step?: string }).step);
+      const data: NewCustomerData = {
+        org,
+        step,
+        planTiers: ['Free', 'Pro', 'Business'],
+        draft: {
+          name: 'Northwind IT Group',
+          subdomain: 'northwind-it-group',
+          plan: 'Pro',
+          adminEmail: 'admin@northwind.example',
+          inheritBranding: true,
+          accent: '#00C9DB',
+        },
+      };
+
+      const { body, pageScripts } = renderNewCustomer(data);
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/customers',
+          title: `${org.name} - New customer`,
+          pageStyles: NEW_CUSTOMER_STYLES,
+          pageScripts,
+        },
+        body,
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/customers/:id (Track C Surface 2 — Customer Detail) ----------
+    //
+    // A reseller drilled into one customer org. Analytics are wired LIVE:
+    // the template renders a shell and fetches the reseller-scoped
+    // customer-dashboard endpoints (conduit PR #130/#136) client-side.
+    // Customer identity is mock until the Track A customer-detail
+    // endpoint lands — same gap Surface 1 carries.
+    // SWAP-IN CONTRACT: the real customer-detail fetch MUST verify the
+    // :id org's parent_org_id === the caller's reseller before returning
+    // it — a reseller iterating :id values must get 403, not another
+    // reseller's customer. See warden Track C review, Finding 2.
+    app.get('/org/customers/:id', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const customerId = (request.params as { id: string }).id;
+      const customer: CustomerSummary = {
+        id: customerId,
+        name: 'AM3 Technology & Cybersecurity',
+        plan: 'BUSINESS',
+        userCount: 12,
+        mcpCount: 4,
+        subdomain: 'am3.conduit.wyre.ai',
+      };
+
+      // Sibling customer roster — feeds the Area 3 tenant switcher. Mock,
+      // like the Surface 1 customer list, until the Track A customer-list
+      // endpoint lands; the current customer is included and marked.
+      // SWAP-IN CONTRACT: same as the Surface 1 list — the real roster
+      // MUST be reseller-scoped, or the switcher becomes a cross-tenant
+      // jump. See warden Track C review, Finding 2.
+      const siblings = [
+        { id: customerId, name: customer.name },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+      ];
+
+      const { body, pageScripts } = renderResellerCustomerDetail({ org, customer });
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: `/org/customers/${customerId}`,
+          title: `${org.name} - ${customer.name}`,
+          navMode: 'customer-detail',
+          customerContext: { id: customer.id, name: customer.name, siblings },
+          pageStyles: RESELLER_CUSTOMER_DETAIL_STYLES,
+          pageScripts,
+        },
+        body,
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/customers/:id/{mcps,users,usage,tools,audit,billing,settings} ----------
+    //
+    // Track C step 5 — the 7 per-org management tabs (Aaron "ship it all").
+    // Usage is live (client-fetch of the reseller-scoped dashboard
+    // endpoint, which owns reseller-owns-:id authz); the rest are
+    // mock-data-first with documented swap-in contracts. All gated by
+    // requireResellerAccess. Registered in a loop — the hrefs are
+    // dynamic (:id), so they are not part of the static nav lock-step.
+    const CUSTOMER_TAB_IDS: CustomerTabId[] =
+      ['mcps', 'users', 'usage', 'tools', 'audit', 'billing', 'settings'];
+
+    function buildCustomerTabData(
+      reseller: Awaited<ReturnType<typeof requireResellerAccess>>,
+      customerId: string,
+      tab: CustomerTabId,
+    ): CustomerTabData {
+      const org = reseller!.org;
+      const customer: CustomerSummary = {
+        id: customerId,
+        name: 'AM3 Technology & Cybersecurity',
+        plan: 'BUSINESS',
+        userCount: 12,
+        mcpCount: 4,
+        subdomain: 'am3.conduit.wyre.ai',
+      };
+      // Mock builders — shaped like the Track A read models. SWAP-IN
+      // CONTRACT: every real query below MUST be reseller-scoped and
+      // verify the :id org's parent === the caller's reseller (warden
+      // Finding 2). Usage does not appear here — it fetches live.
+      return {
+        org,
+        customer,
+        tab,
+        mcps: [
+          { vendor: 'Autotask',   pattern: 'OEM · BYOC',   seats: '8/12 users',  status: 'healthy' },
+          { vendor: 'Datto RMM',  pattern: 'OEM · Shared', seats: '12/12 users', status: 'healthy' },
+          { vendor: 'Huntress',   pattern: 'OEM · Shared', seats: '6/12 users',  status: 'degraded' },
+          { vendor: 'ITGlue',     pattern: 'Self-hosted',  seats: '12/12 users', status: 'healthy' },
+        ],
+        members: [
+          { name: 'C. Ramirez',  email: 'cramirez@am3-it.com',  role: 'Owner',  department: 'Service Delivery', toolAccess: 'All MCPs',     lastActive: '12m ago' },
+          { name: 'J. Martinez', email: 'jmartinez@am3-it.com', role: 'Admin',  department: 'Service Delivery', toolAccess: 'All MCPs',     lastActive: '47m ago' },
+          { name: 'K. Williams', email: 'kwilliams@am3-it.com', role: 'Member', department: 'Tier 1 Support',   toolAccess: '3 of 4 MCPs',  lastActive: '2h ago' },
+          { name: 'M. Chen',     email: 'mchen@am3-it.com',     role: 'Member', department: 'Tier 1 Support',   toolAccess: '3 of 4 MCPs',  lastActive: '5h ago' },
+          { name: 'S. Patel',    email: 'spatel@am3-it.com',    role: 'Member', department: 'Tier 2 Support',   toolAccess: '2 of 4 MCPs',  lastActive: '1d ago' },
+        ],
+        memberTotal: 12,
+        toolDepartment: 'Service Delivery (4 users)',
+        toolDepartments: ['Service Delivery', 'Tier 1 Support', 'Tier 2 Support'],
+        toolGroups: [
+          { name: 'Tickets', tools: [
+            { name: 'create_ticket', enabled: true }, { name: 'update_ticket', enabled: true },
+            { name: 'search_tickets', enabled: true }, { name: 'delete_ticket', enabled: false },
+          ] },
+          { name: 'Time Entries', tools: [
+            { name: 'create_time_entry', enabled: true }, { name: 'search_time_entries', enabled: true },
+          ] },
+          { name: 'Contacts & Companies', tools: [
+            { name: 'search_contacts', enabled: true }, { name: 'create_contact', enabled: false },
+          ] },
+        ],
+        audit: [
+          { when: '12m ago',  actor: 'C. Ramirez',      action: 'mcp.tool.invoke',   target: 'Autotask · search_tickets' },
+          { when: '1h ago',   actor: 'J. Martinez',     action: 'member.role.update', target: 'K. Williams → Member' },
+          { when: '3h ago',   actor: 'WYRE Technology', action: 'mcp.onboard',       target: 'Huntress' },
+          { when: '1d ago',   actor: 'C. Ramirez',      action: 'tool.access.grant', target: 'Tier 1 Support → search_tickets' },
+          { when: '2d ago',   actor: 'WYRE Technology', action: 'customer.create',   target: 'AM3 Technology & Cybersecurity' },
+        ],
+        billingPlan: 'Business',
+        billingRate: '$49 / user / month · 12 users',
+        invoices: [
+          { number: 'INV-2026-0042', date: '2026-05-01', amount: '$588.00', status: 'paid' },
+          { number: 'INV-2026-0031', date: '2026-04-01', amount: '$588.00', status: 'paid' },
+          { number: 'INV-2026-0020', date: '2026-03-01', amount: '$539.00', status: 'paid' },
+        ],
+      };
+    }
+
+    for (const tab of CUSTOMER_TAB_IDS) {
+      app.get(`/org/customers/:id/${tab}`, async (request, reply) => {
+        const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+        if (!ctx) return;
+        const { user, org } = ctx;
+
+        const customerId = (request.params as { id: string }).id;
+        const data = buildCustomerTabData(ctx, customerId, tab);
+
+        const siblings = [
+          { id: customerId, name: data.customer.name },
+          { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+          { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+          { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+        ];
+
+        const { body, pageScripts } = renderCustomerTab(data);
+        const html = renderLayout(
+          {
+            user,
+            org,
+            activePath: `/org/customers/${customerId}/${tab}`,
+            title: `${org.name} - ${data.customer.name}`,
+            navMode: 'customer-detail',
+            customerContext: { id: customerId, name: data.customer.name, siblings },
+            pageStyles: CUSTOMER_TAB_STYLES,
+            pageScripts,
+          },
+          body,
+        );
+        return reply.type('text/html').send(html);
+      });
+    }
+
+    // ---------- GET /org/customers/:id/onboard-mcp (Track C Surface 3 — Onboard wizard) ----------
+    //
+    // 4-step MCP onboarding wizard. Mock-data-first: a fixed scenario
+    // (Autotask · BYOC · AM3 Technology) shaped like the Track A
+    // onboarding read model. `?step=1..4` selects the body. Launched
+    // from the (stubbed) S2 Customer Detail surface — reachable by URL
+    // until S2 lands. The final action is disabled (no persistence).
+    app.get('/org/customers/:id/onboard-mcp', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const customerId = (request.params as { id: string }).id;
+      const step = coerceStep((request.query as { step?: string }).step);
+
+      const data: OnboardMcpData = {
+        org,
+        customerId,
+        customerName: 'AM3 Technology',
+        step,
+        vendorName: 'Autotask',
+        catalogCategories: ['All', 'PSA', 'RMM', 'Security', 'Microsoft 365', 'DNS', 'Backup'],
+        catalog: [
+          { id: 'autotask',    name: 'Autotask',     abbr: 'AT', iconColor: '#d93333', vendor: 'Datto',       category: 'PSA',      hosting: 'OEM · BYOC' },
+          { id: 'datto-rmm',   name: 'Datto RMM',    abbr: 'DR', iconColor: '#1a66d9', vendor: 'Datto',       category: 'RMM',      hosting: 'OEM · Shared' },
+          { id: 'halo',        name: 'Halo PSA',     abbr: 'HA', iconColor: '#f28c1a', vendor: 'HaloITSM',    category: 'PSA',      hosting: 'OEM · BYOC' },
+          { id: 'connectwise', name: 'ConnectWise',  abbr: 'CW', iconColor: '#33a673', vendor: 'ConnectWise', category: 'PSA',      hosting: 'OEM · BYOC' },
+          { id: 'huntress',    name: 'Huntress',     abbr: 'HU', iconColor: '#7333bf', vendor: 'Huntress',    category: 'Security', hosting: 'OEM · Shared' },
+          { id: 'itglue',      name: 'ITGlue',       abbr: 'IG', iconColor: '#6666d9', vendor: 'Kaseya',      category: 'Docs',     hosting: 'Self-hosted' },
+          { id: 'cipp',        name: 'M365 (CIPP)',  abbr: 'CI', iconColor: '#1a8c40', vendor: 'CIPP',        category: 'M365',     hosting: 'OEM · Shared' },
+          { id: 'rocketcyber', name: 'RocketCyber',  abbr: 'RC', iconColor: '#d95933', vendor: 'Kaseya',      category: 'Security', hosting: 'OEM · Shared' },
+          { id: 'checkpoint',  name: 'Check Point',  abbr: 'CP', iconColor: '#8c59d9', vendor: 'Check Point', category: 'Security', hosting: 'OEM · BYOC', isNew: true },
+        ],
+        patterns: [
+          {
+            id: 'byoc', title: 'BYOC — Per User', supported: true, recommended: true,
+            desc: 'Each AM3 user supplies their own Autotask API key.',
+            pros: ['Each user acts as themselves in Autotask', 'Audit trail reflects real user identity', 'Permission scope matches Autotask role'],
+            cons: ['Each user must onboard their own creds', 'Higher setup friction'],
+            bestFor: 'PSAs, time tracking, ticketing where identity matters',
+          },
+          {
+            id: 'shared', title: 'Shared — Reseller-Managed', supported: true,
+            desc: 'WYRE supplies one API key. All AM3 users share it.',
+            pros: ['Zero-setup for AM3 users', 'You rotate creds once, all users updated', 'Simpler audit (one identity outbound)'],
+            cons: ['All actions look like the service user', 'Cannot scope per-user permissions'],
+            bestFor: 'read-mostly tools, security monitoring, RMM',
+          },
+          {
+            id: 'self-hosted', title: 'Self-Hosted (Sidecar)', supported: true,
+            desc: 'Conduit-hosted MCP server container with config you provide.',
+            pros: ['Custom MCPs, internal tools, niche vendors', 'Full control over MCP server config', 'Per-customer container isolation'],
+            cons: ['Higher per-customer infra cost', 'You manage container lifecycle'],
+            bestFor: 'ITGlue, internal MCPs, custom integrations',
+          },
+        ],
+        seats: [
+          { name: 'C. Ramirez',  department: 'Service Delivery', role: 'Owner',  selected: true },
+          { name: 'J. Martinez', department: 'Service Delivery', role: 'Admin',  selected: true },
+          { name: 'K. Williams', department: 'Tier 1 Support',   role: 'Member', selected: true },
+          { name: 'M. Chen',     department: 'Tier 1 Support',   role: 'Member', selected: true },
+          { name: 'S. Patel',    department: 'Tier 2 Support',   role: 'Member', selected: false },
+        ],
+        extraSeatCount: 7,
+        toolPresets: ['Read Only', 'Service Delivery', 'Full Access', 'Custom'],
+        activePreset: 'Service Delivery',
+        department: 'Service Delivery (4 users)',
+        toolGroups: [
+          { name: 'Tickets', tools: [
+            { name: 'create_ticket', enabled: true }, { name: 'update_ticket', enabled: true },
+            { name: 'search_tickets', enabled: true }, { name: 'delete_ticket', enabled: false },
+          ] },
+          { name: 'Time Entries', tools: [
+            { name: 'create_time_entry', enabled: true }, { name: 'search_time_entries', enabled: true },
+          ] },
+          { name: 'Contacts & Companies', tools: [
+            { name: 'search_contacts', enabled: true }, { name: 'create_contact', enabled: false },
+            { name: 'search_companies', enabled: true },
+          ] },
+          { name: 'Invoicing', tools: [
+            { name: 'search_invoices', enabled: false }, { name: 'get_invoice_details', enabled: false },
+          ] },
+        ],
+        summary: [
+          { label: 'Vendor', value: 'Autotask (Datto)' },
+          { label: 'Wiring pattern', value: 'BYOC — Per User' },
+          { label: 'Customer', value: 'AM3 Technology & Cybersecurity' },
+          { label: 'Seats provisioned', value: '5 of 12 users' },
+          { label: 'Department scoped', value: 'Service Delivery' },
+          { label: 'Tools enabled', value: '8 of 13' },
+          { label: 'MCP URL', value: 'am3.conduit.wyre.ai/mcp' },
+          { label: 'Per-user setup link', value: 'Email + dashboard banner' },
+        ],
+      };
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/customers',
+          title: `${org.name} - Onboard MCP`,
+          pageStyles: RESELLER_ONBOARD_MCP_STYLES,
+        },
+        renderOnboardMcp(data),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/hierarchy (Track C Surface 4 — Nested Hierarchy) ----------
+    //
+    // Tenant tree below a reseller. Mock-data-first: the tree below is
+    // shaped like the Track A org-hierarchy read model (reseller →
+    // customer → subtenant). When that endpoint lands, the mock builder
+    // is the single swap-in point — the template renders unchanged.
+    // SWAP-IN CONTRACT: the real tree query MUST be rooted at the caller's
+    // reseller (only its descendant orgs), and the builder must cap
+    // recursion depth + carry a visited-set against a deep or cyclic
+    // org graph. See warden + analyst Track C review, Finding 2.
+    app.get('/org/hierarchy', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const root: TenantNode = {
+        id: org.id,
+        name: org.name,
+        kind: 'reseller',
+        meta: '4 customers · 8 users · BUSINESS',
+        children: [
+          {
+            id: 'cust_mock_1', name: 'AM3 Technology', kind: 'customer',
+            meta: '12 users · BUSINESS',
+            children: [
+              { id: 'sub_mock_1', name: 'AM3 — Internal IT',     kind: 'subtenant', meta: '5 users', children: [] },
+              { id: 'sub_mock_2', name: 'AM3 — Client Services', kind: 'subtenant', meta: '7 users', children: [] },
+            ],
+          },
+          { id: 'cust_mock_2', name: 'Team DNS Solutions', kind: 'customer', meta: '8 users · PRO', children: [] },
+          {
+            id: 'cust_mock_3', name: 'Mountain MSP Group', kind: 'customer',
+            meta: '6 users · PRO',
+            children: [
+              { id: 'sub_mock_3', name: 'Mountain — Healthcare', kind: 'subtenant', meta: '3 users', children: [] },
+              { id: 'sub_mock_4', name: 'Mountain — Legal',      kind: 'subtenant', meta: '2 users', children: [] },
+              { id: 'sub_mock_5', name: 'Mountain — SMB Pool',   kind: 'subtenant', meta: '1 user',  children: [] },
+            ],
+          },
+          { id: 'cust_mock_4', name: 'Coastal IT Partners', kind: 'customer', meta: '15 users · BUSINESS', children: [] },
+        ],
+      };
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/hierarchy',
+          title: `${org.name} - Hierarchy`,
+          pageStyles: RESELLER_HIERARCHY_STYLES,
+          pageScripts: RESELLER_HIERARCHY_SCRIPT,
+        },
+        renderResellerHierarchy({ org, root }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/reseller/* (Track C Surface 5 — stubs) ----------
+    //
+    // Registered as explicit `app.get('<literal>', …)` calls (not a loop)
+    // so the layout.test.ts lock-step source-grep can statically verify
+    // each nav href has a handler. The shared `resellerSettingsStub`
+    // factory keeps the bodies DRY without hiding the path literal.
+    const resellerSettingsStub = (path: string, label: string) =>
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+        if (!ctx) return;
+        const { user, org } = ctx;
+        const html = renderLayout(
+          { user, org, activePath: path, title: `${org.name} - ${label}`, navMode: 'reseller-settings' },
+          resellerStubBody(label),
+        );
+        return reply.type('text/html').send(html);
+      };
+
+    app.get('/org/reseller/general',  resellerSettingsStub('/org/reseller/general', 'General'));
+    app.get('/org/reseller/billing',  resellerSettingsStub('/org/reseller/billing', 'Billing & Plans'));
+    app.get('/org/reseller/api',      resellerSettingsStub('/org/reseller/api', 'API & Webhooks'));
+    app.get('/org/reseller/audit',    resellerSettingsStub('/org/reseller/audit', 'Audit Log'));
+
+    // ---------- GET /org/reseller/branding (Track C Surface 5 — White-Label Branding) ----------
+    //
+    // The reseller-settings "Branding" tab. Mock-data-first: the `branding`
+    // record below is shaped like the Track A reseller-settings read model.
+    // When that endpoint lands, the mock builder is the single swap-in point
+    // — the template renders unchanged. v1 ships the layout with a disabled
+    // "Save changes" affordance (no dead persistence route).
+    app.get('/org/reseller/branding', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const slug = org.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const branding: ResellerBranding = {
+        defaultUrl: `conduit.wyre.ai/v1/mcp/${slug}/am3-technology`,
+        brandAlias: 'mcp.wyretechnology.com',
+        aliasVerified: true,
+        logoUrl: null,
+        colors: { accent: '#D93232', textOnDark: '#F2F2F5', textOnLight: '#212126' },
+        emailFromName: org.name,
+        emailFromAddress: 'notifications@conduit.wyre.ai',
+        emailAuthStatus: 'SPF + DKIM verified · DMARC pending',
+        emailAuthVerified: false,
+        directBillingEnabled: false,
+      };
+
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/reseller/branding',
+          title: `${org.name} - Branding`,
+          navMode: 'reseller-settings',
+          pageStyles: RESELLER_BRANDING_STYLES,
+        },
+        renderResellerBranding({ org, branding, sampleCustomerName: 'AM3 Technology' }),
+      );
       return reply.type('text/html').send(html);
     });
 
