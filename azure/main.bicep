@@ -60,14 +60,6 @@ param pgPassword string
 @description('GitHub Container Registry PAT with read:packages scope')
 param ghcrToken string
 
-@secure()
-@description('Microsoft Entra app client ID for M365 OAuth (optional)')
-param microsoftClientId string = ''
-
-@secure()
-@description('Microsoft Entra app client secret for M365 OAuth (optional)')
-param microsoftClientSecret string = ''
-
 @description('Comma-separated host allowlist for the gateway')
 param allowedHosts string = ''
 
@@ -182,8 +174,6 @@ module gatewayApp './modules/gateway-app.bicep' = {
     masterKey: masterKey
     jwtSecret: jwtSecret
     ghcrToken: ghcrToken
-    microsoftClientId: microsoftClientId
-    microsoftClientSecret: microsoftClientSecret
     allowedHosts: allowedHosts
     adminEmails: adminEmails
     threadAppId: threadAppId

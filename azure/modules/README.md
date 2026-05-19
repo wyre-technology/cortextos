@@ -36,4 +36,4 @@ in `main.bicep` is not significant.
 
 - Key Vault secret names: `auth0-domain`, `auth0-client-id`, `auth0-client-secret`, `stripe-secret-key`, `stripe-webhook-secret`, `stripe-pro-price-id`, `alpha-invite-codes`. The `secretRef` env vars on the gateway container reference these exact names.
 - `AUTH0_DOMAIN` → `secretRef: auth0-domain` wiring in `gateway-app.bicep` resolves to whatever value the out-of-band secret currently holds; changing the name here silently breaks Auth0 login.
-- Top-level parameter names in `main.bicep` (`namePrefix`, `kvName`, `gatewayImage`, `masterKey`, `jwtSecret`, `pgPassword`, `ghcrToken`, `customDomain`, `managedCertName`, `alertEmail`, `deployRoleAssignment`, `vendors`, `env`, `redeployTrigger`, `microsoftClientId`, `microsoftClientSecret`) are consumed by CI — treat them as a public interface.
+- Top-level parameter names in `main.bicep` (`namePrefix`, `kvName`, `gatewayImage`, `masterKey`, `jwtSecret`, `pgPassword`, `ghcrToken`, `customDomain`, `managedCertName`, `alertEmail`, `deployRoleAssignment`, `vendors`, `env`, `redeployTrigger`) are consumed by CI — treat them as a public interface.
