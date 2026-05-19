@@ -98,9 +98,8 @@ describe('vendor-config', () => {
       const vendor = getVendor('microsoft-graph');
       expect(vendor).toBeDefined();
       expect(vendor!.preview).toBe(true);
-      // Conduit's VendorConfig has no `firstParty` or `isStateful` fields —
-      // hosted first-party status is inferred elsewhere; neither is set here.
-      expect((vendor as unknown as Record<string, unknown>).isStateful).toBeFalsy();
+      // Conduit's VendorConfig has no `isStateful` field (the gateway's
+      // stateless-server finding is irrelevant to Conduit's type).
       expect(vendor!.containerUrl).toBe('https://mcp.svc.cloud.microsoft');
       expect(vendor!.mcpPath).toBe('/enterprise');
       expect(vendor!.oauthConfig).toBeDefined();

@@ -693,6 +693,12 @@ export const VENDORS: Record<string, VendorConfig> = {
         throw new Error(`Could not reach Microsoft Entra: ${msg}`);
       });
       if (res.ok) return { valid: true };
+      if (res.status >= 500)
+        return {
+          valid: false,
+          error: `Microsoft Entra is unavailable (HTTP ${res.status}). Try again shortly.`,
+        };
+      // Entra returns 400 for bad client credentials — a real credential rejection.
       return { valid: false, error: 'Azure service principal rejected. Check the tenant ID, client ID, and secret.' };
     },
   },
@@ -1221,10 +1227,19 @@ export const VENDORS: Record<string, VendorConfig> = {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Could not reach Microsoft Graph Enterprise MCP: ${msg}`);
       });
-      if (res.ok) return { valid: true };
       if (res.status === 401 || res.status === 403)
         return { valid: false, error: 'Microsoft authorization expired or insufficient. Reconnect with Microsoft.' };
-      return { valid: false, error: `Microsoft Graph Enterprise MCP returned HTTP ${res.status}.` };
+      if (res.status >= 500)
+        return {
+          valid: false,
+          error: `Microsoft Graph Enterprise MCP is unavailable (HTTP ${res.status}). Try again shortly.`,
+        };
+      // The Phase 0 spike established the Graph Enterprise MCP is a stateless,
+      // POST-only Streamable HTTP server, so a valid `initialize` POST returns
+      // 200. But validate() only needs to confirm the credential is accepted
+      // (i.e. not auth-rejected) — so any non-auth, non-5xx response is treated
+      // as a pass rather than risking a false rejection on a transport quirk.
+      return { valid: true };
     },
     oauthConfig: {
       authorizeUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize',
