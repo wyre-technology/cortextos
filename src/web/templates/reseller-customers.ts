@@ -99,7 +99,7 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
         <h1 style="margin-bottom:4px">Customers</h1>
         <p class="section-desc">Customer organizations under ${orgName} · ${count} active</p>
       </div>
-      <button type="button" class="rc-add-btn" disabled title="Customer onboarding — lands with Surface 3">+ Add Customer</button>
+      <a class="rc-add-btn" href="/org/customers/new">+ Add Customer</a>
     </div>
 
     <div class="rc-toolbar">
@@ -172,6 +172,7 @@ export const RESELLER_CUSTOMERS_STYLES = `
   }
   .rc-add-btn {
     flex-shrink: 0;
+    display: inline-block;
     padding: 9px 16px;
     background: var(--accent);
     color: #0a0a0a;
@@ -181,11 +182,7 @@ export const RESELLER_CUSTOMERS_STYLES = `
     border: none;
     border-radius: 6px;
     cursor: pointer;
-  }
-  .rc-add-btn:disabled {
-    background: var(--border-secondary);
-    color: var(--text-muted);
-    cursor: not-allowed;
+    text-decoration: none;
   }
 
   .rc-toolbar {

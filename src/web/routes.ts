@@ -68,6 +68,12 @@ import {
   RESELLER_CUSTOMER_DETAIL_STYLES,
   type CustomerSummary,
 } from './templates/reseller-customer-detail.js';
+import {
+  renderNewCustomer,
+  coerceNewCustomerStep,
+  NEW_CUSTOMER_STYLES,
+  type NewCustomerData,
+} from './templates/reseller-new-customer.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -651,6 +657,48 @@ export function webRoutes(deps: WebRouteDeps) {
           pageScripts: RESELLER_CUSTOMERS_SCRIPT,
         },
         renderResellerCustomers({ org, customers }),
+      );
+      return reply.type('text/html').send(html);
+    });
+
+    // ---------- GET /org/customers/new (Track C Area 2 — sub-customer onboarding) ----------
+    //
+    // 3-step wizard to provision a new customer org under the reseller.
+    // Registered before /org/customers/:id — Fastify resolves the static
+    // segment first, so "new" never falls through to the :id handler.
+    // Mock-data-first: a fixed example draft; the final "Create customer"
+    // CTA is disabled until the Track A provisioning endpoint lands.
+    app.get('/org/customers/new', async (request, reply) => {
+      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const { user, org } = ctx;
+
+      const step = coerceNewCustomerStep((request.query as { step?: string }).step);
+      const data: NewCustomerData = {
+        org,
+        step,
+        planTiers: ['Free', 'Pro', 'Business'],
+        draft: {
+          name: 'Northwind IT Group',
+          subdomain: 'northwind-it-group',
+          plan: 'Pro',
+          adminEmail: 'admin@northwind.example',
+          inheritBranding: true,
+          accent: '#00C9DB',
+        },
+      };
+
+      const { body, pageScripts } = renderNewCustomer(data);
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: '/org/customers',
+          title: `${org.name} - New customer`,
+          pageStyles: NEW_CUSTOMER_STYLES,
+          pageScripts,
+        },
+        body,
       );
       return reply.type('text/html').send(html);
     });
