@@ -243,11 +243,22 @@ export class TeamService {
   }
 
   /**
-   * The IDs of every team the user is a member of, across ALL their orgs, in
-   * ONE query. RLS scopes org_teams / org_team_members to rows the request
-   * user may see. Used by the unified tools/list aggregation so Phase-1 vendor
-   * discovery does not fan out a per-org getUserTeams() call — the O(orgs) N+1
-   * and concurrent-query fan-out it replaces (see aggregateTools).
+   * The IDs of every team the user is a member of, by direct org_team_members
+   * membership, in ONE query. Used by the unified tools/list Phase-1 vendor
+   * discovery so it does not fan out a per-org getUserTeams() call — the
+   * O(orgs) N+1 and concurrent-query fan-out it replaces (see aggregateTools).
+   *
+   * Scope caveat: org_teams / org_team_members carry NO row-level security,
+   * and nothing structurally guarantees a team member is also a member of
+   * that team's org — so this MAY over-include teams from orgs the user is
+   * not a member of. That is harmless by construction, on two independent
+   * backstops: (a) the only consumer feeds these IDs to
+   * listTeamVendorsForTeams, which reads org_team_credentials — an
+   * RLS-org-scoped table whose policy joins org_members, so an over-included
+   * team in a non-member org contributes zero vendor slugs; and (b) Phase-2
+   * injectCredentials is the fail-closed authorization boundary — a slug that
+   * should not be there simply resolves no credential and is skipped. This
+   * method is a Phase-1 perf pre-filter, NOT an authorization gate.
    */
   async getUserTeamIds(userId: string): Promise<string[]> {
     const rows = await this.sql<{ id: string }[]>`
