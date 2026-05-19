@@ -67,6 +67,53 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
+      # The [self-hosted, wyre-private] runner image (myoung34/github-runner,
+      # Ubuntu 20.04 focal) ships no Azure CLI, but azure/login and
+      # azure/arm-deploy below both require `az` on PATH. Install it from
+      # Microsoft's signed apt repository, pinned to an exact version — not a
+      # bare `curl | bash` of a moving install script.
+      #
+      # Supply-chain posture: the signing key is fetched, then its fingerprint
+      # is asserted against the pinned Microsoft package-signing-key fingerprint
+      # BEFORE it is trusted — a fetch alone is trust-on-first-use every run.
+      # The verified key is `signed-by`-bound to the repo so apt verifies every
+      # package against it, and the azure-cli package is version-pinned.
+      #
+      # Runs as root — myoung34/github-runner's default; no sudo. Breaks if the
+      # runner is ever reconfigured non-root (it is not today).
+      #
+      # INTERIM: this step is removed once the runner image bakes the Azure
+      # CLI in (task_1779172079827) — at which point this is dead weight. The
+      # exact azure-cli pin also depends on Microsoft keeping that version in
+      # the focal repo metadata, so the interim must stay short-lived.
+      - name: Install Azure CLI
+        env:
+          # Microsoft package-signing-key fingerprint (long-standing, stable).
+          MS_KEY_FPR: BC528686B50D79E339D3721CEB3E94ADBE1229CF
+        run: |
+          set -euo pipefail
+          install -d /etc/apt/keyrings
+          curl -sLS https://packages.microsoft.com/keys/microsoft.asc -o /tmp/microsoft.asc
+          # Verify EVERY key the file carries, not just the first — `gpg
+          # --dearmor` trusts all of them, so a MITM that appends a second key
+          # past a verified first one would otherwise land an attacker key in
+          # the signed-by keyring. Assert: exactly one public key, and it is
+          # the pinned fingerprint.
+          key_count="$(gpg --show-keys --with-colons /tmp/microsoft.asc | grep -c '^pub:')"
+          fetched_fpr="$(gpg --show-keys --with-colons /tmp/microsoft.asc | awk -F: '/^fpr:/{print $10; exit}')"
+          if [ "$key_count" != "1" ] || [ "$fetched_fpr" != "$MS_KEY_FPR" ]; then
+            echo "::error::Microsoft key file failed verification — key_count='$key_count' (expect 1), fingerprint='$fetched_fpr' (expect '$MS_KEY_FPR')"
+            exit 1
+          fi
+          gpg --dearmor < /tmp/microsoft.asc > /etc/apt/keyrings/microsoft.gpg
+          chmod 0644 /etc/apt/keyrings/microsoft.gpg
+          rm -f /tmp/microsoft.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ focal main" \
+            > /etc/apt/sources.list.d/azure-cli.list
+          apt-get update
+          apt-get install -y azure-cli=2.72.0-1~focal
+          az version
+
       - name: Azure Login
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3
         with:
