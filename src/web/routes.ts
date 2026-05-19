@@ -20,7 +20,7 @@ import {
 } from '../oauth/vendor-oauth.js';
 import { nanoid } from 'nanoid';
 import { renderLayout } from './layout.js';
-import { renderSuccessPage } from './helpers.js';
+import { renderSuccessPage, escapeHtml } from './helpers.js';
 import { renderPersonalConnections } from './templates/personal-connections.js';
 import { renderTeamOverview, TEAM_OVERVIEW_STYLES } from './templates/team-overview.js';
 import { renderTeamMembers, TEAM_MEMBERS_STYLES } from './templates/team-members.js';
@@ -146,6 +146,36 @@ async function requireTeamAccess(
   }
 
   return { user, org, membership };
+}
+
+/**
+ * Helper: require team access AND that the caller's org is a reseller.
+ * Gate for every reseller-console route (Track C) — the customer list,
+ * customer detail, onboarding wizards, hierarchy, and reseller settings.
+ *
+ * requireTeamAccess alone admits any paid admin of any org; a non-reseller
+ * admin could otherwise load the reseller console by URL. For a
+ * multi-tenant surface that is the wrong default — and it is the seam the
+ * Track A swap-ins would leak through (a real customer-list/ownership
+ * query dropped behind a reseller-only gate is contained; behind a
+ * paid-admin-of-anything gate it is not). See warden's review of the
+ * Track C stack, Finding 1.
+ *
+ * Returns { user, org, membership } or redirects (to /org) and returns null.
+ */
+async function requireResellerAccess(
+  request: Parameters<typeof requireAuth0>[0],
+  reply: Parameters<typeof requireAuth0>[1],
+  orgService: OrgService,
+  billingGate: BillingGate,
+) {
+  const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+  if (!ctx) return null;
+  if (ctx.org.type !== 'reseller') {
+    reply.redirect('/org', 302);
+    return null;
+  }
+  return ctx;
 }
 
 /**
@@ -615,11 +645,15 @@ export function webRoutes(deps: WebRouteDeps) {
     // play as the /org/billing stub → IA shell progression).
 
     function resellerStubBody(surface: string): string {
+      // `surface` is a literal label today, but escape it anyway — a
+      // latent injection point the moment a dynamic value is ever wired
+      // through (analyst review of the Track C stack).
+      const label = escapeHtml(surface);
       return `
         <section style="max-width:560px;margin:48px auto;padding:24px">
-          <h1 style="font-size:22px;font-weight:700;margin-bottom:12px">${surface}</h1>
+          <h1 style="font-size:22px;font-weight:700;margin-bottom:12px">${label}</h1>
           <p style="color:var(--text-secondary);line-height:1.6">
-            This is part of the Conduit reseller console. The ${surface}
+            This is part of the Conduit reseller console. The ${label}
             surface is in active development and will land in a follow-up
             release.
           </p>
@@ -633,8 +667,11 @@ export function webRoutes(deps: WebRouteDeps) {
     // customer rows below are placeholders shaped like the Track A
     // customer-list read model. When that endpoint lands, the mock builder
     // is the single swap-in point — the template renders unchanged.
+    // SWAP-IN CONTRACT: the real customer-list query MUST be reseller-scoped
+    // (only orgs whose parent_org_id === the caller's reseller). A bare
+    // SELECT here leaks every org. See warden Track C review, Finding 2.
     app.get('/org/customers', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
@@ -669,7 +706,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // Mock-data-first: a fixed example draft; the final "Create customer"
     // CTA is disabled until the Track A provisioning endpoint lands.
     app.get('/org/customers/new', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
@@ -710,8 +747,12 @@ export function webRoutes(deps: WebRouteDeps) {
     // customer-dashboard endpoints (conduit PR #130/#136) client-side.
     // Customer identity is mock until the Track A customer-detail
     // endpoint lands — same gap Surface 1 carries.
+    // SWAP-IN CONTRACT: the real customer-detail fetch MUST verify the
+    // :id org's parent_org_id === the caller's reseller before returning
+    // it — a reseller iterating :id values must get 403, not another
+    // reseller's customer. See warden Track C review, Finding 2.
     app.get('/org/customers/:id', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
@@ -728,6 +769,9 @@ export function webRoutes(deps: WebRouteDeps) {
       // Sibling customer roster — feeds the Area 3 tenant switcher. Mock,
       // like the Surface 1 customer list, until the Track A customer-list
       // endpoint lands; the current customer is included and marked.
+      // SWAP-IN CONTRACT: same as the Surface 1 list — the real roster
+      // MUST be reseller-scoped, or the switcher becomes a cross-tenant
+      // jump. See warden Track C review, Finding 2.
       const siblings = [
         { id: customerId, name: customer.name },
         { id: 'cust_mock_2', name: 'Team DNS Solutions' },
@@ -761,7 +805,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // from the (stubbed) S2 Customer Detail surface — reachable by URL
     // until S2 lands. The final action is disabled (no persistence).
     app.get('/org/customers/:id/onboard-mcp', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
@@ -867,8 +911,12 @@ export function webRoutes(deps: WebRouteDeps) {
     // shaped like the Track A org-hierarchy read model (reseller →
     // customer → subtenant). When that endpoint lands, the mock builder
     // is the single swap-in point — the template renders unchanged.
+    // SWAP-IN CONTRACT: the real tree query MUST be rooted at the caller's
+    // reseller (only its descendant orgs), and the builder must cap
+    // recursion depth + carry a visited-set against a deep or cyclic
+    // org graph. See warden + analyst Track C review, Finding 2.
     app.get('/org/hierarchy', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
@@ -922,7 +970,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // factory keeps the bodies DRY without hiding the path literal.
     const resellerSettingsStub = (path: string, label: string) =>
       async (request: FastifyRequest, reply: FastifyReply) => {
-        const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+        const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
         const { user, org } = ctx;
         const html = renderLayout(
@@ -945,7 +993,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // — the template renders unchanged. v1 ships the layout with a disabled
     // "Save changes" affordance (no dead persistence route).
     app.get('/org/reseller/branding', async (request, reply) => {
-      const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 

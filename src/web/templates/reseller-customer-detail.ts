@@ -80,14 +80,12 @@ function buildScript(resellerId: string, customerId: string): string {
       var start = new Date(Date.now() - days * DAY_MS).toISOString();
       return BASE + '/usage?start=' + encodeURIComponent(start);
     }
-    // errorRate aggregate is not yet on UsageSummary (confirmed not in any
-    // branch). Read the field and degrade gracefully — the card is correct
-    // the instant the aggregate ships, with zero UI change. Accepts a 0–1
-    // ratio or an already-percent number.
+    // errorRate is a 0–1 fraction (UsageSummary contract, conduit #187).
+    // Until that aggregate ships the field is absent — degrade gracefully;
+    // the card is correct the instant it lands, with zero UI change.
     function fmtErrorRate(r) {
       if (r == null || isNaN(r)) return '—';
-      var pct = r <= 1 ? r * 100 : r;
-      return pct.toFixed(1) + '%';
+      return (r * 100).toFixed(1) + '%';
     }
 
     Promise.all([
