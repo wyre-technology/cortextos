@@ -10,7 +10,23 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-# Stage 2: Production runtime
+# Stage 2: Build the Starlight docs site
+# Astro Starlight site with base path /docs. The gateway serves the build
+# output at /docs via @fastify/static (src/index.ts), which registers only
+# when public/ exists — so without this stage the image ships docs-less and
+# /docs 404s. Same digest-pinned base image as the other stages.
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS docs-builder
+
+WORKDIR /docs
+
+COPY docs/package*.json ./
+RUN npm ci
+
+COPY docs/astro.config.mjs ./
+COPY docs/src ./src
+RUN npm run build
+
+# Stage 3: Production runtime
 FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
 
 WORKDIR /app
@@ -27,6 +43,12 @@ COPY --from=builder /app/package.json ./
 # Migrations are read at boot by src/db/migrate.ts. Without this COPY the
 # runner finds an empty dir and does nothing.
 COPY migrations ./migrations
+
+# Docs site — Astro Starlight build output. src/index.ts registers
+# @fastify/static against public/ only when the directory exists; the docs
+# site builds at base /docs, so placing dist/ at public/docs makes the
+# gateway serve the documentation at /docs.
+COPY --from=docs-builder /docs/dist ./public/docs
 
 USER gateway
 
