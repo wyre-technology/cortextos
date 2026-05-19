@@ -53,6 +53,7 @@ services:
       - VENDOR_URL_THREATLOCKER=http://threatlocker-mcp:8080
       - VENDOR_URL_TIMEZEST=http://timezest-mcp:8080
       - VENDOR_URL_UNITRENDS=http://unitrends-mcp:8080
+      - VENDOR_URL_AZURE_MCP=http://azure-mcp:8080
       # OAuth vendor app credentials (gateway-level, not per-user)
       - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
       - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
@@ -374,6 +375,14 @@ services:
       - AUTH_MODE=gateway
       - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
+    expose:
+      - "8080"
+
+  azure-mcp:
+    image: ghcr.io/wyre-technology/azure-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
     expose:
       - "8080"
 
