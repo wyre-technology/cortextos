@@ -658,6 +658,9 @@ export const VENDORS: Record<string, VendorConfig> = {
   'azure-mcp': {
     name: 'Azure MCP Server',
     slug: 'azure-mcp',
+    // Closest available category — the gateway uses 'monitoring', which
+    // Conduit's VendorCategory union does not define. Revisit if a cloud /
+    // infrastructure category is added.
     category: 'network',
     containerUrl: 'http://azure-mcp:8080',
     fields: [
