@@ -74,6 +74,12 @@ import {
   NEW_CUSTOMER_STYLES,
   type NewCustomerData,
 } from './templates/reseller-new-customer.js';
+import {
+  renderCustomerTab,
+  CUSTOMER_TAB_STYLES,
+  type CustomerTabId,
+  type CustomerTabData,
+} from './templates/reseller-customer-tabs.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -796,6 +802,118 @@ export function webRoutes(deps: WebRouteDeps) {
       );
       return reply.type('text/html').send(html);
     });
+
+    // ---------- GET /org/customers/:id/{mcps,users,usage,tools,audit,billing,settings} ----------
+    //
+    // Track C step 5 — the 7 per-org management tabs (Aaron "ship it all").
+    // Usage is live (client-fetch of the reseller-scoped dashboard
+    // endpoint, which owns reseller-owns-:id authz); the rest are
+    // mock-data-first with documented swap-in contracts. All gated by
+    // requireResellerAccess. Registered in a loop — the hrefs are
+    // dynamic (:id), so they are not part of the static nav lock-step.
+    const CUSTOMER_TAB_IDS: CustomerTabId[] =
+      ['mcps', 'users', 'usage', 'tools', 'audit', 'billing', 'settings'];
+
+    function buildCustomerTabData(
+      reseller: Awaited<ReturnType<typeof requireResellerAccess>>,
+      customerId: string,
+      tab: CustomerTabId,
+    ): CustomerTabData {
+      const org = reseller!.org;
+      const customer: CustomerSummary = {
+        id: customerId,
+        name: 'AM3 Technology & Cybersecurity',
+        plan: 'BUSINESS',
+        userCount: 12,
+        mcpCount: 4,
+        subdomain: 'am3.conduit.wyre.ai',
+      };
+      // Mock builders — shaped like the Track A read models. SWAP-IN
+      // CONTRACT: every real query below MUST be reseller-scoped and
+      // verify the :id org's parent === the caller's reseller (warden
+      // Finding 2). Usage does not appear here — it fetches live.
+      return {
+        org,
+        customer,
+        tab,
+        mcps: [
+          { vendor: 'Autotask',   pattern: 'OEM · BYOC',   seats: '8/12 users',  status: 'healthy' },
+          { vendor: 'Datto RMM',  pattern: 'OEM · Shared', seats: '12/12 users', status: 'healthy' },
+          { vendor: 'Huntress',   pattern: 'OEM · Shared', seats: '6/12 users',  status: 'degraded' },
+          { vendor: 'ITGlue',     pattern: 'Self-hosted',  seats: '12/12 users', status: 'healthy' },
+        ],
+        members: [
+          { name: 'C. Ramirez',  email: 'cramirez@am3-it.com',  role: 'Owner',  department: 'Service Delivery', toolAccess: 'All MCPs',     lastActive: '12m ago' },
+          { name: 'J. Martinez', email: 'jmartinez@am3-it.com', role: 'Admin',  department: 'Service Delivery', toolAccess: 'All MCPs',     lastActive: '47m ago' },
+          { name: 'K. Williams', email: 'kwilliams@am3-it.com', role: 'Member', department: 'Tier 1 Support',   toolAccess: '3 of 4 MCPs',  lastActive: '2h ago' },
+          { name: 'M. Chen',     email: 'mchen@am3-it.com',     role: 'Member', department: 'Tier 1 Support',   toolAccess: '3 of 4 MCPs',  lastActive: '5h ago' },
+          { name: 'S. Patel',    email: 'spatel@am3-it.com',    role: 'Member', department: 'Tier 2 Support',   toolAccess: '2 of 4 MCPs',  lastActive: '1d ago' },
+        ],
+        memberTotal: 12,
+        toolDepartment: 'Service Delivery (4 users)',
+        toolDepartments: ['Service Delivery', 'Tier 1 Support', 'Tier 2 Support'],
+        toolGroups: [
+          { name: 'Tickets', tools: [
+            { name: 'create_ticket', enabled: true }, { name: 'update_ticket', enabled: true },
+            { name: 'search_tickets', enabled: true }, { name: 'delete_ticket', enabled: false },
+          ] },
+          { name: 'Time Entries', tools: [
+            { name: 'create_time_entry', enabled: true }, { name: 'search_time_entries', enabled: true },
+          ] },
+          { name: 'Contacts & Companies', tools: [
+            { name: 'search_contacts', enabled: true }, { name: 'create_contact', enabled: false },
+          ] },
+        ],
+        audit: [
+          { when: '12m ago',  actor: 'C. Ramirez',      action: 'mcp.tool.invoke',   target: 'Autotask · search_tickets' },
+          { when: '1h ago',   actor: 'J. Martinez',     action: 'member.role.update', target: 'K. Williams → Member' },
+          { when: '3h ago',   actor: 'WYRE Technology', action: 'mcp.onboard',       target: 'Huntress' },
+          { when: '1d ago',   actor: 'C. Ramirez',      action: 'tool.access.grant', target: 'Tier 1 Support → search_tickets' },
+          { when: '2d ago',   actor: 'WYRE Technology', action: 'customer.create',   target: 'AM3 Technology & Cybersecurity' },
+        ],
+        billingPlan: 'Business',
+        billingRate: '$49 / user / month · 12 users',
+        invoices: [
+          { number: 'INV-2026-0042', date: '2026-05-01', amount: '$588.00', status: 'paid' },
+          { number: 'INV-2026-0031', date: '2026-04-01', amount: '$588.00', status: 'paid' },
+          { number: 'INV-2026-0020', date: '2026-03-01', amount: '$539.00', status: 'paid' },
+        ],
+      };
+    }
+
+    for (const tab of CUSTOMER_TAB_IDS) {
+      app.get(`/org/customers/:id/${tab}`, async (request, reply) => {
+        const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+        if (!ctx) return;
+        const { user, org } = ctx;
+
+        const customerId = (request.params as { id: string }).id;
+        const data = buildCustomerTabData(ctx, customerId, tab);
+
+        const siblings = [
+          { id: customerId, name: data.customer.name },
+          { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+          { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+          { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+        ];
+
+        const { body, pageScripts } = renderCustomerTab(data);
+        const html = renderLayout(
+          {
+            user,
+            org,
+            activePath: `/org/customers/${customerId}/${tab}`,
+            title: `${org.name} - ${data.customer.name}`,
+            navMode: 'customer-detail',
+            customerContext: { id: customerId, name: data.customer.name, siblings },
+            pageStyles: CUSTOMER_TAB_STYLES,
+            pageScripts,
+          },
+          body,
+        );
+        return reply.type('text/html').send(html);
+      });
+    }
 
     // ---------- GET /org/customers/:id/onboard-mcp (Track C Surface 3 — Onboard wizard) ----------
     //

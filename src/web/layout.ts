@@ -475,11 +475,17 @@ function renderResellerSettingsNav(orgName: string, activePath: string): string 
 }
 
 // Customer-detail sub-nav (Track C Surface 2). Only "Overview" is built —
-// it's the one designed frame. The remaining tabs render as disabled
-// items (no href): honest about what exists, and — unlike a stub route —
-// nothing to keep lock-step with. They light up when their surfaces land.
-const CUSTOMER_DETAIL_TABS: ReadonlyArray<string> = [
-  'MCPs', 'Users', 'Usage', 'Tool Access', 'Audit Log', 'Billing', 'Settings',
+// the per-org management tabs (Track C step 5 — Aaron "ship it all").
+// Each is a working surface at /org/customers/:id/<slug>; the customer
+// id is spliced in by renderCustomerDetailNav.
+const CUSTOMER_DETAIL_TABS: ReadonlyArray<{ label: string; slug: string }> = [
+  { label: 'MCPs', slug: 'mcps' },
+  { label: 'Users', slug: 'users' },
+  { label: 'Usage', slug: 'usage' },
+  { label: 'Tool Access', slug: 'tools' },
+  { label: 'Audit Log', slug: 'audit' },
+  { label: 'Billing', slug: 'billing' },
+  { label: 'Settings', slug: 'settings' },
 ];
 
 /**
@@ -535,9 +541,11 @@ function renderCustomerDetailNav(
       </div>
       <div class="sidebar-section-label">${name}</div>
       <a class="sidebar-item ${overviewActive ? 'active' : ''}" href="${escapeHtml(overviewHref)}">Overview</a>
-      ${CUSTOMER_DETAIL_TABS.map(
-        (label) => `<span class="sidebar-item sidebar-item-disabled" title="Lands in a follow-up surface">${escapeHtml(label)}</span>`,
-      ).join('')}
+      ${CUSTOMER_DETAIL_TABS.map((tab) => {
+        const href = `${overviewHref}/${tab.slug}`;
+        const active = activePath === href;
+        return `<a class="sidebar-item ${active ? 'active' : ''}" href="${escapeHtml(href)}">${escapeHtml(tab.label)}</a>`;
+      }).join('')}
     </div>`;
 }
 

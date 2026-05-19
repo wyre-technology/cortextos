@@ -1,0 +1,136 @@
+import { describe, it, expect } from 'vitest';
+import { renderCustomerTab, type CustomerTabData, type CustomerTabId } from './reseller-customer-tabs.js';
+import type { Organization } from '../../org/org-service.js';
+
+const org: Organization = {
+  id: 'org_reseller',
+  name: 'WYRE Technology',
+  ownerId: 'auth0|1',
+  plan: 'business',
+  defaultServerAccess: 'none',
+  promptCaptureEnabled: false,
+  stripeCustomerId: null,
+  stripeSubscriptionId: null,
+  type: 'reseller',
+  parentOrgId: null,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-05-16T00:00:00Z',
+};
+
+function data(tab: CustomerTabId, over: Partial<CustomerTabData> = {}): CustomerTabData {
+  return {
+    org,
+    customer: { id: 'cust_1', name: 'AM3 Technology', plan: 'BUSINESS', userCount: 12, mcpCount: 4, subdomain: 'am3.conduit.wyre.ai' },
+    tab,
+    mcps: [{ vendor: 'Autotask', pattern: 'OEM · BYOC', seats: '8/12 users', status: 'healthy' }],
+    members: [
+      { name: 'C. Ramirez', email: 'cramirez@am3-it.com', role: 'Owner', department: 'Service Delivery', toolAccess: 'All MCPs', lastActive: '12m ago' },
+    ],
+    memberTotal: 12,
+    toolDepartment: 'Service Delivery (4 users)',
+    toolDepartments: ['Service Delivery'],
+    toolGroups: [{ name: 'Tickets', tools: [{ name: 'create_ticket', enabled: true }, { name: 'delete_ticket', enabled: false }] }],
+    audit: [{ when: '12m ago', actor: 'C. Ramirez', action: 'mcp.tool.invoke', target: 'Autotask' }],
+    billingPlan: 'Business',
+    billingRate: '$49 / user / month',
+    invoices: [{ number: 'INV-2026-0042', date: '2026-05-01', amount: '$588.00', status: 'paid' }],
+    ...over,
+  };
+}
+
+describe('renderCustomerTab — chrome', () => {
+  it('every tab renders the breadcrumb + tab title + customer subtitle', () => {
+    const tabs: CustomerTabId[] = ['mcps', 'users', 'usage', 'tools', 'audit', 'billing', 'settings'];
+    for (const t of tabs) {
+      const { body } = renderCustomerTab(data(t));
+      expect(body).toContain('WYRE Technology');
+      expect(body).toContain('AM3 Technology');
+      expect(body).toContain('href="/org/customers/cust_1"'); // breadcrumb back to Overview
+    }
+  });
+});
+
+describe('renderCustomerTab — MCPs', () => {
+  it('renders a row per connected MCP with status', () => {
+    const { body } = renderCustomerTab(data('mcps'));
+    expect(body).toContain('Autotask');
+    expect(body).toContain('OEM · BYOC');
+    expect(body).toContain('cdt-dot-healthy');
+  });
+});
+
+describe('renderCustomerTab — Users', () => {
+  it('renders members and the "+ N more" affordance', () => {
+    const { body } = renderCustomerTab(data('users'));
+    expect(body).toContain('C. Ramirez');
+    expect(body).toContain('cramirez@am3-it.com');
+    expect(body).toContain('+ 11 more users');
+  });
+});
+
+describe('renderCustomerTab — Usage (live)', () => {
+  it('renders the live shell + a reseller-scoped fetch script', () => {
+    const { body, pageScripts } = renderCustomerTab(data('usage'));
+    expect(body).toContain('id="cdtUsageLoading"');
+    expect(body).toContain('id="cdtuVendors"');
+    expect(pageScripts).toContain('/admin/reseller/org_reseller/customers/cust_1/dashboard');
+    expect(pageScripts).toContain('createElement');
+    expect(pageScripts).not.toContain('innerHTML');
+  });
+  it('is the only tab with a page script', () => {
+    for (const t of ['mcps', 'users', 'tools', 'audit', 'billing', 'settings'] as CustomerTabId[]) {
+      expect(renderCustomerTab(data(t)).pageScripts).toBe('');
+    }
+  });
+});
+
+describe('renderCustomerTab — Tool Access', () => {
+  it('renders tool groups with enabled counts', () => {
+    const { body } = renderCustomerTab(data('tools'));
+    expect(body).toContain('Tickets');
+    expect(body).toContain('1 of 2 enabled');
+    expect(body).toContain('create_ticket');
+  });
+});
+
+describe('renderCustomerTab — Audit Log', () => {
+  it('renders audit rows', () => {
+    const { body } = renderCustomerTab(data('audit'));
+    expect(body).toContain('mcp.tool.invoke');
+    expect(body).toContain('C. Ramirez');
+  });
+});
+
+describe('renderCustomerTab — Billing', () => {
+  it('renders the plan card and invoice rows', () => {
+    const { body } = renderCustomerTab(data('billing'));
+    expect(body).toContain('Business');
+    expect(body).toContain('INV-2026-0042');
+    expect(body).toContain('cdt-inv-paid');
+  });
+});
+
+describe('renderCustomerTab — Settings', () => {
+  it('renders the identity form with a read-only subdomain and a danger zone', () => {
+    const { body } = renderCustomerTab(data('settings'));
+    expect(body).toContain('Organization name');
+    expect(body).toMatch(/cdt-input-ro[^>]*readonly/);
+    expect(body).toContain('Danger zone');
+    expect(body).toMatch(/cdt-save[^>]*disabled/);
+  });
+});
+
+describe('renderCustomerTab — invariants', () => {
+  it('mock-first tabs carry a documented swap-in contract', () => {
+    for (const t of ['mcps', 'users', 'tools', 'audit', 'billing', 'settings'] as CustomerTabId[]) {
+      expect(renderCustomerTab(data(t)).body).toContain('SWAP-IN CONTRACT');
+    }
+  });
+  it('escapes the customer name (no HTML injection)', () => {
+    const { body } = renderCustomerTab(data('mcps', {
+      customer: { id: 'c', name: '<script>x</script>', plan: 'PRO', userCount: 1, mcpCount: 0, subdomain: 's' },
+    }));
+    expect(body).not.toContain('<script>x</script>');
+    expect(body).toContain('&lt;script&gt;');
+  });
+});
