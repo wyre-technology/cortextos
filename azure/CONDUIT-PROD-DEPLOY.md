@@ -41,8 +41,18 @@ conduit RG migration; nothing here is throwaway.
 2. **Grant the deploy SP** `Contributor` on `rg-conduit-prod` and
    `Key Vault Secrets User` on the conduit-prod KV (dependency c).
 3. **Populate the conduit-prod Key Vault** with the 18 secrets (dependency a).
-4. **What-if dry run — observe the disjointness before the real deploy.** Run
-   `az deployment group what-if --resource-group rg-conduit-prod --template-file azure/main.bicep --parameters azure/params.conduit-prod.bicepparam <secret overrides>`.
+4. **What-if dry run — observe the disjointness before the real deploy.**
+   First export the four secret env vars — `params.conduit-prod.bicepparam`
+   reads them via `readEnvironmentVariable()` (a `.bicepparam` must self-assign
+   every required param; `--parameters` overrides cannot fill omitted ones):
+   ```
+   export MASTER_KEY=...   # generate FRESH (empty conduit-prod DB)
+   export JWT_SECRET=...   # generate FRESH
+   export PG_PASSWORD=...  # generate FRESH (new Postgres admin password)
+   export GHCR_TOKEN=...   # copy existing read:packages PAT
+   ```
+   Then run
+   `az deployment group what-if --resource-group rg-conduit-prod --template-file azure/main.bicep --parameters azure/params.conduit-prod.bicepparam rootlyWebhookUrl=<from-KV>`.
    On the empty `rg-conduit-prod` it must list every resource as a **Create**
    inside `rg-conduit-prod` and show **zero** changes to any `mcp-gateway-prod`
    resource — the observed proof of the name disjointness the templates are

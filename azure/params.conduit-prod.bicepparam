@@ -66,13 +66,23 @@ param existingVendorEnv = []
 
 param deployRoleAssignment = false
 
-// Secrets — passed by CI via `--parameters` overrides at deploy time, NOT
-// stored here (same pattern as params.staging.bicepparam):
-//   masterKey   — generate FRESH (empty conduit-prod DB, nothing to decrypt)
-//   jwtSecret   — generate FRESH
-//   pgPassword  — generate FRESH (new Postgres admin password)
-//   ghcrToken   — copy existing
-//   rootlyWebhookUrl — fetched from the conduit-prod Key Vault at deploy time
+// Secrets — assigned via readEnvironmentVariable(). A .bicepparam file must
+// self-assign every required (non-defaulted) param of its `using` target or
+// compilation fails with BCP258; CLI `--parameters` overrides cannot fill
+// omitted params. The Phase-B deploy (azure/CONDUIT-PROD-DEPLOY.md §4-7)
+// exports these as env vars before running `az deployment group create`:
+//   MASTER_KEY  — generate FRESH (empty conduit-prod DB, nothing to decrypt)
+//   JWT_SECRET  — generate FRESH
+//   PG_PASSWORD — generate FRESH (new Postgres admin password)
+//   GHCR_TOKEN  — copy existing
+// A missing env var fails the deploy loudly at compile time, not as a blank.
+param masterKey = readEnvironmentVariable('MASTER_KEY')
+param jwtSecret = readEnvironmentVariable('JWT_SECRET')
+param pgPassword = readEnvironmentVariable('PG_PASSWORD')
+param ghcrToken = readEnvironmentVariable('GHCR_TOKEN')
+
+// rootlyWebhookUrl (main.bicep defaults to '') — fetched from the conduit-prod
+// Key Vault at deploy time and passed as a `--parameters` override.
 // Image (set by CI):
 //   gatewayImage    — ghcr.io/wyre-technology/conduit:sha-<short>
 //   redeployTrigger — the workflow run id

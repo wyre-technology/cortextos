@@ -216,10 +216,46 @@ jobs:
             --template-file ./azure/subscription-budget.bicep \
             --parameters actionGroupId="/subscriptions/d1fd92e8-6084-4dae-83dd-6a9a705f4a1d/resourceGroups/mcp-gateway-prod/providers/microsoft.insights/actionGroups/mcpgw-prod-alerts"
 
-      # Staging: bicepparam file + secret overrides
+      # Fail loud + early if any of the four staging deploy secrets is unset
+      # OR empty. params.staging.bicepparam reads them via
+      # readEnvironmentVariable(), which throws only on an UNSET var — but the
+      # env: block on the deploy step below always *defines* the vars, so a
+      # missing GitHub-environment secret resolves to "" and would otherwise
+      # compile a BLANK @secure param rather than fail. An empty MASTER_KEY /
+      # JWT_SECRET is forgeable-token / decryptable-credential territory — gate
+      # it here rather than ship it.
+      - name: Assert staging deploy secrets present
+        if: needs.resolve.outputs.environment == 'staging'
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for v in MASTER_KEY JWT_SECRET PG_PASSWORD GHCR_TOKEN; do
+            [ -n "${!v:-}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Staging deploy secret(s) unset or empty: ${missing[*]}. Set them on the conduit 'staging' GitHub environment."
+            exit 1
+          fi
+          echo "All four staging deploy secrets are present and non-empty."
+
+      # Staging: bicepparam file. The four @secure params are assigned inside
+      # params.staging.bicepparam via readEnvironmentVariable() and supplied
+      # here as step env: vars — a .bicepparam must self-assign every required
+      # param (BCP258), so these cannot be passed as `--parameters` overrides.
+      # The guard step above has already asserted all four are non-empty.
       - name: Deploy Bicep (staging)
         if: needs.resolve.outputs.environment == 'staging'
         uses: azure/arm-deploy@a1361c2c2cd398621955b16ca32e01c65ea340f5  # v2
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         with:
           scope: resourcegroup
           resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -228,10 +264,6 @@ jobs:
             ./azure/params.staging.bicepparam
             gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
             redeployTrigger=${{ github.run_id }}
-            masterKey=${{ secrets.MASTER_KEY }}
-            jwtSecret=${{ secrets.JWT_SECRET }}
-            pgPassword=${{ secrets.PG_PASSWORD }}
-            ghcrToken=${{ secrets.GHCR_TOKEN }}
             existingCustomDomains=${{ steps.gw-state.outputs.domains }}
             existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
           failOnStdErr: false
