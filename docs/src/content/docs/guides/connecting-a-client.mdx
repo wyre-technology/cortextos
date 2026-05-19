@@ -1,0 +1,84 @@
+---
+title: Connecting an AI client
+description: How to connect Claude Code, Claude Desktop, or another MCP client to your organization's Conduit gateway.
+---
+
+Conduit is the gateway between your AI client and the vendor tools your MSP has connected. To use those tools from Claude, you point your AI client at your organization's Conduit MCP endpoint and sign in once. This guide walks through it.
+
+You do not install Conduit — it is a hosted gateway. You **connect** an MCP client to it.
+
+## Before you start
+
+You need:
+
+- **A Conduit account.** Your MSP invites you; accept the invitation and complete sign-in once in the browser.
+- **Your Conduit MCP endpoint URL** — `https://<your-conduit-host>/v1/mcp`. Your MSP provides the host. The `/v1/mcp` endpoint is the unified endpoint: it exposes every vendor your organization has connected, behind one URL.
+
+## Connect Claude Code
+
+Claude Code connects to a remote MCP server directly. Run:
+
+```bash
+claude mcp add --transport http conduit https://<your-conduit-host>/v1/mcp
+```
+
+The `--transport http` flag tells Claude Code this is a remote HTTP server (without it, Claude Code would treat the URL as a local command and the add would fail). Flags come before the server name.
+
+On first use, Claude Code opens a browser for sign-in — see [First connection](#first-connection) below.
+
+## Connect Claude Desktop and other clients via the mcp-remote bridge
+
+Claude Desktop — and many other MCP clients — connect only to MCP servers that run locally as a program, not to a remote web address. To reach Conduit from one of those clients, you use **`mcp-remote`**: a small community tool (a third-party npm package, not a WYRE component) that runs locally and bridges your client to the remote Conduit endpoint.
+
+Add this to your client's MCP configuration file — for Claude Desktop, that is `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "conduit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://<your-conduit-host>/v1/mcp"]
+    }
+  }
+}
+```
+
+Restart the client. `mcp-remote` runs on demand (via `npx`), handles the sign-in flow, and stores the token on the client side. The first connection opens a browser for sign-in.
+
+:::note
+Use the `claude mcp add --transport http` form above wherever your client natively supports remote MCP servers. The `mcp-remote` bridge is for clients — Claude Desktop among them — that connect only to local programs.
+:::
+
+## First connection
+
+The first time a client connects, Conduit runs a standard OAuth 2.1 sign-in — your client (or the `mcp-remote` bridge) does this for you:
+
+1. The client registers itself with Conduit (dynamic client registration).
+2. A browser window opens to sign in. Authenticate with your organization's identity — email/password or Microsoft / Entra ID.
+3. The client receives a token and is connected.
+
+The token is cached and refreshed automatically — you sign in once, not on every session. Conduit's OAuth flow uses PKCE; no API keys are ever pasted into your client.
+
+## Verify the connection
+
+Once connected, your organization's connected vendors appear as tools in your client. To confirm:
+
+- Ask Claude to run a simple read-only tool call against one of your connected vendors.
+- The call should return real data from the vendor.
+
+If tools do not appear, see Troubleshooting below.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| No tools appear after connecting | Your organization may not have any vendors connected yet, or your role's tool allowlist restricts them. Check with your MSP admin. |
+| Browser sign-in never completes | Make sure pop-ups are allowed for the sign-in window, then retry the connection. |
+| Claude Code `add` fails or the URL is treated as a command | Make sure `--transport http` is included and comes *before* the server name. |
+| A tool call returns a permissions error | Your role may not be granted access to that vendor or tool. Your MSP admin controls vendor and tool access. |
+| Connection worked, then stopped | Your session may have been revoked, or a vendor credential changed. Reconnect; if it persists, contact your MSP. |
+
+## Related
+
+- [Getting Started](/docs/getting-started/) — the MSP-side setup that stands up the gateway you are connecting to.
+- [Vendor Connections](/docs/guides/vendor-connections/) — how your MSP connects the vendors whose tools you see.
