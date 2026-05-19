@@ -114,6 +114,7 @@ function createMockOrgService() {
     getToolAllowlist: vi.fn().mockResolvedValue(null),
     getUserOrgs: vi.fn().mockResolvedValue([]),
     getUserTeams: vi.fn().mockResolvedValue([]),
+    getUserTeamIds: vi.fn().mockResolvedValue([]),
     hasServerAccess: vi.fn().mockResolvedValue(true),
     getPromptCaptureEnabled: vi.fn().mockResolvedValue(false),
   } as unknown as import('../org/org-service.js').OrgService;
@@ -129,19 +130,34 @@ function createMockBillingGate() {
 function createMockCredentialService(connectedVendors: string[] = []) {
   return {
     listVendors: vi.fn().mockResolvedValue(connectedVendors),
-    listOrgVendors: vi.fn().mockResolvedValue(connectedVendors),
-    listTeamVendors: vi.fn().mockResolvedValue(connectedVendors),
+    // Per-org/per-team variants — retained as spies so a regression to the
+    // old Phase-1 fan-out is caught by `.not.toHaveBeenCalled()`.
+    listOrgVendors: vi.fn().mockResolvedValue([]),
+    listTeamVendors: vi.fn().mockResolvedValue([]),
+    // Set-based Phase-1 queries: the fixed-count replacement for the fan-out.
+    listOrgVendorsForOrgs: vi.fn().mockResolvedValue([]),
+    listTeamVendorsForTeams: vi.fn().mockResolvedValue([]),
   } as unknown as import('../credentials/credential-service.js').CredentialService;
 }
 
-async function buildApp(toolCache: ToolCache, connectedVendors: string[] = ['autotask', 'datto-rmm']) {
+interface ServiceOverrides {
+  credentialService?: import('../credentials/credential-service.js').CredentialService;
+  orgService?: import('../org/org-service.js').OrgService;
+}
+
+async function buildApp(
+  toolCache: ToolCache,
+  connectedVendors: string[] = ['autotask', 'datto-rmm'],
+  overrides: ServiceOverrides = {},
+) {
   const app = Fastify({ logger: false });
   enterTestContext(createMockSql());
 
   await app.register(
     unifiedProxyRoutes({
-      credentialService: createMockCredentialService(connectedVendors),
-      orgService: createMockOrgService(),
+      credentialService:
+        overrides.credentialService ?? createMockCredentialService(connectedVendors),
+      orgService: overrides.orgService ?? createMockOrgService(),
       billingGate: createMockBillingGate(),
       toolCache,
     }),
@@ -276,6 +292,67 @@ describe('Unified MCP Router', () => {
 
       const body = JSON.parse(res.body);
       expect(body.result.tools).toHaveLength(0);
+    });
+
+    it('discovers org- and team-credentialed vendors via fixed set-based queries (no per-org fan-out)', async () => {
+      // Regression: Phase-1 vendor discovery previously fanned out a
+      // per-org/per-team Promise.all of queries onto the request's reserved
+      // transaction connection, which deadlocked and hung tools/list. It is
+      // now a fixed number of sequential set-based queries regardless of how
+      // many orgs/teams the user belongs to. This test pins that shape: the
+      // set-based methods are each called exactly once, and the old per-org
+      // fan-out methods are never called.
+      const credentialService = createMockCredentialService([]);
+      vi.mocked(credentialService.listOrgVendorsForOrgs).mockResolvedValue(['autotask']);
+      vi.mocked(credentialService.listTeamVendorsForTeams).mockResolvedValue(['datto-rmm']);
+
+      const orgService = createMockOrgService();
+      vi.mocked(orgService.getUserOrgs).mockResolvedValue([
+        { id: 'org-1' },
+        { id: 'org-2' },
+      ] as unknown as Awaited<ReturnType<typeof orgService.getUserOrgs>>);
+      vi.mocked(orgService.getUserTeamIds).mockResolvedValue(['team-1', 'team-2', 'team-3']);
+
+      vi.mocked(injectCredentials).mockImplementation(async (_auth, slug) => ({
+        userId: 'user-123',
+        vendor: slug,
+        headers: {},
+      }));
+      vi.mocked(toolCache.getTools).mockImplementation(async (slug) =>
+        slug === 'autotask'
+          ? [{ name: 'list_tickets', description: 'List tickets' }]
+          : [{ name: 'list_devices', description: 'List devices' }],
+      );
+
+      app = await buildApp(toolCache, [], { credentialService, orgService });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/mcp',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const names = JSON.parse(res.body).result.tools.map((t: { name: string }) => t.name);
+      expect(names).toContain('autotask__list_tickets');
+      expect(names).toContain('datto-rmm__list_devices');
+
+      // Set-based queries: one call each, covering ALL orgs/teams at once.
+      expect(credentialService.listOrgVendorsForOrgs).toHaveBeenCalledTimes(1);
+      expect(credentialService.listOrgVendorsForOrgs).toHaveBeenCalledWith(['org-1', 'org-2']);
+      expect(orgService.getUserTeamIds).toHaveBeenCalledTimes(1);
+      expect(credentialService.listTeamVendorsForTeams).toHaveBeenCalledTimes(1);
+      expect(credentialService.listTeamVendorsForTeams).toHaveBeenCalledWith([
+        'team-1',
+        'team-2',
+        'team-3',
+      ]);
+
+      // The old per-org fan-out must never run again.
+      expect(credentialService.listOrgVendors).not.toHaveBeenCalled();
+      expect(credentialService.listTeamVendors).not.toHaveBeenCalled();
+      expect(orgService.getUserTeams).not.toHaveBeenCalled();
     });
   });
 
