@@ -171,16 +171,22 @@ export async function injectCredentials(
       for (const org of orgs) {
         // Team tier (before org tier): check teams the user belongs to that have creds
         {
+          // One set-based query for the credential across every team the
+          // user is in — not a per-team Promise.all fan-out, which issues
+          // concurrent queries on the request's reserved-transaction
+          // connection (the deadlock class fixed in aggregateTools). Returns
+          // only the teams that actually hold a credential.
           const userTeams = await orgService.getUserTeams(org.id, userId);
-          const hits = (await Promise.all(
-            userTeams.map(async (t) => ({ t, creds: await credentialService.getTeamCredential(t.id, vendorSlug) }))
-          )).filter((x) => x.creds !== null);
+          const hits = await credentialService.getTeamCredentialsForTeams(
+            userTeams.map((t) => t.id),
+            vendorSlug,
+          );
 
           if (hits.length === 1) {
             const hasAccess = await orgService.hasServerAccess(org.id, userId, vendorSlug);
             if (hasAccess) {
-              creds = hits[0].creds!;
-              teamId = hits[0].t.id;
+              creds = hits[0].creds;
+              teamId = hits[0].teamId;
               orgId = org.id;
               break;
             }

@@ -242,6 +242,22 @@ export class TeamService {
     return rows.map((r) => this.toTeam(r));
   }
 
+  /**
+   * The IDs of every team the user is a member of, across ALL their orgs, in
+   * ONE query. RLS scopes org_teams / org_team_members to rows the request
+   * user may see. Used by the unified tools/list aggregation so Phase-1 vendor
+   * discovery does not fan out a per-org getUserTeams() call — the O(orgs) N+1
+   * and concurrent-query fan-out it replaces (see aggregateTools).
+   */
+  async getUserTeamIds(userId: string): Promise<string[]> {
+    const rows = await this.sql<{ id: string }[]>`
+      SELECT t.id FROM org_teams t
+      JOIN org_team_members m ON m.team_id = t.id
+      WHERE m.user_id = ${userId}
+    `;
+    return rows.map((r) => r.id);
+  }
+
   // -------------------------------------------------------------------------
   // Team server access
   // -------------------------------------------------------------------------

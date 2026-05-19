@@ -388,97 +388,151 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
       if (!isServiceClient) {
         const connectedSlugs = new Set<string>();
 
-        // Personal credentials — one cheap query, no decryption
+        // Vendor discovery runs as a FIXED, small number of queries, each
+        // awaited SEQUENTIALLY. The previous per-org/per-team Promise.all
+        // fan-out hung tools/list (root cause confirmed via instrumentation):
+        // a nested / dynamic-fan-out of concurrent queries on the request's
+        // single reserved-transaction connection deadlocks. Flat-fixed
+        // concurrent Promise.alls on that same connection are proven fine
+        // (the dashboard and audit endpoints) — the precise postgres.js reason
+        // for the nested-vs-flat difference is not yet characterized. Awaiting
+        // the queries sequentially removes the concurrency entirely, which is
+        // the universally-safe pattern used everywhere else in the codebase.
+        // The set-based queries also make this O(1) in query count rather than
+        // the previous O(orgs × teams) N+1.
+
+        // 1. Personal credentials.
         const personalSlugs = await credentialService.listVendors(userId);
         personalSlugs.forEach((s) => connectedSlugs.add(s));
 
-        // Org + team credentials — slug-only queries per org/team
+        // 2. Org credentials — one query across every org the user is in.
         const orgs = await orgService.getUserOrgs(userId);
-        const orgSlugSets = await Promise.all(
-          orgs.map(async (org) => {
-            const [orgSlugs, teams] = await Promise.all([
-              credentialService.listOrgVendors(org.id),
-              orgService.getUserTeams(org.id, userId),
-            ]);
-            const teamSlugArrays = await Promise.all(
-              teams.map((t) => credentialService.listTeamVendors(t.id)),
-            );
-            return [...orgSlugs, ...teamSlugArrays.flat()];
-          }),
+        const orgSlugs = await credentialService.listOrgVendorsForOrgs(
+          orgs.map((o) => o.id),
         );
-        orgSlugSets.flat().forEach((s) => connectedSlugs.add(s));
+        orgSlugs.forEach((s) => connectedSlugs.add(s));
+
+        // 3. Team credentials — one query for the user's team IDs, one for the
+        //    credential slugs across all of them.
+        const teamIds = await orgService.getUserTeamIds(userId);
+        const teamSlugs = await credentialService.listTeamVendorsForTeams(teamIds);
+        teamSlugs.forEach((s) => connectedSlugs.add(s));
 
         slugsToQuery = allVendorSlugs.filter((s) => connectedSlugs.has(s));
       }
 
       // --- Phase 2: full credential injection for connected vendors only ---
-      const vendorResults = await Promise.allSettled(
-        slugsToQuery.map(async (slug) => {
-          const vendorConfig = getVendor(slug);
-          if (!vendorConfig) return [];
+      // DB work is sequentialized for the same reason as Phase 1 — concurrent
+      // queries fanned out on the request's reserved-transaction connection
+      // deadlock. The per-vendor tool fetch (toolCache.getTools) is a
+      // vendor-container HTTP call with no DB access, so it STAYS concurrent:
+      // serializing it would make tools/list latency grow linearly with
+      // connected-vendor count and let one slow vendor block the rest. Hence
+      // three passes — sequential DB (credential resolution), concurrent HTTP
+      // (tool fetch), sequential DB (allowlist filtering).
 
-          let injection;
+      // Pass 1 — sequential DB: resolve credentials for each connected vendor.
+      const injected: {
+        slug: string;
+        vendorConfig: NonNullable<ReturnType<typeof getVendor>>;
+        injection: Awaited<ReturnType<typeof injectCredentials>>;
+      }[] = [];
+      for (const slug of slugsToQuery) {
+        const vendorConfig = getVendor(slug);
+        if (!vendorConfig) continue;
+
+        try {
+          const injection = await injectCredentials(
+            authHeader,
+            slug,
+            credentialService,
+            orgService,
+            { allowUnscopedToken: true },
+          );
+          injected.push({ slug, vendorConfig, injection });
+        } catch (err) {
+          // error-level (not warn): a 100%-failure mode like "all tokens
+          // missing vendor claim" otherwise looks like "no connected tools"
+          // with no signal.
+          app.log.error(
+            { slug, err: err instanceof Error ? err.message : String(err) },
+            'aggregateTools: credential injection failed',
+          );
+          // No credentials for this vendor — skip.
+        }
+      }
+
+      // Pass 2 — concurrent HTTP: fetch each vendor's tools. Safe to fan out
+      // ONLY because toolCache.getTools issues zero reserved-tx DB queries —
+      // this premise is load-bearing (a DB query here would reintroduce the
+      // Phase-1 deadlock). Verified: proxy/tool-cache.ts has NO imports at all;
+      // getTools/fetchTools touch only an in-memory Map (cache + inflight
+      // dedup) and the global fetch() — no getSql, no service, nothing to
+      // recurse into transitively. allSettled: one vendor's fetch failure must
+      // not drop the rest.
+      const fetched = await Promise.allSettled(
+        injected.map(async ({ slug, vendorConfig, injection }) => {
           try {
-            injection = await injectCredentials(
-              authHeader,
+            const tools = await toolCache.getTools(
               slug,
-              credentialService,
-              orgService,
-              { allowUnscopedToken: true },
+              vendorConfig.containerUrl,
+              injection.headers,
             );
+            return { slug, vendorConfig, injection, tools };
           } catch (err) {
-            // error-level (not warn): outer Promise.allSettled hides per-vendor
-            // failures, so a 100%-failure mode like "all tokens missing vendor
-            // claim" otherwise looks like "no connected tools" with no signal.
+            // A rejected tool fetch (vendor container down/unreachable) must
+            // not vanish silently — without this it is indistinguishable from
+            // "vendor has no tools". Logged here, where the slug is in scope;
+            // the Pass-3 loop then skips the rejected entry.
             app.log.error(
               { slug, err: err instanceof Error ? err.message : String(err) },
-              'aggregateTools: credential injection failed',
+              'aggregateTools: vendor tool fetch failed',
             );
-            // No credentials for this vendor — skip
-            return [];
+            throw err;
           }
-
-          // Fetch tools via cache
-          const tools = await toolCache.getTools(
-            slug,
-            vendorConfig.containerUrl,
-            injection.headers,
-          );
-
-          // Apply allowlist filtering for org credentials
-          let filteredTools = tools;
-          if (injection.orgId) {
-            const membership = await orgService.getMembership(injection.orgId, injection.userId);
-            const role = membership?.role ?? 'member';
-
-            if (role !== 'owner') {
-              const allowlist = await orgService.getToolAllowlist(
-                injection.orgId,
-                slug,
-                role,
-              );
-
-              if (allowlist !== null) {
-                filteredTools = tools.filter((t) => allowlist.includes(t.name));
-              }
-            }
-          }
-
-          // Prefix tool names; truncate descriptions to cap input-token cost.
-          // 200 chars retains full semantic value while trimming marketing copy
-          // and verbose enum lists that Claude doesn't need for tool selection.
-          return filteredTools.map((tool) => ({
-            ...tool,
-            name: `${slug}__${tool.name}`,
-            description: truncateDescription(`[${vendorConfig.name}] ${tool.description ?? ''}`),
-          }));
         }),
       );
 
-      for (const result of vendorResults) {
-        if (result.status === 'fulfilled' && result.value.length > 0) {
-          results.push(...result.value);
+      // Pass 3 — sequential DB: allowlist filtering for org credentials, then
+      // prefix tool names and truncate descriptions.
+      for (const result of fetched) {
+        // Rejected fetches were already logged with their slug inside Pass 2.
+        if (result.status !== 'fulfilled') continue;
+        const { slug, vendorConfig, injection, tools } = result.value;
+
+        let filteredTools = tools;
+        if (injection.orgId) {
+          const membership = await orgService.getMembership(
+            injection.orgId,
+            injection.userId,
+          );
+          const role = membership?.role ?? 'member';
+
+          if (role !== 'owner') {
+            const allowlist = await orgService.getToolAllowlist(
+              injection.orgId,
+              slug,
+              role,
+            );
+
+            if (allowlist !== null) {
+              filteredTools = tools.filter((t) => allowlist.includes(t.name));
+            }
+          }
         }
+
+        // Prefix tool names; truncate descriptions to cap input-token cost.
+        // 200 chars retains full semantic value while trimming marketing copy
+        // and verbose enum lists that Claude doesn't need for tool selection.
+        results.push(
+          ...filteredTools.map((tool) => ({
+            ...tool,
+            name: `${slug}__${tool.name}`,
+            description: truncateDescription(
+              `[${vendorConfig.name}] ${tool.description ?? ''}`,
+            ),
+          })),
+        );
       }
 
       return results;

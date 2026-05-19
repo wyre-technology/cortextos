@@ -13,6 +13,7 @@ describe('injectCredentials', () => {
     getOrgCredential: vi.fn(),
     resolveForOrgAndVendor: vi.fn(),
     getTeamCredential: vi.fn(),
+    getTeamCredentialsForTeams: vi.fn(),
     getServiceClientCredential: vi.fn(),
     store: vi.fn(),
     storeOrgCredential: vi.fn(),
@@ -71,6 +72,7 @@ describe('injectCredentials', () => {
     mockCredentialService.getOrgCredential.mockReset();
     mockCredentialService.resolveForOrgAndVendor.mockReset();
     mockCredentialService.getTeamCredential.mockReset();
+    mockCredentialService.getTeamCredentialsForTeams.mockReset();
     mockCredentialService.getServiceClientCredential.mockReset();
     mockCredentialService.storeOrgCredential.mockReset();
     mockCredentialService.storeTeamCredential.mockReset();
@@ -82,6 +84,7 @@ describe('injectCredentials', () => {
     // Defaults: no teams, no service client creds (backward-compatible)
     mockOrgService.getUserTeams.mockResolvedValue([]);
     mockCredentialService.getTeamCredential.mockResolvedValue(null);
+    mockCredentialService.getTeamCredentialsForTeams.mockResolvedValue([]);
     mockCredentialService.getServiceClientCredential.mockResolvedValue(null);
 
     const mod = await import('./credential-injector.js');
@@ -547,6 +550,68 @@ describe('injectCredentials', () => {
       mockOrgService.hasServerAccess.mockResolvedValue(false);
 
       const token = await makeToken('user-c', 'datto-rmm');
+      await expect(
+        injectCredentials(
+          `Bearer ${token}`,
+          'datto-rmm',
+          mockCredentialService as never,
+          mockOrgService as never,
+        ),
+      ).rejects.toThrow('No stored credentials');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Team-scoped credential resolution
+  // -------------------------------------------------------------------------
+
+  describe('team-scoped credential resolution', () => {
+    it('resolves a team credential via one set-based query, not a per-team fan-out', async () => {
+      mockCredentialService.get.mockResolvedValue(null); // no personal credential
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'org-1', name: 'Org', ownerId: 'owner', plan: 'pro' },
+      ]);
+      mockOrgService.getUserTeams.mockResolvedValue([{ id: 'team-a' }, { id: 'team-b' }]);
+      mockCredentialService.getTeamCredentialsForTeams.mockResolvedValue([
+        {
+          teamId: 'team-b',
+          creds: { apiKey: 'team-key', apiSecret: 'team-secret', platform: 'concord' },
+        },
+      ]);
+      mockOrgService.hasServerAccess.mockResolvedValue(true);
+
+      const token = await makeToken('user-t', 'datto-rmm');
+      const result = await injectCredentials(
+        `Bearer ${token}`,
+        'datto-rmm',
+        mockCredentialService as never,
+        mockOrgService as never,
+      );
+
+      expect(result.headers).toBeDefined();
+      // One query covering every team the user is in — not a per-team
+      // Promise.all fan-out on the reserved-transaction connection.
+      expect(mockCredentialService.getTeamCredentialsForTeams).toHaveBeenCalledTimes(1);
+      expect(mockCredentialService.getTeamCredentialsForTeams).toHaveBeenCalledWith(
+        ['team-a', 'team-b'],
+        'datto-rmm',
+      );
+      expect(mockCredentialService.getTeamCredential).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the org tier when more than one team has the credential', async () => {
+      mockCredentialService.get.mockResolvedValue(null);
+      mockOrgService.getUserOrgs.mockResolvedValue([
+        { id: 'org-1', name: 'Org', ownerId: 'owner', plan: 'pro' },
+      ]);
+      mockOrgService.getUserTeams.mockResolvedValue([{ id: 'team-a' }, { id: 'team-b' }]);
+      mockCredentialService.getTeamCredentialsForTeams.mockResolvedValue([
+        { teamId: 'team-a', creds: { apiKey: 'k1', apiSecret: 's1', platform: 'concord' } },
+        { teamId: 'team-b', creds: { apiKey: 'k2', apiSecret: 's2', platform: 'concord' } },
+      ]);
+      mockCredentialService.resolveForOrgAndVendor.mockResolvedValue(null);
+
+      const token = await makeToken('user-t', 'datto-rmm');
       await expect(
         injectCredentials(
           `Bearer ${token}`,

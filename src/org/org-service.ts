@@ -935,6 +935,7 @@ export class OrgService {
   removeTeamMember(teamId: string, userId: string) { return this.teamService.removeMember(teamId, userId); }
   getTeamMembersWithProfiles(teamId: string) { return this.teamService.getTeamMembersWithProfiles(teamId); }
   getUserTeams(orgId: string, userId: string) { return this.teamService.getUserTeams(orgId, userId); }
+  getUserTeamIds(userId: string) { return this.teamService.getUserTeamIds(userId); }
   grantTeamServerAccess(orgId: string, teamId: string, vendorSlug: string, grantedBy: string) { return this.teamService.grantServerAccess(orgId, teamId, vendorSlug, grantedBy); }
   revokeTeamServerAccess(teamId: string, vendorSlug: string) { return this.teamService.revokeServerAccess(teamId, vendorSlug); }
   listTeamServerAccess(teamId: string) { return this.teamService.listServerAccess(teamId); }

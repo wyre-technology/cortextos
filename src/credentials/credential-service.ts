@@ -393,6 +393,25 @@ export class CredentialService {
     return rows.map((r) => r.vendor_slug);
   }
 
+  /**
+   * Set-based variant of {@link listOrgVendors}: the union of org-credential
+   * vendor slugs across many orgs in ONE query. Empty input returns `[]`
+   * without a query. Used by the unified tools/list aggregation so Phase-1
+   * vendor discovery is a constant number of queries regardless of how many
+   * orgs a user belongs to — replacing a per-org fan-out that was both an
+   * O(orgs) N+1 and a concurrent-query fan-out on the request's reserved
+   * transaction connection (see aggregateTools in proxy/unified-router.ts).
+   */
+  async listOrgVendorsForOrgs(orgIds: string[]): Promise<string[]> {
+    if (orgIds.length === 0) return [];
+    const rows = await this.sql<{ vendor_slug: string }[]>`
+      SELECT DISTINCT vendor_slug FROM org_credentials
+      WHERE org_id IN ${this.sql(orgIds)}
+      ORDER BY vendor_slug
+    `;
+    return rows.map((r) => r.vendor_slug);
+  }
+
   // ---------------------------------------------------------------------------
   // Reseller-shared credential resolution (PRD §5.3 / §7)
   //
@@ -532,6 +551,34 @@ export class CredentialService {
     return this.decrypt(this.toTeamCredential(row));
   }
 
+  /**
+   * Set-based variant of {@link getTeamCredential}: resolves a single vendor's
+   * credential across many teams in ONE query, returning only the teams that
+   * actually have one (decrypted). Empty input returns `[]` without a query.
+   * Used by the credential-injector team tier so the per-team lookup is a
+   * single query, not a concurrent-query fan-out on the request's reserved
+   * transaction connection (see resolveCredentials in proxy/credential-injector.ts).
+   */
+  async getTeamCredentialsForTeams(
+    teamIds: string[],
+    vendorSlug: string,
+  ): Promise<{ teamId: string; creds: Record<string, string> }[]> {
+    if (teamIds.length === 0) return [];
+    const rows = await this.sql<TeamCredentialRow[]>`
+      SELECT * FROM org_team_credentials
+      WHERE team_id IN ${this.sql(teamIds)} AND vendor_slug = ${vendorSlug}
+    `;
+    const hits: { teamId: string; creds: Record<string, string> }[] = [];
+    for (const row of rows) {
+      const creds = this.decrypt(this.toTeamCredential(row));
+      // decrypt() returns null on a row that fails to decrypt — skip it, the
+      // same as the per-team getTeamCredential() path treating null as "no
+      // credential".
+      if (creds !== null) hits.push({ teamId: row.team_id, creds });
+    }
+    return hits;
+  }
+
   async deleteTeamCredential(teamId: string, vendorSlug: string): Promise<boolean> {
     const result = await this.sql`
       DELETE FROM org_team_credentials WHERE team_id = ${teamId} AND vendor_slug = ${vendorSlug}
@@ -542,6 +589,22 @@ export class CredentialService {
   async listTeamVendors(teamId: string): Promise<string[]> {
     const rows = await this.sql<{ vendor_slug: string }[]>`
       SELECT vendor_slug FROM org_team_credentials WHERE team_id = ${teamId} ORDER BY vendor_slug
+    `;
+    return rows.map((r) => r.vendor_slug);
+  }
+
+  /**
+   * Set-based variant of {@link listTeamVendors}: the union of team-credential
+   * vendor slugs across many teams in ONE query. Empty input returns `[]`
+   * without a query. Companion to {@link listOrgVendorsForOrgs} for the
+   * constant-query-count unified tools/list aggregation.
+   */
+  async listTeamVendorsForTeams(teamIds: string[]): Promise<string[]> {
+    if (teamIds.length === 0) return [];
+    const rows = await this.sql<{ vendor_slug: string }[]>`
+      SELECT DISTINCT vendor_slug FROM org_team_credentials
+      WHERE team_id IN ${this.sql(teamIds)}
+      ORDER BY vendor_slug
     `;
     return rows.map((r) => r.vendor_slug);
   }
