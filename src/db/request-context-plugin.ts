@@ -50,6 +50,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   openRequestContext,
   closeRequestContext,
+  RequestPoolBusyError,
   type RequestContextHandle,
 } from './context.js';
 
@@ -95,23 +96,64 @@ export const requestContextPlugin = () =>
   fp(async function plugin(app: FastifyInstance): Promise<void> {
     app.decorateRequest('rlsContext', null);
 
-    app.addHook('onRequest', async (request) => {
+    app.addHook('onRequest', async (request, reply) => {
       if (isExempt(request.method, request.url)) return;
 
       // users.id === the session `sub` (auth0.ts inserts users with id = sub).
       // '' for an unauthenticated request — RLS predicates then match no
       // user-scoped rows, the correct posture for a request with no user.
       const userId = request.auth0User?.sub ?? '';
-      const handle = await openRequestContext(userId);
+
+      // The raw-socket-close handler MUST be registered BEFORE awaiting
+      // openRequestContext. Otherwise, a client disconnect during the
+      // reserve() acquire window leaves the eventual reserved connection with
+      // no release path (onResponse never fires because the response never
+      // completes). Two phases the closure handles:
+      //   - close BEFORE openRequestContext resolves: set `abortedEarly`; the
+      //     post-await check immediately rolls back + releases.
+      //   - close AFTER openRequestContext resolves: rollback now; the
+      //     settle-once guard in closeRequestContext makes the eventual
+      //     onResponse close of a normal request a no-op.
+      let handle: RequestContextHandle | null = null;
+      let abortedEarly = false;
+      const onClose = (): void => {
+        if (handle) {
+          void closeRequestContext(handle, 'rollback');
+        } else {
+          abortedEarly = true;
+        }
+      };
+      request.raw.on('close', onClose);
+
+      try {
+        handle = await openRequestContext(userId);
+      } catch (err) {
+        // Failed acquire: no handle is owed a close, but the listener we
+        // registered above must come off or it lives for the life of the raw
+        // socket. RequestPoolBusyError maps to HTTP 503 — fail loud on pool
+        // exhaustion rather than letting it surface as a generic 500.
+        request.raw.off('close', onClose);
+        if (err instanceof RequestPoolBusyError) {
+          // Static message — do NOT echo err.message into the response body.
+          // The RequestPoolBusyError constructor accepts an argument, so a
+          // future call site that passed user data (a vendor slug, a tenant
+          // id, a path) would leak it via 503. Mapping a fixed string here
+          // makes the no-info-leak property STRUCTURAL, not by-convention.
+          return reply.code(503).send({
+            error: 'request_pool_busy',
+            message: 'Request pool exhausted; please retry shortly.',
+          });
+        }
+        throw err;
+      }
+
       request.rlsContext = handle;
 
-      // Backstop: a client disconnect can kill the socket before onResponse
-      // runs, stranding the open transaction + reserved connection. ROLLBACK
-      // on raw close; the settle-once guard makes the post-response close of a
-      // normal request a no-op.
-      request.raw.on('close', () => {
+      if (abortedEarly) {
+        // The client gave up while we were acquiring. Release immediately so
+        // the slot is reusable; onResponse will not run on this request.
         void closeRequestContext(handle, 'rollback');
-      });
+      }
     });
 
     app.addHook('onResponse', async (request, reply) => {
