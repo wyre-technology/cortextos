@@ -10,8 +10,29 @@ import { escapeHtml } from './helpers.js';
  *  - 'default'           — Personal + Team(+Customers if reseller) + Org sub-nav.
  *  - 'reseller-settings' — the reseller-settings shell (Track C Surface 5):
  *                          a single RESELLER SETTINGS section, no Personal/Team.
+ *  - 'customer-detail'   — a reseller drilled into one customer org (Track C
+ *                          Surface 2): the sidebar swaps to customer context
+ *                          (VIEWING AS RESELLER banner + customer sub-nav).
  */
-export type NavMode = 'default' | 'reseller-settings';
+export type NavMode = 'default' | 'reseller-settings' | 'customer-detail';
+
+/** A tenant reachable from the customer-detail switcher. */
+export interface SwitcherTenant {
+  id: string;
+  name: string;
+}
+
+/** Customer being viewed in 'customer-detail' navMode. */
+export interface CustomerContext {
+  id: string;
+  name: string;
+  /**
+   * Sibling customer orgs under the same reseller — populates the tenant
+   * switcher so a reseller can hop customer→customer without returning to
+   * the list. Omit/empty → the switcher renders as a plain label.
+   */
+  siblings?: SwitcherTenant[];
+}
 
 export interface LayoutContext {
   user: Auth0User;
@@ -22,6 +43,8 @@ export interface LayoutContext {
   pageScripts?: string;
   /** Defaults to 'default'. */
   navMode?: NavMode;
+  /** Required when navMode is 'customer-detail'. */
+  customerContext?: CustomerContext;
 }
 
 interface NavItem {
@@ -77,7 +100,13 @@ const ORGANIZATION_SUBNAV: NavItem[] = [
 // Subtenant Experience", Surface 1 sidebar). "Customers" lists the
 // customer orgs nested under the reseller — distinct from "Members"
 // (members of the reseller org itself).
-const RESELLER_CUSTOMERS_NAV_ITEM: NavItem = { label: 'Customers', href: '/org/customers' };
+// Inserted after Overview, matching the Figma S1/S4 sidebar order:
+// Overview · Customers · Hierarchy. "Hierarchy" is the tenant tree view
+// (Track C Surface 4) — distinct from the flat "Customers" list.
+const RESELLER_CONSOLE_NAV: NavItem[] = [
+  { label: 'Customers', href: '/org/customers' },
+  { label: 'Hierarchy', href: '/org/hierarchy' },
+];
 
 // Reseller-settings nav — a distinct sidebar context (not Personal +
 // Team). Shown on the reseller-settings shell (Track C Surface 5,
@@ -98,7 +127,7 @@ export const ALL_NAV_HREFS: ReadonlyArray<string> = [
   ...PERSONAL_NAV.map((i) => i.href),
   ...TEAM_NAV.map((i) => i.href),
   ...ORGANIZATION_SUBNAV.map((i) => i.href),
-  RESELLER_CUSTOMERS_NAV_ITEM.href,
+  ...RESELLER_CONSOLE_NAV.map((i) => i.href),
   ...RESELLER_SETTINGS_NAV.map((i) => i.href),
 ];
 
@@ -177,6 +206,92 @@ const LAYOUT_STYLES = `
     border-left-color: var(--accent);
     background: rgba(0,201,219,0.08);
   }
+  /* Customer-detail sub-nav: tabs not yet built render disabled — no
+     href, muted, non-interactive. Honest about what exists. */
+  .sidebar-item-disabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+  .sidebar-item-disabled:hover { background: none; color: var(--text-muted); }
+
+  /* VIEWING AS RESELLER banner card atop the customer-detail sidebar
+     (Track C Surface 2, design note #1 — a persistent reminder that
+     actions here affect the customer's data, not the reseller's). */
+  .sidebar-customer-banner {
+    margin: 4px 12px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: rgba(0,201,219,0.08);
+  }
+  .sidebar-customer-tag {
+    display: block;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--accent-text);
+  }
+  .sidebar-customer-name {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .sidebar-customer-back {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--accent-text);
+    text-decoration: none;
+  }
+  .sidebar-customer-back:hover { text-decoration: underline; }
+
+  /* Tenant switcher (Track C Area 3) — a native <details> dropdown. */
+  .ts-switcher { margin-top: 4px; }
+  .ts-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ts-summary::-webkit-details-marker { display: none; }
+  .ts-summary .sidebar-customer-name { margin-top: 0; }
+  .ts-caret {
+    font-size: 8px;
+    color: var(--text-tertiary);
+    transition: transform 0.12s;
+  }
+  .ts-switcher[open] .ts-caret { transform: rotate(180deg); }
+  .ts-menu {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-secondary);
+  }
+  .ts-menu-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin: 8px 0 4px;
+  }
+  .ts-option {
+    display: block;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+  .ts-option:hover { color: var(--text-primary); }
+  .ts-option-reseller { color: var(--accent-text); font-weight: 500; }
+  .ts-option-current {
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: default;
+  }
+  .ts-option-current::before { content: '• '; color: var(--accent); }
   /* Sub-nav (PR #73 IA restructure): Organization parent label + indented
      sub-items. Parent label uses same typographic anchor as sidebar-item
      so it sits in the visual rhythm of the nav, but with muted color +
@@ -359,8 +474,75 @@ function renderResellerSettingsNav(orgName: string, activePath: string): string 
     </div>`;
 }
 
+// Customer-detail sub-nav (Track C Surface 2). Only "Overview" is built —
+// it's the one designed frame. The remaining tabs render as disabled
+// items (no href): honest about what exists, and — unlike a stub route —
+// nothing to keep lock-step with. They light up when their surfaces land.
+const CUSTOMER_DETAIL_TABS: ReadonlyArray<string> = [
+  'MCPs', 'Users', 'Usage', 'Tool Access', 'Audit Log', 'Billing', 'Settings',
+];
+
+/**
+ * Tenant switcher (Track C Area 3). A `<details>` dropdown in the
+ * customer-detail banner: jump reseller→customer or customer→customer
+ * without returning to the list. No JS — native disclosure, keyboard-
+ * accessible. When there are no siblings to switch to it degrades to a
+ * plain label (a one-entry switcher is pointless — omit, don't blank).
+ */
+function renderTenantSwitcher(customer: CustomerContext, resellerName: string): string {
+  const name = escapeHtml(customer.name);
+  const siblings = customer.siblings ?? [];
+  // Only a switcher if there is somewhere else to go.
+  if (siblings.length <= 1) {
+    return `<span class="sidebar-customer-name">${name}</span>`;
+  }
+  const resellerHome = `<a class="ts-option ts-option-reseller" href="/org">&uarr; ${escapeHtml(resellerName)}</a>`;
+  const options = siblings.map((t) => {
+    if (t.id === customer.id) {
+      return `<span class="ts-option ts-option-current" aria-current="true">${escapeHtml(t.name)}</span>`;
+    }
+    return `<a class="ts-option" href="/org/customers/${encodeURIComponent(t.id)}">${escapeHtml(t.name)}</a>`;
+  }).join('');
+  return `
+    <details class="ts-switcher">
+      <summary class="ts-summary" aria-label="Switch tenant">
+        <span class="sidebar-customer-name">${name}</span>
+        <span class="ts-caret" aria-hidden="true">&#9662;</span>
+      </summary>
+      <div class="ts-menu" role="menu">
+        ${resellerHome}
+        <div class="ts-menu-label">Customers</div>
+        ${options}
+      </div>
+    </details>`;
+}
+
+/** Renders the customer-context sidebar (Track C Surface 2 + Area 3 switcher). */
+function renderCustomerDetailNav(
+  customer: CustomerContext,
+  activePath: string,
+  resellerName: string,
+): string {
+  const overviewHref = `/org/customers/${encodeURIComponent(customer.id)}`;
+  const overviewActive = activePath === overviewHref;
+  const name = escapeHtml(customer.name);
+  return `
+    <div class="sidebar-section">
+      <div class="sidebar-customer-banner">
+        <span class="sidebar-customer-tag">VIEWING AS RESELLER</span>
+        ${renderTenantSwitcher(customer, resellerName)}
+        <a class="sidebar-customer-back" href="/org/customers">&larr; Back to customers</a>
+      </div>
+      <div class="sidebar-section-label">${name}</div>
+      <a class="sidebar-item ${overviewActive ? 'active' : ''}" href="${escapeHtml(overviewHref)}">Overview</a>
+      ${CUSTOMER_DETAIL_TABS.map(
+        (label) => `<span class="sidebar-item sidebar-item-disabled" title="Lands in a follow-up surface">${escapeHtml(label)}</span>`,
+      ).join('')}
+    </div>`;
+}
+
 export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
-  const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
+  const { user, org, activePath, title, pageStyles, pageScripts, customerContext } = ctx;
   const navMode: NavMode = ctx.navMode ?? 'default';
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
@@ -386,10 +568,11 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
       ? `<span style="font-size:10px;font-weight:600;background:rgba(0,201,219,0.15);color:var(--accent-text);padding:1px 5px;border-radius:3px;margin-left:6px">RESELLER</span>`
       : '';
 
-    // Reseller orgs get a "Customers" item after Overview — the customer
-    // orgs nested under the reseller. Faithful to Track C Surface 1.
+    // Reseller orgs get "Customers" + "Hierarchy" after Overview — the
+    // flat customer list and the tenant tree view. Faithful to the Track
+    // C Surface 1 / Surface 4 sidebar.
     const consoleNav = isReseller
-      ? [TEAM_NAV[0], RESELLER_CUSTOMERS_NAV_ITEM, ...TEAM_NAV.slice(1)]
+      ? [TEAM_NAV[0], ...RESELLER_CONSOLE_NAV, ...TEAM_NAV.slice(1)]
       : TEAM_NAV;
 
     // Organization sub-nav is active when activePath is any of its hrefs.
@@ -463,6 +646,8 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 
       ${navMode === 'reseller-settings'
         ? renderResellerSettingsNav(orgName || 'Reseller', activePath)
+        : navMode === 'customer-detail' && customerContext
+        ? renderCustomerDetailNav(customerContext, activePath, org?.name ?? 'Reseller')
         : `<div class="sidebar-section">
         <div class="sidebar-section-label">Personal</div>
         ${personalNav}

@@ -159,3 +159,50 @@ describe('reseller-settings nav mode', () => {
     expect(html).not.toContain('RESELLER · SETTINGS');
   });
 });
+
+describe('customer-detail nav mode + tenant switcher (Track C Area 3)', () => {
+  const customerDetail = (siblings?: Array<{ id: string; name: string }>) =>
+    renderLayout(
+      {
+        user: mockUser,
+        org: orgOfType('reseller'),
+        activePath: '/org/customers/c1',
+        title: 'Customer',
+        navMode: 'customer-detail',
+        customerContext: { id: 'c1', name: 'AM3 Technology', siblings },
+      },
+      '<p>body</p>',
+    );
+
+  it('renders the customer-context sidebar with the VIEWING AS RESELLER banner', () => {
+    const html = customerDetail();
+    expect(html).toContain('VIEWING AS RESELLER');
+    expect(html).toContain('AM3 Technology');
+    expect(html).toContain('href="/org/customers"'); // back link
+  });
+
+  it('renders a tenant switcher when there are siblings to switch to', () => {
+    const html = customerDetail([
+      { id: 'c1', name: 'AM3 Technology' },
+      { id: 'c2', name: 'Team DNS Solutions' },
+    ]);
+    expect(html).toContain('<details class="ts-switcher"');
+    expect(html).toContain('href="/org/customers/c2"'); // a switch target
+    expect(html).toContain('href="/org"');              // up to the reseller
+  });
+
+  it('marks the current customer as a non-link option in the switcher', () => {
+    const html = customerDetail([
+      { id: 'c1', name: 'AM3 Technology' },
+      { id: 'c2', name: 'Team DNS Solutions' },
+    ]);
+    // Current tenant renders as a span, not an anchor.
+    expect(html).toContain('ts-option-current" aria-current="true">AM3 Technology</span>');
+  });
+
+  it('degrades to a plain label when there is nowhere to switch (omit, not blank)', () => {
+    const html = customerDetail([{ id: 'c1', name: 'AM3 Technology' }]);
+    expect(html).not.toContain('<details class="ts-switcher"');
+    expect(html).toContain('AM3 Technology');
+  });
+});
