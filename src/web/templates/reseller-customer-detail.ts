@@ -11,8 +11,10 @@ import { escapeHtml } from '../helpers.js';
 // customer's own /dashboard (see team-dashboard.ts). Endpoints (shipped
 // in conduit PR #130 + #136):
 //   GET /admin/reseller/:resellerId/customers/:customerId/dashboard/usage
-//   …/savings
 //   …/vendors
+// The four stat cards each pull /usage at a FIXED trailing window
+// (30d / 7d / 24h) per Track C design Rule 2 — a window-labeled card
+// always means its label's window, independent of any range param.
 //
 // The client-side populate uses createElement + textContent (never
 // innerHTML): vendor names and user emails flow from request logs and
@@ -22,6 +24,9 @@ import { escapeHtml } from '../helpers.js';
 //   - Customer identity (name / plan / user + MCP counts / subdomain) —
 //     the Track A customer-list/detail endpoint has not shipped; same
 //     gap Surface 1 carries. Passed as mock `customer` here.
+//   - Error Rate — UsageSummary has no errorRate field yet (confirmed
+//     not in any branch). The card reads usage.errorRate and degrades to
+//     an em-dash; it is correct the instant the aggregate ships.
 //   - MCP wiring-type, per-connection status dot, last-call — need the
 //     connection-config + vendor-health read models (PR #127).
 //   - Per-user role / department / tool-access — need the customer
@@ -57,6 +62,7 @@ function buildScript(resellerId: string, customerId: string): string {
 <script>
   (function () {
     var BASE = ${JSON.stringify(base)};
+    var DAY_MS = 86400000;
     function num(n) { return (n == null ? 0 : n).toLocaleString(); }
     function set(id, text) {
       var el = document.getElementById(id);
@@ -68,21 +74,37 @@ function buildScript(resellerId: string, customerId: string): string {
       el.textContent = text;
       return el;
     }
+    // Each stat card is a FIXED trailing window (Track C design Rule 2):
+    // the card means its label's window always, independent of any range.
+    function usageUrl(days) {
+      var start = new Date(Date.now() - days * DAY_MS).toISOString();
+      return BASE + '/usage?start=' + encodeURIComponent(start);
+    }
+    // errorRate aggregate is not yet on UsageSummary (confirmed not in any
+    // branch). Read the field and degrade gracefully — the card is correct
+    // the instant the aggregate ships, with zero UI change. Accepts a 0–1
+    // ratio or an already-percent number.
+    function fmtErrorRate(r) {
+      if (r == null || isNaN(r)) return '—';
+      var pct = r <= 1 ? r * 100 : r;
+      return pct.toFixed(1) + '%';
+    }
 
     Promise.all([
-      fetch(BASE + '/usage'),
-      fetch(BASE + '/savings'),
+      fetch(usageUrl(30)),
+      fetch(usageUrl(7)),
+      fetch(usageUrl(1)),
       fetch(BASE + '/vendors'),
     ]).then(function (res) {
       if (res.some(function (r) { return !r.ok; })) throw new Error('request failed');
       return Promise.all(res.map(function (r) { return r.json(); }));
     }).then(function (out) {
-      var usage = out[0], savings = out[1], vendors = out[2];
+      var u30 = out[0], u7 = out[1], u24 = out[2], vendors = out[3];
 
-      set('cdMcpCalls', num(usage.totalCalls));
-      set('cdActiveUsers', num(usage.uniqueUsers));
-      set('cdAvgLatency', num(usage.avgResponseTimeMs) + 'ms');
-      set('cdCostSaved', '$' + (savings.estimatedCostSavedUsd || 0).toFixed(2));
+      set('cdMcpCalls', num(u30.totalCalls));
+      set('cdActiveUsers', num(u7.uniqueUsers));
+      set('cdToolCalls', num(u24.totalCalls));
+      set('cdErrorRate', fmtErrorRate(u7.errorRate));
 
       var mcpGrid = document.getElementById('cdMcpGrid');
       if (mcpGrid) {
@@ -105,7 +127,7 @@ function buildScript(resellerId: string, customerId: string): string {
 
       var userBody = document.getElementById('cdUserBody');
       if (userBody) {
-        var users = usage.byUser || [];
+        var users = u30.byUser || [];
         if (!users.length) {
           var empty = document.createElement('tr');
           var td = cell('td', 'cd-empty', 'No user activity yet.');
@@ -170,20 +192,20 @@ export function renderResellerCustomerDetail(
     <div id="cdContent" style="display:none">
       <div class="cd-stat-grid">
         <div class="cd-stat">
-          <div class="cd-stat-label">MCP Calls</div>
+          <div class="cd-stat-label">MCP Calls (30d)</div>
           <div class="cd-stat-value" id="cdMcpCalls">—</div>
         </div>
         <div class="cd-stat">
-          <div class="cd-stat-label">Active Users</div>
+          <div class="cd-stat-label">Active Users (7d)</div>
           <div class="cd-stat-value" id="cdActiveUsers">—</div>
         </div>
         <div class="cd-stat">
-          <div class="cd-stat-label">Avg Latency</div>
-          <div class="cd-stat-value" id="cdAvgLatency">—</div>
+          <div class="cd-stat-label">Tool Calls (24h)</div>
+          <div class="cd-stat-value" id="cdToolCalls">—</div>
         </div>
         <div class="cd-stat">
-          <div class="cd-stat-label">Est. Cost Saved</div>
-          <div class="cd-stat-value cd-stat-accent" id="cdCostSaved">—</div>
+          <div class="cd-stat-label">Error Rate (7d)</div>
+          <div class="cd-stat-value" id="cdErrorRate">—</div>
         </div>
       </div>
 
@@ -289,7 +311,6 @@ export const RESELLER_CUSTOMER_DETAIL_STYLES = `
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
-  .cd-stat-accent { color: var(--accent-text); }
 
   .cd-section-head {
     display: flex;

@@ -3,7 +3,7 @@
 //
 // S2's analytics load client-side from the reseller-scoped dashboard
 // endpoints, which a static file:// preview can't reach. So this script
-// injects a window.fetch stub (mock usage/savings/vendors payloads)
+// injects a window.fetch stub (mock usage/vendors payloads)
 // ahead of the page loader — the page then populates exactly as it
 // would in production, making the preview faithful for design review.
 //
@@ -49,10 +49,14 @@ const customer = {
 };
 
 // Mock payloads shaped like dashboard-service.ts read models.
+// errorRate is included so the preview shows the populated card —
+// production UsageSummary has no errorRate yet, so the live card
+// exercises the em-dash fallback until that aggregate ships.
 const mockUsage = {
   totalCalls: 8247,
   uniqueUsers: 11,
   avgResponseTimeMs: 142,
+  errorRate: 0.008,
   byVendor: [],
   byUser: [
     { userId: 'u1', email: 'cramirez@am3-it.com', count: 3182 },
@@ -62,12 +66,6 @@ const mockUsage = {
   ],
   byDay: [],
   bySource: [],
-};
-const mockSavings = {
-  totalMcpCalls: 8247,
-  totalCliCalls: 1290,
-  estimatedTokensSaved: 4_120_000,
-  estimatedCostSavedUsd: 61.8,
 };
 const mockVendors = {
   vendors: [
@@ -82,7 +80,6 @@ const fetchStub = `
 <script>
   window.fetch = function (url) {
     var body = url.indexOf('/usage') !== -1 ? ${JSON.stringify(JSON.stringify(mockUsage))}
-      : url.indexOf('/savings') !== -1 ? ${JSON.stringify(JSON.stringify(mockSavings))}
       : ${JSON.stringify(JSON.stringify(mockVendors))};
     return Promise.resolve({ ok: true, json: function () { return Promise.resolve(JSON.parse(body)); } });
   };

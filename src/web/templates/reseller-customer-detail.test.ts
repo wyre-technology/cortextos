@@ -57,11 +57,16 @@ describe('renderResellerCustomerDetail', () => {
     expect(body).toContain('/org/customers/cust_1/onboard-mcp?step=1');
   });
 
-  it('renders the four stat-card slots and loading + content shell', () => {
+  it('renders the four Figma stat-card slots and loading + content shell', () => {
     const { body } = renderResellerCustomerDetail(data());
-    for (const id of ['cdMcpCalls', 'cdActiveUsers', 'cdAvgLatency', 'cdCostSaved']) {
+    for (const id of ['cdMcpCalls', 'cdActiveUsers', 'cdToolCalls', 'cdErrorRate']) {
       expect(body).toContain(`id="${id}"`);
     }
+    // Cards carry their fixed-window labels (design Rule 2).
+    expect(body).toContain('MCP Calls (30d)');
+    expect(body).toContain('Active Users (7d)');
+    expect(body).toContain('Tool Calls (24h)');
+    expect(body).toContain('Error Rate (7d)');
     expect(body).toContain('id="cdLoading"');
     expect(body).toContain('id="cdContent"');
     expect(body).toContain('id="cdMcpGrid"');
@@ -71,9 +76,21 @@ describe('renderResellerCustomerDetail', () => {
   it('builds a fetch script scoped to the reseller and customer ids', () => {
     const { pageScripts } = renderResellerCustomerDetail(data({ id: 'cust_xyz' }));
     expect(pageScripts).toContain('/admin/reseller/org_reseller/customers/cust_xyz/dashboard');
-    expect(pageScripts).toContain("'/usage'");
-    expect(pageScripts).toContain("'/savings'");
+    expect(pageScripts).toContain("'/usage?start='");
     expect(pageScripts).toContain("'/vendors'");
+  });
+
+  it('fetches /usage at three fixed trailing windows (30d/7d/24h)', () => {
+    const { pageScripts } = renderResellerCustomerDetail(data());
+    expect(pageScripts).toContain('usageUrl(30)');
+    expect(pageScripts).toContain('usageUrl(7)');
+    expect(pageScripts).toContain('usageUrl(1)');
+  });
+
+  it('reads errorRate with a graceful fallback (aggregate not yet shipped)', () => {
+    const { pageScripts } = renderResellerCustomerDetail(data());
+    expect(pageScripts).toContain('fmtErrorRate');
+    expect(pageScripts).toContain('u7.errorRate');
   });
 
   it('populates the DOM without innerHTML (untrusted request-log strings)', () => {
