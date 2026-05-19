@@ -71,6 +71,11 @@ export interface VendorConfig {
   buildHeaders?: (creds: Record<string, string>) => Record<string, string>;
   docsUrl: string;
   validate?: (creds: Record<string, string>) => Promise<ValidationResult>;
+  /**
+   * If set, surfaces a "Preview" badge in the UI for early-access vendors.
+   * Does not affect proxy behavior.
+   */
+  preview?: boolean;
   /** If set, this vendor uses OAuth 2.0 Authorization Code flow instead of manual credential entry. */
   oauthConfig?: OAuthVendorConfig;
   /**
@@ -650,6 +655,48 @@ export const VENDORS: Record<string, VendorConfig> = {
     },
   },
 
+  'azure-mcp': {
+    name: 'Azure MCP Server',
+    slug: 'azure-mcp',
+    category: 'network',
+    containerUrl: 'http://azure-mcp:8080',
+    fields: [
+      { key: 'tenantId', label: 'Azure Tenant ID', required: true, placeholder: 'Directory (tenant) ID of the Entra tenant' },
+      { key: 'clientId', label: 'Service Principal Client ID', required: true, placeholder: 'Application (client) ID of the service principal' },
+      { key: 'clientSecret', label: 'Service Principal Client Secret', required: true, secret: true, placeholder: 'Client secret value for the service principal' },
+    ],
+    headerMapping: {
+      tenantId: 'X-Azure-Tenant-Id',
+      clientId: 'X-Azure-Client-Id',
+      clientSecret: 'X-Azure-Client-Secret',
+    },
+    docsUrl: 'https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/overview',
+    async validate(creds) {
+      if (!creds.tenantId || !creds.clientId || !creds.clientSecret) {
+        return { valid: false, error: 'Tenant ID, Client ID, and Client Secret are all required.' };
+      }
+      const res = await fetch(
+        `https://login.microsoftonline.com/${encodeURIComponent(creds.tenantId)}/oauth2/v2.0/token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: creds.clientId,
+            client_secret: creds.clientSecret,
+            grant_type: 'client_credentials',
+            scope: 'https://management.azure.com/.default',
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      ).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Could not reach Microsoft Entra: ${msg}`);
+      });
+      if (res.ok) return { valid: true };
+      return { valid: false, error: 'Azure service principal rejected. Check the tenant ID, client ID, and secret.' };
+    },
+  },
+
   runzero: {
     name: 'runZero',
     slug: 'runzero',
@@ -1129,6 +1176,60 @@ export const VENDORS: Record<string, VendorConfig> = {
       authorizeUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
       tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
       scopes: ['https://graph.microsoft.com/.default', 'offline_access', 'openid', 'profile'],
+      clientIdEnv: 'MICROSOFT_CLIENT_ID',
+      clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
+      extraFields: ['tenantId'],
+    },
+  },
+
+  'microsoft-graph': {
+    name: 'Microsoft Graph (Enterprise)',
+    slug: 'microsoft-graph',
+    category: 'productivity',
+    preview: true,
+    containerUrl: 'https://mcp.svc.cloud.microsoft',
+    mcpPath: '/enterprise',
+    fields: [],
+    headerMapping: {},
+    buildHeaders(creds) {
+      return { Authorization: `Bearer ${creds.accessToken}` };
+    },
+    docsUrl: 'https://learn.microsoft.com/en-us/graph/mcp-server/overview',
+    async validate(creds) {
+      if (!creds.accessToken) {
+        return { valid: false, error: 'Connect with Microsoft to authorize the Graph Enterprise MCP.' };
+      }
+      const res = await fetch('https://mcp.svc.cloud.microsoft/enterprise', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: `Bearer ${creds.accessToken}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'wyre-gateway-validator', version: '1.0.0' },
+          },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Could not reach Microsoft Graph Enterprise MCP: ${msg}`);
+      });
+      if (res.ok) return { valid: true };
+      if (res.status === 401 || res.status === 403)
+        return { valid: false, error: 'Microsoft authorization expired or insufficient. Reconnect with Microsoft.' };
+      return { valid: false, error: `Microsoft Graph Enterprise MCP returned HTTP ${res.status}.` };
+    },
+    oauthConfig: {
+      authorizeUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize',
+      tokenUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token',
+      scopes: ['api://e8c77dc2-69b3-43f4-bc51-3213c9d915b4/.default', 'offline_access', 'openid', 'profile'],
       clientIdEnv: 'MICROSOFT_CLIENT_ID',
       clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
       extraFields: ['tenantId'],

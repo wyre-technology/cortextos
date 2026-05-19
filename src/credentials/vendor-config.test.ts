@@ -93,6 +93,52 @@ describe('vendor-config', () => {
     }
   });
 
+  describe('microsoft-graph vendor', () => {
+    it('is registered as a preview hosted vendor', () => {
+      const vendor = getVendor('microsoft-graph');
+      expect(vendor).toBeDefined();
+      expect(vendor!.preview).toBe(true);
+      // Conduit's VendorConfig has no `firstParty` or `isStateful` fields —
+      // hosted first-party status is inferred elsewhere; neither is set here.
+      expect((vendor as unknown as Record<string, unknown>).isStateful).toBeFalsy();
+      expect(vendor!.containerUrl).toBe('https://mcp.svc.cloud.microsoft');
+      expect(vendor!.mcpPath).toBe('/enterprise');
+      expect(vendor!.oauthConfig).toBeDefined();
+    });
+
+    it('validate() rejects an empty access token', async () => {
+      const vendor = getVendor('microsoft-graph')!;
+      const result = await vendor.validate!({});
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  it('preview, when set, is a boolean', () => {
+    for (const [slug, vendor] of Object.entries(VENDORS)) {
+      if (vendor.preview !== undefined) {
+        expect(typeof vendor.preview, `${slug}: preview must be boolean`).toBe('boolean');
+      }
+    }
+  });
+
+  describe('azure-mcp vendor', () => {
+    it('is registered as a sidecar vendor with three credential fields', () => {
+      const vendor = getVendor('azure-mcp');
+      expect(vendor).toBeDefined();
+      expect(vendor!.containerUrl).toBe('http://azure-mcp:8080');
+      const fieldKeys = vendor!.fields.map((f) => f.key).sort();
+      expect(fieldKeys).toEqual(['clientId', 'clientSecret', 'tenantId']);
+      const secret = vendor!.fields.find((f) => f.key === 'clientSecret');
+      expect(secret!.secret).toBe(true);
+    });
+
+    it('validate() rejects all-empty credentials', async () => {
+      const vendor = getVendor('azure-mcp')!;
+      const result = await vendor.validate!({});
+      expect(result.valid).toBe(false);
+    });
+  });
+
   // #73 — connectwise-automate and hudu validate() fetch a base URL the user
   // typed into the credentials form. Without rejectIfUnsafeBaseUrl they are
   // an SSRF primitive: an authenticated user can probe 169.254.169.254 (cloud
