@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALL_NAV_HREFS } from './layout.js';
+import { ALL_NAV_HREFS, renderLayout } from './layout.js';
+import type { Organization } from '../org/org-service.js';
+import type { Auth0User } from '../auth/auth0.js';
 
 // ---------------------------------------------------------------------------
 // Lock-step regression guard: every sidebar nav href (top-level + sub-nav)
@@ -79,4 +81,81 @@ describe('sidebar nav <-> route handler lock-step invariant', () => {
       expect(matchedIn).toBeDefined();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Reseller-console shell (Track C foundation)
+// ---------------------------------------------------------------------------
+
+const mockUser: Auth0User = {
+  sub: 'auth0|test',
+  email: 'admin@example.com',
+  name: 'Test Admin',
+  emailVerified: true,
+};
+
+function orgOfType(type: Organization['type']): Organization {
+  return {
+    id: 'org_1',
+    name: 'Acme MSP',
+    ownerId: 'auth0|test',
+    plan: 'pro',
+    defaultServerAccess: 'none',
+    promptCaptureEnabled: false,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    type,
+    parentOrgId: null,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-05-16T00:00:00Z',
+  };
+}
+
+describe('reseller-console nav', () => {
+  it('shows the Customers item + RESELLER badge for reseller orgs', () => {
+    const html = renderLayout(
+      { user: mockUser, org: orgOfType('reseller'), activePath: '/org', title: 'T' },
+      '<p>body</p>',
+    );
+    expect(html).toContain('href="/org/customers"');
+    expect(html).toContain('RESELLER');
+  });
+
+  it('omits the Customers item for non-reseller orgs', () => {
+    const html = renderLayout(
+      { user: mockUser, org: orgOfType('standalone'), activePath: '/org', title: 'T' },
+      '<p>body</p>',
+    );
+    expect(html).not.toContain('href="/org/customers"');
+  });
+});
+
+describe('reseller-settings nav mode', () => {
+  it('renders the reseller-settings section and omits Personal/Team', () => {
+    const html = renderLayout(
+      {
+        user: mockUser,
+        org: orgOfType('reseller'),
+        activePath: '/org/reseller/branding',
+        title: 'Branding',
+        navMode: 'reseller-settings',
+      },
+      '<p>body</p>',
+    );
+    expect(html).toContain('href="/org/reseller/general"');
+    expect(html).toContain('href="/org/reseller/branding"');
+    expect(html).toContain('RESELLER · SETTINGS');
+    // Personal/Team sections are replaced, not appended.
+    expect(html).not.toContain('>Personal<');
+    expect(html).not.toContain('href="/org/dashboard"');
+  });
+
+  it('default navMode keeps the standard Personal + Team shell', () => {
+    const html = renderLayout(
+      { user: mockUser, org: orgOfType('reseller'), activePath: '/org', title: 'T' },
+      '<p>body</p>',
+    );
+    expect(html).toContain('>Personal<');
+    expect(html).not.toContain('RESELLER · SETTINGS');
+  });
 });

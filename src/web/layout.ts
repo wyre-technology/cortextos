@@ -5,6 +5,14 @@ import { brand } from '../brand/index.js';
 import { PAGE_STYLES } from './styles.js';
 import { escapeHtml } from './helpers.js';
 
+/**
+ * Sidebar nav context.
+ *  - 'default'           — Personal + Team(+Customers if reseller) + Org sub-nav.
+ *  - 'reseller-settings' — the reseller-settings shell (Track C Surface 5):
+ *                          a single RESELLER SETTINGS section, no Personal/Team.
+ */
+export type NavMode = 'default' | 'reseller-settings';
+
 export interface LayoutContext {
   user: Auth0User;
   org: Organization | null;
@@ -12,6 +20,8 @@ export interface LayoutContext {
   title: string;
   pageStyles?: string;
   pageScripts?: string;
+  /** Defaults to 'default'. */
+  navMode?: NavMode;
 }
 
 interface NavItem {
@@ -61,6 +71,26 @@ const ORGANIZATION_SUBNAV: NavItem[] = [
   { label: 'Billing', href: '/org/billing' },
 ];
 
+// Reseller-console nav — shown only when org.type === 'reseller'. It is
+// the standard TEAM_NAV with a single "Customers" item inserted after
+// Overview, matching the Figma design-of-record (Track C "Conduit —
+// Subtenant Experience", Surface 1 sidebar). "Customers" lists the
+// customer orgs nested under the reseller — distinct from "Members"
+// (members of the reseller org itself).
+const RESELLER_CUSTOMERS_NAV_ITEM: NavItem = { label: 'Customers', href: '/org/customers' };
+
+// Reseller-settings nav — a distinct sidebar context (not Personal +
+// Team). Shown on the reseller-settings shell (Track C Surface 5,
+// White-Label Branding sidebar). Items are faithful to the Figma
+// design-of-record; URLs namespaced under /org/reseller/.
+const RESELLER_SETTINGS_NAV: NavItem[] = [
+  { label: 'General', href: '/org/reseller/general' },
+  { label: 'Branding', href: '/org/reseller/branding' },
+  { label: 'Billing & Plans', href: '/org/reseller/billing' },
+  { label: 'API & Webhooks', href: '/org/reseller/api' },
+  { label: 'Audit Log', href: '/org/reseller/audit' },
+];
+
 /** Flattened nav-href list for regression-guard tests. Every entry
  *  here MUST have a registered route handler — the PR #70 lock-step
  *  invariant extended to the sub-nav structure. */
@@ -68,6 +98,8 @@ export const ALL_NAV_HREFS: ReadonlyArray<string> = [
   ...PERSONAL_NAV.map((i) => i.href),
   ...TEAM_NAV.map((i) => i.href),
   ...ORGANIZATION_SUBNAV.map((i) => i.href),
+  RESELLER_CUSTOMERS_NAV_ITEM.href,
+  ...RESELLER_SETTINGS_NAV.map((i) => i.href),
 ];
 
 const LAYOUT_STYLES = `
@@ -316,8 +348,20 @@ function renderSubNavItem(item: NavItem, activePath: string): string {
   return `<a class="${cls}" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`;
 }
 
+/** Renders the reseller-settings sidebar section (Track C Surface 5). */
+function renderResellerSettingsNav(orgName: string, activePath: string): string {
+  return `
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">${orgName}
+        <span style="display:block;font-size:10px;font-weight:600;color:var(--accent-text);letter-spacing:0.04em;margin-top:2px">RESELLER · SETTINGS</span>
+      </div>
+      ${RESELLER_SETTINGS_NAV.map((item) => renderNavItem(item, activePath)).join('')}
+    </div>`;
+}
+
 export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   const { user, org, activePath, title, pageStyles, pageScripts } = ctx;
+  const navMode: NavMode = ctx.navMode ?? 'default';
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
   // isPaidPlan is the single source of truth shared with requireTeamAccess
@@ -325,6 +369,7 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
   // gate. See src/billing/gate.ts:isPaidPlan for empirical origin.
   const isPro = isPaidPlan(org?.plan);
   const brandName = escapeHtml(brand.name);
+  const isReseller = org?.type === 'reseller';
 
   const personalNav = PERSONAL_NAV
     .map((item) => renderNavItem(item, activePath))
@@ -337,6 +382,15 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
       ? 'background:rgba(237,233,71,0.12);color:var(--highlight)'
       : 'background:rgba(0,201,219,0.15);color:var(--accent-text)';
     const planBadge = `<span style="font-size:10px;font-weight:600;${planTone};padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
+    const resellerBadge = isReseller
+      ? `<span style="font-size:10px;font-weight:600;background:rgba(0,201,219,0.15);color:var(--accent-text);padding:1px 5px;border-radius:3px;margin-left:6px">RESELLER</span>`
+      : '';
+
+    // Reseller orgs get a "Customers" item after Overview — the customer
+    // orgs nested under the reseller. Faithful to Track C Surface 1.
+    const consoleNav = isReseller
+      ? [TEAM_NAV[0], RESELLER_CUSTOMERS_NAV_ITEM, ...TEAM_NAV.slice(1)]
+      : TEAM_NAV;
 
     // Organization sub-nav is active when activePath is any of its hrefs.
     // Indented-list visual: parent label rendered as a sidebar-section-label
@@ -349,8 +403,8 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 
     teamNav = `
     <div class="sidebar-section">
-      <div class="sidebar-section-label">${orgName} ${planBadge}</div>
-      ${TEAM_NAV.map((item) => renderNavItem(item, activePath)).join('')}
+      <div class="sidebar-section-label">${orgName} ${planBadge}${resellerBadge}</div>
+      ${consoleNav.map((item) => renderNavItem(item, activePath)).join('')}
       <div class="${orgParentCls}">Organization</div>
       ${orgSubItems}
     </div>`;
@@ -407,12 +461,14 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
       <div class="sidebar-brand">${brandName}</div>
       <div class="sidebar-email">${userEmail}</div>
 
-      <div class="sidebar-section">
+      ${navMode === 'reseller-settings'
+        ? renderResellerSettingsNav(orgName || 'Reseller', activePath)
+        : `<div class="sidebar-section">
         <div class="sidebar-section-label">Personal</div>
         ${personalNav}
       </div>
 
-      ${teamNav}
+      ${teamNav}`}
 
       <div class="sidebar-footer">
         <div class="sidebar-divider"></div>
