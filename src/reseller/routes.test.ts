@@ -680,6 +680,26 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       expect(res.statusCode).toBe(403);
     });
 
+    it('403s an unowned (reseller,customer) pair — customer belongs to a DIFFERENT reseller (warden Finding 2)', async () => {
+      authenticateAs();
+      // The cross-reseller variant: the caller IS a reseller_admin of
+      // RESELLER_ID, and the target customer DOES have a reseller parent —
+      // but it is a *different* reseller. getResellerOfCustomer returns a
+      // truthy foreign org whose id !== RESELLER_ID, so the reseller branch's
+      // `parent && parent.id === resellerId` equality must reject it (truthy
+      // parent is not enough — identity must match). With no customer
+      // self-membership the customer branch also fails -> 403. This proves
+      // the gate rejects a real-but-foreign parent, not merely a null one.
+      const mocks = makeMocks();
+      const foreignReseller = makeResellerOrg('reseller_FOREIGN', 'Rival MSP');
+      mocks.orgService.getResellerOfCustomer = vi.fn(async () => foreignReseller);
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ error: 'Access denied' });
+    });
+
     it('403s a caller with no reseller membership and no customer membership', async () => {
       authenticateAs();
       app = await buildApp(makeMocks({ actorRole: null }));
