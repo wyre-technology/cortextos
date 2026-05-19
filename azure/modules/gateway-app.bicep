@@ -161,22 +161,29 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'http'
         allowInsecure: false
-        // Preserve any pre-existing custom-domain bindings (managed certs for
-        // mcp.wyre.ai + mcp.wyretechnology.com, or a manually uploaded cert)
-        // so deploys do not silently wipe them. The deploy workflow reads the
-        // current bindings via az CLI and passes them as existingCustomDomains.
-        // The managed-cert binding for `customDomain` is merged in, deduped by
-        // hostname (the managed one wins), so a fresh first-time deploy still
-        // works.
+        // Preserve EVERY pre-existing custom-domain binding as-is — including
+        // the one for `customDomain` itself. The deploy workflow reads the
+        // current bindings via az CLI (name + bindingType + certificateId) and
+        // passes them as existingCustomDomains; each entry's certificateId
+        // already points at the correct cert, whether that is a managed cert
+        // (managedCertificates/) or an uploaded one (certificates/).
+        //
+        // The managed-cert binding for `customDomain` is synthesized ONLY on a
+        // first-ever bind — i.e. when `customDomain` is not already present in
+        // existingCustomDomains. If it IS already bound, synthesizing would
+        // replace the working binding with a certificateId built on an ASSUMED
+        // managedCertificates/ sub-resource that need not exist (staging's env
+        // carries an uploaded certificates/ cert, not a managedCertificates/
+        // one) — which fails the bind and drops the domain's HTTPS.
         customDomains: concat(
-          empty(customDomain) ? [] : [
+          (empty(customDomain) || contains(map(existingCustomDomains, d => d.name), customDomain)) ? [] : [
             {
               name: customDomain
               certificateId: '${containerEnv.id}/managedCertificates/${managedCertName}'
               bindingType: 'SniEnabled'
             }
           ],
-          filter(existingCustomDomains, d => d.name != customDomain)
+          existingCustomDomains
         )
       }
       registries: [

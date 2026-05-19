@@ -137,6 +137,12 @@ jobs:
       # custom-domain managed certs are bound out-of-band — without this, a
       # deploy would wipe both. Empty on first-ever deploy. See azure/modules/
       # gateway-app.bicep (existingCustomDomains / existingVendorEnv params).
+      #
+      # The JSON is written to FILES and passed to the deploy steps below as
+      # `param=@file`, NOT inline as `param=<json>`. azure/arm-deploy strips the
+      # double quotes from an inline JSON `--parameters` value (the JSON reaches
+      # `az` as `[{key:val}]` — unquoted, unparseable). The `@file` form keeps
+      # the JSON off the command line entirely, so quotes survive.
       - name: Read existing gateway state
         id: gw-state
         env:
@@ -154,8 +160,12 @@ jobs:
             DOMAINS='[]'
             VENDOR_ENV='[]'
           fi
-          echo "domains=$DOMAINS" >> "$GITHUB_OUTPUT"
-          echo "vendorenv=$VENDOR_ENV" >> "$GITHUB_OUTPUT"
+          DOMAINS_FILE="$RUNNER_TEMP/gw-existing-custom-domains.json"
+          VENDOR_FILE="$RUNNER_TEMP/gw-existing-vendor-env.json"
+          printf '%s' "$DOMAINS" > "$DOMAINS_FILE"
+          printf '%s' "$VENDOR_ENV" > "$VENDOR_FILE"
+          echo "domains-file=$DOMAINS_FILE" >> "$GITHUB_OUTPUT"
+          echo "vendorenv-file=$VENDOR_FILE" >> "$GITHUB_OUTPUT"
           echo "Preserving $(echo "$DOMAINS" | jq 'length') custom-domain binding(s), $(echo "$VENDOR_ENV" | jq 'length') VENDOR_URL_* var(s)"
 
       # Production: fetch the Rootly Azure Monitor webhook URL from Key Vault.
@@ -196,8 +206,8 @@ jobs:
             jwtSecret=${{ secrets.JWT_SECRET }}
             pgPassword=${{ secrets.PG_PASSWORD }}
             ghcrToken=${{ secrets.GHCR_TOKEN }}
-            existingCustomDomains=${{ steps.gw-state.outputs.domains }}
-            existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
+            existingCustomDomains=@${{ steps.gw-state.outputs.domains-file }}
+            existingVendorEnv=@${{ steps.gw-state.outputs.vendorenv-file }}
           failOnStdErr: false
 
       # Production: subscription-scoped monthly cost budget. Deployed on its
@@ -264,6 +274,6 @@ jobs:
             ./azure/params.staging.bicepparam
             gatewayImage=ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
             redeployTrigger=${{ github.run_id }}
-            existingCustomDomains=${{ steps.gw-state.outputs.domains }}
-            existingVendorEnv=${{ steps.gw-state.outputs.vendorenv }}
+            existingCustomDomains=@${{ steps.gw-state.outputs.domains-file }}
+            existingVendorEnv=@${{ steps.gw-state.outputs.vendorenv-file }}
           failOnStdErr: false

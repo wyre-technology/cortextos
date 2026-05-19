@@ -19,6 +19,17 @@ using './main.bicep'
 param env = 'staging'
 param customDomain = 'staging.conduit.wyre.ai'
 
+// Target the EXISTING managed environment. main.bicep resolves the env name as
+// `empty(containerEnvName) ? '${prefix}-env' : containerEnvName` — left unset,
+// staging would resolve to the bicep-canonical `mcpgw-staging-env` and a deploy
+// would CREATE a new managed environment and re-home the gateway onto it (a
+// high-blast-radius migration with a custom-domain/cert rebind). The live
+// staging stack runs on the hand-built `mcpgw-staging-env-v2`; pinning it here
+// keeps a deploy a true in-place revision bump. Mirrors the production deploy,
+// which already pins `containerEnvName=mcpgw-prod-env-v2`. Canonicalising the
+// `-v2` name is a separate, deliberate, scheduled migration.
+param containerEnvName = 'mcpgw-staging-env-v2'
+
 // Container Apps creates the managed cert on first bind; the name below
 // matches what Azure auto-generates for staging.conduit.wyre.ai. If a deploy
 // reports the cert isn't found, copy the actual managed-cert resource name
