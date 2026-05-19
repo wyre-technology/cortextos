@@ -91,6 +91,9 @@ const DASHBOARD_SCRIPT = `
       document.getElementById('totalCalls').textContent = usage.totalCalls.toLocaleString();
       document.getElementById('activeUsers').textContent = usage.uniqueUsers.toLocaleString();
       document.getElementById('avgLatency').textContent = usage.avgResponseTimeMs + 'ms';
+      // errorRate is a 0–1 fraction; render as a percentage. Fall back to 0
+      // if the field is absent (older API responses).
+      document.getElementById('errorRate').textContent = ((usage.errorRate ?? 0) * 100).toFixed(1) + '%';
       document.getElementById('tokensSaved').textContent = savings.estimatedTokensSaved.toLocaleString();
       document.getElementById('costSaved').textContent = '$' + savings.estimatedCostSavedUsd.toFixed(2);
       document.getElementById('cliCalls').textContent = savings.totalCliCalls.toLocaleString();
@@ -140,6 +143,10 @@ export function renderTeamDashboard(data: TeamDashboardData): { body: string; pa
         <div class="stat-card">
           <div class="stat-label">Avg Latency</div>
           <div class="stat-value" id="avgLatency">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Error Rate</div>
+          <div class="stat-value" id="errorRate">-</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Tokens Saved</div>
