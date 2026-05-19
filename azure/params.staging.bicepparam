@@ -30,6 +30,17 @@ param customDomain = 'staging.conduit.wyre.ai'
 // `-v2` name is a separate, deliberate, scheduled migration.
 param containerEnvName = 'mcpgw-staging-env-v2'
 
+// Hostname allowlist. main.bicep defaults allowedHosts to '' — unset, the
+// gateway gets ALLOWED_HOSTS='' which config.ts splits to an EMPTY allowlist,
+// so getRequestBaseUrl() cannot match the request Host and falls back to its
+// hardcoded 'http://localhost:8080' literal — producing a malformed
+// double-scheme OAuth callback (https://http://localhost:8080/...) that breaks
+// Microsoft/Entra sign-in. Set the staging host as a BARE host, no scheme:
+// getRequestBaseUrl matches the Host against this list and builds
+// `${proto}://${host}` itself. The production deploy passes allowedHosts
+// inline; staging just never set it.
+param allowedHosts = 'staging.conduit.wyre.ai'
+
 // Container Apps creates the managed cert on first bind; the name below
 // matches what Azure auto-generates for staging.conduit.wyre.ai. If a deploy
 // reports the cert isn't found, copy the actual managed-cert resource name
