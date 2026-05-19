@@ -94,7 +94,17 @@ const html = renderLayout(
     activePath: `/org/customers/${customer.id}`,
     title: `${org.name} - ${customer.name}`,
     navMode: 'customer-detail',
-    customerContext: { id: customer.id, name: customer.name },
+    customerContext: {
+      id: customer.id,
+      name: customer.name,
+      // Sibling roster — drives the Area 3 tenant switcher.
+      siblings: [
+        { id: customer.id, name: customer.name },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+      ],
+    },
     pageStyles: RESELLER_CUSTOMER_DETAIL_STYLES,
     // fetch stub must run before the page loader.
     pageScripts: fetchStub + pageScripts,

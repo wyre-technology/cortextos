@@ -725,6 +725,16 @@ export function webRoutes(deps: WebRouteDeps) {
         subdomain: 'am3.conduit.wyre.ai',
       };
 
+      // Sibling customer roster — feeds the Area 3 tenant switcher. Mock,
+      // like the Surface 1 customer list, until the Track A customer-list
+      // endpoint lands; the current customer is included and marked.
+      const siblings = [
+        { id: customerId, name: customer.name },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+      ];
+
       const { body, pageScripts } = renderResellerCustomerDetail({ org, customer });
 
       const html = renderLayout(
@@ -734,7 +744,7 @@ export function webRoutes(deps: WebRouteDeps) {
           activePath: `/org/customers/${customerId}`,
           title: `${org.name} - ${customer.name}`,
           navMode: 'customer-detail',
-          customerContext: { id: customer.id, name: customer.name },
+          customerContext: { id: customer.id, name: customer.name, siblings },
           pageStyles: RESELLER_CUSTOMER_DETAIL_STYLES,
           pageScripts,
         },
