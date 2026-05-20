@@ -1226,6 +1226,10 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org, membership } = ctx;
 
       const members = await orgService.getMembersWithProfiles(org.id);
+      // Layer 1 §8 — seat-billing for the per-seat cost note. Sequential
+      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
+      const memberServiceClients = await orgService.listServiceClients(org.id);
+      const memberSeatBilling = mockSeatBilling(members.length, memberServiceClients.length);
 
       const html = renderLayout(
         { user, org, activePath: '/org/members', title: `${org.name} - Members`, pageStyles: TEAM_MEMBERS_STYLES },
@@ -1240,6 +1244,7 @@ export function webRoutes(deps: WebRouteDeps) {
             email: m.email,
             name: m.name,
           })),
+          seatBilling: memberSeatBilling,
         }),
       );
       return reply.type('text/html').send(html);
@@ -1252,12 +1257,18 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const invitations = await orgService.listInvitations(org.id);
+      // Layer 1 §8 — seat-billing for the per-seat cost note. Sequential
+      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
+      const inviteMembers = await orgService.getMembers(org.id);
+      const inviteServiceClients = await orgService.listServiceClients(org.id);
+      const inviteSeatBilling = mockSeatBilling(inviteMembers.length, inviteServiceClients.length);
 
       const html = renderLayout(
         { user, org, activePath: '/org/invitations', title: `${org.name} - Invitations`, pageStyles: TEAM_INVITATIONS_STYLES },
         renderTeamInvitations({
           orgId: org.id,
           baseUrl: config.baseUrl,
+          seatBilling: inviteSeatBilling,
           // Post-015 contract: existing invitations don't carry the plaintext
           // token — only the hash persists. The list UI shows status only;
           // the copyable invite URL is shown exactly once at create time
@@ -1440,6 +1451,11 @@ export function webRoutes(deps: WebRouteDeps) {
 
       const domainService = new OrgDomainService();
       const domains = await domainService.list(org.id);
+      // Layer 1 §8 — seat-billing for the auto-join seat-cost note. Sequential
+      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
+      const domainMembers = await orgService.getMembers(org.id);
+      const domainServiceClients = await orgService.listServiceClients(org.id);
+      const domainSeatBilling = mockSeatBilling(domainMembers.length, domainServiceClients.length);
 
       const html = renderLayout(
         { user, org, activePath: '/org/domains', title: `${org.name} - Domains`, pageStyles: TEAM_DOMAINS_STYLES },
@@ -1452,6 +1468,7 @@ export function webRoutes(deps: WebRouteDeps) {
             verifiedAt: d.verifiedAt,
             autoJoinRole: d.autoJoinRole,
           })),
+          seatBilling: domainSeatBilling,
         }),
       );
       return reply.type('text/html').send(html);

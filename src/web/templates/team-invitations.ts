@@ -1,8 +1,12 @@
+import type { SeatBilling } from '../../billing/seat-billing.js';
 import { escapeHtml } from '../helpers.js';
+import { formatUsd } from './seat-billing-copy.js';
 
 export interface TeamInvitationsData {
   orgId: string;
   baseUrl: string;
+  /** Seat-billing view object — drives the per-seat cost note. */
+  seatBilling: SeatBilling;
   // Post-015 contract: existing invitations don't carry the plaintext token.
   // The list shows status; the copyable URL is shown exactly once at create
   // time (in the create modal, from the POST response). Re-sharing requires
@@ -22,7 +26,8 @@ function formatUsage(useCount: number, maxUses: number | null): string {
 }
 
 export function renderTeamInvitations(data: TeamInvitationsData): string {
-  const { orgId, baseUrl, invitations } = data;
+  const { orgId, baseUrl, invitations, seatBilling } = data;
+  const perSeat = formatUsd(seatBilling.perSeatPriceCents);
 
   const invitationRows = invitations.length > 0
     ? invitations
@@ -46,7 +51,8 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
     <div style="display:flex;align-items:center;justify-content:space-between">
       <div>
         <h1 style="margin-bottom:4px">Invitations</h1>
-        <p class="section-desc">Share an invite link with your colleagues.</p>
+        <p class="section-desc">Share an invite link with your colleagues.
+          Each colleague who joins takes a ${escapeHtml(perSeat)}/mo member seat.</p>
       </div>
       <button class="btn-create-invite" onclick="showCreateModal()">Create Invite Link</button>
     </div>

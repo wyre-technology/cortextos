@@ -309,4 +309,10 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
     }));
     expect(html).toContain('Your trial ends today');
   });
+
+  it('shows the two-line-item invoice reconcile note (S4)', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).toContain('itemizes this as two lines');
+    expect(html).toContain('reconciles exactly');
+  });
 });

@@ -1,0 +1,21 @@
+import { describe, it, expect } from 'vitest';
+import { renderTeamDomains, type TeamDomainsData } from './team-domains.js';
+import { mockSeatBilling } from '../../billing/seat-billing.js';
+
+function data(over: Partial<TeamDomainsData> = {}): TeamDomainsData {
+  return {
+    orgId: 'org_1',
+    domains: [],
+    seatBilling: mockSeatBilling(4, 0),
+    ...over,
+  };
+}
+
+describe('renderTeamDomains — §8 auto-join seat-cost note', () => {
+  it('warns that auto-join takes a $20/mo member seat without a per-person confirm', () => {
+    const html = renderTeamDomains(data());
+    expect(html).toContain('$20/mo member');
+    expect(html).toContain('auto-join');
+    expect(html).toContain('without a');
+  });
+});

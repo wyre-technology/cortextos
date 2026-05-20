@@ -1,27 +1,25 @@
-// Preview script for /org/billing — IA shell + dunning states.
+// Preview script for /org/billing — Layer 1 §8 composed-bill surface.
 //
-// Renders the page across {none, payment-failing, past-due, final-warning,
-// final-warning-last-48h, suspended, recovered} × {dark, light} into /tmp
-// using mock user/org/data so reviewers can open the files in a browser
-// without needing a running server or seeded database.
+// Renders the page across seat scenarios (decision-of-record §5 examples)
+// × trial on/off, plus a dunning state to confirm the dunning banner still
+// composes above the trial banner, into /tmp — open the files in a browser
+// without a running server.
 //
 // Usage: tsx scripts/preview-billing.mts
-//        then open the paths printed at the end.
 
 import { writeFileSync } from 'node:fs';
 import { renderLayout } from '../src/web/layout.js';
 import {
   renderTeamBilling,
   TEAM_BILLING_STYLES,
-  DUNNING_TOAST_SCRIPT,
   type TeamBillingData,
   type DunningView,
+  type TrialState,
 } from '../src/web/templates/team-billing.js';
 import { getPlan } from '../src/billing/plan-catalog.js';
+import { mockSeatBilling } from '../src/billing/seat-billing.js';
 
 const plan = getPlan('pro')!;
-const memberCount = 6;
-const creditsAllocated = plan.creditAllocation * memberCount;
 
 const baseOrg: TeamBillingData['org'] = {
   id: 'org_preview_001',
@@ -38,36 +36,26 @@ const baseOrg: TeamBillingData['org'] = {
   updatedAt: '2026-05-13T00:00:00Z',
 };
 
-const baseInvoices: TeamBillingData['invoices'] = [
-  { id: 'in_001', number: '2026-0042', date: new Date(Date.now() - 16 * 86_400_000).toISOString(),  amountCents: 4900, currency: 'usd', status: 'paid', pdfUrl: null },
-  { id: 'in_002', number: '2026-0035', date: new Date(Date.now() - 46 * 86_400_000).toISOString(),  amountCents: 4900, currency: 'usd', status: 'paid', pdfUrl: null },
-  { id: 'in_003', number: '2026-0028', date: new Date(Date.now() - 76 * 86_400_000).toISOString(),  amountCents: 4900, currency: 'usd', status: 'paid', pdfUrl: null },
-  { id: 'in_004', number: '2026-0021', date: new Date(Date.now() - 106 * 86_400_000).toISOString(), amountCents: 4900, currency: 'usd', status: 'paid', pdfUrl: null },
-];
-
-const FIVE_DAYS_FUT = new Date(Date.now() + 5 * 86_400_000).toISOString();
-const TWO_DAYS_FUT = new Date(Date.now() + 2 * 86_400_000).toISOString();
-const THIRTY_SIX_HOURS = new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString();
 const TEN_DAYS_AGO = new Date(Date.now() - 10 * 86_400_000).toISOString();
-const FOUR_DAYS_AGO = new Date(Date.now() - 4 * 86_400_000).toISOString();
-const FIVE_MIN_AGO = new Date(Date.now() - 5 * 60_000).toISOString();
+const FIVE_DAYS_FUT = new Date(Date.now() + 5 * 86_400_000).toISOString();
 
-function buildData(dunning: DunningView): TeamBillingData {
+function buildData(
+  humans: number,
+  agents: number,
+  trial: TrialState | null,
+  dunning: DunningView,
+): TeamBillingData {
+  const seatBilling = mockSeatBilling(humans, agents);
   return {
     org: baseOrg,
     plan,
-    memberCount,
-    creditsUsed: Math.floor(creditsAllocated * 0.37),
-    creditsAllocated,
-    paymentMethod: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2027 },
-    nextInvoice: {
-      amountCents: 4900,
-      currency: 'usd',
-      dueDate: new Date(Date.now() + 14 * 86_400_000).toISOString(),
-    },
-    invoices: baseInvoices,
+    seatBilling,
+    trial,
+    creditsUsed: Math.floor(plan.creditAllocation * seatBilling.creditSeats * 0.37),
+    creditsAllocated: plan.creditAllocation * seatBilling.creditSeats,
     dunning,
     firstName: 'Aaron',
+    availableCreditPacks: [1000, 2500, 5000],
   };
 }
 
@@ -78,32 +66,40 @@ const user = {
   emailVerified: true,
 };
 
-const scenarios: Array<{ slug: string; dunning: DunningView }> = [
-  { slug: 'none',                dunning: { state: 'none' } },
-  { slug: 'payment-failing',     dunning: { state: 'payment-failing', firstFailDate: FOUR_DAYS_AGO, attemptCount: 2, nextRetryDate: TWO_DAYS_FUT, cardBrand: 'visa', cardLast4: '4242', amountCents: 4900, currency: 'usd' } },
-  { slug: 'past-due',            dunning: { state: 'past-due',        firstFailDate: TEN_DAYS_AGO,  attemptCount: 4, nextRetryDate: TWO_DAYS_FUT, cardBrand: 'visa', cardLast4: '4242', amountCents: 4900, currency: 'usd' } },
-  { slug: 'final-warning',       dunning: { state: 'final-warning',   firstFailDate: TEN_DAYS_AGO,  attemptCount: 6, serviceEndDate: FIVE_DAYS_FUT, cardBrand: 'visa', cardLast4: '4242', amountCents: 4900, currency: 'usd' } },
-  { slug: 'final-warning-last48',dunning: { state: 'final-warning',   firstFailDate: TEN_DAYS_AGO,  attemptCount: 6, serviceEndDate: THIRTY_SIX_HOURS, cardBrand: 'visa', cardLast4: '4242', amountCents: 4900, currency: 'usd' } },
-  { slug: 'suspended',           dunning: { state: 'suspended',       firstFailDate: TEN_DAYS_AGO,  attemptCount: 7, suspendedAt: FOUR_DAYS_AGO, cardBrand: 'visa', cardLast4: '4242' } },
-  { slug: 'recovered',           dunning: { state: 'recovered',       recoveredAt: FIVE_MIN_AGO, amountCents: 4900, currency: 'usd', nextChargeDate: new Date(Date.now() + 30 * 86_400_000).toISOString() } },
+const none: DunningView = { state: 'none' };
+
+const scenarios: Array<{ slug: string; data: TeamBillingData }> = [
+  // Seat scenarios — decision-of-record §5.
+  { slug: 'seats-5h2a',        data: buildData(5, 2, null, none) },   // all agents included
+  { slug: 'seats-5h4a',        data: buildData(5, 4, null, none) },   // 2 included, 2 billed
+  { slug: 'seats-1h0a',        data: buildData(1, 0, null, none) },   // smallest paid org
+  // Trial state.
+  { slug: 'trial-5h2a',        data: buildData(5, 2, { daysRemaining: 9 }, none) },
+  { slug: 'trial-ends-today',  data: buildData(3, 1, { daysRemaining: 0 }, none) },
+  // Dunning still composes above the §8 content.
+  {
+    slug: 'dunning-final-warning',
+    data: buildData(5, 4, null, {
+      state: 'final-warning', firstFailDate: TEN_DAYS_AGO, attemptCount: 6,
+      serviceEndDate: FIVE_DAYS_FUT, cardBrand: 'visa', cardLast4: '4242',
+      amountCents: 4900, currency: 'usd',
+    }),
+  },
 ];
 
 const themes: Array<'dark' | 'light'> = ['dark', 'light'];
 
 const written: string[] = [];
 for (const sc of scenarios) {
-  const data = buildData(sc.dunning);
-  const pageScripts = sc.dunning.state === 'recovered' ? DUNNING_TOAST_SCRIPT : undefined;
   const html = renderLayout(
     {
       user,
-      org: data.org,
+      org: sc.data.org,
       activePath: '/org/billing',
-      title: `${data.org.name} - Billing`,
+      title: `${sc.data.org.name} - Billing`,
       pageStyles: TEAM_BILLING_STYLES,
-      pageScripts,
     },
-    renderTeamBilling(data),
+    renderTeamBilling(sc.data),
   );
   for (const theme of themes) {
     const path = `/tmp/billing-${sc.slug}-${theme}.html`;

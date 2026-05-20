@@ -382,7 +382,12 @@ function renderPlanCard(data: TeamBillingData): string {
         <span class="plan-line-label">Credits</span>
         <span>${creditsAllocated.toLocaleString()} / month</span>
       </div>
-    </div>`;
+    </div>
+    <p class="invoice-reconcile-note">
+      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(seatBilling.basePriceCents))}
+      base and the per-seat charge — and reconciles exactly with the breakdown above.
+      The full invoice is in your Stripe billing portal below.
+    </p>`;
 }
 
 function renderCredits(used: number, allocated: number): string {
@@ -624,8 +629,10 @@ export const TEAM_BILLING_STYLES = `
   .plan-line {
     display: flex;
     justify-content: space-between;
+    gap: 16px;
     color: var(--text-secondary);
   }
+  .plan-line > .plan-line-label { flex-shrink: 0; }
   .plan-line-label {
     color: var(--text-tertiary);
   }
@@ -642,6 +649,12 @@ export const TEAM_BILLING_STYLES = `
     font-size: 12px;
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;
+  }
+  .invoice-reconcile-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
   }
   .usage-bar-track {
     width: 100%;

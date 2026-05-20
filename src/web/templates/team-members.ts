@@ -1,5 +1,7 @@
 import type { OrgRole } from '../../org/org-service.js';
+import type { SeatBilling } from '../../billing/seat-billing.js';
 import { escapeHtml } from '../helpers.js';
+import { formatUsd } from './seat-billing-copy.js';
 
 export interface TeamMembersData {
   orgId: string;
@@ -12,11 +14,14 @@ export interface TeamMembersData {
     email: string | null;
     name: string | null;
   }[];
+  /** Seat-billing view object — drives the per-seat cost note. */
+  seatBilling: SeatBilling;
 }
 
 export function renderTeamMembers(data: TeamMembersData): string {
-  const { orgId, viewerUserId, viewerRole, members } = data;
+  const { orgId, viewerUserId, viewerRole, members, seatBilling } = data;
   const isViewerOwner = viewerRole === 'owner';
+  const perSeat = formatUsd(seatBilling.perSeatPriceCents);
 
   const memberRows = members
     .map((m) => {
@@ -51,7 +56,9 @@ export function renderTeamMembers(data: TeamMembersData): string {
 
   return `
     <h1 style="margin-bottom:4px">Members</h1>
-    <p class="section-desc">Manage who has access to your team's shared vendor connections.</p>
+    <p class="section-desc">Manage who has access to your team's shared vendor connections.
+      Each member is a ${escapeHtml(perSeat)}/mo seat — adding or removing one
+      prorates your next bill.</p>
 
     <div class="org-section" style="padding:0;overflow:hidden">
       <table>
