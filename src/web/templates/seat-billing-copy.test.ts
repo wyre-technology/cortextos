@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mockSeatBilling } from '../../billing/seat-billing.js';
 import {
   formatUsd,
+  formatUsdExact,
   monthlyTotalCents,
   composedBillLine,
   seatBreakdownLine,
@@ -21,6 +22,17 @@ describe('formatUsd', () => {
   });
   it('shows cents only when not whole', () => {
     expect(formatUsd(650)).toBe('$6.50');
+  });
+});
+
+describe('formatUsdExact', () => {
+  it('always renders 2 decimals — charge-amount convention', () => {
+    expect(formatUsdExact(62_000)).toBe('$620.00');
+    expect(formatUsdExact(74_000)).toBe('$740.00');
+    expect(formatUsdExact(650)).toBe('$6.50');
+  });
+  it('groups thousands', () => {
+    expect(formatUsdExact(1_240_00)).toBe('$1,240.00');
   });
 });
 

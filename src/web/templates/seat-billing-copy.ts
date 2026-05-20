@@ -15,12 +15,28 @@
 
 import type { SeatBilling } from '../../billing/seat-billing.js';
 
-/** Whole-dollar cents → "$600"; non-whole → "$6.50". Thousands grouped. */
+/**
+ * Terse money — whole-dollar cents → "$600", non-whole → "$6.50". For
+ * prices in a breakdown (the composed-bill line, per-seat price) where the
+ * decimals would be noise.
+ */
 export function formatUsd(cents: number): string {
   const dollars = cents / 100;
   const whole = Number.isInteger(dollars);
   return '$' + dollars.toLocaleString('en-US', {
     minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Exact money — always 2 decimals: "$620.00". For an actual charge amount
+ * (the trial first-charge line), where full currency precision is the
+ * convention. Same underlying number as `formatUsd`, charge-formatted.
+ */
+export function formatUsdExact(cents: number): string {
+  return '$' + (cents / 100).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 }

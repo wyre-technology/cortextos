@@ -74,8 +74,8 @@ const scenarios: Array<{ slug: string; data: TeamBillingData }> = [
   { slug: 'seats-5h4a',        data: buildData(5, 4, null, none) },   // 2 included, 2 billed
   { slug: 'seats-1h0a',        data: buildData(1, 0, null, none) },   // smallest paid org
   // Trial state.
-  { slug: 'trial-5h2a',        data: buildData(5, 2, { daysRemaining: 9 }, none) },
-  { slug: 'trial-ends-today',  data: buildData(3, 1, { daysRemaining: 0 }, none) },
+  { slug: 'trial-5h2a',        data: buildData(5, 2, { endsAt: new Date(Date.now() + 9 * 86_400_000).toISOString() }, none) },
+  { slug: 'trial-ends-today',  data: buildData(3, 1, { endsAt: new Date().toISOString() }, none) },
   // Dunning still composes above the §8 content.
   {
     slug: 'dunning-final-warning',

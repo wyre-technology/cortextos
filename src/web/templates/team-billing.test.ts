@@ -287,27 +287,50 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   });
 
   it('on-trial: trial banner shown + the bill framed as post-trial', () => {
+    const endsAt = new Date(Date.now() + 9 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      trial: { daysRemaining: 9 },
+      seatBilling: mockSeatBilling(1, 0), // $620/mo recurring total
+      trial: { endsAt },
     }));
     expect(html).toContain('trial-banner');
-    expect(html).toContain('9 days left in your trial');
-    expect(html).toContain('first bill lands when the trial ends');
+    expect(html).toContain('Free trial — 9 days left');
+    // First-charge amount = the composed-bill recurring total, single-sourced.
+    expect(html).toContain('Your first charge is $620.00 on ');
+    expect(html).toContain('Nothing is billed before then');
     expect(html).toContain('After your trial');
   });
 
-  it('on-trial with 1 day left — singular copy', () => {
+  it('the trial first-charge amount equals the composed-bill total (single source)', () => {
+    const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      trial: { daysRemaining: 1 },
+      seatBilling: mockSeatBilling(5, 4), // $740/mo
+      trial: { endsAt },
     }));
-    expect(html).toContain('1 day left in your trial');
+    expect(html).toContain('Your first charge is $740.00 on ');
+    expect(html).toContain('$600 base + 7 seats × $20 = $740/mo'); // same number
   });
 
-  it('on-trial with 0 days left — "ends today" copy', () => {
+  it('on-trial with 1 day left — singular copy', () => {
+    const endsAt = new Date(Date.now() + 18 * 60 * 60 * 1000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      trial: { daysRemaining: 0 },
+      trial: { endsAt },
     }));
-    expect(html).toContain('Your trial ends today');
+    expect(html).toContain('Free trial — 1 day left');
+  });
+
+  it('on-trial ending today — "ends today" copy', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { endsAt: new Date().toISOString() },
+    }));
+    expect(html).toContain('Free trial — ends today');
+  });
+
+  it('a malformed trial-end date degrades to honest-vague, never "Invalid Date"', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { endsAt: 'not-a-date' },
+    }));
+    expect(html).not.toContain('Invalid Date');
+    expect(html).toContain('when the trial ends');
   });
 
   it('shows the two-line-item invoice reconcile note (S4)', () => {

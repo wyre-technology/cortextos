@@ -7,6 +7,7 @@ import {
   seatBreakdownLine,
   monthlyTotalCents,
   formatUsd,
+  formatUsdExact,
 } from './seat-billing-copy.js';
 import {
   ICON_INFO,
@@ -28,10 +29,14 @@ import {
 // details" block links out to (the portal shows the real two-item
 // invoice). No fabricated billing data is rendered here.
 
-/** Active-trial state for the billing page. `null` once the org converts. */
+/**
+ * Active-trial state for the billing page. `null` once the org converts.
+ * Carries ONLY the trial-end date (ISO — org creation + 14 days, i.e. the
+ * Stripe `trial_end`); the banner derives both the days-left countdown and
+ * the displayed date from it, so the two can never disagree.
+ */
 export interface TrialState {
-  /** Whole days remaining in the 14-day trial. */
-  daysRemaining: number;
+  endsAt: string;
 }
 
 export interface TeamBillingData {
@@ -337,20 +342,32 @@ function renderPlanBadge(planSlug: string, planName: string): string {
 
 /**
  * Trial banner — shown above the H1 while the org is inside its 14-day
- * trial. States plainly that the first real bill lands when the trial
- * ends; the "Current plan" card frames the composed bill as future.
+ * trial. Names the explicit first-charge date + amount (DOR §8). Both the
+ * days-left countdown and the "May 31" date derive from the single
+ * `trial.endsAt` ISO date; the amount is the composed bill's
+ * `monthlyTotalCents` — the SAME number the plan card renders — so the
+ * trial line and the composed bill can never disagree. Not a proration
+ * figure: it is the recurring monthly total at the current seat count.
  */
-export function renderTrialBanner(trial: TrialState): string {
-  const days = Math.max(0, trial.daysRemaining);
-  const left = days === 0
-    ? 'Your trial ends today'
-    : `${days} day${days === 1 ? '' : 's'} left in your trial`;
+export function renderTrialBanner(trial: TrialState, seatBilling: SeatBilling): string {
+  const end = new Date(trial.endsAt);
+  const valid = !Number.isNaN(end.getTime());
+  const daysLeft = valid ? Math.max(0, Math.ceil((end.getTime() - Date.now()) / 86_400_000)) : 0;
+  const daysLabel = daysLeft === 0 ? 'ends today'
+    : daysLeft === 1 ? '1 day left'
+    : `${daysLeft} days left`;
+  // Exact currency for an actual charge amount; same number as the
+  // composed bill's monthlyTotalCents, charge-formatted.
+  const amount = formatUsdExact(monthlyTotalCents(seatBilling));
+  const chargeLine = valid
+    ? `Your first charge is ${amount} on ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Nothing is billed before then.`
+    : `Your first charge is ${amount} when the trial ends. Nothing is billed before then.`;
   return `
     <div class="trial-banner" role="status">
       <span class="trial-banner__icon">${ICON_INFO}</span>
       <div class="trial-banner__copy">
-        <div class="trial-banner__line1">${escapeHtml(left)}.</div>
-        <div class="trial-banner__line2">Your first bill lands when the trial ends — nothing is charged before then.</div>
+        <div class="trial-banner__line1">Free trial — ${escapeHtml(daysLabel)}</div>
+        <div class="trial-banner__line2">${escapeHtml(chargeLine)}</div>
       </div>
     </div>
   `;
@@ -567,7 +584,7 @@ export function renderTeamBilling(data: TeamBillingData): string {
 
   // The trial banner sits above the H1, like the dunning banner; both can
   // be present (a trialing org with a failing card), trial first.
-  const trialBanner = trial ? renderTrialBanner(trial) : '';
+  const trialBanner = trial ? renderTrialBanner(trial, data.seatBilling) : '';
 
   return `
     ${trialBanner}
