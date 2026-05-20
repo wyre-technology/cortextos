@@ -201,10 +201,12 @@ async function requireCustomerOwnership(
   customerId: string,
   orgService: OrgService,
 ): Promise<Awaited<ReturnType<OrgService['getOrg']>>> {
-  const [customer, parent] = await Promise.all([
-    orgService.getOrg(customerId),
-    orgService.getResellerOfCustomer(customerId),
-  ]);
+  // Sequential, NOT Promise.all: each call issues a DB query on the
+  // request's single reserved-tx connection — a Promise.all of two such
+  // method calls stalls it (the #196/#199 hang class). requireCustomerOwnership
+  // is the shared gate every Track A tab inherits, so the shape matters.
+  const customer = await orgService.getOrg(customerId);
+  const parent = await orgService.getResellerOfCustomer(customerId);
   if (!customer || !parent || parent.id !== reseller.org.id) {
     reply.redirect('/org/customers', 302);
     return null;
