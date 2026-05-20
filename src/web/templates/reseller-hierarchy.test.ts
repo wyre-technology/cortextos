@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderResellerHierarchy,
+  MAX_TREE_DEPTH,
   type TenantNode,
   type ResellerHierarchyData,
 } from './reseller-hierarchy.js';
@@ -140,15 +141,23 @@ describe('renderResellerHierarchy', () => {
     expect(html).toContain('Cycle Customer');
   });
 
-  it('does not overflow on a pathologically deep tree', () => {
-    let node: TenantNode = { id: 'leaf', name: 'Leaf', kind: 'subtenant', meta: '', children: [] };
-    for (let i = 0; i < 500; i++) {
-      node = { id: `n${i}`, name: `Node ${i}`, kind: 'subtenant', meta: '', children: [node] };
+  it('truncates the render at MAX_TREE_DEPTH (cap is a real pin, not just no-throw)', () => {
+    // A single chain Depth-0 (root) … Depth-30, one node per level.
+    const nodes: TenantNode[] = [];
+    for (let d = 0; d <= 30; d++) {
+      nodes.push({
+        id: `d${d}`, name: `Depth-${d}-NODE`,
+        kind: d === 0 ? 'reseller' : 'subtenant', meta: '', children: [],
+      });
     }
-    const root: TenantNode = {
-      id: 'org_reseller', name: 'WYRE Technology', kind: 'reseller', meta: '', children: [node],
-    };
-    expect(() => renderResellerHierarchy({ org, root })).not.toThrow();
+    for (let d = 0; d < 30; d++) nodes[d].children.push(nodes[d + 1]);
+
+    const html = renderResellerHierarchy({ org, root: nodes[0] });
+    // Nodes within the cap render…
+    expect(html).toContain(`Depth-${MAX_TREE_DEPTH}-NODE`);
+    // …nodes past it are absent — remove the cap and this goes red.
+    expect(html).not.toContain(`Depth-${MAX_TREE_DEPTH + 1}-NODE`);
+    expect(html).not.toContain('Depth-30-NODE');
   });
 
   it('renders a 3-level-deep tree (reseller → customer → subtenant)', () => {

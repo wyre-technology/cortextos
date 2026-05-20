@@ -43,7 +43,7 @@ const KIND_LABEL: Record<TenantNodeKind, string> = {
 // cyclic. Both recursion walkers below carry a hard depth cap and a
 // visited-id set so a malformed tree degrades gracefully instead of
 // overflowing the stack and crashing the response handler.
-const MAX_TREE_DEPTH = 20;
+export const MAX_TREE_DEPTH = 20;
 
 /** Total nodes under (and including) a node — for the header summary. */
 function countNodes(node: TenantNode, depth = 0, visited = new Set<string>()): number {
