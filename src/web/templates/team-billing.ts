@@ -10,39 +10,12 @@ import {
   ICON_DISMISS,
 } from '../icons.js';
 
-// Track-B IA shell. Render contract is the swap-in target for Hank's
-// Track-A Stripe foundation: when real customer/subscription/invoice
-// data lands, routes.ts replaces the mock builders with service calls
-// and this template renders unchanged.
-//
-// Sections (top-to-bottom) telegraph the four surfaces Aaron can pick
-// from for deepening: current plan + plan-change, seats, payment
-// method, invoice history. Each section is independently fillable.
-
-export interface PaymentMethodView {
-  brand: string;          // 'visa' | 'mastercard' | 'amex' | ...
-  last4: string;
-  expMonth: number;       // 1-12
-  expYear: number;        // 4-digit
-}
-
-export interface NextInvoiceView {
-  amountCents: number;
-  currency: string;       // ISO 4217 (lowercase per Stripe convention)
-  dueDate: string;        // ISO 8601 date
-}
-
-export type InvoiceStatus = 'paid' | 'open' | 'void' | 'uncollectible';
-
-export interface InvoiceView {
-  id: string;
-  number: string;
-  date: string;           // ISO 8601 date
-  amountCents: number;
-  currency: string;
-  status: InvoiceStatus;
-  pdfUrl: string | null;
-}
+// Billing page. `creditsUsed` is real (CreditService.getUsageThisMonth).
+// Payment method, upcoming invoice, and invoice history are NOT rendered
+// on-page — they live in the customer's real Stripe billing portal, which
+// the "Billing details" block links out to. No fabricated billing data is
+// rendered here: an org with a Stripe customer gets the portal link; an
+// org without one gets the honest managed-directly state.
 
 export interface TeamBillingData {
   org: Organization;
@@ -50,9 +23,6 @@ export interface TeamBillingData {
   memberCount: number;
   creditsUsed: number;
   creditsAllocated: number;
-  paymentMethod: PaymentMethodView | null;
-  nextInvoice: NextInvoiceView | null;
-  invoices: InvoiceView[];
   /** Always present, defaults to `{ state: 'none' }`. */
   dunning: DunningView;
   /** First name for personalised copy; null falls back to "there". */
@@ -335,14 +305,6 @@ export const DUNNING_TOAST_SCRIPT = `
 </script>
 `;
 
-function formatMoney(amountCents: number, currency: string): string {
-  const formatter = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  });
-  return formatter.format(amountCents / 100);
-}
-
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -439,61 +401,75 @@ function renderCreditPacks(orgId: string, packs: number[]): string {
   `;
 }
 
-function renderPaymentMethod(pm: PaymentMethodView | null): string {
-  if (!pm) {
+/**
+ * "Billing details" — payment method, invoices, and upcoming charges are NOT
+ * rendered on-page; they live in the customer's real Stripe billing portal.
+ * Two arms, branched on whether the org has a Stripe customer:
+ *  - has stripeCustomerId → link out to the portal (POST /api/billing/portal
+ *    returns a session URL; the portal natively shows real card / invoices /
+ *    upcoming charge — zero fabricated data, fully functional).
+ *  - no stripeCustomerId  → honest managed-directly state, no portal button
+ *    (the portal endpoint 404s without a customer). This is reachable by a
+ *    paid-plan org that has no Stripe customer: a comped / manually-granted
+ *    org, or one mid-checkout before the Stripe webhook attaches the customer.
+ */
+function renderBillingDetails(org: Organization): string {
+  if (!org.stripeCustomerId) {
     return `
-      <p class="section-desc">No payment method on file.</p>
-      <button type="button" class="btn-upgrade" disabled title="Stripe portal redirect lands with Track A">
-        Add payment method
-      </button>
+      <section class="billing-card billing-card-wide">
+        <h2 class="section-title">Billing details</h2>
+        <p class="section-desc">
+          Billing for this organization is managed directly — there is no
+          self-service billing portal for this account.
+        </p>
+      </section>
     `;
   }
-  const exp = String(pm.expMonth).padStart(2, '0') + '/' + String(pm.expYear).slice(-2);
   return `
-    <div class="pm-row">
-      <span class="pm-brand">${escapeHtml(pm.brand.toUpperCase())}</span>
-      <span class="pm-last4">•••• ${escapeHtml(pm.last4)}</span>
-      <span class="pm-exp">exp ${escapeHtml(exp)}</span>
-    </div>
-    <button type="button" class="btn-text" disabled title="Stripe portal redirect lands with Track A">
-      Update payment method
-    </button>
-  `;
-}
-
-function renderInvoiceRow(inv: InvoiceView): string {
-  return `
-    <tr>
-      <td>${escapeHtml(inv.number)}</td>
-      <td>${escapeHtml(formatDate(inv.date))}</td>
-      <td class="invoice-amount">${escapeHtml(formatMoney(inv.amountCents, inv.currency))}</td>
-      <td><span class="invoice-status invoice-status-${escapeHtml(inv.status)}">${escapeHtml(inv.status)}</span></td>
-      <td>${inv.pdfUrl
-        ? `<a href="${escapeHtml(inv.pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>`
-        : '<span class="text-muted">—</span>'}</td>
-    </tr>
-  `;
-}
-
-function renderInvoices(invoices: InvoiceView[]): string {
-  if (invoices.length === 0) {
-    return `<p class="section-desc">No invoices yet.</p>`;
-  }
-  return `
-    <table class="invoice-table">
-      <thead>
-        <tr>
-          <th>Invoice</th>
-          <th>Date</th>
-          <th>Amount</th>
-          <th>Status</th>
-          <th>PDF</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${invoices.map(renderInvoiceRow).join('')}
-      </tbody>
-    </table>
+    <section class="billing-card billing-card-wide">
+      <h2 class="section-title">Billing details</h2>
+      <p class="section-desc">
+        Your payment method, invoices, and upcoming charges are managed in
+        your secure Stripe billing portal.
+      </p>
+      <button type="button" class="btn-upgrade" id="billingPortalBtn">
+        Open billing portal
+      </button>
+      <div class="billing-portal-status" id="billingPortalStatus" role="status"></div>
+    </section>
+    <script>
+      (function () {
+        var orgId = ${JSON.stringify(org.id)};
+        var btn = document.getElementById('billingPortalBtn');
+        var status = document.getElementById('billingPortalStatus');
+        btn.addEventListener('click', async function () {
+          btn.disabled = true;
+          status.textContent = 'Opening portal…';
+          try {
+            var res = await fetch('/api/billing/portal', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ org_id: orgId }),
+            });
+            if (res.status === 403) {
+              // The portal endpoint is owner-only, but this page (and so this
+              // button) is reachable by a non-owner admin. "Try again" would
+              // be futile for them — name the real remedy, and leave the
+              // button disabled since retrying cannot succeed for this user.
+              status.textContent = 'Only an organization owner can open the billing portal.';
+              return;
+            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            var data = await res.json();
+            if (!data.url) throw new Error('no url');
+            window.location.href = data.url;
+          } catch (e) {
+            btn.disabled = false;
+            status.textContent = 'Could not open the billing portal. Please try again.';
+          }
+        });
+      })();
+    </script>
   `;
 }
 
@@ -509,7 +485,7 @@ function renderInvoices(invoices: InvoiceView[]): string {
  *     body-end (empty string when not applicable).
  */
 export function renderTeamBilling(data: TeamBillingData): string {
-  const { org, plan, memberCount, creditsUsed, creditsAllocated, paymentMethod, nextInvoice, invoices, dunning, firstName, availableCreditPacks } = data;
+  const { org, plan, memberCount, creditsUsed, creditsAllocated, dunning, firstName, availableCreditPacks } = data;
   const orgName = escapeHtml(org.name);
 
   const banner = renderDunningBanner(dunning, firstName);
@@ -519,23 +495,9 @@ export function renderTeamBilling(data: TeamBillingData): string {
     return `
       ${renderSuspendedView(dunning, firstName)}
 
-      <div class="org-section" id="invoice-history" style="margin-top:32px">
-        <h2 class="section-title">Invoice history</h2>
-        ${renderInvoices(invoices)}
-      </div>
+      ${renderBillingDetails(org)}
     `;
   }
-
-  const chip = renderDunningChip(dunning);
-  const chipSlot = chip ? ` ${chip}` : '';
-
-  const nextInvoiceBlock = nextInvoice
-    ? `
-      <div class="next-invoice">
-        <div class="next-invoice-amount">${escapeHtml(formatMoney(nextInvoice.amountCents, nextInvoice.currency))}</div>
-        <div class="next-invoice-due">due ${escapeHtml(formatDate(nextInvoice.dueDate))}</div>
-      </div>`
-    : `<p class="section-desc">No upcoming invoice.</p>`;
 
   return `
     ${banner}
@@ -558,31 +520,14 @@ export function renderTeamBilling(data: TeamBillingData): string {
       </section>
 
       <section class="billing-card">
-        <h2 class="section-title">Next invoice${chipSlot}</h2>
-        ${nextInvoiceBlock}
-      </section>
-
-      <section class="billing-card">
         <h2 class="section-title">Usage this month</h2>
         ${renderCredits(creditsUsed, creditsAllocated)}
       </section>
 
       ${renderCreditPacks(org.id, availableCreditPacks)}
-
-      <section class="billing-card">
-        <h2 class="section-title">Payment method</h2>
-        ${renderPaymentMethod(paymentMethod)}
-      </section>
     </div>
 
-    <div class="org-section" id="invoice-history" style="margin-top:32px">
-      <h2 class="section-title">Invoice history</h2>
-      ${renderInvoices(invoices)}
-    </div>
-
-    <p class="ia-shell-note">
-      Plan changes, payment-method updates, and invoice downloads route through Stripe Customer Portal — wiring lands with Track A.
-    </p>
+    ${renderBillingDetails(org)}
 
     ${toast}
   `;

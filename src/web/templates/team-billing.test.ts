@@ -44,9 +44,6 @@ function mockData(dunning: DunningView): TeamBillingData {
     memberCount: 4,
     creditsUsed: 1200,
     creditsAllocated: plan.creditAllocation * 4,
-    paymentMethod: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2027 },
-    nextInvoice: { amountCents: 4900, currency: 'usd', dueDate: FUTURE_DATE },
-    invoices: [],
     dunning,
     firstName: 'Aaron',
     availableCreditPacks: [1000, 2500, 5000],
@@ -198,14 +195,10 @@ describe('renderTeamBilling insertion logic', () => {
     expect(html).toContain('Billing'); // normal heading
   });
 
-  it('inserts banner above the H1 and chip inside Next-invoice for active states', () => {
+  it('inserts the banner above the H1 for active states', () => {
     const html = renderTeamBilling(mockData(ACTIVE_FAILING));
     expect(html).toContain('dunning-banner--info');
     expect(html.indexOf('dunning-banner')).toBeLessThan(html.indexOf('<h1'));
-    // Chip lives inside the Next invoice card heading.
-    const nextInvoiceIdx = html.indexOf('Next invoice');
-    const chipIdx = html.indexOf('dunning-chip');
-    expect(chipIdx).toBeGreaterThan(nextInvoiceIdx);
   });
 
   it('replaces the four-card grid with the suspended card', () => {
@@ -213,14 +206,45 @@ describe('renderTeamBilling insertion logic', () => {
     expect(html).toContain('suspended-card');
     expect(html).not.toContain('billing-grid');
     expect(html).not.toContain('Current plan');
-    // Invoice history still rendered.
-    expect(html).toContain('Invoice history');
+    // Billing details block still rendered below the suspended card.
+    expect(html).toContain('Billing details');
   });
 
   it('appends the recovered toast on a normal layout', () => {
     const html = renderTeamBilling(mockData(RECOVERED));
     expect(html).toContain('dunning-toast--success');
     expect(html).toContain('billing-grid'); // normal layout still rendered
-    expect(html.indexOf('dunning-toast')).toBeGreaterThan(html.indexOf('Invoice history'));
+    expect(html.indexOf('dunning-toast')).toBeGreaterThan(html.indexOf('Billing details'));
+  });
+});
+
+describe('renderTeamBilling — billing details block (F3)', () => {
+  it('Arm 1: links to the Stripe portal when the org has a Stripe customer', () => {
+    // mockOrg has stripeCustomerId: 'cus_test'.
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).toContain('Billing details');
+    expect(html).toContain('Open billing portal');
+    expect(html).toContain('/api/billing/portal');
+    expect(html).not.toContain('managed directly');
+  });
+
+  it('Arm 2: renders the managed-directly state when the org has no Stripe customer', () => {
+    const data = mockData({ state: 'none' });
+    const html = renderTeamBilling({
+      ...data,
+      org: { ...data.org, stripeCustomerId: null },
+    });
+    expect(html).toContain('Billing details');
+    expect(html).toContain('managed directly');
+    expect(html).not.toContain('Open billing portal');
+    expect(html).not.toContain('/api/billing/portal');
+  });
+
+  it('renders NO fabricated billing data — no mock card, invoices, or next-invoice section', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).not.toContain('4242');            // the old mock card last4
+    expect(html).not.toContain('Payment method');  // the old mock card heading
+    expect(html).not.toContain('Invoice history'); // the old mock invoice section
+    expect(html).not.toContain('Next invoice');    // the old mock next-invoice card
   });
 });
