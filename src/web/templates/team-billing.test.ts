@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Organization } from '../../org/org-service.js';
 import { getPlan } from '../../billing/plan-catalog.js';
+import { mockSeatBilling } from '../../billing/seat-billing.js';
 import {
   renderDunningBanner,
   renderDunningChip,
@@ -36,17 +37,23 @@ const mockOrg: Organization = {
   updatedAt: '2026-05-15T00:00:00Z',
 };
 
-function mockData(dunning: DunningView): TeamBillingData {
+function mockData(
+  dunning: DunningView,
+  over: Partial<TeamBillingData> = {},
+): TeamBillingData {
   const plan = getPlan('pro')!;
+  const seatBilling = mockSeatBilling(4, 0); // 4 humans, 0 agents
   return {
     org: mockOrg,
     plan,
-    memberCount: 4,
+    seatBilling,
+    trial: null,
     creditsUsed: 1200,
-    creditsAllocated: plan.creditAllocation * 4,
+    creditsAllocated: plan.creditAllocation * seatBilling.creditSeats,
     dunning,
     firstName: 'Aaron',
     availableCreditPacks: [1000, 2500, 5000],
+    ...over,
   };
 }
 
@@ -246,5 +253,60 @@ describe('renderTeamBilling — billing details block (F3)', () => {
     expect(html).not.toContain('Payment method');  // the old mock card heading
     expect(html).not.toContain('Invoice history'); // the old mock invoice section
     expect(html).not.toContain('Next invoice');    // the old mock next-invoice card
+  });
+});
+
+describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
+  it('renders the composed bill and the inclusion-explicit seat line', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: mockSeatBilling(5, 2),
+    }));
+    expect(html).toContain('$600 base + 5 seats × $20 = $700/mo');
+    expect(html).toContain('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
+    expect(html).toContain('$700/mo'); // the prominent total
+  });
+
+  it('shows the included-vs-billed split when agents exceed the inclusion', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: mockSeatBilling(5, 4),
+    }));
+    expect(html).toContain('9 seats — 5 members + 4 agents (2 included, 2 billed)');
+    expect(html).toContain('$740/mo');
+  });
+
+  it('drops the obsolete "Change plan" button (one paid plan, nothing to change to)', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).not.toContain('Change plan');
+  });
+
+  it('off-trial: the bill is labelled as the live monthly charge', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, { trial: null }));
+    expect(html).toContain('Monthly bill');
+    expect(html).not.toContain('After your trial');
+    expect(html).not.toContain('trial-banner');
+  });
+
+  it('on-trial: trial banner shown + the bill framed as post-trial', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { daysRemaining: 9 },
+    }));
+    expect(html).toContain('trial-banner');
+    expect(html).toContain('9 days left in your trial');
+    expect(html).toContain('first bill lands when the trial ends');
+    expect(html).toContain('After your trial');
+  });
+
+  it('on-trial with 1 day left — singular copy', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { daysRemaining: 1 },
+    }));
+    expect(html).toContain('1 day left in your trial');
+  });
+
+  it('on-trial with 0 days left — "ends today" copy', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { daysRemaining: 0 },
+    }));
+    expect(html).toContain('Your trial ends today');
   });
 });

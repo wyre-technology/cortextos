@@ -84,6 +84,7 @@ import {
 } from './templates/reseller-customer-tabs.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
+import { mockSeatBilling } from '../billing/seat-billing.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
 import { assembleOrgVendorHealth, type VendorMonitor } from '../monitoring/vendor-monitor.js';
 import Stripe from 'stripe';
@@ -609,11 +610,20 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const plan = getPlan(org.plan) ?? getDefaultPlan();
+
+      // Layer 1 §8 — seat-billing view object. SWAP-IN: when Hank's group A
+      // lands, replace this block with `await getSeatBilling(org.id)`.
+      // Sequential awaits, NOT Promise.all — each is a DB query on the
+      // request reserved-tx connection (#196/#199 hang class).
       const members = await orgService.getMembers(org.id);
-      const memberCount = members.length;
-      const creditsAllocated = plan.maxMembers === Infinity
-        ? plan.creditAllocation * memberCount
-        : plan.creditAllocation;
+      const serviceClients = await orgService.listServiceClients(org.id);
+      const seatBilling = mockSeatBilling(members.length, serviceClients.length);
+      // 2500 credits/seat × all functional seats (humans + agents, including
+      // the 2 base-included agents). Locked at decision-of-record §4.
+      const creditsAllocated = plan.creditAllocation * seatBilling.creditSeats;
+      // Trial state — SWAP-IN: the real trial read (Hank's §9.1 onboarding
+      // field) is not wired yet, so no org renders as trialing for now.
+      const trial = null;
 
       const dunning = await deriveDunningView(org.id, {
         orgService,
@@ -625,7 +635,8 @@ export function webRoutes(deps: WebRouteDeps) {
       const data: TeamBillingData = {
         org,
         plan,
-        memberCount,
+        seatBilling,
+        trial,
         creditsUsed: await creditService.getUsageThisMonth(org.id),
         creditsAllocated,
         // Payment method, upcoming invoice, and invoice history are not

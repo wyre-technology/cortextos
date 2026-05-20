@@ -1,6 +1,13 @@
 import type { Organization } from '../../org/org-service.js';
 import type { PlanDefinition } from '../../billing/plan-catalog.js';
+import type { SeatBilling } from '../../billing/seat-billing.js';
 import { escapeHtml } from '../helpers.js';
+import {
+  composedBillLine,
+  seatBreakdownLine,
+  monthlyTotalCents,
+  formatUsd,
+} from './seat-billing-copy.js';
 import {
   ICON_INFO,
   ICON_WARN,
@@ -10,17 +17,30 @@ import {
   ICON_DISMISS,
 } from '../icons.js';
 
-// Billing page. `creditsUsed` is real (CreditService.getUsageThisMonth).
-// Payment method, upcoming invoice, and invoice history are NOT rendered
-// on-page — they live in the customer's real Stripe billing portal, which
-// the "Billing details" block links out to. No fabricated billing data is
-// rendered here: an org with a Stripe customer gets the portal link; an
-// org without one gets the honest managed-directly state.
+// Billing page (Layer 1 §8). The "Current plan" card shows the composed
+// bill — "$600 base + N seats × $20 = $X/mo" — and the inclusion-explicit
+// seat line, both derived from the SeatBilling view object (the data layer
+// single-sources the seat math; this page only formats).
+//
+// `creditsUsed` is real (CreditService.getUsageThisMonth). Payment method,
+// upcoming invoice, and invoice history are NOT rendered on-page — they
+// live in the customer's real Stripe billing portal, which the "Billing
+// details" block links out to (the portal shows the real two-item
+// invoice). No fabricated billing data is rendered here.
+
+/** Active-trial state for the billing page. `null` once the org converts. */
+export interface TrialState {
+  /** Whole days remaining in the 14-day trial. */
+  daysRemaining: number;
+}
 
 export interface TeamBillingData {
   org: Organization;
   plan: PlanDefinition;
-  memberCount: number;
+  /** Seat-billing view object — drives the composed bill + seat line. */
+  seatBilling: SeatBilling;
+  /** Non-null while the org is inside its 14-day trial. */
+  trial: TrialState | null;
   creditsUsed: number;
   creditsAllocated: number;
   /** Always present, defaults to `{ state: 'none' }`. */
@@ -258,9 +278,6 @@ export function renderSuspendedView(
       <a href="${UPDATE_PAYMENT_URL}" class="btn-primary suspended-card__cta">
         Update payment method
       </a>
-      <a href="#invoice-history" class="link-secondary suspended-card__secondary">
-        View invoice history →
-      </a>
       <p class="suspended-card__footnote">
         Need help? <a href="/contact-support">Contact support →</a>
       </p>
@@ -318,10 +335,54 @@ function renderPlanBadge(planSlug: string, planName: string): string {
   return `<span class="plan-badge ${escapeHtml(planSlug)}">${label}</span>`;
 }
 
-function renderSeats(memberCount: number, maxMembers: number): string {
-  const limit = maxMembers === Infinity ? 'unlimited' : String(maxMembers);
-  const noun = memberCount === 1 ? 'member' : 'members';
-  return `${memberCount} ${noun} <span class="seat-limit">/ ${escapeHtml(limit)}</span>`;
+/**
+ * Trial banner — shown above the H1 while the org is inside its 14-day
+ * trial. States plainly that the first real bill lands when the trial
+ * ends; the "Current plan" card frames the composed bill as future.
+ */
+export function renderTrialBanner(trial: TrialState): string {
+  const days = Math.max(0, trial.daysRemaining);
+  const left = days === 0
+    ? 'Your trial ends today'
+    : `${days} day${days === 1 ? '' : 's'} left in your trial`;
+  return `
+    <div class="trial-banner" role="status">
+      <span class="trial-banner__icon">${ICON_INFO}</span>
+      <div class="trial-banner__copy">
+        <div class="trial-banner__line1">${escapeHtml(left)}.</div>
+        <div class="trial-banner__line2">Your first bill lands when the trial ends — nothing is charged before then.</div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * The "Current plan" card body — the composed bill + the inclusion-explicit
+ * seat line. While trialing, the bill is framed as what starts after the
+ * trial; otherwise it is the live monthly charge.
+ */
+function renderPlanCard(data: TeamBillingData): string {
+  const { seatBilling, trial, creditsAllocated } = data;
+  const billLabel = trial ? 'After your trial' : 'Monthly bill';
+  return `
+    <p class="section-desc">One plan, billed monthly — ${escapeHtml(formatUsd(seatBilling.basePriceCents))} base plus ${escapeHtml(formatUsd(seatBilling.perSeatPriceCents))} per seat.</p>
+    <div class="plan-summary">
+      <div class="plan-line">
+        <span class="plan-line-label">${escapeHtml(billLabel)}</span>
+        <span class="bill-amount">${escapeHtml(formatUsd(monthlyTotalCents(seatBilling)))}/mo</span>
+      </div>
+      <div class="plan-line plan-line--composed">
+        <span class="composed-bill">${escapeHtml(composedBillLine(seatBilling))}</span>
+      </div>
+      <div class="plan-line">
+        <span class="plan-line-label">Seats</span>
+        <span>${escapeHtml(seatBreakdownLine(seatBilling))}</span>
+      </div>
+      <div class="plan-line">
+        <span class="plan-line-label">Credits</span>
+        <span>${creditsAllocated.toLocaleString()} / month</span>
+      </div>
+    </div>`;
 }
 
 function renderCredits(used: number, allocated: number): string {
@@ -485,7 +546,7 @@ function renderBillingDetails(org: Organization): string {
  *     body-end (empty string when not applicable).
  */
 export function renderTeamBilling(data: TeamBillingData): string {
-  const { org, plan, memberCount, creditsUsed, creditsAllocated, dunning, firstName, availableCreditPacks } = data;
+  const { org, plan, trial, creditsUsed, creditsAllocated, dunning, firstName, availableCreditPacks } = data;
   const orgName = escapeHtml(org.name);
 
   const banner = renderDunningBanner(dunning, firstName);
@@ -499,7 +560,12 @@ export function renderTeamBilling(data: TeamBillingData): string {
     `;
   }
 
+  // The trial banner sits above the H1, like the dunning banner; both can
+  // be present (a trialing org with a failing card), trial first.
+  const trialBanner = trial ? renderTrialBanner(trial) : '';
+
   return `
+    ${trialBanner}
     ${banner}
 
     <h1 style="margin-bottom:4px">Billing</h1>
@@ -508,15 +574,7 @@ export function renderTeamBilling(data: TeamBillingData): string {
     <div class="billing-grid">
       <section class="billing-card">
         <h2 class="section-title">Current plan</h2>
-        <p class="section-desc">${escapeHtml(plan.name)} plan, billed monthly.</p>
-        <div class="plan-summary">
-          <div class="plan-line"><span class="plan-line-label">Seats</span><span>${renderSeats(memberCount, plan.maxMembers)}</span></div>
-          <div class="plan-line"><span class="plan-line-label">Credits</span><span>${creditsAllocated.toLocaleString()} / month</span></div>
-          <div class="plan-line"><span class="plan-line-label">Rate limit</span><span>${plan.rateLimitPerHour.toLocaleString()} req/hr</span></div>
-        </div>
-        <button type="button" class="btn-upgrade" disabled title="Plan-change flow lands with Track A">
-          Change plan
-        </button>
+        ${renderPlanCard(data)}
       </section>
 
       <section class="billing-card">
@@ -571,17 +629,19 @@ export const TEAM_BILLING_STYLES = `
   .plan-line-label {
     color: var(--text-tertiary);
   }
-  .seat-limit { color: var(--text-tertiary); }
-  .next-invoice-amount {
+  /* Composed bill — the "$600 base + N seats × $20 = $X/mo" line and the
+     prominent total above it. */
+  .bill-amount {
     font-family: var(--font-heading);
-    font-size: 28px;
+    font-size: 22px;
     font-weight: 600;
     color: var(--text-heading);
   }
-  .next-invoice-due {
-    margin-top: 4px;
-    font-size: 13px;
+  .plan-line--composed { margin-top: -4px; }
+  .composed-bill {
+    font-size: 12px;
     color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
   }
   .usage-bar-track {
     width: 100%;
@@ -600,82 +660,41 @@ export const TEAM_BILLING_STYLES = `
     font-size: 13px;
     color: var(--text-secondary);
   }
-  .pm-row {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin: 12px 0;
-    font-size: 14px;
-  }
-  .pm-brand {
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: 0.04em;
-  }
-  .pm-last4 {
-    color: var(--text-secondary);
-    font-family: var(--font-body);
-  }
-  .pm-exp {
-    color: var(--text-tertiary);
-    font-size: 12px;
-  }
-  .btn-text {
-    background: none;
-    border: none;
-    color: var(--accent-text);
-    font: inherit;
-    font-size: 13px;
-    cursor: pointer;
-    padding: 0;
-    text-decoration: underline;
-  }
-  .btn-text:disabled {
-    color: var(--text-muted);
-    cursor: not-allowed;
-    text-decoration: none;
-  }
   .btn-upgrade:disabled {
     background: var(--border-secondary);
     color: var(--text-muted);
     cursor: not-allowed;
   }
-  .invoice-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    margin-top: 12px;
+
+  /* ===== Trial banner ===== */
+  .trial-banner {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: rgba(0, 201, 219, 0.10);
+    border: 1px solid rgba(0, 201, 219, 0.30);
   }
-  .invoice-table th {
-    text-align: left;
-    padding: 8px 12px;
-    font-weight: 600;
-    color: var(--text-tertiary);
-    border-bottom: 1px solid var(--border-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 11px;
+  .trial-banner__icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    color: var(--accent-text);
   }
-  .invoice-table td {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-subtle);
+  .trial-banner__copy { flex: 1; min-width: 0; }
+  .trial-banner__line1 {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .trial-banner__line2 {
+    margin-top: 2px;
+    font-size: 14px;
     color: var(--text-secondary);
   }
-  .invoice-amount { font-variant-numeric: tabular-nums; }
-  .invoice-status {
-    display: inline-block;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 3px;
-  }
-  .invoice-status-paid { background: rgba(0, 201, 219, 0.15); color: var(--accent-text); }
-  .invoice-status-open { background: var(--border-tertiary); color: var(--text-secondary); }
-  .invoice-status-void,
-  .invoice-status-uncollectible { background: var(--border-tertiary); color: var(--text-muted); }
-  .text-muted { color: var(--text-muted); }
+
   .ia-shell-note {
     margin-top: 24px;
     padding: 12px 16px;
