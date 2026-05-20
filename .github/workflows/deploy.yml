@@ -254,6 +254,13 @@ jobs:
       # idempotent (a no-op once set) and makes any fresh-Postgres deploy
       # self-healing — see azure/CONDUIT-PROD-DEPLOY.md.
       #
+      # `parameter set --value` is set-ABSOLUTE — it REPLACES azure.extensions
+      # wholesale, not append. PG_TRGM is the COMPLETE extension set the conduit
+      # migrations need today (grep: pg_trgm in 012 is the only CREATE
+      # EXTENSION). If a future migration adds another `CREATE EXTENSION`, this
+      # `--value` MUST be extended to the full comma-separated set, or that
+      # migration will crashloop.
+      #
       # customDomain comes from params.conduit-prod.bicepparam
       # (`conduit.wyre.ai`). This path is for STEADY-STATE deploys, i.e. after
       # the conduit.wyre.ai custom domain is bound to conduit-prod-gateway; the
