@@ -373,7 +373,7 @@ await app.register(dashboardRoutes({
 // MSP Admin Console (`/admin/reseller/*`) — scaffold, dark by default.
 // The plugin itself also enforces the RESELLER_CONSOLE_ENABLED flag so the
 // surface 404s even if the flag flips at runtime.
-await app.register(resellerRoutes({ resellerService, resellerMemberService, orgService, dashboardService }));
+await app.register(resellerRoutes({ resellerService, resellerMemberService, orgService, dashboardService, auditService }));
 
 // Admin API: set org plan directly (for managed services contracts)
 app.post<{

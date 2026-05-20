@@ -31,12 +31,14 @@ import {
   makeRequireResellerOrCustomerAccess,
 } from './middleware.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
+import type { AuditService } from '../audit/audit-service.js';
 
 export interface ResellerRoutesDeps {
   resellerService: ResellerService;
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
   dashboardService: DashboardService;
+  auditService: AuditService;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +170,7 @@ function parsePagination(query: unknown): Pagination | { error: string } {
 // ---------------------------------------------------------------------------
 
 export function resellerRoutes(deps: ResellerRoutesDeps) {
-  const { resellerService, resellerMemberService, orgService, dashboardService } = deps;
+  const { resellerService, resellerMemberService, orgService, dashboardService, auditService } = deps;
   const requireResellerAccess = makeRequireResellerAccess(resellerService);
   const requireResellerRole = makeRequireResellerRole(resellerService);
   const requireResellerOrCustomerAccess = makeRequireResellerOrCustomerAccess(
@@ -442,6 +444,41 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
       });
       return reply.send({ vendors });
     });
+
+    // -----------------------------------------------------------------------
+    // Reseller-scoped customer audit feed (Track A — Audit Log tab)
+    //
+    // The customer org's MCP tool-invocation history (request_log), for the
+    // per-org Audit Log tab. Same authz as the dashboard endpoints above:
+    // requireResellerOrCustomerAccess verifies :customerId's parent is the
+    // caller's reseller, and request_log_select RLS carries the
+    // reseller-membership clause underneath — enforced twice.
+    //
+    // Returns the AuditRow shape the reseller-customer-tabs template renders:
+    // { when (ISO), actor, action, target }. v1 surfaces tool invocations;
+    // admin-event entries (admin_audit_log) are a documented follow-up.
+    // -----------------------------------------------------------------------
+    app.get<{
+      Params: { resellerId: string; customerId: string };
+    }>(
+      '/admin/reseller/:resellerId/customers/:customerId/audit',
+      async (request, reply) => {
+        const ctx = await requireResellerOrCustomerAccess(request, reply);
+        if (!ctx) return;
+
+        const { entries } = await auditService.query({
+          orgId: ctx.customerId,
+          limit: 25,
+        });
+        const rows = entries.map((e) => ({
+          when: e.createdAt,
+          actor: e.userName ?? e.userEmail ?? e.userId,
+          action: 'mcp.tool.invoke',
+          target: e.toolName ? `${e.vendorSlug} · ${e.toolName}` : e.vendorSlug,
+        }));
+        return reply.send({ entries: rows });
+      },
+    );
   };
 }
 
