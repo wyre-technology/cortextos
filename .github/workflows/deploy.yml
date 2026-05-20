@@ -20,6 +20,7 @@ on:
         options:
           - staging
           - production
+          - conduit-prod
 
 concurrency:
   group: deploy-${{ inputs.environment || 'staging' }}
@@ -101,11 +102,14 @@ jobs:
       # double quotes from an inline JSON `--parameters` value (the JSON reaches
       # `az` as `[{key:val}]` — unquoted, unparseable). The `@file` form keeps
       # the JSON off the command line entirely, so quotes survive.
+      # conduit-prod lives in its OWN resource group (rg-conduit-prod) and its
+      # gateway is `conduit-prod-gateway` — not the `mcpgw-{env}` prefix shape
+      # the staging/production stacks use. RG + APP_NAME are env-resolved here.
       - name: Read existing gateway state
         id: gw-state
         env:
-          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
-          APP_NAME: mcpgw-${{ needs.resolve.outputs.environment }}-gateway
+          RG: ${{ needs.resolve.outputs.environment == 'conduit-prod' && 'rg-conduit-prod' || vars.AZURE_RESOURCE_GROUP }}
+          APP_NAME: ${{ needs.resolve.outputs.environment == 'conduit-prod' && 'conduit-prod-gateway' || format('mcpgw-{0}-gateway', needs.resolve.outputs.environment) }}
         run: |
           set -euo pipefail
           if az containerapp show -n "$APP_NAME" -g "$RG" --only-show-errors >/dev/null 2>&1; then
@@ -235,3 +239,61 @@ jobs:
             existingCustomDomains=@${{ steps.gw-state.outputs.domains-file }}
             existingVendorEnv=@${{ steps.gw-state.outputs.vendorenv-file }}
           failOnStdErr: false
+
+      # conduit-prod: the dedicated own-RG stack (Phase B). Unlike staging/
+      # production, conduit-prod keeps ALL of its secrets — the 4 deploy params
+      # AND rootlyWebhookUrl — in its own Key Vault `conduit-prod-kv`, not as
+      # GitHub-environment secrets. They are fetched here at deploy time; the
+      # deploy SP holds `Key Vault Secrets User` on conduit-prod-kv. This keeps
+      # conduit-prod-kv the single source of truth for the stack's secrets.
+      #
+      # pg_trgm guard: migration 012 runs `CREATE EXTENSION pg_trgm`. A fresh
+      # Azure PostgreSQL Flexible Server allow-lists NO extensions, so the very
+      # first deploy of a fresh conduit Postgres crashloops migrate.ts until
+      # `azure.extensions` includes PG_TRGM. The parameter set below is
+      # idempotent (a no-op once set) and makes any fresh-Postgres deploy
+      # self-healing — see azure/CONDUIT-PROD-DEPLOY.md.
+      #
+      # customDomain comes from params.conduit-prod.bicepparam
+      # (`conduit.wyre.ai`). This path is for STEADY-STATE deploys, i.e. after
+      # the conduit.wyre.ai custom domain is bound to conduit-prod-gateway; the
+      # `Read existing gateway state` step then carries the binding through
+      # `existingCustomDomains`. The first-ever standup (deploy without the
+      # domain, bind, redeploy) is the interactive runbook in
+      # azure/CONDUIT-PROD-DEPLOY.md, not this workflow.
+      - name: Deploy Bicep (conduit-prod)
+        if: needs.resolve.outputs.environment == 'conduit-prod'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
+          RUN_ID: ${{ github.run_id }}
+          DOMAINS_FILE: ${{ steps.gw-state.outputs.domains-file }}
+          VENDORENV_FILE: ${{ steps.gw-state.outputs.vendorenv-file }}
+        run: |
+          set -euo pipefail
+          KV=conduit-prod-kv
+          # Fetch the stack's secrets from its own Key Vault.
+          MASTER_KEY=$(az keyvault secret show --vault-name "$KV" --name master-key --query value -o tsv)
+          JWT_SECRET=$(az keyvault secret show --vault-name "$KV" --name jwt-secret --query value -o tsv)
+          PG_PASSWORD=$(az keyvault secret show --vault-name "$KV" --name pg-password --query value -o tsv)
+          GHCR_TOKEN=$(az keyvault secret show --vault-name "$KV" --name ghcr-token --query value -o tsv)
+          ROOTLY_URL=$(az keyvault secret show --vault-name "$KV" --name rootly-azuremonitor-webhook-url --query value -o tsv)
+          for v in MASTER_KEY JWT_SECRET PG_PASSWORD GHCR_TOKEN ROOTLY_URL; do
+            echo "::add-mask::${!v}"
+            [ -n "${!v:-}" ] || { echo "::error::conduit-prod-kv secret for $v is empty"; exit 1; }
+          done
+          export MASTER_KEY JWT_SECRET PG_PASSWORD GHCR_TOKEN
+          # Idempotent pg_trgm allow-list — load-bearing on a fresh Postgres.
+          az postgres flexible-server parameter set \
+            --resource-group rg-conduit-prod --server-name conduit-prod-pg \
+            --name azure.extensions --value PG_TRGM --only-show-errors -o none
+          az deployment group create \
+            --resource-group rg-conduit-prod \
+            --name "conduit-prod-${RUN_ID}" \
+            --template-file ./azure/main.bicep \
+            --parameters ./azure/params.conduit-prod.bicepparam \
+            --parameters \
+              gatewayImage="$IMAGE" \
+              redeployTrigger="$RUN_ID" \
+              rootlyWebhookUrl="$ROOTLY_URL" \
+              existingCustomDomains=@"$DOMAINS_FILE" \
+              existingVendorEnv=@"$VENDORENV_FILE"
