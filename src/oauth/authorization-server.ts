@@ -98,7 +98,10 @@ function extractVendorFromResource(resource: string): string {
 export interface CredentialChecker {
   has(userId: string, vendorSlug: string): Promise<boolean>;
   getOrgCredential(orgId: string, vendorSlug: string): Promise<Record<string, string> | null>;
-  getTeamCredential(teamId: string, vendorSlug: string): Promise<Record<string, string> | null>;
+  getTeamCredentialsForTeams(
+    teamIds: string[],
+    vendorSlug: string,
+  ): Promise<{ teamId: string; creds: Record<string, string> }[]>;
 }
 
 export async function userHasAnyCredentials(
@@ -115,16 +118,18 @@ export async function userHasAnyCredentials(
 
   const orgs = await orgService.getUserOrgs(userId);
   for (const org of orgs) {
-    // Team tier first
+    // Team tier first.
+    // One set-based query, NOT a per-team Promise.all fan-out: each
+    // getTeamCredential call queries the request's single reserved-tx
+    // connection, and a Promise.all of those method calls stalls it (same
+    // hang class as the /v1/mcp tools/call bug). getTeamCredentialsForTeams
+    // resolves the vendor across every team in one query and returns only
+    // the teams that hold a credential.
     const userTeams = await orgService.getUserTeams(org.id, userId);
-    const teamHits = (
-      await Promise.all(
-        userTeams.map(async (t) => ({
-          t,
-          has: (await credentialService.getTeamCredential(t.id, vendor)) !== null,
-        })),
-      )
-    ).filter((x) => x.has);
+    const teamHits = await credentialService.getTeamCredentialsForTeams(
+      userTeams.map((t) => t.id),
+      vendor,
+    );
 
     if (teamHits.length === 1) {
       const hasAccess = await orgService.hasServerAccess(org.id, userId, vendor);

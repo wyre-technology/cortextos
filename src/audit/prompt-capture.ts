@@ -23,10 +23,15 @@ export async function shouldCapturePrompt(
   orgId: string | null | undefined,
 ): Promise<boolean> {
   if (!orgId) return false;
-  const [planAllows, orgEnabled] = await Promise.all([
-    billingGate.canUsePromptCapture(orgId),
-    orgService.getPromptCaptureEnabled(orgId),
-  ]);
+  // Sequential, NOT Promise.all: these two checks each issue a DB query, and
+  // on a request-path call they run on the request's single reserved-tx
+  // connection. A Promise.all of service-method calls that each query that
+  // connection stalls it — confirmed: this exact site hung every /v1/mcp
+  // tools/call (TLDIAG localized the stuck await here). Awaiting in sequence
+  // removes the concurrency; the cost is one extra round-trip on a gate
+  // already off the hot path.
+  const planAllows = await billingGate.canUsePromptCapture(orgId);
+  const orgEnabled = await orgService.getPromptCaptureEnabled(orgId);
   return planAllows && orgEnabled;
 }
 

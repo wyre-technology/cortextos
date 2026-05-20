@@ -12,7 +12,9 @@ function makeCredService(overrides: {
   return {
     has: vi.fn().mockResolvedValue(overrides.hasPersonal ?? false),
     getOrgCredential: vi.fn().mockResolvedValue(overrides.orgCred ?? null),
-    getTeamCredential: vi.fn().mockResolvedValue(overrides.teamCred ?? null),
+    getTeamCredentialsForTeams: vi.fn().mockResolvedValue(
+      overrides.teamCred ? [{ teamId: 'team1', creds: overrides.teamCred }] : [],
+    ),
   };
 }
 
@@ -64,14 +66,14 @@ describe('userHasAnyCredentials', () => {
   });
 
   it('falls through to org tier when >1 team has credentials (ambiguous)', async () => {
-    let call = 0;
     const svc = {
       has: vi.fn().mockResolvedValue(false),
       getOrgCredential: vi.fn().mockResolvedValue(creds),
-      getTeamCredential: vi.fn().mockImplementation(() => {
-        call++;
-        return Promise.resolve(call <= 2 ? creds : null); // both team1 and team2 match
-      }),
+      // Both team1 and team2 hold a credential → 2 hits → ambiguous.
+      getTeamCredentialsForTeams: vi.fn().mockResolvedValue([
+        { teamId: 'team1', creds },
+        { teamId: 'team2', creds },
+      ]),
     };
     const org = makeOrgService({
       orgs: [{ id: 'org1' }],
@@ -85,5 +87,24 @@ describe('userHasAnyCredentials', () => {
   it('returns false when orgService is not provided', async () => {
     const svc = makeCredService({ orgCred: creds });
     expect(await userHasAnyCredentials('user1', 'autotask', svc)).toBe(false);
+  });
+
+  it('resolves team credentials via ONE set-based query, not a per-team fan-out', async () => {
+    // Regression pin for the set-based rewrite (was a per-team
+    // Promise.all(userTeams.map(getTeamCredential)) fan-out that stalled the
+    // reserved-tx connection). getTeamCredentialsForTeams must be called
+    // exactly once per org, with every team id at once — a regression back
+    // to a per-team loop/fan-out fails this.
+    const svc = makeCredService({});
+    const org = makeOrgService({
+      orgs: [{ id: 'org1' }],
+      teams: [{ id: 'team1' }, { id: 'team2' }, { id: 'team3' }],
+    });
+    await userHasAnyCredentials('user1', 'autotask', svc, org);
+    expect(svc.getTeamCredentialsForTeams).toHaveBeenCalledTimes(1);
+    expect(svc.getTeamCredentialsForTeams).toHaveBeenCalledWith(
+      ['team1', 'team2', 'team3'],
+      'autotask',
+    );
   });
 });

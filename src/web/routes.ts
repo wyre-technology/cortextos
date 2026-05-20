@@ -1488,10 +1488,12 @@ export function webRoutes(deps: WebRouteDeps) {
 
       // Capture toggle is gated on plan + owner role. Members see the page
       // and the captured data, but the toggle UI is read-only / hidden.
-      const [planAllowsCapture, captureEnabled] = await Promise.all([
-        billingGate.canUsePromptCapture(org.id),
-        orgService.getPromptCaptureEnabled(org.id),
-      ]);
+      // Sequential, NOT Promise.all: each check issues a DB query on the
+      // request's single reserved-tx connection — a Promise.all of
+      // service-method calls querying that connection stalls it (same class
+      // as the tools/call hang). See shouldCapturePrompt for the full note.
+      const planAllowsCapture = await billingGate.canUsePromptCapture(org.id);
+      const captureEnabled = await orgService.getPromptCaptureEnabled(org.id);
 
       const html = renderLayout(
         { user, org, activePath: '/org/audit', title: `${org.name} - Audit Log`, pageStyles: TEAM_AUDIT_STYLES },
