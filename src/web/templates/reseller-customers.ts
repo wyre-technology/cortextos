@@ -54,15 +54,16 @@ function renderPlanBadge(plan: CustomerPlan): string {
 
 /**
  * Per-row action triad (Figma open-question #3 resolved to inline-always).
- * v1 ships them disabled with tooltips — switch-into-context lands with
- * Surface 2 (Customer Detail), impersonate is its own auth surface. Same
- * disabled-affordance play as the billing IA shell, so no dead-link route.
+ * Open (→) is a live link now that Surface 2 (Customer Detail) has
+ * landed; impersonate and more-actions stay disabled — they route
+ * through follow-up surfaces, so no dead-link.
  */
-function renderRowActions(customerName: string): string {
-  const name = escapeHtml(customerName);
+function renderRowActions(customer: ResellerCustomer): string {
+  const name = escapeHtml(customer.name);
+  const href = `/org/customers/${encodeURIComponent(customer.id)}`;
   return `
     <div class="rc-actions">
-      <button type="button" class="rc-action" disabled title="Customer detail — lands with Surface 2" aria-label="Open ${name}">→</button>
+      <a class="rc-action" href="${escapeHtml(href)}" title="Open customer detail" aria-label="Open ${name}">→</a>
       <button type="button" class="rc-action" disabled title="Impersonate for support — lands in a follow-up" aria-label="Impersonate a user at ${name}">&#128100;</button>
       <button type="button" class="rc-action" disabled title="More actions — lands in a follow-up" aria-label="More actions for ${name}">&#8943;</button>
     </div>`;
@@ -76,11 +77,11 @@ function renderRow(c: ResellerCustomer): string {
         <div class="rc-name">${name}</div>
         <div class="rc-sub">${escapeHtml(formatRelativeTime(c.lastActivity))} · ${escapeHtml(c.subdomain)}</div>
       </td>
-      <td>${renderPlanBadge(c.plan)}</td>
-      <td class="rc-num">${c.userCount.toLocaleString()}</td>
-      <td class="rc-num">${c.mcpCalls30d.toLocaleString()}</td>
-      <td class="rc-activity">${escapeHtml(formatRelativeTime(c.lastActivity))}</td>
-      <td>${renderRowActions(c.name)}</td>
+      <td data-label="Plan">${renderPlanBadge(c.plan)}</td>
+      <td class="rc-num" data-label="Users">${c.userCount.toLocaleString()}</td>
+      <td class="rc-num" data-label="MCP Calls (30d)">${c.mcpCalls30d.toLocaleString()}</td>
+      <td class="rc-activity" data-label="Last Activity">${escapeHtml(formatRelativeTime(c.lastActivity))}</td>
+      <td>${renderRowActions(c)}</td>
     </tr>`;
 }
 
@@ -132,7 +133,7 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
         ${rows}
       </tbody>
     </table>
-    <p class="rc-empty-filtered" id="rcNoMatch" hidden>No customers match your filters.</p>
+    <p class="rc-empty-filtered" id="rcNoMatch" role="status" aria-live="polite" hidden>No customers match your filters.</p>
 
     <p class="ia-shell-note">
       Customer detail, onboarding, and impersonation route through follow-up
@@ -240,6 +241,7 @@ export const RESELLER_CUSTOMERS_STYLES = `
   .rc-name {
     font-weight: 500;
     color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
   .rc-sub {
     margin-top: 2px;
@@ -293,12 +295,23 @@ export const RESELLER_CUSTOMERS_STYLES = `
     font-size: 13px;
     cursor: pointer;
     font-family: inherit;
+    text-decoration: none;
   }
+  a.rc-action:hover { border-color: var(--accent); color: var(--accent-text); }
   .rc-action:disabled { color: var(--text-muted); cursor: not-allowed; }
 
   @media (max-width: 720px) {
     .rc-table thead { display: none; }
     .rc-table tr { display: block; margin-bottom: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; }
-    .rc-table td { display: flex; justify-content: space-between; border: none; }
+    .rc-table td { display: flex; justify-content: space-between; align-items: center; border: none; }
+    /* Restore the column identity the hidden <thead> would have carried. */
+    .rc-table td[data-label]::before {
+      content: attr(data-label);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+    }
   }
 `;

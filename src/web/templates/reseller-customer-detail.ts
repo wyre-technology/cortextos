@@ -145,7 +145,15 @@ function buildScript(resellerId: string, customerId: string): string {
       document.getElementById('cdContent').style.display = 'block';
     }).catch(function () {
       var l = document.getElementById('cdLoading');
-      if (l) l.textContent = 'Could not load customer analytics. Retry shortly.';
+      if (!l) return;
+      l.textContent = 'Could not load customer analytics. ';
+      l.classList.add('cd-load-error');
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'cd-retry';
+      retry.textContent = 'Retry';
+      retry.onclick = function () { location.reload(); };
+      l.appendChild(retry);
     });
   })();
 </script>`;
@@ -171,10 +179,16 @@ export function renderResellerCustomerDetail(
     <div class="cd-header">
       <div>
         <h1 style="margin-bottom:4px">${name}</h1>
-        <p class="section-desc">
-          ${escapeHtml(customer.plan)} plan · ${customer.userCount.toLocaleString()} users
-          · ${customer.mcpCount.toLocaleString()} MCPs · ${escapeHtml(customer.subdomain)}
-        </p>
+        <p class="section-desc">${
+          // Omit any segment whose source value is empty, rather than
+          // rendering a dangling " · " (omit-not-blank, Track C Rule 1).
+          [
+            customer.plan ? `${escapeHtml(customer.plan)} plan` : '',
+            `${customer.userCount.toLocaleString()} users`,
+            `${customer.mcpCount.toLocaleString()} MCPs`,
+            customer.subdomain ? escapeHtml(customer.subdomain) : '',
+          ].filter(Boolean).join(' · ')
+        }</p>
       </div>
       <div class="cd-actions">
         <button type="button" class="cd-btn-secondary" disabled
@@ -185,7 +199,7 @@ export function renderResellerCustomerDetail(
       </div>
     </div>
 
-    <p id="cdLoading" class="cd-loading">Loading customer analytics…</p>
+    <p id="cdLoading" class="cd-loading" role="status" aria-live="polite">Loading customer analytics…</p>
 
     <div id="cdContent" style="display:none">
       <div class="cd-stat-grid">
@@ -282,6 +296,19 @@ export const RESELLER_CUSTOMER_DETAIL_STYLES = `
   .cd-btn-secondary:disabled { color: var(--text-muted); cursor: not-allowed; }
 
   .cd-loading { color: var(--text-tertiary); font-style: italic; padding: 16px 0; }
+  .cd-load-error { color: var(--error-text); font-style: normal; }
+  .cd-retry {
+    margin-left: 4px;
+    padding: 4px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cd-retry:hover { border-color: var(--accent); color: var(--accent-text); }
 
   .cd-stat-grid {
     display: grid;

@@ -65,10 +65,13 @@ describe('renderResellerCustomers', () => {
     expect(html).toContain('rc-plan-free');
   });
 
-  it('renders the row-action triad disabled (Surface 2/3 not built)', () => {
-    const html = renderResellerCustomers(data([customer({})]));
-    const actions = html.match(/rc-action[^>]*disabled/g) ?? [];
-    expect(actions.length).toBe(3);
+  it('opens the customer via a live link; impersonate + more stay disabled', () => {
+    const html = renderResellerCustomers(data([customer({ id: 'cust_x' })]));
+    // Open (→) is a real link now that Surface 2 has shipped.
+    expect(html).toContain('href="/org/customers/cust_x"');
+    // The other two actions still route through follow-up surfaces.
+    const disabled = html.match(/rc-action[^>]*disabled/g) ?? [];
+    expect(disabled.length).toBe(2);
   });
 
   it('renders an empty state when there are no customers', () => {

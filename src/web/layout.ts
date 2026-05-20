@@ -187,6 +187,7 @@ const LAYOUT_STYLES = `
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
+    overflow-wrap: anywhere;
   }
   .sidebar-item {
     display: block;
@@ -237,6 +238,7 @@ const LAYOUT_STYLES = `
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
   .sidebar-customer-back {
     display: block;
@@ -515,7 +517,7 @@ function renderTenantSwitcher(customer: CustomerContext, resellerName: string): 
         <span class="sidebar-customer-name">${name}</span>
         <span class="ts-caret" aria-hidden="true">&#9662;</span>
       </summary>
-      <div class="ts-menu" role="menu">
+      <div class="ts-menu">
         ${resellerHome}
         <div class="ts-menu-label">Customers</div>
         ${options}

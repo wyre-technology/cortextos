@@ -39,9 +39,17 @@ const KIND_LABEL: Record<TenantNodeKind, string> = {
   subtenant: 'SUBTENANT',
 };
 
+// A real org-hierarchy graph could be deep or — through a data bug —
+// cyclic. Both recursion walkers below carry a hard depth cap and a
+// visited-id set so a malformed tree degrades gracefully instead of
+// overflowing the stack and crashing the response handler.
+const MAX_TREE_DEPTH = 20;
+
 /** Total nodes under (and including) a node — for the header summary. */
-function countNodes(node: TenantNode): number {
-  return 1 + node.children.reduce((sum, c) => sum + countNodes(c), 0);
+function countNodes(node: TenantNode, depth = 0, visited = new Set<string>()): number {
+  if (depth > MAX_TREE_DEPTH || visited.has(node.id)) return 0;
+  visited.add(node.id);
+  return 1 + node.children.reduce((sum, c) => sum + countNodes(c, depth + 1, visited), 0);
 }
 
 /**
@@ -49,28 +57,40 @@ function countNodes(node: TenantNode): number {
  * children collapse by default (terse view); the disclosure toggle
  * surfaces the immediate child count, matching the Figma's "▾ 2" /
  * "▾ 3" affordance.
+ *
+ * `visited` guards against cyclic data; `depth` is hard-capped so a
+ * pathologically deep tree cannot overflow the stack.
  */
-function renderNode(node: TenantNode, depth: number): string {
+function renderNode(node: TenantNode, depth: number, visited: Set<string>): string {
+  if (depth > MAX_TREE_DEPTH || visited.has(node.id)) return '';
+  visited.add(node.id);
+
   const hasChildren = node.children.length > 0;
   const collapsed = node.kind === 'customer' && hasChildren;
   const kindClass = `rh-kind-${node.kind}`;
 
   const toggle = hasChildren
-    ? `<button type="button" class="rh-toggle" aria-expanded="${collapsed ? 'false' : 'true'}"
-         aria-label="Expand ${escapeHtml(node.name)}" onclick="rhToggle(this)">
+    ? `<button type="button" class="rh-toggle" tabindex="-1"
+         aria-label="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(node.name)}"
+         onclick="rhToggle(this)">
          <span class="rh-caret">&#9662;</span> ${node.children.length}
        </button>`
     : '';
 
   const childList = hasChildren
-    ? `<div class="rh-children" ${collapsed ? 'hidden' : ''}>
-         ${node.children.map((c) => renderNode(c, depth + 1)).join('')}
+    ? `<div class="rh-children" role="group" ${collapsed ? 'hidden' : ''}>
+         ${node.children.map((c) => renderNode(c, depth + 1, visited)).join('')}
        </div>`
     : '';
 
+  // aria-expanded lives on the treeitem (the focusable .rh-card); the
+  // toggle button is a decorative tabindex=-1 control inside it.
+  const expandedAttr = hasChildren ? ` aria-expanded="${collapsed ? 'false' : 'true'}"` : '';
+
   return `
     <div class="rh-node rh-depth-${Math.min(depth, 3)}">
-      <div class="rh-card ${kindClass}" data-kind="${escapeHtml(node.kind)}" tabindex="0">
+      <div class="rh-card ${kindClass}" role="treeitem"${expandedAttr}
+        data-kind="${escapeHtml(node.kind)}" tabindex="0">
         <div class="rh-card-head">
           <span class="rh-badge ${kindClass}">${escapeHtml(KIND_LABEL[node.kind])}</span>
           ${toggle}
@@ -102,9 +122,12 @@ export function renderResellerHierarchy(data: ResellerHierarchyData): string {
         title="Table view lands in a follow-up">Table</button>
     </div>
 
-    <div class="rh-tree">
-      ${renderNode(root, 0)}
+    <div class="rh-tree" role="tree" aria-label="Tenant hierarchy">
+      ${renderNode(root, 0, new Set<string>())}
     </div>
+    ${root.children.length === 0
+      ? '<p class="rh-empty">No customers under this reseller yet.</p>'
+      : ''}
 
     <p class="ia-shell-note">
       This hierarchy renders mock data until the Track A org-hierarchy
@@ -121,11 +144,17 @@ export const RESELLER_HIERARCHY_SCRIPT = `
     var node = btn.closest('.rh-node');
     if (!node) return;
     var children = node.querySelector(':scope > .rh-children');
+    var card = node.querySelector(':scope > .rh-card');
     if (!children) return;
     var expanded = children.hasAttribute('hidden');
     if (expanded) { children.removeAttribute('hidden'); }
     else { children.setAttribute('hidden', ''); }
-    btn.setAttribute('aria-expanded', String(expanded));
+    // aria-expanded is owned by the treeitem (.rh-card); the button's
+    // label flips between Expand/Collapse so it never goes stale.
+    if (card) card.setAttribute('aria-expanded', String(expanded));
+    var label = btn.getAttribute('aria-label') || '';
+    var name = label.replace(/^(Expand|Collapse)\\s+/, '');
+    btn.setAttribute('aria-label', (expanded ? 'Collapse ' : 'Expand ') + name);
   }
 </script>
 `;
@@ -223,11 +252,23 @@ export const RESELLER_HIERARCHY_STYLES = `
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
   .rh-meta {
     margin-top: 2px;
     font-size: 11px;
     color: var(--text-tertiary);
+    overflow-wrap: anywhere;
+  }
+
+  .rh-empty {
+    margin-bottom: 24px;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px dashed var(--border-secondary);
+    border-radius: 10px;
+    color: var(--text-tertiary);
+    font-size: 13px;
   }
 
   .rh-toggle {
