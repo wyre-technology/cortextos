@@ -451,6 +451,14 @@ function renderBillingDetails(org: Organization): string {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ org_id: orgId }),
             });
+            if (res.status === 403) {
+              // The portal endpoint is owner-only, but this page (and so this
+              // button) is reachable by a non-owner admin. "Try again" would
+              // be futile for them — name the real remedy, and leave the
+              // button disabled since retrying cannot succeed for this user.
+              status.textContent = 'Only an organization owner can open the billing portal.';
+              return;
+            }
             if (!res.ok) throw new Error('HTTP ' + res.status);
             var data = await res.json();
             if (!data.url) throw new Error('no url');
