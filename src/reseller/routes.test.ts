@@ -21,6 +21,7 @@ import type {
 import { ResellerMemberError } from '../org/reseller-member-service.js';
 import type { OrgService, Organization } from '../org/org-service.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
+import type { AuditService } from '../audit/audit-service.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -96,6 +97,7 @@ interface MockDeps {
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
   dashboardService: DashboardService;
+  auditService: AuditService;
 }
 
 function makeMocks(options: {
@@ -111,6 +113,7 @@ function makeMocks(options: {
   customerLinkedToReseller?: boolean;
   /** Whether the caller is a direct org_member of CUSTOMER_ID. */
   customerSelfMember?: boolean;
+  auditQueryImpl?: AuditService['query'];
 } = {}): MockDeps {
   const {
     actorRole = 'reseller_admin',
@@ -172,7 +175,11 @@ function makeMocks(options: {
     getVendorBreakdown: vi.fn(async () => [{ vendor: 'datto-rmm', calls: 12 }]),
   } as unknown as DashboardService;
 
-  return { resellerService, resellerMemberService, orgService, dashboardService };
+  const auditService = {
+    query: options.auditQueryImpl ?? vi.fn(async () => ({ entries: [], total: 0 })),
+  } as unknown as AuditService;
+
+  return { resellerService, resellerMemberService, orgService, dashboardService, auditService };
 }
 
 async function buildApp(deps: MockDeps, featureEnabled = true): Promise<FastifyInstance> {
@@ -724,6 +731,83 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       app = await buildApp(makeMocks());
 
       const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reseller-scoped customer audit feed (Track A — Audit Log tab)
+  // -------------------------------------------------------------------------
+
+  describe('GET /admin/reseller/:resellerId/customers/:customerId/audit', () => {
+    const auditUrl = `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/audit`;
+
+    const sampleEntries = [
+      {
+        id: 'r1', userId: 'u1', userEmail: 'c@am3.com', userName: 'C. Ramirez',
+        orgId: CUSTOMER_ID, vendorSlug: 'autotask', toolName: 'search_tickets',
+        toolArguments: null, promptContext: null, source: 'claude.ai',
+        statusCode: 200, responseTimeMs: 142, createdAt: '2026-05-20T12:00:00.000Z',
+      },
+      {
+        id: 'r2', userId: 'u2', userEmail: null, userName: null,
+        orgId: CUSTOMER_ID, vendorSlug: 'datto-rmm', toolName: null,
+        toolArguments: null, promptContext: null, source: null,
+        statusCode: 200, responseTimeMs: 88, createdAt: '2026-05-20T11:00:00.000Z',
+      },
+    ];
+
+    it('returns the customer audit feed mapped to the AuditRow shape', async () => {
+      authenticateAs();
+      const mocks = makeMocks({
+        actorRole: 'reseller_support_agent',
+        auditQueryImpl: vi.fn(async () => ({ entries: sampleEntries, total: 2 })),
+      });
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        entries: [
+          { when: '2026-05-20T12:00:00.000Z', actor: 'C. Ramirez', action: 'mcp.tool.invoke', target: 'autotask · search_tickets' },
+          // userName/userEmail null -> falls back to userId; null toolName -> vendor only.
+          { when: '2026-05-20T11:00:00.000Z', actor: 'u2', action: 'mcp.tool.invoke', target: 'datto-rmm' },
+        ],
+      });
+      // The feed is scoped to the TARGET customer org, not the caller's.
+      expect(mocks.auditService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: CUSTOMER_ID }),
+      );
+    });
+
+    it('403s when the customer does not belong to the reseller (warden Finding 2)', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ customerLinkedToReseller: false }));
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('403s an unowned pair — customer belongs to a DIFFERENT reseller', async () => {
+      authenticateAs();
+      const mocks = makeMocks();
+      mocks.orgService.getResellerOfCustomer = vi.fn(async () =>
+        makeResellerOrg('reseller_FOREIGN', 'Rival MSP'),
+      );
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+      expect(res.statusCode).toBe(403);
+      // The audit query must never run for an unowned customer.
+      expect(mocks.auditService.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unauthenticated caller', async () => {
+      unauthenticated();
+      app = await buildApp(makeMocks());
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
       expect(res.statusCode).toBe(401);
     });
   });
