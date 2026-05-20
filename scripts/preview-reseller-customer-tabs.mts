@@ -104,11 +104,23 @@ const mockUsage = {
   ],
 };
 
+const mockAudit = {
+  entries: [
+    { when: new Date(Date.now() - 12 * 60000).toISOString(), actor: 'C. Ramirez', action: 'mcp.tool.invoke', target: 'autotask · search_tickets' },
+    { when: new Date(Date.now() - 3 * 3600000).toISOString(), actor: 'J. Martinez', action: 'mcp.tool.invoke', target: 'datto-rmm · list_devices' },
+    { when: new Date(Date.now() - 2 * 86400000).toISOString(), actor: 'kwilliams@am3-it.com', action: 'mcp.tool.invoke', target: 'huntress · list_incidents' },
+  ],
+};
+
+// The Usage and Audit tabs both client-fetch; branch the stub on URL.
 const fetchStub = `
 <script>
-  window.fetch = function () {
+  window.fetch = function (url) {
+    var body = String(url).indexOf('/audit') !== -1
+      ? ${JSON.stringify(JSON.stringify(mockAudit))}
+      : ${JSON.stringify(JSON.stringify(mockUsage))};
     return Promise.resolve({ ok: true, json: function () {
-      return Promise.resolve(${JSON.stringify(mockUsage)});
+      return Promise.resolve(JSON.parse(body));
     } });
   };
 </script>`;

@@ -187,6 +187,36 @@ async function requireResellerAccess(
 }
 
 /**
+ * Track A — the :id-ownership gate (warden Finding 2). For a customer-detail
+ * page wired to real data, requireResellerAccess alone is not enough — it
+ * proves the caller is *a* reseller, not that the caller's reseller owns
+ * customer `:id`. This verifies the customer org's parent IS the caller's
+ * reseller, fail-closed (redirect to /org/customers). Returns the customer
+ * org so the handler can render real identity without a second fetch.
+ *
+ * Defense-in-depth: the reseller-scoped data endpoints (src/reseller/routes.ts)
+ * independently re-check via requireResellerOrCustomerAccess + RLS.
+ */
+async function requireCustomerOwnership(
+  reply: Parameters<typeof requireAuth0>[1],
+  reseller: NonNullable<Awaited<ReturnType<typeof requireResellerAccess>>>,
+  customerId: string,
+  orgService: OrgService,
+): Promise<Awaited<ReturnType<OrgService['getOrg']>>> {
+  // Sequential, NOT Promise.all: each call issues a DB query on the
+  // request's single reserved-tx connection — a Promise.all of two such
+  // method calls stalls it (the #196/#199 hang class). requireCustomerOwnership
+  // is the shared gate every Track A tab inherits, so the shape matters.
+  const customer = await orgService.getOrg(customerId);
+  const parent = await orgService.getResellerOfCustomer(customerId);
+  if (!customer || !parent || parent.id !== reseller.org.id) {
+    reply.redirect('/org/customers', 302);
+    return null;
+  }
+  return customer;
+}
+
+/**
  * Fastify plugin that registers all web-facing routes for the credential
  * connection flow, settings page, and team management pages.
  */
@@ -871,39 +901,78 @@ export function webRoutes(deps: WebRouteDeps) {
       };
     }
 
-    for (const tab of CUSTOMER_TAB_IDS) {
+    // Shared render+send for a customer-detail tab page.
+    function sendCustomerTab(
+      reply: FastifyReply,
+      user: NonNullable<Awaited<ReturnType<typeof requireResellerAccess>>>['user'],
+      org: NonNullable<Awaited<ReturnType<typeof requireResellerAccess>>>['org'],
+      customerId: string,
+      data: CustomerTabData,
+    ) {
+      const siblings = [
+        { id: customerId, name: data.customer.name },
+        { id: 'cust_mock_2', name: 'Team DNS Solutions' },
+        { id: 'cust_mock_3', name: 'Mountain MSP Group' },
+        { id: 'cust_mock_4', name: 'Coastal IT Partners' },
+      ];
+      const { body, pageScripts } = renderCustomerTab(data);
+      const html = renderLayout(
+        {
+          user,
+          org,
+          activePath: `/org/customers/${customerId}/${data.tab}`,
+          title: `${org.name} - ${data.customer.name}`,
+          navMode: 'customer-detail',
+          customerContext: { id: customerId, name: data.customer.name, siblings },
+          pageStyles: CUSTOMER_TAB_STYLES,
+          pageScripts,
+        },
+        body,
+      );
+      return reply.type('text/html').send(html);
+    }
+
+    // The 6 still-mock tabs — one loop, mock data, page-level reseller gate.
+    for (const tab of CUSTOMER_TAB_IDS.filter((t) => t !== 'audit')) {
       app.get(`/org/customers/:id/${tab}`, async (request, reply) => {
         const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
-        const { user, org } = ctx;
-
         const customerId = (request.params as { id: string }).id;
-        const data = buildCustomerTabData(ctx, customerId, tab);
-
-        const siblings = [
-          { id: customerId, name: data.customer.name },
-          { id: 'cust_mock_2', name: 'Team DNS Solutions' },
-          { id: 'cust_mock_3', name: 'Mountain MSP Group' },
-          { id: 'cust_mock_4', name: 'Coastal IT Partners' },
-        ];
-
-        const { body, pageScripts } = renderCustomerTab(data);
-        const html = renderLayout(
-          {
-            user,
-            org,
-            activePath: `/org/customers/${customerId}/${tab}`,
-            title: `${org.name} - ${data.customer.name}`,
-            navMode: 'customer-detail',
-            customerContext: { id: customerId, name: data.customer.name, siblings },
-            pageStyles: CUSTOMER_TAB_STYLES,
-            pageScripts,
-          },
-          body,
-        );
-        return reply.type('text/html').send(html);
+        return sendCustomerTab(reply, ctx.user, ctx.org, customerId,
+          buildCustomerTabData(ctx, customerId, tab));
       });
     }
+
+    // ---------- GET /org/customers/:id/audit (Track A — wired to real data) ----------
+    //
+    // The Audit Log tab serves a real reseller-scoped customer audit feed.
+    // Per warden Finding 2 the page swaps the bare requireResellerAccess for
+    // the :id-ownership gate (requireCustomerOwnership) BEFORE it renders any
+    // real customer identity — a reseller cannot load /audit for a customer
+    // it does not own. The feed itself is a live client-fetch of the
+    // reseller-scoped /admin/reseller/.../audit endpoint, which independently
+    // re-checks ownership + RLS. Gate enforced twice (web shell + endpoint).
+    app.get('/org/customers/:id/audit', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const customerId = (request.params as { id: string }).id;
+      const customer = await requireCustomerOwnership(reply, ctx, customerId, orgService);
+      if (!customer) return;
+      const data: CustomerTabData = {
+        ...buildCustomerTabData(ctx, customerId, 'audit'),
+        // Real customer identity — verified-owned above.
+        customer: {
+          id: customerId,
+          name: customer.name,
+          plan: customer.plan.toUpperCase(),
+          userCount: 0,
+          mcpCount: 0,
+          subdomain: '',
+        },
+        audit: [], // live — the auditScript fetches the feed; endpoint owns authz
+      };
+      return sendCustomerTab(reply, ctx.user, ctx.org, customerId, data);
+    });
 
     // ---------- GET /org/customers/:id/onboard-mcp (Track C Surface 3 — Onboard wizard) ----------
     //
