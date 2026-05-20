@@ -117,11 +117,18 @@ jobs:
               --query 'properties.configuration.ingress.customDomains' -o json | jq -c '. // []')
             VENDOR_ENV=$(az containerapp show -n "$APP_NAME" -g "$RG" --only-show-errors \
               --query 'properties.template.containers[0].env' -o json \
-              | jq -c '[.[] | select(.name | startswith("VENDOR_URL_"))]')
+              | jq -c '[(. // [])[] | select(.name | startswith("VENDOR_URL_"))]')
           else
             DOMAINS='[]'
             VENDOR_ENV='[]'
           fi
+          # Guard: a fresh stack with no custom domains / no VENDOR_URL_* vars
+          # legitimately yields an empty az/jq result. Without this default the
+          # printf below writes an EMPTY file, and the `--parameters @file`
+          # step then fails with "Failed to parse string as JSON: Expecting
+          # value: line 1 column 1 (char 0)". Both files must hold valid JSON.
+          [ -n "$DOMAINS" ] || DOMAINS='[]'
+          [ -n "$VENDOR_ENV" ] || VENDOR_ENV='[]'
           DOMAINS_FILE="$RUNNER_TEMP/gw-existing-custom-domains.json"
           VENDOR_FILE="$RUNNER_TEMP/gw-existing-vendor-env.json"
           printf '%s' "$DOMAINS" > "$DOMAINS_FILE"
