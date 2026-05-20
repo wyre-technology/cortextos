@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderResellerHierarchy,
+  MAX_TREE_DEPTH,
   type TenantNode,
   type ResellerHierarchyData,
 } from './reseller-hierarchy.js';
@@ -112,5 +113,56 @@ describe('renderResellerHierarchy', () => {
       children: [{ id: 'c1', name: 'Solo', kind: 'customer', meta: '1 user', children: [] }],
     })));
     expect(html).toContain('1 tenant.');
+  });
+
+  it('carries ARIA tree semantics (tree / treeitem / group)', () => {
+    const html = renderResellerHierarchy(data());
+    expect(html).toContain('role="tree"');
+    expect(html).toContain('role="treeitem"');
+    expect(html).toContain('role="group"');
+  });
+
+  it('renders an empty-state when the reseller has no customers', () => {
+    const html = renderResellerHierarchy(data(tree({ children: [] })));
+    expect(html).toContain('No customers under this reseller yet');
+  });
+
+  it('does not infinite-loop on a cyclic tree (child points back to an ancestor)', () => {
+    const root: TenantNode = {
+      id: 'org_reseller', name: 'WYRE Technology', kind: 'reseller', meta: '', children: [],
+    };
+    const cust: TenantNode = {
+      id: 'c1', name: 'Cycle Customer', kind: 'customer', meta: '', children: [],
+    };
+    root.children.push(cust);
+    cust.children.push(root); // cycle: customer's child is the root
+    // Must return, not overflow the stack.
+    const html = renderResellerHierarchy({ org, root });
+    expect(html).toContain('Cycle Customer');
+  });
+
+  it('truncates the render at MAX_TREE_DEPTH (cap is a real pin, not just no-throw)', () => {
+    // A single chain Depth-0 (root) … Depth-30, one node per level.
+    const nodes: TenantNode[] = [];
+    for (let d = 0; d <= 30; d++) {
+      nodes.push({
+        id: `d${d}`, name: `Depth-${d}-NODE`,
+        kind: d === 0 ? 'reseller' : 'subtenant', meta: '', children: [],
+      });
+    }
+    for (let d = 0; d < 30; d++) nodes[d].children.push(nodes[d + 1]);
+
+    const html = renderResellerHierarchy({ org, root: nodes[0] });
+    // Nodes within the cap render…
+    expect(html).toContain(`Depth-${MAX_TREE_DEPTH}-NODE`);
+    // …nodes past it are absent — remove the cap and this goes red.
+    expect(html).not.toContain(`Depth-${MAX_TREE_DEPTH + 1}-NODE`);
+    expect(html).not.toContain('Depth-30-NODE');
+  });
+
+  it('renders a 3-level-deep tree (reseller → customer → subtenant)', () => {
+    const html = renderResellerHierarchy(data());
+    expect(html).toContain('AM3 — Internal IT');
+    expect(html).toContain('AM3 — Client Services');
   });
 });

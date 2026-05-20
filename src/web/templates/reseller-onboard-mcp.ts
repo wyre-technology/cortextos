@@ -1,5 +1,5 @@
 import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import { escapeHtml, safeCssColor } from '../helpers.js';
 
 // Track C Surface 3 — Onboard MCP Wizard (/org/customers/:id/onboard-mcp).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID nodes 6:2 / 7:2 / 8:2 / 8:81.
@@ -89,10 +89,17 @@ const STEP_LABELS: Record<OnboardStep, string> = {
   4: 'Allowlist',
 };
 
-/** Clamp an arbitrary number to a valid step. */
+/**
+ * Clamp a `?step=` query value to a valid step. Anything that is not
+ * exactly "2", "3", or "4" — including `parseInt`-salvageable garbage
+ * like "3abc" or "2.9", arrays, and `undefined` — normalizes to step 1.
+ */
 export function coerceStep(raw: unknown): OnboardStep {
-  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
-  if (n === 2 || n === 3 || n === 4) return n;
+  if (typeof raw !== 'string') return 1;
+  const s = raw.trim();
+  if (s === '2') return 2;
+  if (s === '3') return 3;
+  if (s === '4') return 4;
   return 1;
 }
 
@@ -109,10 +116,12 @@ function renderStepper(current: OnboardStep): string {
       ${steps.map((s) => {
         const state = s < current ? 'done' : s === current ? 'active' : 'pending';
         const marker = state === 'done' ? '&#10003;' : String(s);
+        const aria = state === 'active' ? ' aria-current="step"' : '';
+        const sr = state === 'done' ? ' (completed)' : state === 'active' ? ' (current step)' : '';
         return `
-          <li class="ob-step ob-step-${state}">
+          <li class="ob-step ob-step-${state}"${aria}>
             <span class="ob-step-dot">${marker}</span>
-            <span class="ob-step-label">${escapeHtml(STEP_LABELS[s])}</span>
+            <span class="ob-step-label">${escapeHtml(STEP_LABELS[s])}<span class="ob-sr">${sr}</span></span>
           </li>`;
       }).join('')}
     </ol>`;
@@ -149,7 +158,7 @@ function renderCatalogCard(entry: McpCatalogEntry, data: OnboardMcpData): string
   return `
     <div class="ob-cat-card">
       <div class="ob-cat-head">
-        <span class="ob-cat-icon" style="background:${escapeHtml(entry.iconColor)}">${escapeHtml(entry.abbr)}</span>
+        <span class="ob-cat-icon" style="background:${safeCssColor(entry.iconColor, 'var(--border-secondary)')}">${escapeHtml(entry.abbr)}</span>
         ${newBadge}
       </div>
       <div class="ob-cat-name">${escapeHtml(entry.name)}</div>
@@ -171,9 +180,11 @@ function renderStep1(data: OnboardMcpData): string {
         `<button type="button" class="ob-pill ${i === 0 ? 'ob-pill-active' : ''}">${escapeHtml(c)}</button>`,
       ).join('')}
     </div>
-    <div class="ob-cat-grid">
+    ${data.catalog.length === 0
+      ? '<p class="ob-empty">No MCPs available in the catalog yet.</p>'
+      : `<div class="ob-cat-grid">
       ${data.catalog.map((e) => renderCatalogCard(e, data)).join('')}
-    </div>`;
+    </div>`}`;
 }
 
 // ---- step 2 — wire up pattern -------------------------------------------
@@ -423,6 +434,28 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
   .ob-step-active .ob-step-label { color: var(--text-primary); font-weight: 600; }
   .ob-step-done .ob-step-dot { background: var(--success); color: #0a0a0a; }
   .ob-step-done .ob-step-label { color: var(--text-primary); }
+  /* visually-hidden text — exposes step state to screen readers only */
+  .ob-sr {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0;
+  }
+  /* On narrow viewports the four labels overflow — show dots only. */
+  @media (max-width: 560px) {
+    .ob-step-label { display: none; }
+    .ob-step:not(:last-child)::after { margin: 0 4px; }
+  }
+
+  .ob-empty {
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px dashed var(--border-secondary);
+    border-radius: 8px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+  }
 
   .ob-q { font-size: 18px; margin: 0 0 6px; color: var(--text-primary); }
   .ob-q-sub { font-size: 13px; color: var(--text-tertiary); margin: 0 0 20px; line-height: 1.5; }
@@ -718,6 +751,11 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
     padding: 6px 0;
     font-size: 12px;
   }
-  .ob-summary-row dt { color: var(--text-tertiary); }
-  .ob-summary-row dd { margin: 0; color: var(--text-primary); text-align: right; }
+  .ob-summary-row dt { color: var(--text-tertiary); flex-shrink: 0; }
+  .ob-summary-row dd {
+    margin: 0;
+    color: var(--text-primary);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
 `;

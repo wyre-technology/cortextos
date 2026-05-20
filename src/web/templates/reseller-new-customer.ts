@@ -46,10 +46,16 @@ const STEP_LABELS: Record<NewCustomerStep, string> = {
   3: 'Review',
 };
 
-/** Clamp an arbitrary query value to a valid step. */
+/**
+ * Clamp a `?step=` query value to a valid step. Anything that is not
+ * exactly "2" or "3" — including `parseInt`-salvageable garbage like
+ * "3abc" or "2.9", arrays, and `undefined` — normalizes to step 1.
+ */
 export function coerceNewCustomerStep(raw: unknown): NewCustomerStep {
-  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
-  if (n === 2 || n === 3) return n;
+  if (typeof raw !== 'string') return 1;
+  const s = raw.trim();
+  if (s === '2') return 2;
+  if (s === '3') return 3;
   return 1;
 }
 
@@ -64,10 +70,12 @@ function renderStepper(current: NewCustomerStep): string {
       ${steps.map((s) => {
         const state = s < current ? 'done' : s === current ? 'active' : 'pending';
         const marker = state === 'done' ? '&#10003;' : String(s);
+        const aria = state === 'active' ? ' aria-current="step"' : '';
+        const sr = state === 'done' ? ' (completed)' : state === 'active' ? ' (current step)' : '';
         return `
-          <li class="nc-step nc-step-${state}">
+          <li class="nc-step nc-step-${state}"${aria}>
             <span class="nc-step-dot">${marker}</span>
-            <span class="nc-step-label">${escapeHtml(STEP_LABELS[s])}</span>
+            <span class="nc-step-label">${escapeHtml(STEP_LABELS[s])}<span class="nc-sr">${sr}</span></span>
           </li>`;
       }).join('')}
     </ol>`;
@@ -89,13 +97,12 @@ function renderStep1(data: NewCustomerData): string {
     <label class="nc-field">
       <span class="nc-label">Organization name</span>
       <input type="text" id="ncName" class="nc-input" value="${escapeHtml(draft.name)}"
-        oninput="ncSyncSlug()" aria-label="Organization name" />
+        oninput="ncSyncSlug()" />
     </label>
 
     <label class="nc-field">
       <span class="nc-label">Subdomain</span>
-      <input type="text" id="ncSlug" class="nc-input" value="${slug}"
-        aria-label="Customer subdomain" />
+      <input type="text" id="ncSlug" class="nc-input" value="${slug}" />
       <span class="nc-help">
         URL: conduit.wyre.ai/v1/mcp/${resellerSlug}/<span id="ncSlugEcho">${slug}</span>
       </span>
@@ -103,7 +110,7 @@ function renderStep1(data: NewCustomerData): string {
 
     <label class="nc-field">
       <span class="nc-label">Plan tier</span>
-      <select class="nc-select" aria-label="Plan tier">
+      <select class="nc-select">
         ${planTiers.map((p) =>
           `<option${p === draft.plan ? ' selected' : ''}>${escapeHtml(p)}</option>`,
         ).join('')}
@@ -125,7 +132,7 @@ function renderStep2(data: NewCustomerData): string {
     <label class="nc-field">
       <span class="nc-label">Owner email</span>
       <input type="email" class="nc-input" value="${escapeHtml(draft.adminEmail)}"
-        placeholder="admin@customer.com" aria-label="Owner email" />
+        placeholder="admin@customer.com" />
       <span class="nc-help">An invite is sent on create; the owner sets their
         own password via the link.</span>
     </label>
@@ -167,7 +174,7 @@ function renderStep3(data: NewCustomerData): string {
     <label class="nc-field">
       <span class="nc-label">Accent override</span>
       <input type="text" class="nc-input nc-input-narrow" value="${escapeHtml(draft.accent)}"
-        ${draft.inheritBranding ? 'disabled' : ''} aria-label="Accent color override" />
+        ${draft.inheritBranding ? 'disabled' : ''} />
       <span class="nc-help">Used only when inheritance is off.</span>
     </label>
 
@@ -287,6 +294,18 @@ export const NEW_CUSTOMER_STYLES = `
   .nc-step-active .nc-step-label { color: var(--text-primary); font-weight: 600; }
   .nc-step-done .nc-step-dot { background: var(--success); color: #0a0a0a; }
   .nc-step-done .nc-step-label { color: var(--text-primary); }
+  /* visually-hidden text — exposes step state to screen readers only */
+  .nc-sr {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0;
+  }
+  @media (max-width: 480px) {
+    .nc-step-label { display: none; }
+    .nc-step:not(:last-child)::after { margin: 0 4px; }
+  }
 
   .nc-q { font-size: 18px; margin: 0 0 6px; color: var(--text-primary); }
   .nc-q-sub { font-size: 13px; color: var(--text-tertiary); margin: 0 0 20px; line-height: 1.5; }
@@ -321,6 +340,7 @@ export const NEW_CUSTOMER_STYLES = `
     font-size: 11px;
     color: var(--text-tertiary);
     line-height: 1.5;
+    overflow-wrap: anywhere;
   }
 
   .nc-toggle-row { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
@@ -368,8 +388,13 @@ export const NEW_CUSTOMER_STYLES = `
     padding: 6px 0;
     font-size: 12px;
   }
-  .nc-summary-row dt { color: var(--text-tertiary); }
-  .nc-summary-row dd { margin: 0; color: var(--text-primary); text-align: right; }
+  .nc-summary-row dt { color: var(--text-tertiary); flex-shrink: 0; }
+  .nc-summary-row dd {
+    margin: 0;
+    color: var(--text-primary);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
 
   .nc-actions { margin: 24px 0; display: flex; justify-content: flex-end; }
   .nc-actions-split { justify-content: space-between; }

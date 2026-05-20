@@ -1,5 +1,5 @@
 import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import { escapeHtml, safeCssColor, safeHttpsUrl } from '../helpers.js';
 
 // Track C Surface 5 — Reseller White-Label Branding (/org/reseller/branding).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 9:96.
@@ -70,12 +70,16 @@ function renderAliasRow(branding: ResellerBranding): string {
 }
 
 function renderSwatch(label: string, hex: string): string {
+  // hex reaches a CSS `background:` context — validate, never just escape.
+  // An invalid value falls back to the Conduit accent token.
+  const safeHex = safeCssColor(hex, 'var(--accent)');
+  const displayHex = /^#[0-9a-fA-F]{3,8}$/.test(hex.trim()) ? hex.trim().toUpperCase() : '—';
   return `
     <div class="rb-swatch">
-      <span class="rb-swatch-chip" style="background:${escapeHtml(hex)}"></span>
+      <span class="rb-swatch-chip" style="background:${safeHex}"></span>
       <div class="rb-swatch-meta">
         <span class="rb-swatch-label">${escapeHtml(label)}</span>
-        <span class="rb-swatch-hex">${escapeHtml(hex.toUpperCase())}</span>
+        <span class="rb-swatch-hex">${escapeHtml(displayHex)}</span>
       </div>
     </div>`;
 }
@@ -114,8 +118,8 @@ export function renderResellerBranding(data: ResellerBrandingData): string {
         <div class="rb-subcard">
           <h3 class="rb-subcard-title">Customer logo</h3>
           <div class="rb-upload" role="button" tabindex="0" aria-label="Upload customer logo">
-            ${branding.logoUrl
-              ? `<img class="rb-logo-preview" src="${escapeHtml(branding.logoUrl)}" alt="Customer logo" />`
+            ${safeHttpsUrl(branding.logoUrl)
+              ? `<img class="rb-logo-preview" src="${escapeHtml(safeHttpsUrl(branding.logoUrl)!)}" alt="Customer logo" />`
               : `<span class="rb-upload-text">Drop SVG/PNG or click to upload</span>
                  <span class="rb-upload-hint">SVG or PNG, 256px+</span>`}
           </div>
@@ -265,7 +269,7 @@ export const RESELLER_BRANDING_STYLES = `
   .rb-unverified {
     font-size: 11px;
     font-weight: 600;
-    color: #f59e0b;
+    color: var(--warning-text);
   }
 
   .rb-grid {
@@ -328,7 +332,7 @@ export const RESELLER_BRANDING_STYLES = `
     font-weight: 500;
   }
   .rb-email-ok { color: var(--success); }
-  .rb-email-warn { color: #f59e0b; }
+  .rb-email-warn { color: var(--warning-text); }
 
   .rb-toggle-row {
     display: flex;

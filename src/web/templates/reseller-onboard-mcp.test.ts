@@ -74,6 +74,14 @@ describe('coerceStep', () => {
     expect(coerceStep('abc')).toBe(1);
     expect(coerceStep(undefined)).toBe(1);
   });
+  it('rejects parseInt-salvageable garbage instead of accepting it', () => {
+    expect(coerceStep('3abc')).toBe(1);
+    expect(coerceStep('2.9')).toBe(1);
+    expect(coerceStep('  3  ')).toBe(3); // trimmed, still valid
+    expect(coerceStep(['3'])).toBe(1);
+    expect(coerceStep('0x3')).toBe(1);
+    expect(coerceStep(null)).toBe(1);
+  });
 });
 
 describe('renderOnboardMcp — shared chrome', () => {
@@ -178,5 +186,21 @@ describe('renderOnboardMcp — escaping', () => {
     const html = renderOnboardMcp(data(2, { customerName: '<script>x</script>' }));
     expect(html).not.toContain('<script>x</script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('rejects a CSS-injection payload in a catalog icon color', () => {
+    const html = renderOnboardMcp(data(1, {
+      catalog: [
+        { id: 'x', name: 'X', abbr: 'X', iconColor: 'red;background:url(https://evil/x)',
+          vendor: 'V', category: 'PSA', hosting: 'OEM' },
+      ],
+    }));
+    expect(html).not.toContain('url(https://evil/x)');
+    expect(html).toContain('style="background:var(--border-secondary)"');
+  });
+
+  it('renders an empty-catalog state instead of a blank grid', () => {
+    const html = renderOnboardMcp(data(1, { catalog: [] }));
+    expect(html).toContain('No MCPs available in the catalog yet');
   });
 });

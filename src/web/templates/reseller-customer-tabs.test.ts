@@ -134,3 +134,34 @@ describe('renderCustomerTab — invariants', () => {
     expect(body).toContain('&lt;script&gt;');
   });
 });
+
+describe('renderCustomerTab — empty states', () => {
+  it('renders an empty-state row for each zero-row mock tab', () => {
+    expect(renderCustomerTab(data('mcps', { mcps: [] })).body).toContain('No MCPs connected');
+    expect(renderCustomerTab(data('users', { members: [], memberTotal: 0 })).body).toContain('No members yet');
+    expect(renderCustomerTab(data('audit', { audit: [] })).body).toContain('No audit events');
+    expect(renderCustomerTab(data('billing', { invoices: [] })).body).toContain('No invoices yet');
+  });
+  it('omits the "+ N more" affordance when the roster is complete', () => {
+    const { body } = renderCustomerTab(data('users', { memberTotal: 1 }));
+    expect(body).not.toContain('more users');
+  });
+});
+
+describe('renderCustomerTab — hardening', () => {
+  it('an unknown tab renders a neutral body, never the Settings form', () => {
+    const { body } = renderCustomerTab(data('bogus' as CustomerTabId));
+    expect(body).toContain('Unknown tab');
+    expect(body).not.toContain('Danger zone');
+  });
+  it('Settings name + plan inputs are read-only (not editable behind a disabled Save)', () => {
+    const { body } = renderCustomerTab(data('settings'));
+    const inputs = body.match(/<input[^>]*>/g) ?? [];
+    expect(inputs.length).toBe(3);
+    for (const input of inputs) expect(input).toContain('readonly');
+  });
+  it('table headers carry scope="col"', () => {
+    const { body } = renderCustomerTab(data('users'));
+    expect(body).toContain('<th scope="col">');
+  });
+});

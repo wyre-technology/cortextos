@@ -81,6 +81,7 @@ function renderChrome(data: CustomerTabData, body: string): string {
   const { org, customer, tab } = data;
   const name = escapeHtml(customer.name);
   const base = `/org/customers/${encodeURIComponent(customer.id)}`;
+  const title = escapeHtml(TAB_TITLE[tab] ?? 'Customer');
   return `
     <nav class="cdt-breadcrumb" aria-label="Breadcrumb">
       <span>${escapeHtml(org.name)}</span>
@@ -89,9 +90,9 @@ function renderChrome(data: CustomerTabData, body: string): string {
       <span class="cdt-crumb-sep">/</span>
       <a href="${base}">${name}</a>
       <span class="cdt-crumb-sep">/</span>
-      <span class="cdt-crumb-current">${escapeHtml(TAB_TITLE[tab])}</span>
+      <span class="cdt-crumb-current">${title}</span>
     </nav>
-    <h1 class="cdt-title">${escapeHtml(TAB_TITLE[tab])}</h1>
+    <h1 class="cdt-title">${title}</h1>
     <p class="section-desc">${name} · ${escapeHtml(customer.plan)} plan</p>
     ${body}
   `;
@@ -116,7 +117,7 @@ function renderMcps(data: CustomerTabData): string {
     </tr>`).join('');
   return renderChrome(data, `
     <table class="cdt-table">
-      <thead><tr><th>Vendor</th><th>Wiring</th><th>Seats</th><th>Status</th></tr></thead>
+      <thead><tr><th scope="col">Vendor</th><th scope="col">Wiring</th><th scope="col">Seats</th><th scope="col">Status</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="cdt-empty">No MCPs connected.</td></tr>`}</tbody>
     </table>
     ${seam('Mock-data-first. SWAP-IN CONTRACT: the real MCP-connection query MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
@@ -137,7 +138,7 @@ function renderUsers(data: CustomerTabData): string {
     ? `<p class="cdt-more">+ ${data.memberTotal - data.members.length} more users</p>` : '';
   return renderChrome(data, `
     <table class="cdt-table">
-      <thead><tr><th>User</th><th>Role</th><th>Department</th><th>Tool Access</th><th>Last Active</th></tr></thead>
+      <thead><tr><th scope="col">User</th><th scope="col">Role</th><th scope="col">Department</th><th scope="col">Tool Access</th><th scope="col">Last Active</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="5" class="cdt-empty">No members yet.</td></tr>`}</tbody>
     </table>
     ${more}
@@ -157,12 +158,12 @@ function renderUsage(data: CustomerTabData): string {
       </div>
       <h2 class="cdt-section-title">By vendor</h2>
       <table class="cdt-table">
-        <thead><tr><th>Vendor</th><th class="cdt-num">Calls</th></tr></thead>
+        <thead><tr><th scope="col">Vendor</th><th class="cdt-num" scope="col">Calls</th></tr></thead>
         <tbody id="cdtuVendors"></tbody>
       </table>
       <h2 class="cdt-section-title">By source</h2>
       <table class="cdt-table">
-        <thead><tr><th>Source</th><th class="cdt-num">Calls</th></tr></thead>
+        <thead><tr><th scope="col">Source</th><th class="cdt-num" scope="col">Calls</th></tr></thead>
         <tbody id="cdtuSources"></tbody>
       </table>
     </div>
@@ -204,8 +205,10 @@ function usageScript(resellerId: string, customerId: string): string {
         sb.appendChild(tr);
       });
       if (sb && !sb.children.length) { var e2 = cell('td', 'cdt-empty', 'No source data.'); e2.colSpan = 2; var r2 = document.createElement('tr'); r2.appendChild(e2); sb.appendChild(r2); }
-      document.getElementById('cdtUsageLoading').style.display = 'none';
-      document.getElementById('cdtUsageContent').style.display = 'block';
+      var loading = document.getElementById('cdtUsageLoading');
+      var content = document.getElementById('cdtUsageContent');
+      if (loading) loading.style.display = 'none';
+      if (content) content.style.display = 'block';
     }).catch(function () {
       var l = document.getElementById('cdtUsageLoading');
       if (l) l.textContent = 'Could not load usage analytics. Retry shortly.';
@@ -221,8 +224,8 @@ function renderTools(data: CustomerTabData): string {
     const on = g.tools.filter((t) => t.enabled).length;
     const rows = g.tools.map((t) => `
       <div class="cdt-tool-row">
-        <span class="cdt-box ${t.enabled ? 'cdt-box-on' : ''}">${t.enabled ? '&#10003;' : ''}</span>
-        <span class="${t.enabled ? '' : 'cdt-tool-off'}">${escapeHtml(t.name)}</span>
+        <span class="cdt-box ${t.enabled ? 'cdt-box-on' : ''}" aria-hidden="true">${t.enabled ? '&#10003;' : ''}</span>
+        <span class="${t.enabled ? '' : 'cdt-tool-off'}">${escapeHtml(t.name)}<span class="cdt-sr"> — ${t.enabled ? 'enabled' : 'disabled'}</span></span>
       </div>`).join('');
     return `
       <div class="cdt-tool-group">
@@ -252,7 +255,7 @@ function renderAudit(data: CustomerTabData): string {
     </tr>`).join('');
   return renderChrome(data, `
     <table class="cdt-table">
-      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead>
+      <thead><tr><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="cdt-empty">No audit events.</td></tr>`}</tbody>
     </table>
     ${seam('Mock-data-first. SWAP-IN CONTRACT: the audit query MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
@@ -279,7 +282,7 @@ function renderBilling(data: CustomerTabData): string {
     </div>
     <h2 class="cdt-section-title">Invoices</h2>
     <table class="cdt-table">
-      <thead><tr><th>Invoice</th><th>Date</th><th class="cdt-num">Amount</th><th>Status</th></tr></thead>
+      <thead><tr><th scope="col">Invoice</th><th scope="col">Date</th><th class="cdt-num" scope="col">Amount</th><th scope="col">Status</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="cdt-empty">No invoices yet.</td></tr>`}</tbody>
     </table>
     ${seam('Mock-data-first (reseller pricing/invoice migrations 025-027 exist; no read endpoint yet). SWAP-IN CONTRACT: the billing read MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
@@ -293,17 +296,19 @@ function renderSettings(data: CustomerTabData): string {
     <div class="cdt-form">
       <label class="cdt-field">
         <span class="cdt-label">Organization name</span>
-        <input type="text" class="cdt-input" value="${escapeHtml(c.name)}" aria-label="Organization name" />
+        <input type="text" class="cdt-input cdt-input-ro" value="${escapeHtml(c.name)}" readonly />
       </label>
       <label class="cdt-field">
         <span class="cdt-label">Subdomain</span>
-        <input type="text" class="cdt-input cdt-input-ro" value="${escapeHtml(c.subdomain)}" readonly aria-label="Subdomain" />
+        <input type="text" class="cdt-input cdt-input-ro" value="${escapeHtml(c.subdomain)}" readonly />
         <span class="cdt-sub">Path-based, collision-safe — fixed after creation.</span>
       </label>
       <label class="cdt-field">
         <span class="cdt-label">Plan tier</span>
-        <input type="text" class="cdt-input" value="${escapeHtml(c.plan)}" aria-label="Plan tier" />
+        <input type="text" class="cdt-input cdt-input-ro" value="${escapeHtml(c.plan)}" readonly />
       </label>
+      <p class="cdt-sub">Fields are read-only until the Track A reseller-settings
+        endpoint lands — editing and Save activate together.</p>
     </div>
     <div class="cdt-danger">
       <div class="cdt-strong">Danger zone</div>
@@ -323,6 +328,9 @@ function renderSettings(data: CustomerTabData): string {
 export function renderCustomerTab(
   data: CustomerTabData,
 ): { body: string; pageScripts: string } {
+  // Explicit per-tab dispatch — an unrecognized tab renders a neutral
+  // "unknown tab" body rather than silently falling through to the
+  // editable-looking Settings form.
   const body =
     data.tab === 'mcps' ? renderMcps(data)
     : data.tab === 'users' ? renderUsers(data)
@@ -330,7 +338,8 @@ export function renderCustomerTab(
     : data.tab === 'tools' ? renderTools(data)
     : data.tab === 'audit' ? renderAudit(data)
     : data.tab === 'billing' ? renderBilling(data)
-    : renderSettings(data);
+    : data.tab === 'settings' ? renderSettings(data)
+    : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
 
   const pageScripts = data.tab === 'usage'
     ? usageScript(data.org.id, data.customer.id)
@@ -365,11 +374,23 @@ export const CUSTOMER_TAB_STYLES = `
   .cdt-activity { color: var(--text-tertiary); white-space: nowrap; }
   .cdt-empty { padding: 20px 12px; text-align: center; color: var(--text-tertiary); }
   .cdt-more { margin-top: 12px; font-size: 12px; color: var(--accent-text); }
+  /* visually-hidden text — state cues for screen readers only */
+  .cdt-sr {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0;
+  }
+  /* Narrow viewports: let wide tables scroll rather than overflow the page. */
+  @media (max-width: 640px) {
+    .cdt-table { display: block; overflow-x: auto; white-space: nowrap; }
+  }
 
   .cdt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .cdt-dot-healthy { background: var(--success); }
-  .cdt-dot-degraded { background: #f59e0b; }
-  .cdt-dot-down { background: #dc2626; }
+  .cdt-dot-degraded { background: var(--warning-text); }
+  .cdt-dot-down { background: var(--error); }
 
   .cdt-loading { color: var(--text-tertiary); font-style: italic; padding: 16px 0; }
   .cdt-stat-grid {
@@ -405,7 +426,7 @@ export const CUSTOMER_TAB_STYLES = `
     letter-spacing: 0.05em; padding: 2px 8px; border-radius: 10px; border: 1px solid transparent;
   }
   .cdt-inv-paid { color: var(--success); border-color: var(--success); }
-  .cdt-inv-open { color: #f59e0b; border-color: #f59e0b; }
+  .cdt-inv-open { color: var(--warning-text); border-color: var(--warning-text); }
   .cdt-inv-void { color: var(--text-tertiary); border-color: var(--border-secondary); }
 
   .cdt-card {
@@ -429,11 +450,11 @@ export const CUSTOMER_TAB_STYLES = `
 
   .cdt-danger {
     margin-top: 24px; padding: 16px; max-width: 420px;
-    border: 1px solid #dc2626; border-radius: 8px;
+    border: 1px solid var(--error); border-radius: 8px;
   }
   .cdt-danger-btn {
     margin-top: 10px; padding: 8px 14px; background: transparent;
-    border: 1px solid #dc2626; border-radius: 6px; color: #dc2626;
+    border: 1px solid var(--error); border-radius: 6px; color: var(--error);
     font-size: 12px; font-family: inherit; cursor: pointer;
   }
   .cdt-danger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
