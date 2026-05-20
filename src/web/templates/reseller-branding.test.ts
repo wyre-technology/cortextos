@@ -136,4 +136,28 @@ describe('renderResellerBranding', () => {
     expect(html).not.toContain('<script>x</script>');
     expect(html).toContain('&lt;script&gt;');
   });
+
+  it('rejects a CSS-injection payload in a brand color (no style breakout)', () => {
+    const html = renderResellerBranding(data({
+      colors: {
+        accent: 'red;background:url(https://evil/x)',
+        textOnDark: '#fff} body{display:none',
+        textOnLight: '#212126',
+      },
+    }));
+    // The malicious values never reach the style attribute…
+    expect(html).not.toContain('url(https://evil/x)');
+    expect(html).not.toContain('body{display:none');
+    // …a bad swatch falls back to the accent token and shows an em-dash hex.
+    expect(html).toContain('style="background:var(--accent)"');
+    // The one valid hex still renders.
+    expect(html).toContain('#212126');
+  });
+
+  it('drops a non-https logo URL rather than rendering it', () => {
+    const html = renderResellerBranding(data({ logoUrl: 'javascript:alert(1)' }));
+    expect(html).not.toContain('javascript:alert(1)');
+    expect(html).not.toContain('rb-logo-preview');
+    expect(html).toContain('Drop SVG/PNG or click to upload');
+  });
 });

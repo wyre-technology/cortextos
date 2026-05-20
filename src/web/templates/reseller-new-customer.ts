@@ -52,7 +52,8 @@ const STEP_LABELS: Record<NewCustomerStep, string> = {
  * "3abc" or "2.9", arrays, and `undefined` — normalizes to step 1.
  */
 export function coerceNewCustomerStep(raw: unknown): NewCustomerStep {
-  const s = typeof raw === 'string' ? raw.trim() : String(raw);
+  if (typeof raw !== 'string') return 1;
+  const s = raw.trim();
   if (s === '2') return 2;
   if (s === '3') return 3;
   return 1;

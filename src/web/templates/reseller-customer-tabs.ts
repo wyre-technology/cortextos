@@ -81,6 +81,7 @@ function renderChrome(data: CustomerTabData, body: string): string {
   const { org, customer, tab } = data;
   const name = escapeHtml(customer.name);
   const base = `/org/customers/${encodeURIComponent(customer.id)}`;
+  const title = escapeHtml(TAB_TITLE[tab] ?? 'Customer');
   return `
     <nav class="cdt-breadcrumb" aria-label="Breadcrumb">
       <span>${escapeHtml(org.name)}</span>
@@ -89,9 +90,9 @@ function renderChrome(data: CustomerTabData, body: string): string {
       <span class="cdt-crumb-sep">/</span>
       <a href="${base}">${name}</a>
       <span class="cdt-crumb-sep">/</span>
-      <span class="cdt-crumb-current">${escapeHtml(TAB_TITLE[tab])}</span>
+      <span class="cdt-crumb-current">${title}</span>
     </nav>
-    <h1 class="cdt-title">${escapeHtml(TAB_TITLE[tab])}</h1>
+    <h1 class="cdt-title">${title}</h1>
     <p class="section-desc">${name} · ${escapeHtml(customer.plan)} plan</p>
     ${body}
   `;

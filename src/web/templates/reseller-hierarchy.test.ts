@@ -113,4 +113,47 @@ describe('renderResellerHierarchy', () => {
     })));
     expect(html).toContain('1 tenant.');
   });
+
+  it('carries ARIA tree semantics (tree / treeitem / group)', () => {
+    const html = renderResellerHierarchy(data());
+    expect(html).toContain('role="tree"');
+    expect(html).toContain('role="treeitem"');
+    expect(html).toContain('role="group"');
+  });
+
+  it('renders an empty-state when the reseller has no customers', () => {
+    const html = renderResellerHierarchy(data(tree({ children: [] })));
+    expect(html).toContain('No customers under this reseller yet');
+  });
+
+  it('does not infinite-loop on a cyclic tree (child points back to an ancestor)', () => {
+    const root: TenantNode = {
+      id: 'org_reseller', name: 'WYRE Technology', kind: 'reseller', meta: '', children: [],
+    };
+    const cust: TenantNode = {
+      id: 'c1', name: 'Cycle Customer', kind: 'customer', meta: '', children: [],
+    };
+    root.children.push(cust);
+    cust.children.push(root); // cycle: customer's child is the root
+    // Must return, not overflow the stack.
+    const html = renderResellerHierarchy({ org, root });
+    expect(html).toContain('Cycle Customer');
+  });
+
+  it('does not overflow on a pathologically deep tree', () => {
+    let node: TenantNode = { id: 'leaf', name: 'Leaf', kind: 'subtenant', meta: '', children: [] };
+    for (let i = 0; i < 500; i++) {
+      node = { id: `n${i}`, name: `Node ${i}`, kind: 'subtenant', meta: '', children: [node] };
+    }
+    const root: TenantNode = {
+      id: 'org_reseller', name: 'WYRE Technology', kind: 'reseller', meta: '', children: [node],
+    };
+    expect(() => renderResellerHierarchy({ org, root })).not.toThrow();
+  });
+
+  it('renders a 3-level-deep tree (reseller → customer → subtenant)', () => {
+    const html = renderResellerHierarchy(data());
+    expect(html).toContain('AM3 — Internal IT');
+    expect(html).toContain('AM3 — Client Services');
+  });
 });

@@ -51,6 +51,13 @@ describe('coerceNewCustomerStep', () => {
     expect(coerceNewCustomerStep('x')).toBe(1);
     expect(coerceNewCustomerStep(undefined)).toBe(1);
   });
+  it('rejects parseInt-salvageable garbage instead of accepting it', () => {
+    expect(coerceNewCustomerStep('2abc')).toBe(1);
+    expect(coerceNewCustomerStep('3.9')).toBe(1);
+    expect(coerceNewCustomerStep(['2'])).toBe(1);
+    expect(coerceNewCustomerStep(null)).toBe(1);
+    expect(coerceNewCustomerStep('  2  ')).toBe(2); // trimmed, still valid
+  });
 });
 
 describe('renderNewCustomer — chrome', () => {
