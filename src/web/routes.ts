@@ -1374,7 +1374,12 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
+      // Layer 1 §8 — seat-billing for the at-creation cost copy. Sequential
+      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: replace with
+      // `await getSeatBilling(org.id)` when Hank's group A lands.
+      const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
+      const seatBilling = mockSeatBilling(members.length, serviceClients.length);
 
       const html = renderLayout(
         { user, org, activePath: '/org/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
@@ -1389,6 +1394,9 @@ export function webRoutes(deps: WebRouteDeps) {
             expiresAt: c.expiresAt,
             createdAt: c.createdAt,
           })),
+          seatBilling,
+          // SWAP-IN: real trial read (Hank's §9.1 field) not wired yet.
+          trialing: false,
         }),
       );
       return reply.type('text/html').send(html);
