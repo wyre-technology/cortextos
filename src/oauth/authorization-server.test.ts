@@ -88,4 +88,23 @@ describe('userHasAnyCredentials', () => {
     const svc = makeCredService({ orgCred: creds });
     expect(await userHasAnyCredentials('user1', 'autotask', svc)).toBe(false);
   });
+
+  it('resolves team credentials via ONE set-based query, not a per-team fan-out', async () => {
+    // Regression pin for the set-based rewrite (was a per-team
+    // Promise.all(userTeams.map(getTeamCredential)) fan-out that stalled the
+    // reserved-tx connection). getTeamCredentialsForTeams must be called
+    // exactly once per org, with every team id at once — a regression back
+    // to a per-team loop/fan-out fails this.
+    const svc = makeCredService({});
+    const org = makeOrgService({
+      orgs: [{ id: 'org1' }],
+      teams: [{ id: 'team1' }, { id: 'team2' }, { id: 'team3' }],
+    });
+    await userHasAnyCredentials('user1', 'autotask', svc, org);
+    expect(svc.getTeamCredentialsForTeams).toHaveBeenCalledTimes(1);
+    expect(svc.getTeamCredentialsForTeams).toHaveBeenCalledWith(
+      ['team1', 'team2', 'team3'],
+      'autotask',
+    );
+  });
 });
