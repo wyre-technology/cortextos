@@ -4,6 +4,7 @@ import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
 import { ROLE_LEVEL } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
+import type { CreditService } from '../billing/credit-service.js';
 import { isPaidPlan } from '../billing/gate.js';
 import { getVendor } from '../credentials/vendor-config.js';
 import { renderConnectPage } from './templates/connect.js';
@@ -103,6 +104,7 @@ interface WebRouteDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
+  creditService: CreditService;
   vendorOAuthStates: VendorOAuthStateStore;
   completeAuth: (sessionId: string, userId: string) => Promise<{ redirectUrl: string } | null>;
   logShippingService: LogShippingService;
@@ -189,7 +191,7 @@ async function requireResellerAccess(
  * connection flow, settings page, and team management pages.
  */
 export function webRoutes(deps: WebRouteDeps) {
-  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
+  const { credentialService, orgService, billingGate, creditService, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
 
   const sweepInterval = setInterval(() => {
     // The interval tick has NO request context — sweepExpired()'s getSql()
@@ -593,25 +595,13 @@ export function webRoutes(deps: WebRouteDeps) {
         org,
         plan,
         memberCount,
-        creditsUsed: Math.floor(creditsAllocated * 0.37),
+        creditsUsed: await creditService.getUsageThisMonth(org.id),
         creditsAllocated,
-        paymentMethod: {
-          brand: 'visa',
-          last4: '4242',
-          expMonth: 12,
-          expYear: 2027,
-        },
-        nextInvoice: {
-          amountCents: plan.slug === 'business' ? 19900 : 4900,
-          currency: 'usd',
-          dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        invoices: [
-          { id: 'in_mock_001', number: '2026-0042', date: new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
-          { id: 'in_mock_002', number: '2026-0035', date: new Date(Date.now() - 46 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
-          { id: 'in_mock_003', number: '2026-0028', date: new Date(Date.now() - 76 * 24 * 60 * 60 * 1000).toISOString(),  amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
-          { id: 'in_mock_004', number: '2026-0021', date: new Date(Date.now() - 106 * 24 * 60 * 60 * 1000).toISOString(), amountCents: 4900,  currency: 'usd', status: 'paid', pdfUrl: null },
-        ],
+        // Payment method, upcoming invoice, and invoice history are not
+        // rendered on-page — they are shown in the customer's real Stripe
+        // billing portal (the "Billing details" block links out to it). An
+        // org with no Stripe customer gets the honest managed-directly state.
+        // No fabricated billing data reaches this page.
         dunning,
         firstName: (user.name || '').split(/\s+/)[0] || null,
         // Only offer packs that have a configured Stripe price ID — the

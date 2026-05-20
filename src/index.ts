@@ -318,6 +318,7 @@ await app.register(webRoutes({
   credentialService,
   orgService,
   billingGate,
+  creditService,
   vendorOAuthStates,
   completeAuth,
   logShippingService,
