@@ -18,6 +18,17 @@
 #
 # Run after a vendor-fleet deploy. Exit 0 = complete; non-zero = a gap.
 #
+# ENFORCEMENT — this script is the option-a acceptance GATE, not an optional
+# check. It MUST be invoked as a step immediately after every vendor-fleet
+# provision/update so a non-zero exit fails the deploy:
+#   * the live Piece-1 provision (the `az deployment group create
+#     --template-file azure/vendor-fleet.bicep` run) runs this as its
+#     acceptance step;
+#   * the durable vendor-fleet deploy path (option-a Piece 2) invokes it as a
+#     pipeline step — a fleet deploy is not "done" until this exits 0.
+# Wired this way, an incomplete fleet cannot ship silently. Run standalone only
+# for ad-hoc verification.
+#
 # Usage:  azure/vendor-fleet-completeness-check.sh [resource-group]
 #   default resource-group: rg-conduit-prod
 #   requires: az (logged in), the conduit repo checked out (for vendor-config.ts)
