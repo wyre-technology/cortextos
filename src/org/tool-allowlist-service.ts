@@ -58,10 +58,13 @@ export class ToolAllowlistService {
     orgId: string,
     vendorSlug: string,
   ): Promise<{ admin: string[] | null; member: string[] | null }> {
-    const [admin, member] = await Promise.all([
-      this.getToolAllowlist(orgId, vendorSlug, 'admin'),
-      this.getToolAllowlist(orgId, vendorSlug, 'member'),
-    ]);
+    // Sequential, NOT Promise.all: getToolAllowlist issues a DB query, and on
+    // a request-path call it runs on the request's single reserved-tx
+    // connection. A Promise.all of two such method calls stalls that
+    // connection (same hang class as the /v1/mcp tools/call bug). Sequential
+    // awaits remove the concurrency.
+    const admin = await this.getToolAllowlist(orgId, vendorSlug, 'admin');
+    const member = await this.getToolAllowlist(orgId, vendorSlug, 'member');
     return { admin, member };
   }
 }

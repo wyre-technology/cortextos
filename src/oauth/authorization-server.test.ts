@@ -12,7 +12,9 @@ function makeCredService(overrides: {
   return {
     has: vi.fn().mockResolvedValue(overrides.hasPersonal ?? false),
     getOrgCredential: vi.fn().mockResolvedValue(overrides.orgCred ?? null),
-    getTeamCredential: vi.fn().mockResolvedValue(overrides.teamCred ?? null),
+    getTeamCredentialsForTeams: vi.fn().mockResolvedValue(
+      overrides.teamCred ? [{ teamId: 'team1', creds: overrides.teamCred }] : [],
+    ),
   };
 }
 
@@ -64,14 +66,14 @@ describe('userHasAnyCredentials', () => {
   });
 
   it('falls through to org tier when >1 team has credentials (ambiguous)', async () => {
-    let call = 0;
     const svc = {
       has: vi.fn().mockResolvedValue(false),
       getOrgCredential: vi.fn().mockResolvedValue(creds),
-      getTeamCredential: vi.fn().mockImplementation(() => {
-        call++;
-        return Promise.resolve(call <= 2 ? creds : null); // both team1 and team2 match
-      }),
+      // Both team1 and team2 hold a credential → 2 hits → ambiguous.
+      getTeamCredentialsForTeams: vi.fn().mockResolvedValue([
+        { teamId: 'team1', creds },
+        { teamId: 'team2', creds },
+      ]),
     };
     const org = makeOrgService({
       orgs: [{ id: 'org1' }],

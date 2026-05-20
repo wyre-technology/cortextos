@@ -82,10 +82,15 @@ export class CreditService {
    * Total credits available this month: plan allocation + purchased blocks.
    */
   async getTotalAvailable(orgId: string): Promise<number> {
-    const [allocated, blocks] = await Promise.all([
-      this.billingGate.getCreditAllocation(orgId),
-      this.getBlockBalance(orgId),
-    ]);
+    // Sequential, NOT Promise.all: each call issues a DB query. Today's
+    // callers reach this via runAsSystem (system pool), where concurrency is
+    // safe — but a Promise.all of service-method calls stalls the request's
+    // reserved-tx connection (the /v1/mcp tools/call hang class), so if this
+    // is ever wired onto a request path (e.g. the /org/billing credits
+    // surface, F3 / task_1779216873009) the Promise.all form would be a
+    // latent hang. Sequential awaits are correct on both pools.
+    const allocated = await this.billingGate.getCreditAllocation(orgId);
+    const blocks = await this.getBlockBalance(orgId);
     return allocated + blocks;
   }
 
@@ -93,10 +98,10 @@ export class CreditService {
    * Whether the org has any credits left (plan or blocks).
    */
   async hasCreditsRemaining(orgId: string): Promise<boolean> {
-    const [used, total] = await Promise.all([
-      this.getUsageThisMonth(orgId),
-      this.getTotalAvailable(orgId),
-    ]);
+    // Sequential, NOT Promise.all — see getTotalAvailable for the rationale
+    // (reserved-tx-safe regardless of which pool the caller runs on).
+    const used = await this.getUsageThisMonth(orgId);
+    const total = await this.getTotalAvailable(orgId);
     return used < total;
   }
 

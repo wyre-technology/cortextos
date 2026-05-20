@@ -219,10 +219,13 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           return reply.code(404).send({ error: 'Reseller not found' });
         }
 
-        const [customers, members] = await Promise.all([
-          orgService.getCustomersOfReseller(resellerId),
-          resellerMemberService.list(resellerId),
-        ]);
+        // Sequential, NOT Promise.all: each call issues a DB query on the
+        // request's single reserved-tx connection — a Promise.all of two
+        // such service-method calls stalls that connection (same hang class
+        // as the /v1/mcp tools/call bug). Sequential awaits remove the
+        // concurrency.
+        const customers = await orgService.getCustomersOfReseller(resellerId);
+        const members = await resellerMemberService.list(resellerId);
 
         return reply.send({
           id: org.id,
