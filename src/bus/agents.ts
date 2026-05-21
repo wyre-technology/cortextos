@@ -93,6 +93,39 @@ export function listAgents(ctxRoot: string, org?: string): AgentInfo[] {
 
         agents.push(buildAgentInfo(agentName, orgName, isEnabled, ctxRoot));
       }
+
+      // Namespaced (per-engineer) agents: orgs/<org>/engineers/<eng>/agents/<name>
+      const engineersDir = join(orgsDir, orgName, 'engineers');
+      if (existsSync(engineersDir)) {
+        let engineerDirs: string[];
+        try {
+          engineerDirs = readdirSync(engineersDir);
+        } catch {
+          engineerDirs = [];
+        }
+        for (const engineer of engineerDirs) {
+          if (!/^[a-z0-9_-]+$/.test(engineer)) continue;
+          const nsAgentsDir = join(engineersDir, engineer, 'agents');
+          if (!existsSync(nsAgentsDir)) continue;
+          let nsAgentDirs: string[];
+          try {
+            nsAgentDirs = readdirSync(nsAgentsDir);
+          } catch {
+            continue;
+          }
+          for (const agentName of nsAgentDirs) {
+            if (!/^[a-z0-9_-]+$/.test(agentName)) continue;
+            const qualified = `${engineer}/${agentName}`;
+            if (seen.has(qualified)) continue;
+            seen.add(qualified);
+            const explicitEntry = enabledAgents[qualified];
+            const isEnabled = explicitEntry ? explicitEntry.enabled !== false : true;
+            const info = buildAgentInfo(qualified, orgName, isEnabled, ctxRoot);
+            info.engineer = engineer;
+            agents.push(info);
+          }
+        }
+      }
     }
   }
 
