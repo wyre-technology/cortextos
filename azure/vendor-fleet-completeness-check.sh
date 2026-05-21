@@ -112,3 +112,15 @@ exit 1
 # run from INSIDE conduit-prod-env (internal ingress) — the gws-itglue /
 # gws-rocketcyber B-minimal probe-job pattern. Run it as a one-shot ACA job in
 # conduit-prod-env if a vendor is healthy-but-not-serving-MCP is suspected.
+#
+# PROBE-PORT NOTE — learned 2026-05-21 on the Piece-1 acceptance probe.
+# vendor-config.ts's default `containerUrl: http://<slug>-mcp:8080` is the
+# CA-to-CA path (the conduit-prod gateway, itself a Container App, can reach
+# any same-env CA on its targetPort directly). A JOB-to-CA probe in the same
+# environment does NOT have direct-targetPort access — Jobs go through the
+# CA's internal HTTP ingress, which listens on **port 80** (forwarded to
+# targetPort 8080 inside the container). A first probe attempt against
+# `:8080` returned `http=000` for all 33 — a 0/33 false signal that looks
+# like a total fleet outage but is actually the wrong port for the
+# Job-to-CA path. Probe URL from a Job: `http://<slug>-mcp/mcp` (port 80).
+# The gateway's `http://<slug>-mcp:8080` is correct for CA-to-CA and stays.
