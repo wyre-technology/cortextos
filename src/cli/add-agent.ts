@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, chmodSync, symlinkSync, lstatSync, unlinkSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, resolve, relative } from 'path';
 import { homedir } from 'os';
 import { OrgContext } from '../types';
 import { validateAgentName } from '../utils/validate';
@@ -311,7 +311,7 @@ export const addAgentCommand = new Command('add-agent')
 
     console.log(`\n  Agent "${name}" created.`);
     console.log(`\n  Next steps:`);
-    console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram settings`);
+    console.log(`    1. Edit ${relative(projectRoot, resolveAgentDir(projectRoot, org, name))}/.env with your Telegram settings`);
     console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
     console.log(`    3. Start: cortextos start ${name}\n`);
   });

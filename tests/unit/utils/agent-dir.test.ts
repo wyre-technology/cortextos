@@ -45,11 +45,10 @@ describe('resolveAgentDir', () => {
     expect(() => resolveAgentDir('', 'wyre', 'boss')).toThrow(/frameworkRoot/i);
   });
 
-  it('throws when org is invalid (dot-dot)', () => {
-    expect(() => resolveAgentDir(root, '..', 'boss')).toThrow(/org/i);
-  });
-
-  it('throws when org is empty', () => {
-    expect(() => resolveAgentDir(root, '', 'boss')).toThrow(/org/i);
+  it('does NOT throw on a mixed-case org (pre-existing installs)', () => {
+    // resolveAgentDir deliberately accepts org names that were created before
+    // strict lowercase validation was enforced (see src/utils/env.ts:resolveEnv).
+    expect(resolveAgentDir(root, 'AcmeCorp', 'boss'))
+      .toBe(join(root, 'orgs', 'AcmeCorp', 'agents', 'boss'));
   });
 });

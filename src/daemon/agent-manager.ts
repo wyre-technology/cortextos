@@ -124,7 +124,7 @@ export class AgentManager {
           .filter(d => d.isDirectory())
           .map(d => d.name);
         for (const org of orgs) {
-          if (existsSync(join(orgsBase, org, 'agents', name))) {
+          if (existsSync(resolveAgentDir(this.frameworkRoot, org, name))) {
             return org;
           }
         }

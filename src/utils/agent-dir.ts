@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { AGENT_NAME_REGEX, validateOrgName } from './validate.js';
+import { AGENT_NAME_REGEX } from './validate.js';
 
 export interface QualifiedName {
   /** Engineer namespace, if this is a personal agent. */
@@ -43,7 +43,6 @@ export function resolveAgentDir(frameworkRoot: string, org: string, qualifiedNam
   if (!frameworkRoot) {
     throw new Error('resolveAgentDir: frameworkRoot is empty — CTX_FRAMEWORK_ROOT is likely unset.');
   }
-  validateOrgName(org);
   const { engineer, agent } = parseQualifiedName(qualifiedName);
   if (engineer) {
     return join(frameworkRoot, 'orgs', org, 'engineers', engineer, 'agents', agent);
