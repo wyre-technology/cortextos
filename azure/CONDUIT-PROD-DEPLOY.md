@@ -72,7 +72,72 @@ conduit RG migration; nothing here is throwaway.
    call, `schema_migrations` shows 001-030 applied to the *fresh* conduit DB.
 9. **Cutover `conduit.wyre.ai`** — re-point the Cloudflare origin to the new
    conduit-prod gateway. Blue-green: the new stack is validated first, the
-   current origin stays live until the switch.
+   current origin stays live until the switch. The full sequence is below
+   (one controlled session, not stretched).
+
+## conduit.wyre.ai cutover sequence — one controlled session
+
+The new stack is already validated on its default `*.azurecontainerapps.io`
+hostname; the asuid TXT (`asuid.conduit.wyre.ai`) is already in the wyre.ai
+zone, so `conduit.wyre.ai` is on `conduit-prod-gateway`'s `customDomains` list
+with `bindingType: Disabled`. The cutover provisions the cert and flips traffic
+at Aaron's launch-window greenlight. Avoids two known traps documented inline.
+
+1. **Aaron adds RECORD 2** (the cutover): on the wyre.ai Cloudflare zone,
+   create CNAME `conduit` → `conduit-prod-gateway.<env-default-domain>`
+   (currently `conduit-prod-gateway.kinddesert-88f38e67.eastus2.azurecontainerapps.io`).
+   This both enables the ACME challenge for the managed cert AND repoints
+   traffic — it IS the cutover. Verify resolution before step 2:
+   `dig +short conduit.wyre.ai @1.1.1.1` should return the env's ingress IPs.
+2. **Delete the auto-pending cert from the pre-bind attempt.** The Phase-B
+   bind attempt created `mc-conduit-prod-e-conduit-wyre-ai-<NNNN>` (ACA
+   appends a random suffix) in `Pending` state because the ACME challenge
+   couldn't complete without RECORD 2. **Do not let that cert provision and
+   bind itself** — its random-suffix name does not match the bicepparam's
+   `managedCertName=mc-conduit-prod-env-conduit-wyre-ai`, so the next
+   bicep deploy would fail on a customDomain binding referencing a
+   nonexistent cert. Delete it (guarded — skips cleanly if a prior attempt
+   already removed it or it was never created):
+   ```
+   NAME=$(az containerapp env certificate list -n conduit-prod-env \
+     -g rg-conduit-prod \
+     --query "[?starts_with(name,'mc-conduit-prod-e-conduit-wyre-ai-')].name" \
+     -o tsv)
+   if [ -n "$NAME" ]; then
+     az containerapp env certificate delete --name "$NAME" \
+       -n conduit-prod-env -g rg-conduit-prod --yes
+   else
+     echo "no auto-pending cert to delete — skipping step 2"
+   fi
+   ```
+3. **Create the controlled-name managed cert** matching the bicepparam.
+   HTTP-01 succeeds because RECORD 2 now points the domain at the env:
+   ```
+   az containerapp managed-certificate create \
+     --name mc-conduit-prod-env-conduit-wyre-ai \
+     --resource-group rg-conduit-prod --environment conduit-prod-env \
+     --hostname conduit.wyre.ai --validation-method HTTP
+   ```
+4. **Bind that cert to `conduit.wyre.ai` on `conduit-prod-gateway`:**
+   ```
+   az containerapp hostname bind \
+     --hostname conduit.wyre.ai \
+     --name conduit-prod-gateway --resource-group rg-conduit-prod \
+     --certificate mc-conduit-prod-env-conduit-wyre-ai
+   ```
+5. **Validate on the cut-over domain:**
+   `curl https://conduit.wyre.ai/health` → `{"status":"ok"}`.
+6. The next `conduit-prod` workflow deploy (the steady-state path) sees the
+   existing custom-domain binding via the `Read existing gateway state` step
+   and synthesizes no new binding — a clean no-op on the customDomain side.
+
+### Why path (b) (controlled-name cert) not path (a) (update bicepparam to the auto-suffix name)
+
+Baking a non-reproducible `-3474` random suffix into IaC means every future
+re-bind generates a different suffix and the bicepparam drifts. Keep
+bicep-as-source-of-truth: the cert name is what the bicepparam declares; the
+cert resource matches. Path (a) is the fallback only if a path-(b)
+ACME/ordering constraint surfaces mid-cutover (in which case flag it).
 
 ## migrate.ts on first boot
 
