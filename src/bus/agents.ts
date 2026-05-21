@@ -3,7 +3,7 @@ import { join } from 'path';
 import type { AgentInfo, AgentConfig, BusPaths } from '../types/index.js';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
 import { sendMessage } from './message.js';
-import { resolveAgentDir } from '../utils/agent-dir.js';
+import { resolveAgentDir, parseQualifiedName } from '../utils/agent-dir.js';
 
 /**
  * List all agents in the system.
@@ -132,8 +132,10 @@ export function listAgents(ctxRoot: string, org?: string): AgentInfo[] {
   // 3. Append any entries from enabled-agents.json that don't have a corresponding
   // directory on disk (stale registrations — file has them but the dir was deleted
   // or never existed). These are surfaced so users can clean them up.
+  // Use parseQualifiedName to accept both bare names and namespaced names like
+  // "aaron/dev" — the old inline regex /^[a-z0-9_-]+$/ silently dropped them.
   for (const [name, cfg] of Object.entries(enabledAgents)) {
-    if (!/^[a-z0-9_-]+$/.test(name)) continue;
+    try { parseQualifiedName(name); } catch { continue; }
     if (seen.has(name)) continue;
     const agentOrg = cfg.org || '';
     if (org && agentOrg !== org) continue;

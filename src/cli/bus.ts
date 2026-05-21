@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { spawnSync, execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { resolveAgentDir } from '../utils/agent-dir.js';
+import { resolveAgentDir, parseQualifiedName } from '../utils/agent-dir.js';
 import { sendMessage, checkInbox, ackInbox } from '../bus/message.js';
 import { validateAgentName } from '../utils/validate.js';
 import { createTask, updateTask, completeTask, claimTask, readTaskAudit, checkTaskDependencies, compactTasks, listTasks, checkStaleTasks, archiveTasks, checkHumanTasks } from '../bus/task.js';
@@ -81,9 +81,10 @@ busCommand
       console.error(`Invalid priority '${priority}'. Must be one of: ${validPriorities.join(', ')}`);
       process.exit(1);
     }
-    // Security (H9): Validate agent name before any filesystem access.
+    // Security (H9): Validate agent name (bare or qualified) before any filesystem access.
+    // parseQualifiedName accepts both "boss" and "aaron/dev" forms, validating each segment.
     try {
-      validateAgentName(to);
+      parseQualifiedName(to);
     } catch (err) {
       console.error(String(err));
       process.exit(1);
@@ -92,7 +93,8 @@ busCommand
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
 
-    // Warn if target agent doesn't exist (check project dir)
+    // Warn if target agent doesn't exist (check project dir).
+    // For qualified names (engineer/agent) also look under engineers/*/agents/.
     const { existsSync } = require('fs');
     const { join } = require('path');
     const projectRoot = env.projectRoot || env.frameworkRoot || process.cwd();
@@ -102,7 +104,7 @@ busCommand
       const { readdirSync } = require('fs');
       try {
         for (const org of readdirSync(orgsDir)) {
-          if (existsSync(join(orgsDir, org, 'agents', to))) {
+          if (existsSync(resolveAgentDir(projectRoot, org, to))) {
             agentExists = true;
             break;
           }
@@ -1342,14 +1344,28 @@ busCommand
       } catch { /* skip corrupt */ }
     }
 
-    // Also scan org agent directories
+    // Also scan org agent directories (shared and namespaced)
     const orgsDir = join(frameworkRoot, 'orgs');
     if (existsSync(orgsDir)) {
       for (const org of readdirSync(orgsDir)) {
+        // Shared agents: orgs/<org>/agents/<name>
         const agentsDir = join(orgsDir, org, 'agents');
-        if (!existsSync(agentsDir)) continue;
-        for (const name of readdirSync(agentsDir)) {
-          if (!agentMap[name]) agentMap[name] = { org, enabled: true };
+        if (existsSync(agentsDir)) {
+          for (const name of readdirSync(agentsDir)) {
+            if (!agentMap[name]) agentMap[name] = { org, enabled: true };
+          }
+        }
+        // Namespaced agents: orgs/<org>/engineers/<eng>/agents/<name>
+        const engineersDir = join(orgsDir, org, 'engineers');
+        if (existsSync(engineersDir)) {
+          for (const engineer of readdirSync(engineersDir)) {
+            const nsAgentsDir = join(engineersDir, engineer, 'agents');
+            if (!existsSync(nsAgentsDir)) continue;
+            for (const name of readdirSync(nsAgentsDir)) {
+              const qualified = `${engineer}/${name}`;
+              if (!agentMap[qualified]) agentMap[qualified] = { org, enabled: true };
+            }
+          }
         }
       }
     }
@@ -1843,7 +1859,8 @@ function agentExistsInFramework(agentName: string, frameworkRoot: string): boole
   if (!fsExists(orgsDir)) return true; // no orgs dir — allow
   try {
     for (const org of fsReaddir(orgsDir)) {
-      if (fsExists(pjoin(orgsDir, org, 'agents', agentName))) return true;
+      // resolveAgentDir handles both bare names and qualified "engineer/agent" names.
+      if (fsExists(resolveAgentDir(frameworkRoot, org, agentName))) return true;
     }
   } catch { /* ignore */ }
   return false;
@@ -2178,23 +2195,24 @@ busCommand
 
     if (agentArg) {
       // Single-agent migration
-      try { validateAgentName(agentArg); } catch (err) { console.error(String(err)); process.exit(1); }
+      try { parseQualifiedName(agentArg); } catch (err) { console.error(String(err)); process.exit(1); }
 
-      // Resolve config.json path via filesystem scan
+      // Resolve config.json path via filesystem scan.
+      // resolveAgentDir handles both bare names and qualified "engineer/agent" names.
       const { existsSync: fsExists, readdirSync: fsReaddir } = require('fs') as typeof import('fs');
       const orgsDir = join(frameworkRoot, 'orgs');
       let configPath: string | undefined;
       if (fsExists(orgsDir)) {
         try {
-          for (const org of fsReaddir(orgsDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)) {
-            const candidate = join(orgsDir, org, 'agents', agentArg, 'config.json');
+          for (const org of fsReaddir(orgsDir, { withFileTypes: true }).filter((d: import('fs').Dirent) => d.isDirectory()).map((d: import('fs').Dirent) => d.name)) {
+            const candidate = join(resolveAgentDir(frameworkRoot, org, agentArg), 'config.json');
             if (fsExists(candidate)) { configPath = candidate; break; }
           }
         } catch { /* ignore scan errors */ }
       }
 
       if (!configPath) {
-        console.error(`Error: agent '${agentArg}' not found in framework. Check orgs/*/agents/ directory.`);
+        console.error(`Error: agent '${agentArg}' not found in framework. Check orgs/*/agents/ and orgs/*/engineers/*/agents/ directories.`);
         process.exit(1);
       }
 
@@ -2261,14 +2279,15 @@ busCommand
     const { existsSync: fsExists, readdirSync: fsReaddir } =
       require('fs') as typeof import('fs');
 
-    // Resolve agent name to its absolute workspace dir (orgs/*/agents/AGENT).
-    function resolveAgentDir(agent: string): string | undefined {
+    // Resolve agent name (bare or qualified) to its absolute workspace dir.
+    // Uses the imported resolveAgentDir which handles "engineer/agent" forms.
+    function agentDirFor(agent: string): string | undefined {
       const orgsDir = join(frameworkRoot, 'orgs');
       if (!fsExists(orgsDir)) return undefined;
       try {
         for (const entry of fsReaddir(orgsDir, { withFileTypes: true })) {
           if (!entry.isDirectory()) continue;
-          const candidate = join(orgsDir, entry.name, 'agents', agent);
+          const candidate = resolveAgentDir(frameworkRoot, entry.name, agent);
           if (fsExists(candidate)) return candidate;
         }
       } catch {
@@ -2306,10 +2325,10 @@ busCommand
 
     const reports: Report[] = [];
     if (agentArg) {
-      try { validateAgentName(agentArg); } catch (err) { console.error(String(err)); process.exit(1); }
-      const dir = resolveAgentDir(agentArg);
+      try { parseQualifiedName(agentArg); } catch (err) { console.error(String(err)); process.exit(1); }
+      const dir = agentDirFor(agentArg);
       if (!dir) {
-        console.error(`Error: agent '${agentArg}' not found under ${join(frameworkRoot, 'orgs')}/*/agents/`);
+        console.error(`Error: agent '${agentArg}' not found under ${join(frameworkRoot, 'orgs')}/*/agents/ or orgs/*/engineers/*/agents/`);
         process.exit(1);
       }
       reports.push({ agent: agentArg, result: scanAgentDir(dir, { apply: opts.apply }) });

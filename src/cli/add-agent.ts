@@ -4,7 +4,7 @@ import { join, resolve, relative } from 'path';
 import { homedir } from 'os';
 import { OrgContext } from '../types';
 import { validateAgentName } from '../utils/validate';
-import { resolveAgentDir } from '../utils/agent-dir.js';
+import { resolveAgentDir, parseQualifiedName } from '../utils/agent-dir.js';
 
 const VALID_RUNTIMES = ['claude-code', 'hermes', 'codex-app-server'] as const;
 type RuntimeKind = typeof VALID_RUNTIMES[number];
@@ -42,12 +42,15 @@ export const addAgentCommand = new Command('add-agent')
     // fine but unable to use any bus command (including send-telegram).
     // Canonical rule lives in `src/utils/validate.ts`:
     //   AGENT_NAME_REGEX = /^[a-z0-9_-]+$/
+    // Namespace support: accept qualified names like "engineer/agent" in addition
+    // to bare names. parseQualifiedName validates each segment individually.
     try {
-      validateAgentName(name);
+      parseQualifiedName(name);
     } catch (err) {
       console.error(`Error: ${(err as Error).message}`);
       console.error(`Agent names must match /^[a-z0-9_-]+$/ (lowercase letters, numbers, underscores, hyphens).`);
-      console.error(`Examples of valid names: paul, sentinel, cortext-designer, m2c1-worker, agent_1`);
+      console.error(`Namespaced agents use "engineer/agent" form (e.g. aaron/dev).`);
+      console.error(`Examples of valid names: paul, sentinel, cortext-designer, aaron/dev`);
       process.exit(1);
     }
 
