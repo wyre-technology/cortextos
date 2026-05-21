@@ -146,6 +146,7 @@ function renderStep2(data: NewCustomerData): string {
 function renderStep3(data: NewCustomerData): string {
   const { draft, org } = data;
   const resellerSlug = org.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  const createUrl = `/admin/reseller/${encodeURIComponent(org.id)}/customers`;
   const summary: Array<[string, string]> = [
     ['Organization', draft.name],
     ['Subdomain', `conduit.wyre.ai/v1/mcp/${resellerSlug}/${draft.subdomain}`],
@@ -191,11 +192,14 @@ function renderStep3(data: NewCustomerData): string {
 
     <div class="nc-actions nc-actions-split">
       <a class="nc-back" href="${stepPath(2)}">&larr; Back</a>
-      <button type="button" class="nc-create" disabled
-        title="Customer provisioning lands with the Track A endpoint">
+      <button type="button" id="ncCreateBtn" class="nc-create"
+        data-create-url="${escapeHtml(createUrl)}"
+        data-plan="${escapeHtml(draft.plan)}"
+        data-name="${escapeHtml(draft.name)}">
         Create customer
       </button>
-    </div>`;
+    </div>
+    <div id="ncCreateError" class="nc-error" role="alert" hidden></div>`;
 }
 
 export function renderNewCustomer(data: NewCustomerData): { body: string; pageScripts: string } {
@@ -215,10 +219,9 @@ export function renderNewCustomer(data: NewCustomerData): { body: string; pageSc
       ${renderStepper(step)}
       ${stepBody}
       <p class="ia-shell-note">
-        This wizard renders mock data until the Track A customer-provisioning
-        endpoint lands. "Create customer" is disabled — provisioning writes a
-        new org, sends an owner invite, and seeds branding, so it stays gated
-        until that endpoint is live.
+        Provisioning v1 creates the customer org with you (the reseller admin)
+        as the interim owner. Owner-invite delivery and brand-profile
+        overrides land in follow-up iterations.
       </p>
     </div>`;
 
@@ -236,6 +239,48 @@ export function renderNewCustomer(data: NewCustomerData): { body: string; pageSc
     slug.value = derived;
     if (echo) echo.textContent = derived;
   }
+</script>`
+    : step === 3
+    ? `
+<script>
+  (function () {
+    var btn = document.getElementById('ncCreateBtn');
+    var err = document.getElementById('ncCreateError');
+    if (!btn || !err) return;
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      err.hidden = true;
+      err.textContent = '';
+      try {
+        var res = await fetch(btn.dataset.createUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: btn.dataset.name,
+            plan: (btn.dataset.plan || 'free').toLowerCase(),
+          }),
+        });
+        if (res.status === 201) {
+          var body = await res.json();
+          window.location.assign('/org/customers/' + encodeURIComponent(body.id));
+          return;
+        }
+        var msg = 'Create failed (HTTP ' + res.status + ')';
+        try {
+          var data = await res.json();
+          if (data && data.error) msg = data.error;
+        } catch (e) { /* keep default */ }
+        err.textContent = msg;
+        err.hidden = false;
+        btn.disabled = false;
+      } catch (e) {
+        err.textContent = 'Network error — please retry';
+        err.hidden = false;
+        btn.disabled = false;
+      }
+    });
+  })();
 </script>`
     : '';
 
@@ -431,5 +476,15 @@ export const NEW_CUSTOMER_STYLES = `
     background: var(--border-secondary);
     color: var(--text-muted);
     cursor: not-allowed;
+  }
+
+  .nc-error {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(220, 38, 38, 0.10);
+    border: 1px solid var(--danger, #dc2626);
+    border-radius: 6px;
+    color: var(--danger, #dc2626);
+    font-size: 12px;
   }
 `;
