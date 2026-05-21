@@ -201,3 +201,17 @@ A feature without a template update ships dark. If you're unsure whether a templ
 ## Questions
 
 Open a GitHub issue or message the cortextOS community channel.
+
+---
+
+## Syncing with upstream cortextOS
+
+WYRE runs a hard fork. To pull upstream fixes:
+
+    git fetch upstream
+    git checkout -b sync/<date> upstream/main
+    # cherry-pick or merge specific commits, resolving conflicts in src/
+    git checkout main && git merge sync/<date>
+
+Keep WYRE-specific changes surgical and isolated (prefer new files over edits
+to upstream files) to minimise merge conflicts.
