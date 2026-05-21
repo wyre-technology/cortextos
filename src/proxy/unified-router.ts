@@ -22,12 +22,25 @@ import { ToolCache, type McpTool } from './tool-cache.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 import { getSql } from '../db/context.js';
+import { getUserPrimaryOrgId } from './request-org-context.js';
+import { getOnpremCapsForOrg } from './onprem-capability-lookup.js';
+import { decideOnpremRoute } from './onprem-fork-decision.js';
+import type { RelayControlPlaneClient } from './relay-control-plane-client.js';
 
 interface UnifiedProxyDeps {
   credentialService: CredentialService;
   orgService: OrgService;
   billingGate: BillingGate;
   toolCache: ToolCache;
+  /**
+   * Gateway↔relay control-plane client for on-prem-vendor dispatch. Optional;
+   * absent (null/undefined) means the on-prem path is not configured for this
+   * gateway instance, and the unified-router's on-prem-fork short-circuits to
+   * "no on-prem path configured" (falls through to the standard vendor path).
+   * The relay-side endpoint is the same process the relay container runs;
+   * wired at gateway boot via readControlPlaneConfigFromEnv().
+   */
+  relayControlPlane?: RelayControlPlaneClient | null;
 }
 
 /**
@@ -41,7 +54,7 @@ function truncateDescription(desc: string, maxLen = 200): string {
 }
 
 export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
-  const { credentialService, orgService, billingGate, toolCache } = deps;
+  const { credentialService, orgService, billingGate, toolCache, relayControlPlane = null } = deps;
   const resultCache = new ResultCache();
 
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -193,6 +206,164 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
 
             const vendorSlug = prefixedName.slice(0, separatorIdx);
             const originalToolName = prefixedName.slice(separatorIdx + 2);
+
+            // ---------------------------------------------------------------
+            // ON-PREM FORK (PR #2 §4 step 5)
+            //
+            // Before resolving a cloud vendor, check whether this user's org
+            // has an on-prem tunnel registering THIS vendor slug as a granted
+            // capability. If so, route via the relay control-plane; the
+            // request never touches a cloud vendor URL.
+            //
+            // Boss pin 1: user→org resolution is memoized via getUserPrimaryOrgId
+            // (request-scope), shared with injectCredentials' internal lookup —
+            // ONE read per request, not two.
+            //
+            // Boss pin 2: getOnpremCapsForOrg memoizes the onprem_tunnels.caps
+            // read per request — multiple tools/call dispatches within one
+            // request hit the cache, not the DB.
+            //
+            // Boss pin 3: capability match is EXACT slug equality (caps array
+            // .includes(vendorSlug)) — no normalization, no case folding, no
+            // prefix matching. Same discipline as HMAC body-binding (verifier
+            // sees exactly what signer set).
+            //
+            // Boss pin 4: three distinct failure-mode mappings at the fork:
+            //   (a) slug NOT in caps          → "no on-prem path for this vendor";
+            //                                   FALL THROUGH to standard getVendor
+            //                                   path below (cloud routing).
+            //   (b) slug IN caps but no live tunnel held OR control-plane not
+            //       configured                 → "on-prem configured but unreachable";
+            //                                   typed error; do NOT fall through
+            //                                   (the operator chose on-prem; a
+            //                                   silent fall-back to cloud would
+            //                                   violate that choice).
+            //   (c) slug in caps + control-plane call → map RouteResult per
+            //                                   scope §3 decision (iv) (handled
+            //                                   in the relayControlPlane.route()
+            //                                   call below).
+            // ---------------------------------------------------------------
+            // Resolve user → org (memoized request-scope, α-helper) and the
+            // on-prem caps for that org (memoized request-scope). The actual
+            // branch logic lives in decideOnpremRoute() (unit-tested), so the
+            // three (a)/(b)/(c) cases stay pin-4 explicit and regression-safe.
+            const userIdForOnpremCheck = await resolveUserId(authHeader);
+            const onpremOrgId = userIdForOnpremCheck
+              ? await getUserPrimaryOrgId(request, userIdForOnpremCheck, orgService)
+              : null;
+            const onpremCaps = onpremOrgId ? await getOnpremCapsForOrg(request, onpremOrgId) : null;
+
+            const onpremDecision = decideOnpremRoute({
+              userId: userIdForOnpremCheck,
+              orgId: onpremOrgId,
+              onpremCaps,
+              vendorSlug,
+              hasControlPlaneClient: relayControlPlane !== null,
+            });
+
+            if (onpremDecision.kind === 'configured_but_unreachable') {
+              // (b) — typed error; do NOT fall through to cloud.
+              return reply.send({
+                jsonrpc: '2.0',
+                id: body?.id ?? null,
+                error: { code: -32000, message: 'on-prem path configured but control plane unreachable' },
+              });
+            }
+
+            if (onpremDecision.kind === 'dispatch_via_control_plane') {
+              // (c) — dispatch via control-plane; map RouteResult per (iv).
+              // relayControlPlane is non-null per the decision invariant.
+              const onpremStart = Date.now();
+              const routeResult = await relayControlPlane!.route({
+                subtenantId: onpremDecision.subtenantId,
+                target: vendorSlug,
+                payload: {
+                  jsonrpc: '2.0',
+                  id: body?.id ?? null,
+                  method: 'tools/call',
+                  params: { name: originalToolName, arguments: body?.params?.arguments ?? {} },
+                },
+              });
+              const onpremDurationMs = Date.now() - onpremStart;
+              // Customer-facing request_log row — COLLAPSED status (matches
+              // what the client sees). Per warden's operator-only-audit pin
+              // (scope §3 decision (iv)): the customer-facing Audit Log tab
+              // MUST NOT distinguish capability_not_granted from
+              // tunnel_offline — both surface as 401-ish "unknown vendor"
+              // for the client; here both get status 404 in request_log to
+              // preserve that ambiguity for the customer audit feed.
+              const customerStatus = routeResult.ok
+                ? 200
+                : routeResult.reason === 'capability_not_granted' || routeResult.reason === 'tunnel_offline'
+                  ? 404
+                  : routeResult.reason === 'tunnel_timeout'
+                    ? 504
+                    : routeResult.reason === 'tunnel_disconnected'
+                      ? 502
+                      : routeResult.reason === 'overloaded'
+                        ? 503
+                        : 500;
+              getSql()`
+                INSERT INTO request_log (id, user_id, org_id, vendor_slug, tool_name, status_code, response_time_ms, source)
+                VALUES (${nanoid()}, ${userIdForOnpremCheck!}, ${onpremDecision.subtenantId}, ${vendorSlug}, ${originalToolName}, ${customerStatus}, ${onpremDurationMs}, ${'onprem'})
+              `.catch((err) => { app.log.warn({ err }, 'Failed to log on-prem request to request_log'); });
+
+              // Operator-facing admin_audit_log row — PRECISE relay-return-
+              // reason. ONLY on failure (success paths get only request_log).
+              // metadata captures the discriminant so operator-side telemetry
+              // distinguishes capability_not_granted from tunnel_offline even
+              // though the customer sees the same response. Warden's
+              // operator-only-audit pin: precise reasons ONLY in
+              // admin_audit_log, never in request_log.
+              if (!routeResult.ok) {
+                const reason = routeResult.reason;
+                const eventMeta = {
+                  vendor_slug: vendorSlug,
+                  tool_name: originalToolName,
+                  precise_reason: reason,
+                  customer_visible_status: customerStatus,
+                  duration_ms: onpremDurationMs,
+                  ...(reason === 'control_plane_unreachable' ? { detail: (routeResult as { detail?: string }).detail ?? null } : {}),
+                  ...(reason === 'unknown_error' ? { status: (routeResult as { status?: number }).status ?? null } : {}),
+                };
+                getSql()`
+                  INSERT INTO admin_audit_log (id, org_id, actor_id, event_type, metadata)
+                  VALUES (${nanoid()}, ${onpremDecision.subtenantId}, ${userIdForOnpremCheck!}, ${'onprem_request_failed'}, ${getSql().json(eventMeta)})
+                `.catch((err) => { app.log.warn({ err }, 'Failed to log on-prem failure to admin_audit_log'); });
+              }
+
+              if (routeResult.ok) {
+                // The relay returned a JSON-RPC frame; forward as-is.
+                const responseBody =
+                  (routeResult.response.payload as object | undefined) ??
+                  (routeResult.response.error
+                    ? { jsonrpc: '2.0', id: body?.id ?? null, error: routeResult.response.error }
+                    : { jsonrpc: '2.0', id: body?.id ?? null, result: null });
+                return reply.send(responseBody);
+              }
+              // Failure mode mapping per scope §3 decision (iv) — coarse,
+              // operator-precise reason captured in admin_audit_log (above);
+              // client-visible JSON-RPC error is generic.
+              const errMap: Record<string, { code: number; message: string }> = {
+                tunnel_offline: { code: -32000, message: 'on-prem tunnel offline' },
+                tunnel_timeout: { code: -32000, message: 'on-prem tunnel timeout' },
+                tunnel_disconnected: { code: -32000, message: 'on-prem tunnel disconnected' },
+                capability_not_granted: { code: -32601, message: `Unknown vendor: ${vendorSlug}` },
+                unauthorized: { code: -32000, message: 'control plane error' },
+                malformed_body: { code: -32000, message: 'control plane error' },
+                overloaded: { code: -32000, message: 'on-prem path overloaded' },
+                control_plane_unreachable: { code: -32000, message: 'control plane unreachable' },
+                unknown_error: { code: -32000, message: 'control plane error' },
+              };
+              const mapped = errMap[routeResult.reason] ?? { code: -32000, message: 'control plane error' };
+              return reply.send({
+                jsonrpc: '2.0',
+                id: body?.id ?? null,
+                error: mapped,
+              });
+            }
+            // (a) — onpremDecision.kind === 'fall_through_to_cloud': continue
+            // to the standard getVendor() path below.
 
             const vendorConfig = getVendor(vendorSlug);
             if (!vendorConfig) {

@@ -116,7 +116,30 @@ export class RelayServer {
 
   async stop(): Promise<void> {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
-    for (const t of this.tunnels.values()) t.socket.close();
+
+    // Drain sockets: close each + AWAIT its 'close' event so onDisconnect
+    // (markOffline + pending-reject + cleanup) completes BEFORE stop()
+    // resolves. Without this drain, close events fire asynchronously after
+    // stop() returns — and if the test/process tears down the DB context
+    // between stop() returning and the close events firing, markOffline
+    // hits an uninitialized SQL pool and explodes. The cleanup must finish
+    // in scope.
+    const drains: Promise<void>[] = [];
+    for (const t of this.tunnels.values()) {
+      const socket = t.socket;
+      drains.push(
+        new Promise<void>((resolve) => {
+          if (socket.readyState === 3 /* CLOSED */) {
+            resolve();
+            return;
+          }
+          socket.once('close', () => resolve());
+          socket.close();
+        }),
+      );
+    }
+    await Promise.all(drains);
+
     await new Promise<void>((resolve) => this.wss.close(() => resolve()));
   }
 
