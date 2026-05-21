@@ -76,10 +76,58 @@ conduit RG migration; nothing here is throwaway.
 
 ## migrate.ts on first boot
 
-The gateway runs `migrate.ts` (001-030) on first boot against the **fresh,
+The gateway runs `migrate.ts` (001-031) on first boot against the **fresh,
 empty** `conduit-prod-pg` database — a non-event, the designed clean-slate
 path. This is exactly the migration that is *unsafe* against the live
 mcp-gateway DB and *safe* here.
+
+### ⚠ pg_trgm extension allow-list — REQUIRED before the first deploy
+
+Migration `012_impersonation_and_audit.sql` runs `CREATE EXTENSION IF NOT
+EXISTS pg_trgm`. A **fresh Azure Database for PostgreSQL Flexible Server
+allow-lists NO extensions** — `azure.extensions` is empty by default — so
+`CREATE EXTENSION pg_trgm` is rejected, migration 012 fails, `migrate.ts`
+throws, and the gateway **crashloops (exit 1)**. Observed on the 2026-05-20
+Phase-B standup.
+
+Fix — set the allow-list on `conduit-prod-pg`:
+```
+az postgres flexible-server parameter set \
+  --resource-group rg-conduit-prod --server-name conduit-prod-pg \
+  --name azure.extensions --value PG_TRGM
+```
+`azure.extensions` is a dynamic parameter (no server restart). After setting
+it, restart the gateway revision so `migrate.ts` re-runs. The
+`Deploy Bicep (conduit-prod)` step in `.github/workflows/deploy.yml` already
+does this `parameter set` (idempotent) before every deploy — so a deploy via
+the workflow is self-healing; only an interactive first deploy must do it by
+hand. **`pg_trgm` is the only extension the conduit migrations need** — if a
+future migration adds another `CREATE EXTENSION`, extend the allow-list value.
+
+### Gateway identity → Key Vault (the secretRef chicken-and-egg)
+
+`gateway-app.bicep` gives the gateway a **system-assigned** identity and
+declares its 18 app-config secrets as `keyVaultUrl`-backed Container App
+secret refs (`identity: 'system'`). `identity.bicep` has
+`deployRoleAssignment = false`, so the Bicep does **not** grant the gateway
+identity Key Vault access — and it could not usefully do so anyway: the
+identity does not exist until the gateway Container App is created, and the
+revision tries to resolve the KV secrets as part of that same creation.
+
+So the first deploy leaves the gateway revision stuck `Activating` (KV secrets
+unresolvable). After the first deploy, grant the gateway's system identity
+`Key Vault Secrets User` on `conduit-prod-kv` and restart the revision:
+```
+PRINCIPAL=$(az containerapp show -n conduit-prod-gateway -g rg-conduit-prod \
+  --query identity.principalId -o tsv)
+az role assignment create --assignee-object-id "$PRINCIPAL" \
+  --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
+  --scope "$(az keyvault show -n conduit-prod-kv -g rg-conduit-prod --query id -o tsv)"
+az containerapp revision restart -n conduit-prod-gateway -g rg-conduit-prod \
+  --revision "$(az containerapp show -n conduit-prod-gateway -g rg-conduit-prod --query properties.latestRevisionName -o tsv)"
+```
+This is a one-time grant — the role assignment persists, so subsequent deploys
+need no repeat.
 
 ## conduit-prod Key Vault — 18 secrets (copy from `mcpgw-prod-kv`)
 

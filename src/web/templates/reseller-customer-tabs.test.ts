@@ -77,10 +77,11 @@ describe('renderCustomerTab — Usage (live)', () => {
     expect(pageScripts).toContain('createElement');
     expect(pageScripts).not.toContain('innerHTML');
   });
-  it('is the only tab with a page script', () => {
-    for (const t of ['mcps', 'users', 'tools', 'audit', 'billing', 'settings'] as CustomerTabId[]) {
+  it('only the live tabs (Usage, Audit) carry a page script', () => {
+    for (const t of ['mcps', 'users', 'tools', 'billing', 'settings'] as CustomerTabId[]) {
       expect(renderCustomerTab(data(t)).pageScripts).toBe('');
     }
+    expect(renderCustomerTab(data('audit')).pageScripts).not.toBe('');
   });
 });
 
@@ -93,11 +94,14 @@ describe('renderCustomerTab — Tool Access', () => {
   });
 });
 
-describe('renderCustomerTab — Audit Log', () => {
-  it('renders audit rows', () => {
-    const { body } = renderCustomerTab(data('audit'));
-    expect(body).toContain('mcp.tool.invoke');
-    expect(body).toContain('C. Ramirez');
+describe('renderCustomerTab — Audit Log (live)', () => {
+  it('renders the live shell + a reseller-scoped audit fetch script', () => {
+    const { body, pageScripts } = renderCustomerTab(data('audit'));
+    expect(body).toContain('id="cdtAuditLoading"');
+    expect(body).toContain('id="cdtAuditRows"');
+    expect(pageScripts).toContain('/admin/reseller/org_reseller/customers/cust_1/audit');
+    expect(pageScripts).toContain('createElement');
+    expect(pageScripts).not.toContain('innerHTML');
   });
 });
 
@@ -122,7 +126,8 @@ describe('renderCustomerTab — Settings', () => {
 
 describe('renderCustomerTab — invariants', () => {
   it('mock-first tabs carry a documented swap-in contract', () => {
-    for (const t of ['mcps', 'users', 'tools', 'audit', 'billing', 'settings'] as CustomerTabId[]) {
+    // Usage + Audit are wired live; the rest are still mock-first.
+    for (const t of ['mcps', 'users', 'tools', 'billing', 'settings'] as CustomerTabId[]) {
       expect(renderCustomerTab(data(t)).body).toContain('SWAP-IN CONTRACT');
     }
   });
@@ -139,8 +144,8 @@ describe('renderCustomerTab — empty states', () => {
   it('renders an empty-state row for each zero-row mock tab', () => {
     expect(renderCustomerTab(data('mcps', { mcps: [] })).body).toContain('No MCPs connected');
     expect(renderCustomerTab(data('users', { members: [], memberTotal: 0 })).body).toContain('No members yet');
-    expect(renderCustomerTab(data('audit', { audit: [] })).body).toContain('No audit events');
     expect(renderCustomerTab(data('billing', { invoices: [] })).body).toContain('No invoices yet');
+    // (Audit Log is live — its empty-state is a client-script fallback.)
   });
   it('omits the "+ N more" affordance when the roster is complete', () => {
     const { body } = renderCustomerTab(data('users', { memberTotal: 1 }));

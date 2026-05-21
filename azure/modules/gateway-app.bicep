@@ -219,6 +219,16 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
         {
+          name: 'microsoft-client-id'
+          keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-id'
+          identity: 'system'
+        }
+        {
+          name: 'microsoft-client-secret'
+          keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-secret'
+          identity: 'system'
+        }
+        {
           name: 'stripe-secret-key'
           keyVaultUrl: '${keyVaultUri}secrets/stripe-secret-key'
           identity: 'system'
@@ -311,6 +321,11 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AUTH0_DOMAIN', secretRef: 'auth0-domain' }
             { name: 'AUTH0_CLIENT_ID', secretRef: 'auth0-client-id' }
             { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
+            // microsoft-graph / m365 vendor OAuth (oauthConfig.clientIdEnv).
+            // Backed by a multi-tenant Entra app; secrets live in each
+            // environment's Key Vault as microsoft-client-id / -secret.
+            { name: 'MICROSOFT_CLIENT_ID', secretRef: 'microsoft-client-id' }
+            { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
             { name: 'AUTH0_CALLBACK_URL', value: empty(customDomain) ? 'https://${prefix}-gateway.${containerEnv.properties.defaultDomain}/auth/callback' : 'https://${customDomain}/auth/callback' }
             { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
             { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
