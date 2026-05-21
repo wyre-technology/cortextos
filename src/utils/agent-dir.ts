@@ -1,7 +1,5 @@
 import { join } from 'path';
-
-/** Canonical segment rule — matches AGENT_NAME_REGEX in src/utils/validate.ts. */
-const SEGMENT_RE = /^[a-z0-9_-]+$/;
+import { AGENT_NAME_REGEX, validateOrgName } from './validate.js';
 
 export interface QualifiedName {
   /** Engineer namespace, if this is a personal agent. */
@@ -22,16 +20,16 @@ export function parseQualifiedName(name: string): QualifiedName {
   }
   if (parts.length === 2) {
     const [engineer, agent] = parts;
-    if (!SEGMENT_RE.test(engineer)) {
-      throw new Error(`Invalid engineer segment "${engineer}" in "${name}": must match ${SEGMENT_RE}.`);
+    if (!AGENT_NAME_REGEX.test(engineer)) {
+      throw new Error(`Invalid engineer segment "${engineer}" in "${name}": must match ${AGENT_NAME_REGEX}.`);
     }
-    if (!SEGMENT_RE.test(agent)) {
-      throw new Error(`Invalid agent segment "${agent}" in "${name}": must match ${SEGMENT_RE}.`);
+    if (!AGENT_NAME_REGEX.test(agent)) {
+      throw new Error(`Invalid agent segment "${agent}" in "${name}": must match ${AGENT_NAME_REGEX}.`);
     }
     return { engineer, agent };
   }
-  if (!SEGMENT_RE.test(name)) {
-    throw new Error(`Invalid agent name "${name}": must match ${SEGMENT_RE}.`);
+  if (!AGENT_NAME_REGEX.test(name)) {
+    throw new Error(`Invalid agent name "${name}": must match ${AGENT_NAME_REGEX}.`);
   }
   return { agent: name };
 }
@@ -42,6 +40,10 @@ export function parseQualifiedName(name: string): QualifiedName {
  * `qualifiedName` is bare ("boss") or engineer-qualified ("aaron/dev").
  */
 export function resolveAgentDir(frameworkRoot: string, org: string, qualifiedName: string): string {
+  if (!frameworkRoot) {
+    throw new Error('resolveAgentDir: frameworkRoot is empty — CTX_FRAMEWORK_ROOT is likely unset.');
+  }
+  validateOrgName(org);
   const { engineer, agent } = parseQualifiedName(qualifiedName);
   if (engineer) {
     return join(frameworkRoot, 'orgs', org, 'engineers', engineer, 'agents', agent);

@@ -22,6 +22,10 @@ describe('parseQualifiedName', () => {
   it('rejects an invalid agent segment', () => {
     expect(() => parseQualifiedName('aaron/Dev')).toThrow(/agent/i);
   });
+
+  it('throws on an empty string', () => {
+    expect(() => parseQualifiedName('')).toThrow();
+  });
 });
 
 describe('resolveAgentDir', () => {
@@ -35,5 +39,17 @@ describe('resolveAgentDir', () => {
   it('resolves a namespaced agent under engineers/<engineer>/agents', () => {
     expect(resolveAgentDir(root, 'wyre', 'aaron/dev'))
       .toBe(join(root, 'orgs', 'wyre', 'engineers', 'aaron', 'agents', 'dev'));
+  });
+
+  it('throws when frameworkRoot is empty', () => {
+    expect(() => resolveAgentDir('', 'wyre', 'boss')).toThrow(/frameworkRoot/i);
+  });
+
+  it('throws when org is invalid (dot-dot)', () => {
+    expect(() => resolveAgentDir(root, '..', 'boss')).toThrow(/org/i);
+  });
+
+  it('throws when org is empty', () => {
+    expect(() => resolveAgentDir(root, '', 'boss')).toThrow(/org/i);
   });
 });

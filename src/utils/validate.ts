@@ -1,7 +1,7 @@
 import type { Priority, EventCategory, EventSeverity, ApprovalCategory } from '../types/index.js';
 import { VALID_PRIORITIES } from '../types/index.js';
 
-const AGENT_NAME_REGEX = /^[a-z0-9_-]+$/;
+export const AGENT_NAME_REGEX = /^[a-z0-9_-]+$/;
 
 export function validateInstanceId(instanceId: string): void {
   if (!instanceId || !AGENT_NAME_REGEX.test(instanceId)) {
