@@ -1,3 +1,4 @@
+export { parseQualifiedName, resolveAgentDir } from './agent-dir.js';
 export { atomicWriteSync, ensureDir } from './atomic.js';
 export { acquireLock, releaseLock } from './lock.js';
 export { resolvePaths, getIpcPath } from './paths.js';

@@ -3,6 +3,7 @@ import { join } from 'path';
 import type { AgentInfo, AgentConfig, BusPaths } from '../types/index.js';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
 import { sendMessage } from './message.js';
+import { resolveAgentDir, parseQualifiedName } from '../utils/agent-dir.js';
 
 /**
  * List all agents in the system.
@@ -92,14 +93,49 @@ export function listAgents(ctxRoot: string, org?: string): AgentInfo[] {
 
         agents.push(buildAgentInfo(agentName, orgName, isEnabled, ctxRoot));
       }
+
+      // Namespaced (per-engineer) agents: orgs/<org>/engineers/<eng>/agents/<name>
+      const engineersDir = join(orgsDir, orgName, 'engineers');
+      if (existsSync(engineersDir)) {
+        let engineerDirs: string[];
+        try {
+          engineerDirs = readdirSync(engineersDir);
+        } catch {
+          engineerDirs = [];
+        }
+        for (const engineer of engineerDirs) {
+          if (!/^[a-z0-9_-]+$/.test(engineer)) continue;
+          const nsAgentsDir = join(engineersDir, engineer, 'agents');
+          if (!existsSync(nsAgentsDir)) continue;
+          let nsAgentDirs: string[];
+          try {
+            nsAgentDirs = readdirSync(nsAgentsDir);
+          } catch {
+            continue;
+          }
+          for (const agentName of nsAgentDirs) {
+            if (!/^[a-z0-9_-]+$/.test(agentName)) continue;
+            const qualified = `${engineer}/${agentName}`;
+            if (seen.has(qualified)) continue;
+            seen.add(qualified);
+            const explicitEntry = enabledAgents[qualified];
+            const isEnabled = explicitEntry ? explicitEntry.enabled !== false : true;
+            const info = buildAgentInfo(qualified, orgName, isEnabled, ctxRoot);
+            info.engineer = engineer;
+            agents.push(info);
+          }
+        }
+      }
     }
   }
 
   // 3. Append any entries from enabled-agents.json that don't have a corresponding
   // directory on disk (stale registrations — file has them but the dir was deleted
   // or never existed). These are surfaced so users can clean them up.
+  // Use parseQualifiedName to accept both bare names and namespaced names like
+  // "aaron/dev" — the old inline regex /^[a-z0-9_-]+$/ silently dropped them.
   for (const [name, cfg] of Object.entries(enabledAgents)) {
-    if (!/^[a-z0-9_-]+$/.test(name)) continue;
+    try { parseQualifiedName(name); } catch { continue; }
     if (seen.has(name)) continue;
     const agentOrg = cfg.org || '';
     if (org && agentOrg !== org) continue;
@@ -148,7 +184,7 @@ function buildAgentInfo(
   const frameworkRoot = process.env.CTX_FRAMEWORK_ROOT || process.env.CTX_PROJECT_ROOT || '';
   if (frameworkRoot) {
     const identityPaths = [
-      join(frameworkRoot, 'orgs', org, 'agents', name, 'IDENTITY.md'),
+      join(resolveAgentDir(frameworkRoot, org, name), 'IDENTITY.md'),
       join(frameworkRoot, 'agents', name, 'IDENTITY.md'),
     ];
     for (const idPath of identityPaths) {
@@ -202,7 +238,7 @@ function buildAgentInfo(
   const configFrameworkRoot = process.env.CTX_FRAMEWORK_ROOT || process.env.CTX_PROJECT_ROOT || '';
   if (configFrameworkRoot) {
     const configPaths = [
-      join(configFrameworkRoot, 'orgs', org, 'agents', name, 'config.json'),
+      join(resolveAgentDir(configFrameworkRoot, org, name), 'config.json'),
       join(configFrameworkRoot, 'agents', name, 'config.json'),
     ];
     for (const cfgPath of configPaths) {

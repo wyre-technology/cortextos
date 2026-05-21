@@ -15,6 +15,7 @@ import { recordInboundTelegram, cacheLastSent, logOutboundMessage, buildRecentHi
 import { collectTelegramCommands, registerTelegramCommands } from '../bus/metrics.js';
 import { stripControlChars } from '../utils/validate.js';
 import { processMediaMessage } from '../telegram/media.js';
+import { resolveAgentDir } from '../utils/agent-dir.js';
 
 type LogFn = (msg: string) => void;
 
@@ -123,7 +124,7 @@ export class AgentManager {
           .filter(d => d.isDirectory())
           .map(d => d.name);
         for (const org of orgs) {
-          if (existsSync(join(orgsBase, org, 'agents', name))) {
+          if (existsSync(resolveAgentDir(this.frameworkRoot, org, name))) {
             return org;
           }
         }
@@ -169,7 +170,7 @@ export class AgentManager {
 
     // Auto-discover agent directory if not provided (e.g. when started via IPC)
     if (!agentDir || !existsSync(agentDir)) {
-      const discovered = join(this.frameworkRoot, 'orgs', resolvedOrg, 'agents', name);
+      const discovered = resolveAgentDir(this.frameworkRoot, resolvedOrg, name);
       if (existsSync(discovered)) {
         agentDir = discovered;
       } else {
@@ -919,21 +920,55 @@ export class AgentManager {
     }
 
     for (const org of orgNames) {
+      // Shared org agents: orgs/<org>/agents/<name>
       const agentsBase = join(orgsBase, org, 'agents');
-      if (!existsSync(agentsBase)) continue;
+      if (existsSync(agentsBase)) {
+        try {
+          const dirs = readdirSync(agentsBase, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name);
 
-      try {
-        const dirs = readdirSync(agentsBase, { withFileTypes: true })
-          .filter(d => d.isDirectory())
-          .map(d => d.name);
-
-        for (const name of dirs) {
-          const dir = join(agentsBase, name);
-          const config = this.loadAgentConfig(dir);
-          agents.push({ name, dir, org, config });
+          for (const name of dirs) {
+            const dir = join(agentsBase, name);
+            const config = this.loadAgentConfig(dir);
+            agents.push({ name, dir, org, config });
+          }
+        } catch {
+          // Ignore read errors for this org — continue scanning others
         }
-      } catch {
-        // Ignore read errors for this org — continue scanning others
+      }
+
+      // Namespaced (per-engineer) agents: orgs/<org>/engineers/<eng>/agents/<name>
+      // Discovered with qualified name "<engineer>/<agent>" so downstream path
+      // resolution via resolveAgentDir handles the slash correctly.
+      const engineersBase = join(orgsBase, org, 'engineers');
+      if (existsSync(engineersBase)) {
+        try {
+          const engineerDirs = readdirSync(engineersBase, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name);
+
+          for (const engineer of engineerDirs) {
+            const nsAgentsBase = join(engineersBase, engineer, 'agents');
+            if (!existsSync(nsAgentsBase)) continue;
+            try {
+              const nsAgentDirs = readdirSync(nsAgentsBase, { withFileTypes: true })
+                .filter(d => d.isDirectory())
+                .map(d => d.name);
+
+              for (const agentName of nsAgentDirs) {
+                const qualifiedName = `${engineer}/${agentName}`;
+                const dir = join(nsAgentsBase, agentName);
+                const config = this.loadAgentConfig(dir);
+                agents.push({ name: qualifiedName, dir, org, config });
+              }
+            } catch {
+              // Ignore read errors for this engineer dir
+            }
+          }
+        } catch {
+          // Ignore read errors for engineers dir
+        }
       }
     }
 

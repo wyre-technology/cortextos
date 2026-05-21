@@ -176,6 +176,30 @@ describe('Agent Discovery', () => {
     });
   });
 
+  describe('namespaced agent discovery', () => {
+    it('discovers per-engineer agents under their qualified name', () => {
+      const frameworkRoot = join(testDir, 'framework');
+      process.env.CTX_FRAMEWORK_ROOT = frameworkRoot;
+
+      // Shared org agent
+      mkdirSync(join(frameworkRoot, 'orgs', 'wyre', 'agents', 'boss'), { recursive: true });
+      // Personal agent under engineer namespace
+      mkdirSync(join(frameworkRoot, 'orgs', 'wyre', 'engineers', 'aaron', 'agents', 'dev'), {
+        recursive: true,
+      });
+
+      const agents = listAgents(ctxRoot, 'wyre');
+      const names = agents.map(a => a.name).sort();
+
+      expect(names).toContain('boss');
+      expect(names).toContain('aaron/dev');
+
+      const nsAgent = agents.find(a => a.name === 'aaron/dev');
+      expect(nsAgent).toBeDefined();
+      expect(nsAgent!.engineer).toBe('aaron');
+    });
+  });
+
   describe('notifyAgent', () => {
     let paths: BusPaths;
 

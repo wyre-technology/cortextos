@@ -762,6 +762,8 @@ export interface AgentInfo {
   last_heartbeat: string | null;
   current_task: string | null;
   mode: string | null;
+  /** Engineer namespace for personal agents; absent for shared org agents. */
+  engineer?: string;
 }
 
 // Agent Status (returned by daemon)
