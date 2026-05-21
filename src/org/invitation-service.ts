@@ -3,6 +3,8 @@ import { nanoid } from 'nanoid';
 import type { OrgInvitation, OrgMember, CreatedInvitation } from './org-service.js';
 import { MemberService } from './member-service.js';
 import { hashInvitationToken } from './invitation-token-hash.js';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
+import type { FastifyBaseLogger } from 'fastify';
 
 interface InvitationRow {
   id: string;
@@ -117,7 +119,7 @@ export class InvitationService {
     return toInvitation(rows[0]);
   }
 
-  async acceptInvitation(token: string, userId: string): Promise<OrgMember | null> {
+  async acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger): Promise<OrgMember | null> {
     const invitation = await this.getInvitationByToken(token);
     if (!invitation) return null;
 
@@ -148,6 +150,11 @@ export class InvitationService {
       ON CONFLICT (org_id, user_id) DO NOTHING
       RETURNING *
     `;
+
+    // Notify new signup if membership was created
+    if (rows[0] && log) {
+      void notifyNewSignup(this.sql, { userId, orgId: invitation.orgId, isOwner: false }, log);
+    }
 
     return rows[0] ? toMember(rows[0]) : await this.memberService.getMembership(invitation.orgId, userId);
   }

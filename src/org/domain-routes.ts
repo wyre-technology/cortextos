@@ -34,6 +34,7 @@ import { domainFromEmail } from './public-email-domains.js';
 import { getSql, runAsSystem } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { FastifyReply } from 'fastify';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
 
 interface DomainRouteDeps {
   orgService: OrgService;
@@ -227,6 +228,9 @@ export function domainRoutes(deps: DomainRouteDeps) {
           ON CONFLICT (org_id, user_id) DO NOTHING
         `,
       );
+
+      // Notify new signup
+      void notifyNewSignup(getSql(), { userId: user.sub, orgId: claim.orgId, isOwner: false }, request.log);
 
       // System-path, for consistency with claim-eligibility above and so this
       // does not depend on the just-committed org_members INSERT being visible

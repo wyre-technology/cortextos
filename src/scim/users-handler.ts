@@ -20,6 +20,8 @@ import { nanoid } from 'nanoid';
 import type postgres from 'postgres';
 import { getSql, type Sql } from '../db/context.js';
 import { scimPatch } from 'scim-patch';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
+import type { FastifyBaseLogger } from 'fastify';
 import {
   scimUserCreateSchema,
   scimUserReplaceSchema,
@@ -195,7 +197,7 @@ export class ScimUsersHandler {
       }
 
       // 2. Attach membership in the connection's scope.
-      await this.attachMembership(tx, connection, user.id);
+      await this.attachMembership(tx, connection, user.id, console);
 
       return {
         status: 201,
@@ -249,7 +251,7 @@ export class ScimUsersHandler {
       if (willDeactivate) {
         await this.detachMembership(tx, connection, id);
       } else if (willReactivate) {
-        await this.attachMembership(tx, connection, id);
+        await this.attachMembership(tx, connection, id, console);
       }
       return { status: 200, body: serializeUser(updated[0], connection) };
     });
@@ -327,6 +329,7 @@ export class ScimUsersHandler {
     tx: postgres.TransactionSql,
     connection: ScimConnection,
     userId: string,
+    log?: Pick<FastifyBaseLogger, 'warn'>,
   ): Promise<void> {
     if (connection.scope === 'tenant') {
       await tx`
@@ -335,6 +338,11 @@ export class ScimUsersHandler {
                 ${connection.defaultRole}, NOW())
         ON CONFLICT (org_id, user_id) DO NOTHING
       `;
+
+      // Notify new signup for tenant scope only (not reseller_members)
+      if (log) {
+        void notifyNewSignup(tx, { userId, orgId: connection.orgId, isOwner: false }, log);
+      }
     } else {
       await tx`
         INSERT INTO reseller_members

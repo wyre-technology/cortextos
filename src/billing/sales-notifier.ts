@@ -15,8 +15,10 @@
 
 import { config } from '../config.js';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Sql } from '../db/context.js';
+import type postgres from 'postgres';
 
-async function postToSlack(payload: Record<string, unknown>, log: FastifyBaseLogger): Promise<void> {
+async function postToSlack(payload: Record<string, unknown>, log: Pick<FastifyBaseLogger, 'warn'>): Promise<void> {
   if (!config.slackSalesWebhookUrl) return;
   try {
     const res = await fetch(config.slackSalesWebhookUrl, {
@@ -52,7 +54,7 @@ export interface BillingAnomalyEvent {
  */
 export async function notifyBillingAnomaly(
   ev: BillingAnomalyEvent,
-  log: FastifyBaseLogger,
+  log: Pick<FastifyBaseLogger, 'warn'>,
 ): Promise<void> {
   await postToSlack(
     {
@@ -78,4 +80,93 @@ export async function notifyBillingAnomaly(
     },
     log,
   );
+}
+
+export interface NewSignupEvent {
+  userId: string;
+  orgId: string;
+  isOwner: boolean;
+}
+
+/**
+ * Fires when a user creates their first membership in any organization.
+ * Posts to #conduit-sales indicating whether they created the org (owner)
+ * or joined an existing one.
+ */
+export async function notifyNewSignup(
+  sql: Sql | postgres.TransactionSql,
+  ev: NewSignupEvent,
+  log: Pick<FastifyBaseLogger, 'warn'>,
+): Promise<void> {
+  try {
+    // Check if this is truly the user's first membership
+    const membershipCount = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM org_members WHERE user_id = ${ev.userId}
+    `;
+
+    if (Number(membershipCount[0]?.count) !== 1) {
+      return; // Not a new user
+    }
+
+    // Fetch user and organization details
+    const userRows = await sql<{ email: string | null; name: string | null }[]>`
+      SELECT email, name FROM users WHERE id = ${ev.userId} LIMIT 1
+    `;
+
+    const orgRows = await sql<{ name: string }[]>`
+      SELECT name FROM organizations WHERE id = ${ev.orgId} LIMIT 1
+    `;
+
+    const user = userRows[0];
+    const org = orgRows[0];
+
+    if (!user || !org) {
+      return; // Missing user or org data
+    }
+
+    // Format user line
+    const userLine = user.name ? `${user.name} <${user.email}>` : user.email;
+
+    // Set up content based on owner vs member
+    const emoji = ev.isOwner ? `:office:` : `:wave:`;
+    const role = ev.isOwner ? `Org owner` : `Joined existing org`;
+    const headline = ev.isOwner
+      ? `*${userLine}* created a new organization, *${org.name}*.`
+      : `*${userLine}* joined an existing organization, *${org.name}*.`;
+
+    await postToSlack(
+      {
+        text: `${emoji} New Conduit signup — ${user.email} (${role})`,
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `${emoji} *New Conduit signup*\n${headline}`,
+            },
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*User*\n${userLine}`,
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Organization*\n${org.name}`,
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Type*\n${role}`,
+              },
+            ],
+          },
+        ],
+      },
+      log,
+    );
+  } catch (err) {
+    log.warn({ err }, 'sales-notifier: notifyNewSignup failed');
+  }
 }

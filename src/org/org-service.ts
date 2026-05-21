@@ -6,6 +6,8 @@ import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
 import { TeamService } from './team-service.js';
 import type { OrgTeam, OrgTeamMember, OrgTeamServerAccess, OrgTeamWithMembers } from './team-service.js';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
+import type { FastifyBaseLogger } from 'fastify';
 export type { OrgTeam, OrgTeamMember, OrgTeamServerAccess, OrgTeamWithMembers };
 
 // ---------------------------------------------------------------------------
@@ -457,6 +459,7 @@ export class OrgService {
     ownerId: string,
     plan?: PlanSlug,
     options?: CreateOrgOptions,
+    log?: FastifyBaseLogger,
   ): Promise<Organization> {
     const orgId = nanoid();
     const memberId = nanoid();
@@ -521,6 +524,11 @@ export class OrgService {
       INSERT INTO org_members (id, org_id, user_id, role, joined_at)
       VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
     `;
+
+    // Notify new signup
+    if (log) {
+      void notifyNewSignup(this.sql, { userId: ownerId, orgId, isOwner: true }, log);
+    }
 
     return this.toOrg(rows[0]);
   }
@@ -671,7 +679,7 @@ export class OrgService {
 
   createInvitation(orgId: string, invitedBy: string, options?: { maxUses?: number | null; expiresInHours?: number }) { return this.invitationService.createInvitation(orgId, invitedBy, options); }
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
-  acceptInvitation(token: string, userId: string) { return this.invitationService.acceptInvitation(token, userId); }
+  acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger) { return this.invitationService.acceptInvitation(token, userId, log); }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
   revokeInvitation(invitationId: string, orgId: string) { return this.invitationService.revokeInvitation(invitationId, orgId); }
 
