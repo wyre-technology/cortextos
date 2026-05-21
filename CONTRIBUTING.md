@@ -208,10 +208,14 @@ Open a GitHub issue or message the cortextOS community channel.
 
 WYRE runs a hard fork. To pull upstream fixes:
 
-    git fetch upstream
-    git checkout -b sync/<date> upstream/main
-    # cherry-pick or merge specific commits, resolving conflicts in src/
-    git checkout main && git merge sync/<date>
+This assumes the `upstream` remote is configured (`git remote -v` should list it).
+
+```bash
+git fetch upstream
+git checkout -b sync/<YYYY-MM-DD> upstream/main
+# cherry-pick or merge specific commits, resolving conflicts in src/
+git checkout main && git merge sync/<YYYY-MM-DD>
+```
 
 Keep WYRE-specific changes surgical and isolated (prefer new files over edits
-to upstream files) to minimise merge conflicts.
+to upstream files) to minimize merge conflicts.
