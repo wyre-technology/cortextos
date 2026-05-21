@@ -96,12 +96,19 @@ at Aaron's launch-window greenlight. Avoids two known traps documented inline.
    bind itself** — its random-suffix name does not match the bicepparam's
    `managedCertName=mc-conduit-prod-env-conduit-wyre-ai`, so the next
    bicep deploy would fail on a customDomain binding referencing a
-   nonexistent cert. Delete it:
+   nonexistent cert. Delete it (guarded — skips cleanly if a prior attempt
+   already removed it or it was never created):
    ```
-   az containerapp env certificate delete \
-     --name "$(az containerapp env certificate list -n conduit-prod-env -g rg-conduit-prod \
-       --query "[?starts_with(name,'mc-conduit-prod-e-conduit-wyre-ai-')].name" -o tsv)" \
-     --resource-group rg-conduit-prod --yes
+   NAME=$(az containerapp env certificate list -n conduit-prod-env \
+     -g rg-conduit-prod \
+     --query "[?starts_with(name,'mc-conduit-prod-e-conduit-wyre-ai-')].name" \
+     -o tsv)
+   if [ -n "$NAME" ]; then
+     az containerapp env certificate delete --name "$NAME" \
+       -n conduit-prod-env -g rg-conduit-prod --yes
+   else
+     echo "no auto-pending cert to delete — skipping step 2"
+   fi
    ```
 3. **Create the controlled-name managed cert** matching the bicepparam.
    HTTP-01 succeeds because RECORD 2 now points the domain at the env:
