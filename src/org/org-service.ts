@@ -3,6 +3,9 @@ import { nanoid } from 'nanoid';
 import { getDefaultPlan, type PlanSlug } from '../billing/plan-catalog.js';
 import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
 import type { SeatSyncer } from '../billing/seat-syncer.js';
+import { isAcceptInvitationError } from './invitation-service.js';
+export { isAcceptInvitationError } from './invitation-service.js';
+export type { AcceptInvitationError } from './invitation-service.js';
 import { MemberService } from './member-service.js';
 import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
@@ -102,6 +105,21 @@ export interface OrgInvitation {
   maxUses: number | null;
   useCount: number;
   createdAt: string;
+  /**
+   * Role granted on accept. NULL for legacy pre-Layer-1 invitations (treated
+   * as 'member' by acceptInvitation). 'owner' triggers the atomic-swap path;
+   * 'admin' / 'member' use the standard INSERT path.
+   * From migration 010 (intended_role column).
+   */
+  intendedRole: OrgRole | null;
+  /**
+   * Email the invite is bound to (lowercased+trimmed by src/email/normalize.ts).
+   * When NOT NULL, acceptInvitation enforces auth.user.email match. NULL is
+   * tolerated for legacy pre-2026-05-22 invitations — new owner-invite code
+   * paths never write null. Paired-follow-up task_1779450095130 extends the
+   * same shape to member-invites. From migration 034.
+   */
+  recipientEmail: string | null;
 }
 
 /**
@@ -812,12 +830,44 @@ export class OrgService {
   // Invitations (delegated to InvitationService)
   // -------------------------------------------------------------------------
 
-  createInvitation(orgId: string, invitedBy: string, options?: { maxUses?: number | null; expiresInHours?: number }) { return this.invitationService.createInvitation(orgId, invitedBy, options); }
+  /**
+   * Mint an invitation. opts extended in Layer 1 to carry intendedRole +
+   * recipientEmail for the owner-invite path. AUTHORIZATION GUARD: when
+   * opts.intendedRole === 'owner' the caller MUST verify invitedBy is the
+   * current owner of orgId before calling — see route-layer guard in
+   * src/reseller/routes.ts customer-create path.
+   */
+  createInvitation(
+    orgId: string,
+    invitedBy: string,
+    options?: {
+      maxUses?: number | null;
+      expiresInHours?: number;
+      intendedRole?: OrgRole;
+      recipientEmail?: string;
+    },
+  ) {
+    return this.invitationService.createInvitation(orgId, invitedBy, options);
+  }
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
-  async acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger) {
-    const member = await this.invitationService.acceptInvitation(token, userId, log);
-    if (member) await this.syncSeats(member.orgId);
-    return member;
+  async acceptInvitation(
+    token: string,
+    userId: string,
+    log?: FastifyBaseLogger,
+    /** Authenticated user's email — required when the invitation has
+     *  recipient_email set (owner-invite shape). Verbatim from auth context;
+     *  normalization happens inside invitationService.acceptInvitation. */
+    userEmail?: string | null,
+  ) {
+    const result = await this.invitationService.acceptInvitation(token, userId, log, userEmail);
+    // Seat-sync only fires on a successful membership outcome (not on a
+    // discriminated-union failure case or null). The log+swallow API
+    // contract on syncSeats still applies — Stripe push errors don't 5xx
+    // the accept flow.
+    if (result && !isAcceptInvitationError(result)) {
+      await this.syncSeats(result.orgId);
+    }
+    return result;
   }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
   revokeInvitation(invitationId: string, orgId: string) { return this.invitationService.revokeInvitation(invitationId, orgId); }

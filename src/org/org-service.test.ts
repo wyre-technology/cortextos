@@ -890,9 +890,10 @@ describe('OrgService', () => {
 
     const member = await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_joiner'));
     expect(member).not.toBeNull();
-    expect(member!.orgId).toBe(org.id);
-    expect(member!.userId).toBe('user_joiner');
-    expect(member!.role).toBe('member');
+    expect(member).not.toHaveProperty('kind');
+    expect((member as { orgId: string }).orgId).toBe(org.id);
+    expect((member as { userId: string }).userId).toBe('user_joiner');
+    expect((member as { role: string }).role).toBe('member');
 
     // Verify membership persists
     const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_joiner'));

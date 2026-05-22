@@ -36,6 +36,8 @@ interface InvitationRowShape {
   max_uses: number | null;
   use_count: number;
   created_at: string;
+  intended_role: string | null;
+  recipient_email: string | null;
 }
 
 function hash(token: string): string {
@@ -55,8 +57,14 @@ function createMockSql() {
       insertStatements.push(text);
       // Contract: INSERT must not reference the legacy `token` column.
       // The fake SQL captures the statement; assertions inspect it.
-      const [id, orgId, invitedBy, tokenHash, expiresAt, maxUses, useCount] = values as [
+      // Layer 1: 9 positional values — intended_role + recipient_email
+      // appended (migrations 010 + 034).
+      const [
+        id, orgId, invitedBy, tokenHash, expiresAt, maxUses, useCount,
+        intendedRole, recipientEmail,
+      ] = values as [
         string, string, string, string, string, number | null, number,
+        string | null, string | null,
       ];
       const row: InvitationRowShape = {
         id,
@@ -69,6 +77,8 @@ function createMockSql() {
         max_uses: maxUses,
         use_count: useCount,
         created_at: new Date().toISOString(),
+        intended_role: intendedRole,
+        recipient_email: recipientEmail,
       };
       inviteRows.set(id, row);
       return Promise.resolve([row]);
@@ -232,8 +242,10 @@ describe('InvitationService — post-015 contract', () => {
     const { plainToken } = await svc.createInvitation('org-1', 'inviter-1');
     const member = await svc.acceptInvitation(plainToken, 'newuser-1');
     expect(member).not.toBeNull();
-    expect(member?.orgId).toBe('org-1');
-    expect(member?.userId).toBe('newuser-1');
+    // Member-invite path → OrgMember (no discriminated-error kind).
+    expect(member).not.toHaveProperty('kind');
+    expect((member as { orgId: string }).orgId).toBe('org-1');
+    expect((member as { userId: string }).userId).toBe('newuser-1');
   });
 
   it('acceptInvitation returns null for an unknown token', async () => {
@@ -252,5 +264,89 @@ describe('InvitationService — post-015 contract', () => {
     const rows = [...mock.inviteRows.values()];
     expect(rows).toHaveLength(1);
     expect(rows[0].token_hash).toBe(expectedHash);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Layer 1 owner-invite-delivery: intended_role + recipient_email persistence
+  // ---------------------------------------------------------------------------
+
+  it('createInvitation persists intendedRole when opts.intendedRole is set', async () => {
+    await svc.createInvitation('org-1', 'owner-1', { intendedRole: 'owner' });
+    const rows = [...mock.inviteRows.values()];
+    expect(rows[0].intended_role).toBe('owner');
+  });
+
+  it('createInvitation persists NULL intended_role when not specified (legacy/(α) shape)', async () => {
+    await svc.createInvitation('org-1', 'owner-1');
+    const rows = [...mock.inviteRows.values()];
+    expect(rows[0].intended_role).toBeNull();
+  });
+
+  it('createInvitation NORMALIZES recipientEmail at store time (case-insensitive invariant)', async () => {
+    // Same normalization function (src/email/normalize.ts) used at the
+    // accept-time check. Storing the normalized form is the DRY-invariant
+    // half — the comparison half normalizes the auth.user.email value.
+    await svc.createInvitation('org-1', 'owner-1', {
+      intendedRole: 'owner',
+      recipientEmail: '  ADMIN@Customer.IO  ',
+    });
+    const rows = [...mock.inviteRows.values()];
+    expect(rows[0].recipient_email).toBe('admin@customer.io');
+  });
+
+  it('createInvitation persists NULL recipient_email when not specified (share-link/(α) shape)', async () => {
+    await svc.createInvitation('org-1', 'owner-1');
+    const rows = [...mock.inviteRows.values()];
+    expect(rows[0].recipient_email).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Layer 1 acceptInvitation: email-match guard (β) for invites with recipient_email
+  // ---------------------------------------------------------------------------
+
+  it('acceptInvitation returns email_mismatch when recipient_email is set and userEmail differs', async () => {
+    const { plainToken } = await svc.createInvitation('org-1', 'inviter-1', {
+      recipientEmail: 'invited@customer.io',
+    });
+    const result = await svc.acceptInvitation(plainToken, 'newuser-1', undefined, 'attacker@elsewhere.com');
+    expect(result).toEqual(
+      expect.objectContaining({ kind: 'email_mismatch' }),
+    );
+  });
+
+  it('acceptInvitation email-match is CASE-INSENSITIVE (same normalizer both ends)', async () => {
+    // Stored "admin@customer.io" (normalized); incoming "ADMIN@Customer.IO".
+    // Both routes through normalizeEmail → match. The RFC-routing-semantic
+    // invariant via shared util.
+    const { plainToken } = await svc.createInvitation('org-1', 'inviter-1', {
+      recipientEmail: 'admin@customer.io',
+    });
+    const result = await svc.acceptInvitation(plainToken, 'newuser-1', undefined, 'ADMIN@Customer.IO');
+    // Either a member (member-invite path with email-match passing) or
+    // null on edge cases; what matters is it's NOT an email_mismatch error.
+    expect(result).not.toEqual(expect.objectContaining({ kind: 'email_mismatch' }));
+  });
+
+  it('acceptInvitation returns email_mismatch when userEmail is undefined on a recipient_email-bound invite', async () => {
+    // Defense: missing auth email on an email-bound invite is treated as
+    // mismatch (rather than allow-through), so a bug in the auth-context
+    // wiring fails-closed.
+    const { plainToken } = await svc.createInvitation('org-1', 'inviter-1', {
+      recipientEmail: 'invited@customer.io',
+    });
+    const result = await svc.acceptInvitation(plainToken, 'newuser-1', undefined, undefined);
+    expect(result).toEqual(
+      expect.objectContaining({ kind: 'email_mismatch' }),
+    );
+  });
+
+  it('acceptInvitation does NOT enforce email-match when recipient_email is NULL (legacy (α) tolerance)', async () => {
+    // Pre-Layer-1 / share-link invites have NULL recipient_email and
+    // accept any authenticated user. New owner-invite code paths never
+    // write NULL on the owner path; legacy tolerance lives for the
+    // rollout window per migration 034 + the paired-follow-up task.
+    const { plainToken } = await svc.createInvitation('org-1', 'inviter-1');
+    const result = await svc.acceptInvitation(plainToken, 'newuser-1', undefined, 'anyone@anywhere.com');
+    expect(result).not.toEqual(expect.objectContaining({ kind: 'email_mismatch' }));
   });
 });

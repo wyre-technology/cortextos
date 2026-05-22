@@ -1221,7 +1221,16 @@ describe('orgRoutes', () => {
 
       expect(response.statusCode).toBe(302);
       expect(response.headers.location).toBe('/settings');
-      expect(orgService.acceptInvitation).toHaveBeenCalledWith('valid-token', 'user-1', expect.anything());
+      // Layer 1 owner-invite-delivery: acceptInvitation now takes a 4th
+      // userEmail argument (required when invitation.recipient_email IS NOT
+      // NULL; null-tolerated for legacy invites). routes.ts threads
+      // user.email ?? null verbatim from the auth context.
+      expect(orgService.acceptInvitation).toHaveBeenCalledWith(
+        'valid-token',
+        'user-1',
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it('returns 404 for invalid token', async () => {

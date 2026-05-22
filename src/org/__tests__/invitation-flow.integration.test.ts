@@ -143,8 +143,10 @@ describe('invitation flow — end-to-end against real Postgres', () => {
 
     const member = await svc.acceptInvitation(plainToken, 'joiner-1');
     expect(member).not.toBeNull();
-    expect(member!.orgId).toBe('org-1');
-    expect(member!.userId).toBe('joiner-1');
+    // Member-invite path (no intendedRole='owner', no recipientEmail) → OrgMember.
+    expect(member).not.toHaveProperty('kind');
+    expect((member as { orgId: string }).orgId).toBe('org-1');
+    expect((member as { userId: string }).userId).toBe('joiner-1');
 
     const [row] = await sql<{ count: bigint }[]>`
       SELECT COUNT(*)::bigint AS count FROM org_members WHERE org_id = 'org-1' AND user_id = 'joiner-1'

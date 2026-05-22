@@ -184,6 +184,26 @@ function makeMocks(options: {
         ? { id: 'om1', orgId, userId, role: 'member' }
         : null,
     ),
+    // Layer 1 owner-invite-delivery: customer-create fires this after the
+    // org row inserts. Returns the canonical CreatedInvitation shape; tests
+    // narrow on createInvitation.toHaveBeenCalledWith to verify the
+    // intendedRole + recipientEmail wiring.
+    createInvitation: vi.fn(async (orgId: string, invitedBy: string) => ({
+      invitation: {
+        id: 'inv_new',
+        orgId,
+        invitedBy,
+        expiresAt: '2024-03-08T00:00:00.000Z',
+        acceptedBy: null,
+        acceptedAt: null,
+        maxUses: 1,
+        useCount: 0,
+        createdAt: '2024-03-01T00:00:00.000Z',
+        intendedRole: 'owner',
+        recipientEmail: 'admin@northwind.test',
+      },
+      plainToken: 'plain_token_test',
+    })),
   } as unknown as OrgService;
 
   const dashboardService = {
@@ -657,7 +677,14 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
 
   describe('POST /admin/reseller/:resellerId/customers', () => {
     const url = `/admin/reseller/${RESELLER_ID}/customers`;
-    const validPayload = { name: 'Northwind IT', plan: 'pro' };
+    // Layer 1: admin_email is required (wizard step-2 collected — owner-invite
+    // is addressed to it; the wizard's "An invite is sent on create" copy
+    // gets backed by the build at this surface).
+    const validPayload = {
+      name: 'Northwind IT',
+      plan: 'pro',
+      admin_email: 'admin@northwind.test',
+    };
 
     it('401s when no session', async () => {
       unauthenticated();
@@ -676,8 +703,36 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
     it('400s when name missing', async () => {
       authenticateAs();
       app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
-      const res = await app.inject({ method: 'POST', url, payload: { plan: 'pro' } });
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: { plan: 'pro', admin_email: 'admin@northwind.test' },
+      });
       expect(res.statusCode).toBe(400);
+    });
+
+    it('400s when admin_email missing (Layer 1 owner-invite requires it)', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: { name: 'Northwind IT', plan: 'pro' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/admin_email/);
+    });
+
+    it('400s when admin_email is malformed', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: { name: 'Northwind IT', plan: 'pro', admin_email: 'not-an-email' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/admin_email/);
     });
 
     it('400s when plan is not in the allowed set', async () => {
@@ -686,7 +741,7 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       const res = await app.inject({
         method: 'POST',
         url,
-        payload: { name: 'Northwind IT', plan: 'enterprise' },
+        payload: { name: 'Northwind IT', plan: 'enterprise', admin_email: 'admin@northwind.test' },
       });
       expect(res.statusCode).toBe(400);
     });
@@ -748,13 +803,36 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       app = await buildApp(
         makeMocks({ actorRole: 'reseller_admin', createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'] }),
       );
-      const res = await app.inject({ method: 'POST', url, payload: { name: 'Northwind IT' } });
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: { name: 'Northwind IT', admin_email: 'admin@northwind.test' },
+      });
       expect(res.statusCode).toBe(201);
       expect(createOrgImpl).toHaveBeenCalledWith(
         'Northwind IT',
         TEST_USER.sub,
         'free',
         { type: 'customer', parentOrgId: RESELLER_ID },
+      );
+    });
+
+    it('fires owner-invite addressed to admin_email with intendedRole=owner + max_uses=1', async () => {
+      // Layer 1 owner-invite-delivery wiring assertion.
+      authenticateAs();
+      const mocks = makeMocks({ actorRole: 'reseller_admin' });
+      app = await buildApp(mocks);
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(201);
+      expect(mocks.orgService.createInvitation).toHaveBeenCalledWith(
+        'cust_new',
+        TEST_USER.sub,
+        expect.objectContaining({
+          intendedRole: 'owner',
+          recipientEmail: 'admin@northwind.test',
+          maxUses: 1,
+          expiresInHours: 168,
+        }),
       );
     });
 
