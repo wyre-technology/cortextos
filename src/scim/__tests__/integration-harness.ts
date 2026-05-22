@@ -161,6 +161,7 @@ const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
   { file: '027_reseller_invoices.sql', reason: 'Track C PR-B foundation: reseller_invoices + line_items; RLS depends on mig 018 helpers SCIM already skips. SCIM tests do not exercise reseller-channel RLS.' },
   { file: '030_widen_request_log_reseller_read.sql', reason: 'Track C S2 reconcile: DROP/CREATE request_log_select to widen the reseller read to any reseller role; request_log is not in the SCIM bootstrap — same class as 007/014/018/020/022. SCIM tests do not exercise RLS policies.' },
   { file: '031_organization_domains.sql', reason: 'GAP-1 domain-claim port: organization_domains RLS policies reference conduit_is_member_of_org from mig 018 which SCIM already skips. SCIM tests do not exercise domain-claim or its RLS.' },
+  { file: '033_onprem_tunnels_select_policy.sql', reason: 'On-prem stream PR #2: onprem_tunnels_select policy references conduit_is_member_of_org + conduit_is_reseller_member_of_parent from migs 018+030 which SCIM already skips. SCIM tests do not exercise on-prem-tunnel RLS. Same class as 030/031.' },
 ];
 
 const SKIP_LOG_PREFIX = 'HARNESS_SKIP';

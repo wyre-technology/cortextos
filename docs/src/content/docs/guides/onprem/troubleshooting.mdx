@@ -1,0 +1,143 @@
+---
+title: On-Prem Gateway — Troubleshooting
+description: Failure modes and fixes for the WYRE on-prem-gateway. Error messages appear verbatim as section headings so you can search-key from the error you saw.
+---
+
+Each section heading below is a **verbatim error message** the on-prem-gateway will produce. Search by copying a unique phrase from your container logs. Errors are designed to name what's wrong + WHERE to fix.
+
+---
+
+## `FATAL: RELAY_URL env var is required`
+
+The boot guard `requireCustomerEnvVars` did not find `RELAY_URL` in the container's env.
+
+**Fix:**
+- Confirm your `.env` file contains `RELAY_URL=wss://relay.wyre.ai` (or your staging equivalent).
+- Confirm `docker-compose.yml` references `env_file: - .env`.
+- Verify the env reaches the container: `docker compose config | grep RELAY_URL`.
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN env var is required`
+
+Same shape — the boot guard found `ENROLLMENT_TOKEN` missing.
+
+**Fix:**
+- Confirm your `.env` file contains `ENROLLMENT_TOKEN=<jwt>`.
+- Tokens expire (default 5 min from issuance). If your old one expired, get a fresh one from your WYRE ops contact.
+
+---
+
+## `FATAL: CAPABILITIES env var is required`
+
+The boot guard found `CAPABILITIES` missing or empty.
+
+**Fix:**
+- Confirm your `.env` file contains `CAPABILITIES=echo` (or your granted list).
+- Slug match is **byte-for-byte** against what your enrollment token grants — case-sensitive, no normalization. See [Reference — CAPABILITIES](/docs/guides/onprem/reference#capabilities).
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN structure invalid — expected 3 segments`
+
+The structural-validate guard rejected the token because it's not in JWT `header.payload.signature` shape.
+
+**Common causes:**
+- Copy-paste truncation (a newline broke the token).
+- Wrong env var value (you pasted a different secret).
+
+**Fix:** re-paste the token from your WYRE ops contact's message. The full JWT has exactly two `.` characters separating three base64url-encoded segments.
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN structure invalid — header or payload is not valid base64url`
+
+The structural-validate guard could parse the segments but at least one isn't valid base64url-encoded JSON.
+
+**Fix:** copy-paste corruption is the usual cause. Get a fresh token + re-paste cleanly. If the issue recurs, contact WYRE ops — the issuer-side may be misconfigured.
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN appears expired`
+
+The token's `exp` claim is in the past.
+
+**Why:** the default TTL is 5 minutes from issuance. If you waited longer between mint and deploy, the token expired.
+
+**Fix:** get a fresh token from WYRE ops + redeploy quickly.
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN iss claim mismatch`
+
+The token's `iss` (issuer) claim doesn't match the gateway's expected issuer.
+
+**Common cause:** token from wrong environment (staging-token-against-prod or vice versa). Each environment has its own issuer.
+
+**Fix:** confirm with WYRE ops which environment your token was minted for + use the matching `RELAY_URL`.
+
+---
+
+## `FATAL: ENROLLMENT_TOKEN aud claim mismatch`
+
+The token's `aud` (audience) claim doesn't match the gateway's expected audience.
+
+**Cause:** misconfigured customer-portal output (rare — surface to WYRE ops if it happens).
+
+---
+
+## `INTERNAL-INGRESS INVARIANT VIOLATED` / `assertNoInbound`
+
+The `assertNoInbound` boot guard detected an unaccounted LAN-listening socket. The on-prem-gateway must bind NO inbound port; the WSS dial-out is its only ingress.
+
+**Why this matters:** the no-inbound invariant is what makes the on-prem-gateway safe to run on a customer's network without exposing a new attack surface. A listening port would invalidate that guarantee.
+
+**Fix:** this should not happen with the stock image. If you see it, something in your environment is forcing a listener (a sidecar, a Docker network config, an injected agent). Remove the listener or contact WYRE ops.
+
+---
+
+## `assertSecureRelayUrl` — `RELAY_URL must be wss://`
+
+The `assertSecureRelayUrl` boot guard rejected your `RELAY_URL` because it's not `wss://`.
+
+**Fix:** correct the `RELAY_URL` env var to use the `wss://` scheme. Plain non-TLS `ws`, `http://`, and `https://` are all rejected.
+
+---
+
+## Tunnel comes up but `/v1/mcp` calls return `Unknown vendor`
+
+The relay accepted your registration but the cloud-gateway's on-prem-fork didn't find your capability for the requesting org.
+
+**Fix:**
+- Confirm the `CAPABILITIES` env matches what your enrollment token grants (byte-for-byte).
+- Confirm the requesting user is in the correct org (the gateway resolves user → primary-org → on-prem caps).
+- Check the operator-side `admin_audit_log` (WYRE ops can see it): `event_type='onprem_request_failed'` with `precise_reason='capability_not_granted'` confirms this is the cause.
+
+---
+
+## Tunnel goes offline intermittently
+
+**Likely causes:**
+- Egress firewall is closing idle outbound connections (the WSS is long-lived).
+- DNS resolution failure for `RELAY_URL`.
+
+**Fix:**
+- Add a firewall exception for outbound `:443` to `relay.wyre.ai`.
+- Lower `HEARTBEAT_INTERVAL_MS` to keep the connection active (e.g. `15000`).
+- `docker compose logs -f onprem-gateway` will show reconnect attempts.
+
+---
+
+## I need to verify the image I pulled is genuine
+
+See [Quickstart — Verifying the image](/docs/guides/onprem/quickstart#verifying-the-image-optional-but-recommended) for the `cosign verify` command. A failed verify means the image is NOT from the WYRE-published release workflow — do NOT deploy.
+
+---
+
+## Still stuck
+
+Contact your WYRE ops contact with:
+- The verbatim error from `docker compose logs onprem-gateway`.
+- Your environment (production / staging).
+- Your subtenant org ID.
+- The compose file you're using (with `ENROLLMENT_TOKEN` value REDACTED).

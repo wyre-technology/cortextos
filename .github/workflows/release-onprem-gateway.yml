@@ -1,0 +1,178 @@
+# =============================================================================
+# release-onprem-gateway.yml — Build, push, and sign the customer-deploy
+# on-prem-gateway image to ghcr.io/wyre-technology/conduit-onprem-gateway.
+#
+# TRIGGER SHAPE — release.types=[published]:
+#   Fires when conduit's main release.yml publishes a GitHub release. The
+#   on-prem-gateway image ships with conduit's version tag (shared-version
+#   Option B). If a future divergence is needed, this workflow gets its own
+#   semantic-release per the Mode-3 NOW lesson below.
+#
+# MODE-3 NOW LESSON (Walter tactical fold task_1779380617318, boss
+# reinforcement 2026-05-22):
+#   If/when this workflow needs its OWN semantic-release (separate version
+#   source for the on-prem-gateway), it MUST use:
+#     - cycjimmy/semantic-release-action@<SHA-pinned> (NOT bare `npx semantic-release`)
+#     - UNDERSCORED output keys end-to-end (new_release_published,
+#       new_release_version — NOT hyphenated)
+#     - Downstream-job gating on `new_release_published == 'true'`
+#   The bare-npx shape in the existing release.yml is the BROKEN v1.0.0
+#   canonical (hyphenated outputs, unstable across invocation paths). DO
+#   NOT replicate it here. Wire-proven shape: task_1779380617318.
+#
+# THREE-LAYER IMAGE VERIFICATION (warden scope-stage pin, sign-at-launch
+# per boss confirmation):
+#   1. Build provenance attestation + SBOM (CI-QW-1 floor, free via
+#      docker/build-push-action).
+#   2. Cosign keyless GHA OIDC signing via sigstore Fulcio (~zero-cost;
+#      matches mimecast #3 supply-chain bar). id-token: write required.
+#   3. Digest-pinning in customer docs — emitted in the job summary +
+#      threaded into docker-compose.onprem.yml's @sha256:... reference.
+#
+# SECURITY — all release-event inputs (tag_name) and workflow_dispatch
+# inputs (release_tag) flow ONLY via env: vars + parameterized cosign /
+# echo arguments, NEVER inline-interpolated into shell `run:` blocks.
+# Prevents the GitHub Actions workflow-injection class (untrusted-input ->
+# code execution via shell metachar).
+# =============================================================================
+
+name: Release On-Prem Gateway
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to build (e.g. v1.14.0). Required for manual dispatch.'
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  IMAGE_NAME: ghcr.io/wyre-technology/conduit-onprem-gateway
+
+jobs:
+  build-push-sign:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build_push.outputs.digest }}
+      tag: ${{ steps.resolve_tag.outputs.tag }}
+      version: ${{ steps.resolve_tag.outputs.version }}
+
+    steps:
+      - name: Resolve release tag (env-var-only, never inline-interp)
+        id: resolve_tag
+        env:
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_EVENT_TAG"
+          else
+            TAG="$DISPATCH_TAG"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::no release tag resolved from event or input"
+            exit 1
+          fi
+          # Validate tag shape — defense-in-depth against injection-via-tag.
+          # Allowed: leading 'v' + semver (1.2.3 or 1.2.3-pre.1).
+          if ! printf '%s' "$TAG" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+            echo "::error::release tag '$TAG' does not match expected semver shape"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          ref: ${{ steps.resolve_tag.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a  # v3.8.1
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.resolve_tag.outputs.version }}
+            type=raw,value=${{ steps.resolve_tag.outputs.tag }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=WYRE Conduit On-Prem Gateway
+            org.opencontainers.image.description=Customer-deployable on-prem-gateway container that dials the WYRE relay over WSS and exposes on-prem MCP capabilities through Conduit.
+            org.opencontainers.image.source=https://github.com/wyre-technology/conduit
+            org.opencontainers.image.version=${{ steps.resolve_tag.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push
+        id: build_push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7
+        with:
+          context: .
+          file: Dockerfile.onprem
+          push: true
+          provenance: true
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Sign image with cosign (keyless GHA OIDC)
+        # Layer 2 — cosign keyless via sigstore Fulcio.
+        # DIGEST passed via env to avoid inline-interpolation injection class;
+        # cosign's --image arg is parameterized.
+        env:
+          IMG_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build_push.outputs.digest }}
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          IMAGE_REF="${IMG_NAME}@${DIGEST}"
+          echo "Signing ${IMAGE_REF} via cosign keyless GHA OIDC"
+          cosign sign --yes "${IMAGE_REF}"
+
+      - name: Write digest + verify command to job summary
+        # Layer 3 — emit the canonical digest + verify command for customer-
+        # docs consumption. All interpolated values flow via env: vars +
+        # parameterized printf so the summary content cannot be tampered via
+        # release-event input.
+        env:
+          IMG_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build_push.outputs.digest }}
+          TAG: ${{ steps.resolve_tag.outputs.tag }}
+          VERSION: ${{ steps.resolve_tag.outputs.version }}
+        run: |
+          {
+            printf '## On-prem-gateway release published\n\n'
+            printf '**Tag:** `%s`\n' "$TAG"
+            printf '**Version:** `%s`\n' "$VERSION"
+            printf '**Digest:** `%s`\n\n' "$DIGEST"
+            printf '### Customer verify command (cosign)\n\n'
+            printf '```bash\n'
+            printf 'cosign verify %s@%s \\\n' "$IMG_NAME" "$DIGEST"
+            printf "  --certificate-identity-regexp 'https://github.com/wyre-technology/conduit/.github/workflows/release-onprem-gateway.yml@.*' \\\n"
+            printf '  --certificate-oidc-issuer https://token.actions.githubusercontent.com\n'
+            printf '```\n\n'
+            printf '### Canonical compose reference\n\n'
+            printf '```yaml\n'
+            printf 'image: %s@%s\n' "$IMG_NAME" "$DIGEST"
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"

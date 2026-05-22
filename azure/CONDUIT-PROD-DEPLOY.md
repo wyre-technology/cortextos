@@ -72,14 +72,174 @@ conduit RG migration; nothing here is throwaway.
    call, `schema_migrations` shows 001-030 applied to the *fresh* conduit DB.
 9. **Cutover `conduit.wyre.ai`** — re-point the Cloudflare origin to the new
    conduit-prod gateway. Blue-green: the new stack is validated first, the
-   current origin stays live until the switch.
+   current origin stays live until the switch. The full sequence is below
+   (one controlled session, not stretched).
+
+## conduit.wyre.ai cutover sequence — one controlled session
+
+The new stack is already validated on its default `*.azurecontainerapps.io`
+hostname; the asuid TXT (`asuid.conduit.wyre.ai`) is already in the wyre.ai
+zone, so `conduit.wyre.ai` is on `conduit-prod-gateway`'s `customDomains` list
+with `bindingType: Disabled`. The cutover provisions the cert and flips traffic
+at Aaron's launch-window greenlight. Avoids two known traps documented inline.
+
+1. **Aaron adds RECORD 2** (the cutover): on the wyre.ai Cloudflare zone,
+   create CNAME `conduit` → `conduit-prod-gateway.<env-default-domain>`
+   (currently `conduit-prod-gateway.kinddesert-88f38e67.eastus2.azurecontainerapps.io`).
+   This both enables the ACME challenge for the managed cert AND repoints
+   traffic — it IS the cutover. Verify resolution before step 2:
+   `dig +short conduit.wyre.ai @1.1.1.1` should return the env's ingress IPs.
+2. **Delete the auto-pending cert from the pre-bind attempt.** The Phase-B
+   bind attempt created `mc-conduit-prod-e-conduit-wyre-ai-<NNNN>` (ACA
+   appends a random suffix) in `Pending` state because the ACME challenge
+   couldn't complete without RECORD 2. **Do not let that cert provision and
+   bind itself** — its random-suffix name does not match the bicepparam's
+   `managedCertName=mc-conduit-prod-env-conduit-wyre-ai`, so the next
+   bicep deploy would fail on a customDomain binding referencing a
+   nonexistent cert. Delete it (guarded — skips cleanly if a prior attempt
+   already removed it or it was never created):
+   ```
+   NAME=$(az containerapp env certificate list -n conduit-prod-env \
+     -g rg-conduit-prod \
+     --query "[?starts_with(name,'mc-conduit-prod-e-conduit-wyre-ai-')].name" \
+     -o tsv)
+   if [ -n "$NAME" ]; then
+     az containerapp env certificate delete --name "$NAME" \
+       -n conduit-prod-env -g rg-conduit-prod --yes
+   else
+     echo "no auto-pending cert to delete — skipping step 2"
+   fi
+   ```
+3. **Create the controlled-name managed cert** matching the bicepparam.
+   HTTP-01 succeeds because RECORD 2 now points the domain at the env:
+   ```
+   az containerapp managed-certificate create \
+     --name mc-conduit-prod-env-conduit-wyre-ai \
+     --resource-group rg-conduit-prod --environment conduit-prod-env \
+     --hostname conduit.wyre.ai --validation-method HTTP
+   ```
+4. **Bind that cert to `conduit.wyre.ai` on `conduit-prod-gateway`:**
+   ```
+   az containerapp hostname bind \
+     --hostname conduit.wyre.ai \
+     --name conduit-prod-gateway --resource-group rg-conduit-prod \
+     --certificate mc-conduit-prod-env-conduit-wyre-ai
+   ```
+5. **Validate on the cut-over domain.** Three checks; all three must pass:
+   - `curl https://conduit.wyre.ai/health` → `{"status":"ok"}`.
+   - `curl -s https://conduit.wyre.ai/.well-known/oauth-authorization-server
+     | jq -r .issuer` → `https://conduit.wyre.ai`. **Load-bearing**:
+     `gateway-app.bicep` derives `BASE_URL` from the `customDomain` param via
+     a ternary (`empty(customDomain) ? <env-default-fqdn> : '${customDomain}'`),
+     so the cutover redeploy with `customDomain=conduit.wyre.ai` IS what
+     refreshes the OAuth-issuer string from the kinddesert default FQDN to
+     `conduit.wyre.ai`. If `.issuer` still reads the Azure FQDN here, the
+     redeploy did not pick up the new customDomain — OAuth clients
+     authenticating against an issuer-mismatch will reject tokens.
+   - `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type:
+     application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"
+     ,"params":{}}' https://conduit.wyre.ai/v1/mcp` → `401` (auth-gated, not
+     5xx; proves the MCP path is reachable + auth-rejecting on the new env).
+6. The next `conduit-prod` workflow deploy (the steady-state path) sees the
+   existing custom-domain binding via the `Read existing gateway state` step
+   and synthesizes no new binding — a clean no-op on the customDomain side.
+
+### Cutover-day env-refresh — required KV secrets
+
+The cutover-day deploy refreshes `conduit-prod-gateway` with **all required
+config**, not just the image. The 2026-05-22 bicep-completeness pre-cutover
+audit identified one new env coupling that landed post the original Phase-B
+standup; verify present in `conduit-prod-kv` BEFORE the cutover redeploy:
+
+- **`control-plane-secret`** (from PR #211 / `relay-control-plane-client.ts`).
+  Shared HMAC secret between **a gateway** and **the relay(s) that talk to
+  that gateway**. The gateway reads `CONTROL_PLANE_SECRET` env var (KV-backed
+  via `gateway-app.bicep`); the relay signs requests with the same value from
+  its own credential store.
+
+  **Symmetric WITHIN each stack-pair, INDEPENDENT across stacks.** `gateway-
+  app.bicep` resolves `control-plane-secret` from the deploying stack's
+  `keyVaultUri`, so each gateway stack reads from its own KV:
+
+  | Gateway stack | KV (`keyVaultUri`) | Relay-side reads from |
+  |---|---|---|
+  | `conduit-prod-gateway` (rg-conduit-prod) | `conduit-prod-kv` | same |
+  | `conduit-prod-staging-gateway` / `mcpgw-staging-gateway` | `mcpgw-staging-kv` | same |
+  | `mcpgw-prod-gateway` | `mcpgw-prod-kv` | same |
+
+  Provisioned 2026-05-22 into ALL THREE vaults (independent 32-hex values per
+  stack); a missing secret in any one = `gateway-app.bicep` deploy of that
+  stack fails on KV resolution.
+
+  Verify: `az keyvault secret show --vault-name <kv> --name
+  control-plane-secret --query name -o tsv` should print `control-plane-secret`
+  for whichever `<kv>` matches the stack being deployed.
+
+(If a future PR introduces another required env var, extend this section as
+part of the same PR. Cutover-day is not the place to discover env wiring gaps.)
+
+### Why path (b) (controlled-name cert) not path (a) (update bicepparam to the auto-suffix name)
+
+Baking a non-reproducible `-3474` random suffix into IaC means every future
+re-bind generates a different suffix and the bicepparam drifts. Keep
+bicep-as-source-of-truth: the cert name is what the bicepparam declares; the
+cert resource matches. Path (a) is the fallback only if a path-(b)
+ACME/ordering constraint surfaces mid-cutover (in which case flag it).
 
 ## migrate.ts on first boot
 
-The gateway runs `migrate.ts` (001-030) on first boot against the **fresh,
+The gateway runs `migrate.ts` (001-031) on first boot against the **fresh,
 empty** `conduit-prod-pg` database — a non-event, the designed clean-slate
 path. This is exactly the migration that is *unsafe* against the live
 mcp-gateway DB and *safe* here.
+
+### ⚠ pg_trgm extension allow-list — REQUIRED before the first deploy
+
+Migration `012_impersonation_and_audit.sql` runs `CREATE EXTENSION IF NOT
+EXISTS pg_trgm`. A **fresh Azure Database for PostgreSQL Flexible Server
+allow-lists NO extensions** — `azure.extensions` is empty by default — so
+`CREATE EXTENSION pg_trgm` is rejected, migration 012 fails, `migrate.ts`
+throws, and the gateway **crashloops (exit 1)**. Observed on the 2026-05-20
+Phase-B standup.
+
+Fix — set the allow-list on `conduit-prod-pg`:
+```
+az postgres flexible-server parameter set \
+  --resource-group rg-conduit-prod --server-name conduit-prod-pg \
+  --name azure.extensions --value PG_TRGM
+```
+`azure.extensions` is a dynamic parameter (no server restart). After setting
+it, restart the gateway revision so `migrate.ts` re-runs. The
+`Deploy Bicep (conduit-prod)` step in `.github/workflows/deploy.yml` already
+does this `parameter set` (idempotent) before every deploy — so a deploy via
+the workflow is self-healing; only an interactive first deploy must do it by
+hand. **`pg_trgm` is the only extension the conduit migrations need** — if a
+future migration adds another `CREATE EXTENSION`, extend the allow-list value.
+
+### Gateway identity → Key Vault (the secretRef chicken-and-egg)
+
+`gateway-app.bicep` gives the gateway a **system-assigned** identity and
+declares its 18 app-config secrets as `keyVaultUrl`-backed Container App
+secret refs (`identity: 'system'`). `identity.bicep` has
+`deployRoleAssignment = false`, so the Bicep does **not** grant the gateway
+identity Key Vault access — and it could not usefully do so anyway: the
+identity does not exist until the gateway Container App is created, and the
+revision tries to resolve the KV secrets as part of that same creation.
+
+So the first deploy leaves the gateway revision stuck `Activating` (KV secrets
+unresolvable). After the first deploy, grant the gateway's system identity
+`Key Vault Secrets User` on `conduit-prod-kv` and restart the revision:
+```
+PRINCIPAL=$(az containerapp show -n conduit-prod-gateway -g rg-conduit-prod \
+  --query identity.principalId -o tsv)
+az role assignment create --assignee-object-id "$PRINCIPAL" \
+  --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
+  --scope "$(az keyvault show -n conduit-prod-kv -g rg-conduit-prod --query id -o tsv)"
+az containerapp revision restart -n conduit-prod-gateway -g rg-conduit-prod \
+  --revision "$(az containerapp show -n conduit-prod-gateway -g rg-conduit-prod --query properties.latestRevisionName -o tsv)"
+```
+This is a one-time grant — the role assignment persists, so subsequent deploys
+need no repeat.
 
 ## conduit-prod Key Vault — 18 secrets (copy from `mcpgw-prod-kv`)
 

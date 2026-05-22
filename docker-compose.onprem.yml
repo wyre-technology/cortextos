@@ -1,0 +1,61 @@
+# =============================================================================
+# docker-compose.onprem.yml — Customer-deploy on-prem-gateway compose shape.
+#
+# PR #3 scope-doc decisions (locked green from boss + analyst + warden):
+#   - Customer pulls the published image from ghcr.io (NOT a local build);
+#     image referenced by @sha256:... digest per warden CI-QW-2 + analyst
+#     fold (digest-pinning in customer deploy docs, not :latest).
+#   - Customer fills env_file (`.env`) with their three required env vars
+#     (RELAY_URL + ENROLLMENT_TOKEN + CAPABILITIES). The .env file MUST be
+#     gitignored (see customer-deploy-quickstart.md) — warden's load-bearing
+#     customer-side secret-handling pin.
+#   - No ports exposed — assertNoInbound enforces this at boot; the only
+#     egress is the WSS dial-out to RELAY_URL.
+#   - restart: unless-stopped for the typical MSP-ops "deploy + walk away"
+#     posture; container dies → docker restarts; persistent intentional
+#     stop requires `docker compose down`.
+#
+# CUSTOMER QUICKSTART (3-step):
+#   1. curl https://conduit.wyre.ai/docs/onprem/docker-compose.onprem.yml -o docker-compose.yml
+#   2. cp .env.example .env  &&  $EDITOR .env  &&  echo ".env" >> .gitignore
+#   3. docker compose up -d
+#
+# Verify: docker compose logs onprem-gateway | grep 'on-prem-gateway ready'
+# =============================================================================
+
+services:
+  onprem-gateway:
+    # IMPORTANT: pin to a specific digest per warden CI-QW-2. Customers
+    # following the canonical docs will see the digest published per
+    # release. The :latest tag is NOT used in this canonical example —
+    # customers who pin to :latest forfeit the supply-chain verification
+    # gate that the digest provides.
+    #
+    # The release workflow (PR #3 §4 step 6, follow-up chunk) publishes
+    # per-release digests; the customer docs publish the canonical digest
+    # alongside each release. This example uses a placeholder that the
+    # release workflow updates per tag.
+    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:REPLACE_WITH_RELEASE_DIGEST
+
+    # Restart on failure; do not auto-start at boot unless the MSP
+    # configures the daemon for that.
+    restart: unless-stopped
+
+    # Required env vars — the customer fills these in `.env`. The
+    # on-prem-gateway boot sequence (src/onprem/index.ts) refuses to
+    # start without all three; the error message names each missing
+    # var + where to get its value (fail-loud-with-named-actionable-
+    # choice discipline).
+    env_file:
+      - .env
+
+    # No ports declared — assertNoInbound (src/onprem/no-inbound-assert.ts,
+    # wired at src/onprem/index.ts:bootOnpremGateway guard 4) refuses to
+    # boot if the on-prem gateway binds any LAN-listening socket. The only
+    # ingress to this container is the WSS dial-out to RELAY_URL, which is
+    # outbound; no `ports:` clause is needed.
+
+    # Optional: docker logs already captures stdout/stderr; the customer
+    # can run `docker compose logs -f onprem-gateway` for live tailing.
+    # No volumes are needed for echo-only M2; the on-prem-gateway is
+    # stateless (the relay-registry holds the tunnel state).

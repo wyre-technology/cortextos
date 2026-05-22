@@ -8,6 +8,8 @@ import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
 import { TeamService } from './team-service.js';
 import type { OrgTeam, OrgTeamMember, OrgTeamServerAccess, OrgTeamWithMembers } from './team-service.js';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
+import type { FastifyBaseLogger } from 'fastify';
 export type { OrgTeam, OrgTeamMember, OrgTeamServerAccess, OrgTeamWithMembers };
 
 // ---------------------------------------------------------------------------
@@ -548,6 +550,7 @@ export class OrgService {
     ownerId: string,
     plan?: PlanSlug,
     options?: CreateOrgOptions,
+    log?: FastifyBaseLogger,
   ): Promise<Organization> {
     const orgId = nanoid();
     const memberId = nanoid();
@@ -616,6 +619,11 @@ export class OrgService {
       INSERT INTO org_members (id, org_id, user_id, role, joined_at)
       VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
     `;
+
+    // Notify new signup (from main — fire-and-forget signup analytics).
+    if (log) {
+      void notifyNewSignup(this.sql, { userId: ownerId, orgId, isOwner: true }, log);
+    }
 
     // Layer 1: standalone orgs attach a Stripe trialing subscription at
     // creation (DOR §9.1). Customer and reseller orgs are billed via the
@@ -806,8 +814,8 @@ export class OrgService {
 
   createInvitation(orgId: string, invitedBy: string, options?: { maxUses?: number | null; expiresInHours?: number }) { return this.invitationService.createInvitation(orgId, invitedBy, options); }
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
-  async acceptInvitation(token: string, userId: string) {
-    const member = await this.invitationService.acceptInvitation(token, userId);
+  async acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger) {
+    const member = await this.invitationService.acceptInvitation(token, userId, log);
     if (member) await this.syncSeats(member.orgId);
     return member;
   }

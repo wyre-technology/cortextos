@@ -34,6 +34,7 @@ import { domainFromEmail } from './public-email-domains.js';
 import { getSql, runAsSystem } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { FastifyReply } from 'fastify';
+import { notifyNewSignup } from '../billing/sales-notifier.js';
 
 interface DomainRouteDeps {
   orgService: OrgService;
@@ -228,12 +229,17 @@ export function domainRoutes(deps: DomainRouteDeps) {
         `,
       );
 
+      // Notify new signup (fire-and-forget — from main).
+      void notifyNewSignup(getSql(), { userId: user.sub, orgId: claim.orgId, isOwner: false }, request.log);
+
       // Layer 1 seat-sync (DOR §6 — domain-auto-join is a "human added"
       // event from the seat-count perspective). Runs system-path same as
       // the INSERT so getSeatBilling reads the committed row. The
       // ON CONFLICT DO NOTHING above means this fires even on a race-loser
-      // path; the syncer's quantity-unchanged short-circuit keeps that
-      // idempotent — same SeatBilling, no spurious Stripe call.
+      // path; OrgService.syncSeats's quantity-unchanged short-circuit
+      // keeps that idempotent — same SeatBilling, no spurious Stripe call.
+      // Log+swallow lives at the syncSeats API boundary (post-HOLD); a
+      // Stripe outage during auto-join cannot 5xx this route.
       await runAsSystem(() => orgService.syncSeats(claim.orgId));
 
       // System-path, for consistency with claim-eligibility above and so this

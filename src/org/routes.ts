@@ -101,9 +101,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // but no longer changes the resulting plan.
         void inviteCode;
 
-        const org = await orgService.createOrg(name.trim(), user.sub, undefined, {
-          ownerEmail: user.email ?? undefined,
-        });
+        const org = await orgService.createOrg(
+          name.trim(),
+          user.sub,
+          undefined,
+          { ownerEmail: user.email ?? undefined },
+          request.log,
+        );
 
         // Fire one Loops event so org-level drips can trigger without
         // starting a new contact (avoids overlap with the user-signup drip).
@@ -870,7 +874,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!user) return;
 
         const { token } = request.params;
-        const member = await orgService.acceptInvitation(token, user.sub);
+        const member = await orgService.acceptInvitation(token, user.sub, request.log);
         if (!member) {
           return reply.code(404).type('text/html').send(renderInviteErrorPage('This invitation has expired or is no longer valid.'));
         }

@@ -219,6 +219,16 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
         {
+          name: 'microsoft-client-id'
+          keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-id'
+          identity: 'system'
+        }
+        {
+          name: 'microsoft-client-secret'
+          keyVaultUrl: '${keyVaultUri}secrets/microsoft-client-secret'
+          identity: 'system'
+        }
+        {
           name: 'stripe-secret-key'
           keyVaultUrl: '${keyVaultUri}secrets/stripe-secret-key'
           identity: 'system'
@@ -287,6 +297,19 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUri}secrets/rootly-vendor-webhook-url'
           identity: 'system'
         }
+        {
+          // Shared HMAC secret for the relay control-plane API (PR #211).
+          // The gateway verifies incoming relay requests against this secret;
+          // the on-prem relay signs outgoing requests with the SAME value.
+          // Symmetric: both ends read from THIS stack's Key Vault by the same
+          // secret name. relay-control-plane-client.ts reads it as
+          // process.env.CONTROL_PLANE_SECRET (defaults to null) — null = relay
+          // calls silently fail; this wiring ensures the gateway always has a
+          // value once conduit-prod-kv `control-plane-secret` is provisioned.
+          name: 'control-plane-secret'
+          keyVaultUrl: '${keyVaultUri}secrets/control-plane-secret'
+          identity: 'system'
+        }
       ]
     }
     template: {
@@ -311,6 +334,11 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AUTH0_DOMAIN', secretRef: 'auth0-domain' }
             { name: 'AUTH0_CLIENT_ID', secretRef: 'auth0-client-id' }
             { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
+            // microsoft-graph / m365 vendor OAuth (oauthConfig.clientIdEnv).
+            // Backed by a multi-tenant Entra app; secrets live in each
+            // environment's Key Vault as microsoft-client-id / -secret.
+            { name: 'MICROSOFT_CLIENT_ID', secretRef: 'microsoft-client-id' }
+            { name: 'MICROSOFT_CLIENT_SECRET', secretRef: 'microsoft-client-secret' }
             { name: 'AUTH0_CALLBACK_URL', value: empty(customDomain) ? 'https://${prefix}-gateway.${containerEnv.properties.defaultDomain}/auth/callback' : 'https://${customDomain}/auth/callback' }
             { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
             { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
@@ -341,6 +369,14 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             // Unset == logged no-op (src/monitoring/rootly.ts), so this is
             // safe to add ahead of any Rootly-side config.
             { name: 'ROOTLY_WEBHOOK_URL', secretRef: 'rootly-webhook-url' }
+            // Shared HMAC secret for the relay control-plane API (PR #211).
+            // relay-control-plane-client.ts reads as `process.env
+            // .CONTROL_PLANE_SECRET ?? null`; null = relay calls silently fail
+            // at runtime. The KV secret `control-plane-secret` must exist in
+            // this stack's Key Vault (conduit-prod-kv on prod /
+            // mcpgw-staging-kv on staging) with the SAME value as whatever
+            // the on-prem relay uses — symmetric HMAC.
+            { name: 'CONTROL_PLANE_SECRET', secretRef: 'control-plane-secret' }
           ])
           probes: [
             {

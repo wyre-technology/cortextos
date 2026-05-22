@@ -20,7 +20,9 @@ import type {
 } from '../org/reseller-member-service.js';
 import { ResellerMemberError } from '../org/reseller-member-service.js';
 import type { OrgService, Organization } from '../org/org-service.js';
+import { OrgHierarchyError } from '../org/org-service.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
+import type { AuditService } from '../audit/audit-service.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -96,6 +98,7 @@ interface MockDeps {
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
   dashboardService: DashboardService;
+  auditService: AuditService;
 }
 
 function makeMocks(options: {
@@ -107,10 +110,12 @@ function makeMocks(options: {
   updateRoleImpl?: ResellerMemberService['updateRole'];
   deleteImpl?: ResellerMemberService['delete'];
   updateOrgImpl?: OrgService['updateOrg'];
+  createOrgImpl?: OrgService['createOrg'];
   /** Whether CUSTOMER_ID's parent_org_id resolves to RESELLER_ID. */
   customerLinkedToReseller?: boolean;
   /** Whether the caller is a direct org_member of CUSTOMER_ID. */
   customerSelfMember?: boolean;
+  auditQueryImpl?: AuditService['query'];
 } = {}): MockDeps {
   const {
     actorRole = 'reseller_admin',
@@ -154,6 +159,21 @@ function makeMocks(options: {
         if (!org) return null;
         return { ...org, id, name, updatedAt: '2024-02-01T00:00:00.000Z' };
       }),
+    createOrg: options.createOrgImpl ??
+      vi.fn(async (name: string, ownerId: string, plan, opts) => ({
+        id: 'cust_new',
+        name,
+        ownerId,
+        plan: plan ?? 'free',
+        defaultServerAccess: 'none',
+        promptCaptureEnabled: false,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        type: opts?.type ?? 'standalone',
+        parentOrgId: opts?.parentOrgId ?? null,
+        createdAt: '2024-03-01T00:00:00.000Z',
+        updatedAt: '2024-03-01T00:00:00.000Z',
+      })),
     // requireResellerOrCustomerAccess: customer's reseller parent.
     getResellerOfCustomer: vi.fn(async (customerId: string) =>
       customerLinkedToReseller && customerId === CUSTOMER_ID ? org : null,
@@ -172,7 +192,11 @@ function makeMocks(options: {
     getVendorBreakdown: vi.fn(async () => [{ vendor: 'datto-rmm', calls: 12 }]),
   } as unknown as DashboardService;
 
-  return { resellerService, resellerMemberService, orgService, dashboardService };
+  const auditService = {
+    query: options.auditQueryImpl ?? vi.fn(async () => ({ entries: [], total: 0 })),
+  } as unknown as AuditService;
+
+  return { resellerService, resellerMemberService, orgService, dashboardService, auditService };
 }
 
 async function buildApp(deps: MockDeps, featureEnabled = true): Promise<FastifyInstance> {
@@ -628,6 +652,140 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // POST /admin/reseller/:resellerId/customers
+  // -------------------------------------------------------------------------
+
+  describe('POST /admin/reseller/:resellerId/customers', () => {
+    const url = `/admin/reseller/${RESELLER_ID}/customers`;
+    const validPayload = { name: 'Northwind IT', plan: 'pro' };
+
+    it('401s when no session', async () => {
+      unauthenticated();
+      app = await buildApp(makeMocks());
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('403s when actor is reseller_support_agent', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: 'reseller_support_agent' }));
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('400s when name missing', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
+      const res = await app.inject({ method: 'POST', url, payload: { plan: 'pro' } });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('400s when plan is not in the allowed set', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: { name: 'Northwind IT', plan: 'enterprise' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('201s on happy path and parents the customer at :resellerId', async () => {
+      authenticateAs();
+      const createOrgImpl = vi.fn(async (name: string, ownerId: string, plan, opts) => ({
+        id: 'cust_new',
+        name,
+        ownerId,
+        plan: plan ?? 'free',
+        defaultServerAccess: 'none' as const,
+        promptCaptureEnabled: false,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        type: opts?.type ?? 'standalone',
+        parentOrgId: opts?.parentOrgId ?? null,
+        createdAt: '2024-03-01T00:00:00.000Z',
+        updatedAt: '2024-03-01T00:00:00.000Z',
+      }));
+      app = await buildApp(
+        makeMocks({ actorRole: 'reseller_admin', createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'] }),
+      );
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body).toMatchObject({
+        id: 'cust_new',
+        name: 'Northwind IT',
+        type: 'customer',
+        parentOrgId: RESELLER_ID,
+        ownerId: TEST_USER.sub,
+        plan: 'pro',
+      });
+      expect(createOrgImpl).toHaveBeenCalledWith(
+        'Northwind IT',
+        TEST_USER.sub,
+        'pro',
+        { type: 'customer', parentOrgId: RESELLER_ID },
+      );
+    });
+
+    it('defaults plan to "free" when omitted', async () => {
+      authenticateAs();
+      const createOrgImpl = vi.fn(async (name: string, ownerId: string, plan, opts) => ({
+        id: 'cust_new',
+        name,
+        ownerId,
+        plan: plan ?? 'free',
+        defaultServerAccess: 'none' as const,
+        promptCaptureEnabled: false,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        type: opts?.type ?? 'standalone',
+        parentOrgId: opts?.parentOrgId ?? null,
+        createdAt: '2024-03-01T00:00:00.000Z',
+        updatedAt: '2024-03-01T00:00:00.000Z',
+      }));
+      app = await buildApp(
+        makeMocks({ actorRole: 'reseller_admin', createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'] }),
+      );
+      const res = await app.inject({ method: 'POST', url, payload: { name: 'Northwind IT' } });
+      expect(res.statusCode).toBe(201);
+      expect(createOrgImpl).toHaveBeenCalledWith(
+        'Northwind IT',
+        TEST_USER.sub,
+        'free',
+        { type: 'customer', parentOrgId: RESELLER_ID },
+      );
+    });
+
+    it('translates PARENT_NOT_RESELLER → 400', async () => {
+      authenticateAs();
+      const createOrgImpl = vi.fn(async () => {
+        throw new OrgHierarchyError('PARENT_NOT_RESELLER', 'parent must be a reseller');
+      });
+      app = await buildApp(
+        makeMocks({ actorRole: 'reseller_admin', createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'] }),
+      );
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'PARENT_NOT_RESELLER' });
+    });
+
+    it('translates PARENT_NOT_FOUND → 404', async () => {
+      authenticateAs();
+      const createOrgImpl = vi.fn(async () => {
+        throw new OrgHierarchyError('PARENT_NOT_FOUND', 'parent does not exist');
+      });
+      app = await buildApp(
+        makeMocks({ actorRole: 'reseller_admin', createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'] }),
+      );
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'PARENT_NOT_FOUND' });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Reseller-scoped customer dashboard (Track C S2)
   // -------------------------------------------------------------------------
 
@@ -724,6 +882,83 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       app = await buildApp(makeMocks());
 
       const res = await app.inject({ method: 'GET', url: usageUrl });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reseller-scoped customer audit feed (Track A — Audit Log tab)
+  // -------------------------------------------------------------------------
+
+  describe('GET /admin/reseller/:resellerId/customers/:customerId/audit', () => {
+    const auditUrl = `/admin/reseller/${RESELLER_ID}/customers/${CUSTOMER_ID}/audit`;
+
+    const sampleEntries = [
+      {
+        id: 'r1', userId: 'u1', userEmail: 'c@am3.com', userName: 'C. Ramirez',
+        orgId: CUSTOMER_ID, vendorSlug: 'autotask', toolName: 'search_tickets',
+        toolArguments: null, promptContext: null, source: 'claude.ai',
+        statusCode: 200, responseTimeMs: 142, createdAt: '2026-05-20T12:00:00.000Z',
+      },
+      {
+        id: 'r2', userId: 'u2', userEmail: null, userName: null,
+        orgId: CUSTOMER_ID, vendorSlug: 'datto-rmm', toolName: null,
+        toolArguments: null, promptContext: null, source: null,
+        statusCode: 200, responseTimeMs: 88, createdAt: '2026-05-20T11:00:00.000Z',
+      },
+    ];
+
+    it('returns the customer audit feed mapped to the AuditRow shape', async () => {
+      authenticateAs();
+      const mocks = makeMocks({
+        actorRole: 'reseller_support_agent',
+        auditQueryImpl: vi.fn(async () => ({ entries: sampleEntries, total: 2 })),
+      });
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        entries: [
+          { when: '2026-05-20T12:00:00.000Z', actor: 'C. Ramirez', action: 'mcp.tool.invoke', target: 'autotask · search_tickets' },
+          // userName/userEmail null -> falls back to userId; null toolName -> vendor only.
+          { when: '2026-05-20T11:00:00.000Z', actor: 'u2', action: 'mcp.tool.invoke', target: 'datto-rmm' },
+        ],
+      });
+      // The feed is scoped to the TARGET customer org, not the caller's.
+      expect(mocks.auditService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: CUSTOMER_ID }),
+      );
+    });
+
+    it('403s when the customer does not belong to the reseller (warden Finding 2)', async () => {
+      authenticateAs();
+      app = await buildApp(makeMocks({ customerLinkedToReseller: false }));
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('403s an unowned pair — customer belongs to a DIFFERENT reseller', async () => {
+      authenticateAs();
+      const mocks = makeMocks();
+      mocks.orgService.getResellerOfCustomer = vi.fn(async () =>
+        makeResellerOrg('reseller_FOREIGN', 'Rival MSP'),
+      );
+      app = await buildApp(mocks);
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
+      expect(res.statusCode).toBe(403);
+      // The audit query must never run for an unowned customer.
+      expect(mocks.auditService.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unauthenticated caller', async () => {
+      unauthenticated();
+      app = await buildApp(makeMocks());
+
+      const res = await app.inject({ method: 'GET', url: auditUrl });
       expect(res.statusCode).toBe(401);
     });
   });

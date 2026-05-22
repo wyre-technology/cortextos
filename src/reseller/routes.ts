@@ -17,7 +17,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { config } from '../config.js';
 import type { ResellerService } from './reseller-service.js';
-import type { OrgService } from '../org/org-service.js';
+import { OrgHierarchyError, type OrgService } from '../org/org-service.js';
+import type { PlanSlug } from '../billing/plan-catalog.js';
 import {
   ResellerMemberError,
   RESELLER_ROLES,
@@ -31,12 +32,14 @@ import {
   makeRequireResellerOrCustomerAccess,
 } from './middleware.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
+import type { AuditService } from '../audit/audit-service.js';
 
 export interface ResellerRoutesDeps {
   resellerService: ResellerService;
   resellerMemberService: ResellerMemberService;
   orgService: OrgService;
   dashboardService: DashboardService;
+  auditService: AuditService;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +125,70 @@ function parseCreateMemberBody(body: unknown): CreateMemberBody | { error: strin
   return { userId, role };
 }
 
+// Plan tiers accepted by the customer-create endpoint. Mirrors PLAN_RANK in
+// src/billing/gate.ts — customers can be provisioned on any plan; the wizard
+// surfaces Free/Pro/Business, which map 1:1 here.
+const CUSTOMER_PLAN_SLUGS = ['free', 'pro', 'business'] as const;
+
+function isCustomerPlanSlug(value: unknown): value is PlanSlug {
+  return typeof value === 'string'
+    && (CUSTOMER_PLAN_SLUGS as readonly string[]).includes(value);
+}
+
+interface CreateCustomerBody {
+  name: string;
+  plan: PlanSlug;
+}
+
+function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: string } {
+  if (!isRecord(body)) return { error: 'Request body must be a JSON object' };
+  const name = body.name;
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return { error: 'name is required and must be a non-empty string' };
+  }
+  if (name.length > 200) {
+    return { error: 'name must be 200 characters or fewer' };
+  }
+  // plan is optional; default 'free' so the wizard's Free-tier path works
+  // without sending the field.
+  const planRaw = body.plan;
+  if (planRaw !== undefined && !isCustomerPlanSlug(planRaw)) {
+    return { error: `plan must be one of: ${CUSTOMER_PLAN_SLUGS.join(', ')}` };
+  }
+  const plan: PlanSlug = isCustomerPlanSlug(planRaw) ? planRaw : 'free';
+  return { name: name.trim(), plan };
+}
+
+/**
+ * Match by shape rather than `instanceof` — same module-identity gotcha as
+ * isResellerMemberError above: tests reset modules, so `instanceof` would
+ * miss real errors thrown from a different module instance.
+ */
+function isOrgHierarchyError(err: unknown): err is { name: string; code: string; message: string } {
+  if (err instanceof OrgHierarchyError) return true;
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { name?: unknown; code?: unknown };
+  return e.name === 'OrgHierarchyError' && typeof e.code === 'string';
+}
+
+function sendOrgHierarchyError(
+  reply: FastifyReply,
+  err: { code: string; message: string },
+): FastifyReply {
+  switch (err.code) {
+    case 'PARENT_NOT_FOUND':
+      return reply.code(404).send({ error: err.message, code: err.code });
+    case 'PARENT_NOT_RESELLER':
+    case 'CUSTOMER_REQUIRES_PARENT':
+    case 'STANDALONE_CANNOT_HAVE_PARENT':
+    case 'RESELLER_CANNOT_HAVE_PARENT':
+    case 'INVALID_ORG_TYPE':
+      return reply.code(400).send({ error: err.message, code: err.code });
+    default:
+      return reply.code(500).send({ error: 'Internal error' });
+  }
+}
+
 interface UpdateMemberBody {
   role: ResellerRole;
 }
@@ -168,7 +235,7 @@ function parsePagination(query: unknown): Pagination | { error: string } {
 // ---------------------------------------------------------------------------
 
 export function resellerRoutes(deps: ResellerRoutesDeps) {
-  const { resellerService, resellerMemberService, orgService, dashboardService } = deps;
+  const { resellerService, resellerMemberService, orgService, dashboardService, auditService } = deps;
   const requireResellerAccess = makeRequireResellerAccess(resellerService);
   const requireResellerRole = makeRequireResellerRole(resellerService);
   const requireResellerOrCustomerAccess = makeRequireResellerOrCustomerAccess(
@@ -382,6 +449,50 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     );
 
     // -----------------------------------------------------------------------
+    // POST /admin/reseller/:resellerId/customers — provision a new customer
+    //
+    // Track A customer-provisioning endpoint. A reseller_admin creates a new
+    // org with type='customer' parented at :resellerId. The caller becomes
+    // the customer org's owner (interim — the wizard collects an admin email
+    // but invite delivery is a documented follow-up; the reseller_admin can
+    // re-assign ownership once the invite flow lands alongside migration 015).
+    //
+    // Branding is inherited by default: no brand_profiles row is created, and
+    // src/brand/resolver.ts walks up parent_org_id when one is absent. A
+    // future iteration adds a thin brand_profiles row when the wizard sets
+    // an accent override.
+    //
+    // Authorization stacks the wizard's same membership gate (reseller_admin
+    // of :resellerId) with the service-layer hierarchy invariants in
+    // OrgService.createOrg (parent must exist + be type='reseller').
+    // -----------------------------------------------------------------------
+    app.post<{ Params: { resellerId: string }; Body: unknown }>(
+      '/admin/reseller/:resellerId/customers',
+      async (request, reply) => {
+        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        if (!ctx) return;
+
+        const parsed = parseCreateCustomerBody(request.body);
+        if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+
+        try {
+          const customer = await orgService.createOrg(
+            parsed.name,
+            ctx.user.sub,
+            parsed.plan,
+            { type: 'customer', parentOrgId: ctx.resellerId },
+          );
+          return reply.code(201).send(customer);
+        } catch (err) {
+          if (isOrgHierarchyError(err)) {
+            return sendOrgHierarchyError(reply, err);
+          }
+          throw err;
+        }
+      },
+    );
+
+    // -----------------------------------------------------------------------
     // Reseller-scoped customer dashboard (Track C S2)
     //
     // The same usage payload as /api/dashboard/* but for a target customer
@@ -442,6 +553,41 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
       });
       return reply.send({ vendors });
     });
+
+    // -----------------------------------------------------------------------
+    // Reseller-scoped customer audit feed (Track A — Audit Log tab)
+    //
+    // The customer org's MCP tool-invocation history (request_log), for the
+    // per-org Audit Log tab. Same authz as the dashboard endpoints above:
+    // requireResellerOrCustomerAccess verifies :customerId's parent is the
+    // caller's reseller, and request_log_select RLS carries the
+    // reseller-membership clause underneath — enforced twice.
+    //
+    // Returns the AuditRow shape the reseller-customer-tabs template renders:
+    // { when (ISO), actor, action, target }. v1 surfaces tool invocations;
+    // admin-event entries (admin_audit_log) are a documented follow-up.
+    // -----------------------------------------------------------------------
+    app.get<{
+      Params: { resellerId: string; customerId: string };
+    }>(
+      '/admin/reseller/:resellerId/customers/:customerId/audit',
+      async (request, reply) => {
+        const ctx = await requireResellerOrCustomerAccess(request, reply);
+        if (!ctx) return;
+
+        const { entries } = await auditService.query({
+          orgId: ctx.customerId,
+          limit: 25,
+        });
+        const rows = entries.map((e) => ({
+          when: e.createdAt,
+          actor: e.userName ?? e.userEmail ?? e.userId,
+          action: 'mcp.tool.invoke',
+          target: e.toolName ? `${e.vendorSlug} · ${e.toolName}` : e.vendorSlug,
+        }));
+        return reply.send({ entries: rows });
+      },
+    );
   };
 }
 

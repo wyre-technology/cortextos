@@ -100,10 +100,10 @@ describe('renderNewCustomer — step 1 customer', () => {
     const { body } = renderNewCustomer(data(1));
     expect(body).toContain('conduit.wyre.ai/v1/mcp/wyre-technology/');
   });
-  it('ships the slug-sync script only on step 1', () => {
+  it('ships the slug-sync script on step 1 and the create-POST script on step 3', () => {
     expect(renderNewCustomer(data(1)).pageScripts).toContain('ncSyncSlug');
     expect(renderNewCustomer(data(2)).pageScripts).toBe('');
-    expect(renderNewCustomer(data(3)).pageScripts).toBe('');
+    expect(renderNewCustomer(data(3)).pageScripts).toContain('ncCreateBtn');
   });
 });
 
@@ -135,10 +135,18 @@ describe('renderNewCustomer — step 3 branding + review', () => {
     expect(body).toContain('Owner invite');
     expect(body).toContain('Northwind IT Group');
   });
-  it('ships the Create customer CTA disabled (no provisioning endpoint)', () => {
-    const { body } = renderNewCustomer(data(3));
-    expect(body).toMatch(/nc-create[^>]*disabled/);
+  it('wires the Create customer CTA to the reseller customers POST endpoint', () => {
+    const { body, pageScripts } = renderNewCustomer(data(3));
     expect(body).toContain('Create customer');
+    expect(body).toMatch(/id="ncCreateBtn"/);
+    // POST target points at the caller's reseller id.
+    expect(body).toContain('data-create-url="/admin/reseller/org_reseller/customers"');
+    // Plan + name flow to the request body via data-attrs.
+    expect(body).toContain('data-plan="Pro"');
+    expect(body).toContain('data-name="Northwind IT Group"');
+    // Step-3 script is what actually POSTs and redirects.
+    expect(pageScripts).toContain("fetch(btn.dataset.createUrl");
+    expect(pageScripts).toContain("/org/customers/' + encodeURIComponent(body.id)");
   });
 });
 

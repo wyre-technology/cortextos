@@ -243,22 +243,73 @@ function renderTools(data: CustomerTabData): string {
     ${seam('Mock-data-first. SWAP-IN CONTRACT: tool-access reads/writes MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
 }
 
-// ---- tab: Audit Log ------------------------------------------------------
+// ---- tab: Audit Log (LIVE) -----------------------------------------------
 
 function renderAudit(data: CustomerTabData): string {
-  const rows = data.audit.map((a) => `
-    <tr>
-      <td class="cdt-activity">${escapeHtml(a.when)}</td>
-      <td>${escapeHtml(a.actor)}</td>
-      <td class="cdt-strong">${escapeHtml(a.action)}</td>
-      <td>${escapeHtml(a.target)}</td>
-    </tr>`).join('');
   return renderChrome(data, `
-    <table class="cdt-table">
+    <p id="cdtAuditLoading" class="cdt-loading" role="status" aria-live="polite">Loading audit log…</p>
+    <table class="cdt-table" id="cdtAuditTable" style="display:none">
       <thead><tr><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="4" class="cdt-empty">No audit events.</td></tr>`}</tbody>
+      <tbody id="cdtAuditRows"></tbody>
     </table>
-    ${seam('Mock-data-first. SWAP-IN CONTRACT: the audit query MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
+    <p class="ia-shell-note">Live — sourced from the reseller-scoped customer
+      audit endpoint, which enforces reseller-owns-customer access.</p>`);
+}
+
+/** Live loader for the Audit Log tab — reseller-scoped, endpoint owns authz. */
+function auditScript(resellerId: string, customerId: string): string {
+  const url = `/admin/reseller/${encodeURIComponent(resellerId)}/customers/${encodeURIComponent(customerId)}/audit`;
+  return `
+<script>
+  (function () {
+    var URL = ${JSON.stringify(url)};
+    // Compact relative-time — same idiom as the customer list.
+    function rel(iso) {
+      var t = new Date(iso).getTime();
+      if (isNaN(t)) return '—';
+      var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+      if (s < 60) return 'just now';
+      var m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+      var h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+    function cell(cls, t) { var e = document.createElement('td'); if (cls) e.className = cls; e.textContent = t; return e; }
+    fetch(URL).then(function (r) {
+      if (!r.ok) throw new Error('failed');
+      return r.json();
+    }).then(function (d) {
+      var tb = document.getElementById('cdtAuditRows');
+      var rows = (d && d.entries) || [];
+      rows.forEach(function (e) {
+        var tr = document.createElement('tr');
+        tr.appendChild(cell('cdt-activity', rel(e.when)));
+        tr.appendChild(cell(null, e.actor));
+        tr.appendChild(cell('cdt-strong', e.action));
+        tr.appendChild(cell(null, e.target));
+        tb.appendChild(tr);
+      });
+      if (!rows.length) {
+        var td = cell('cdt-empty', 'No audit events.'); td.colSpan = 4;
+        var tr = document.createElement('tr'); tr.appendChild(td); tb.appendChild(tr);
+      }
+      var loading = document.getElementById('cdtAuditLoading');
+      var table = document.getElementById('cdtAuditTable');
+      if (loading) loading.style.display = 'none';
+      if (table) table.style.display = '';
+    }).catch(function () {
+      var l = document.getElementById('cdtAuditLoading');
+      if (!l) return;
+      l.textContent = 'Could not load the audit log. ';
+      l.classList.add('cdt-load-error');
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'cdt-retry';
+      retry.textContent = 'Retry';
+      retry.onclick = function () { location.reload(); };
+      l.appendChild(retry);
+    });
+  })();
+</script>`;
 }
 
 // ---- tab: Billing --------------------------------------------------------
@@ -341,8 +392,9 @@ export function renderCustomerTab(
     : data.tab === 'settings' ? renderSettings(data)
     : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
 
-  const pageScripts = data.tab === 'usage'
-    ? usageScript(data.org.id, data.customer.id)
+  const pageScripts =
+    data.tab === 'usage' ? usageScript(data.org.id, data.customer.id)
+    : data.tab === 'audit' ? auditScript(data.org.id, data.customer.id)
     : '';
 
   return { body, pageScripts };
@@ -393,6 +445,14 @@ export const CUSTOMER_TAB_STYLES = `
   .cdt-dot-down { background: var(--error); }
 
   .cdt-loading { color: var(--text-tertiary); font-style: italic; padding: 16px 0; }
+  .cdt-load-error { color: var(--error-text); font-style: normal; }
+  .cdt-retry {
+    margin-left: 4px; padding: 4px 12px;
+    background: var(--bg-card); border: 1px solid var(--border-primary);
+    border-radius: 6px; color: var(--text-secondary);
+    font-size: 12px; font-family: inherit; cursor: pointer;
+  }
+  .cdt-retry:hover { border-color: var(--accent); color: var(--accent-text); }
   .cdt-stat-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 16px; margin-top: 16px;
