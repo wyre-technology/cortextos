@@ -62,6 +62,7 @@ import {
   renderOnboardMcp,
   coerceStep,
   RESELLER_ONBOARD_MCP_STYLES,
+  WIRING_PATTERN_COPY,
   type OnboardMcpData,
 } from './templates/reseller-onboard-mcp.js';
 import {
@@ -1007,28 +1008,14 @@ export function webRoutes(deps: WebRouteDeps) {
           { id: 'rocketcyber', name: 'RocketCyber',  abbr: 'RC', iconColor: '#d95933', vendor: 'Kaseya',      category: 'Security', hosting: 'OEM · Shared' },
           { id: 'checkpoint',  name: 'Check Point',  abbr: 'CP', iconColor: '#8c59d9', vendor: 'Check Point', category: 'Security', hosting: 'OEM · BYOC', isNew: true },
         ],
+        // Per-vendor pattern *data* (support + recommendation) only.
+        // Copy comes from WIRING_PATTERN_COPY (Surface 3a) — Track A
+        // swap-in replaces these three rows with whatever the vendor
+        // catalog reports, and the spread keeps copy a single source.
         patterns: [
-          {
-            id: 'byoc', title: 'BYOC — Per User', supported: true, recommended: true,
-            desc: 'Each AM3 user supplies their own Autotask API key.',
-            pros: ['Each user acts as themselves in Autotask', 'Audit trail reflects real user identity', 'Permission scope matches Autotask role'],
-            cons: ['Each user must onboard their own creds', 'Higher setup friction'],
-            bestFor: 'PSAs, time tracking, ticketing where identity matters',
-          },
-          {
-            id: 'shared', title: 'Shared — Reseller-Managed', supported: true,
-            desc: 'WYRE supplies one API key. All AM3 users share it.',
-            pros: ['Zero-setup for AM3 users', 'You rotate creds once, all users updated', 'Simpler audit (one identity outbound)'],
-            cons: ['All actions look like the service user', 'Cannot scope per-user permissions'],
-            bestFor: 'read-mostly tools, security monitoring, RMM',
-          },
-          {
-            id: 'self-hosted', title: 'Self-Hosted (Sidecar)', supported: true,
-            desc: 'Conduit-hosted MCP server container with config you provide.',
-            pros: ['Custom MCPs, internal tools, niche vendors', 'Full control over MCP server config', 'Per-customer container isolation'],
-            cons: ['Higher per-customer infra cost', 'You manage container lifecycle'],
-            bestFor: 'ITGlue, internal MCPs, custom integrations',
-          },
+          { id: 'byoc',        supported: true, recommended: true, ...WIRING_PATTERN_COPY.byoc },
+          { id: 'shared',      supported: true,                    ...WIRING_PATTERN_COPY.shared },
+          { id: 'self-hosted', supported: true,                    ...WIRING_PATTERN_COPY['self-hosted'] },
         ],
         seats: [
           { name: 'C. Ramirez',  department: 'Service Delivery', role: 'Owner',  selected: true },
