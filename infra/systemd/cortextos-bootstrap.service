@@ -12,4 +12,3 @@ TimeoutStartSec=1800
 
 [Install]
 WantedBy=multi-user.target
-
