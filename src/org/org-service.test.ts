@@ -615,7 +615,7 @@ describe('OrgService', () => {
     it('acceptInvitation delegation wraps inner service + calls syncSeats on success', async () => {
       // The OrgService delegation is `async acceptInvitation(token, userId) {
       //   const member = await this.invitationService.acceptInvitation(...);
-      //   if (member) await this.trySyncSeats(member.orgId);
+      //   if (member) await this.syncSeats(member.orgId);
       //   return member;
       // }`. Validated by direct method composition: stub the inner
       // invitation-service return, observe syncer firing with the
@@ -651,11 +651,15 @@ describe('OrgService', () => {
       expect(syncer).not.toHaveBeenCalled();
     });
 
-    it('syncer failure is swallowed by trySyncSeats — DB write still wins', async () => {
+    it('syncer failure is swallowed by syncSeats (API-boundary discipline) — DB write still wins', async () => {
       // Per the disposition: payments shouldn't gate auth/membership.
       // A Stripe outage during seat-sync must not throw out of the
       // mutation method — the DB write is committed, the org-level Stripe
       // quantity is eventually-consistent and reconciled separately.
+      // Post-HOLD: the log+swallow lives on the public syncSeats API
+      // boundary now (not a private trySyncSeats wrapper), so every
+      // external caller — in-class and out — inherits the discipline by
+      // construction.
       const sql = createMockSql();
       enterTestContext(sql);
       const syncer = vi.fn().mockRejectedValue(new Error('stripe is down'));

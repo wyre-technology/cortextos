@@ -243,38 +243,34 @@ export class OrgService {
 
   /**
    * Pushes the org's current billableSeats to its Stripe subscription
-   * seat-item. Called by every seat-mutation site after the underlying
-   * DB write completes. No-op when no syncer is wired (tests, dev w/o
-   * Stripe). Errors propagate — the caller is responsible for deciding
-   * whether a Stripe-sync failure should fail the mutation; default
-   * disposition (see hookable sites below) is "log + swallow" so a
-   * Stripe outage cannot block org membership changes.
-   */
-  async syncSeats(orgId: string): Promise<void> {
-    if (!this.seatSyncer) return;
-    await this.seatSyncer(orgId);
-  }
-
-  /**
-   * Same as syncSeats, but log + swallow Stripe errors so an upstream
-   * outage cannot block the seat-mutating operation that just succeeded
-   * (member add, member remove, service-client create/delete). The DB
-   * write is the source of truth for entitlement; the Stripe push is
-   * eventually-consistent — a reconciliation job (out of Layer 1 scope)
-   * catches drift if a sync drops.
+   * seat-item. Called by every seat-mutation site (the 5 hookable sites:
+   * createServiceClient, deleteServiceClient, removeMember, acceptInvitation,
+   * domain-auto-join) after the underlying DB write completes.
+   *
+   * LOG + SWALLOW SEMANTIC (API CONTRACT, not caller-side discipline):
+   * Stripe errors are logged via console.warn and absorbed. The DB write
+   * is the source of truth for entitlement; the Stripe push is eventually-
+   * consistent. A reconciliation job (filed as launch-gate task with
+   * named triggers — first observed drift OR fleet >~100 orgs OR
+   * compliance ask) catches persistent drift; this method prevents a
+   * transient Stripe blip from cascading into a user-facing 5xx on a
+   * mutation whose DB write already committed.
    *
    * Per DOR §6 + ruby disposition: payments shouldn't gate auth/membership.
+   * Analyst HOLD on PR #221 caught a 4-of-5 address-the-set inconsistency
+   * where this method previously threw and 4 in-class callers used a
+   * private trySyncSeats wrapper — the 5th caller (domain-auto-join)
+   * could 5xx despite a committed INSERT. Disposition (β): lift the
+   * log+swallow to the API boundary so every caller gets the same
+   * semantic by construction; future mutation sites can't pick wrong.
+   *
+   * No-op when no syncer is wired (tests, dev w/o Stripe).
    */
-  private async trySyncSeats(orgId: string): Promise<void> {
+  async syncSeats(orgId: string): Promise<void> {
     if (!this.seatSyncer) return;
     try {
       await this.seatSyncer(orgId);
     } catch (err) {
-      // Caller's caller has no recourse here — the DB write is committed.
-      // Surface to logs (best-effort: console.warn if no structured logger
-      // available at this layer). A separate reconciliation/alert path
-      // catches persistent drift; this prevents a transient Stripe blip
-      // from cascading into a user-facing 5xx.
       // eslint-disable-next-line no-console
       console.warn(
         `[seat-sync] failed for org ${orgId} after seat mutation; DB write is committed, Stripe quantity may be stale:`,
@@ -782,7 +778,7 @@ export class OrgService {
   getMembership(orgId: string, userId: string) { return this.memberService.getMembership(orgId, userId); }
   async removeMember(orgId: string, userId: string): Promise<boolean> {
     const removed = await this.memberService.removeMember(orgId, userId);
-    if (removed) await this.trySyncSeats(orgId);
+    if (removed) await this.syncSeats(orgId);
     return removed;
   }
 
@@ -812,7 +808,7 @@ export class OrgService {
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
   async acceptInvitation(token: string, userId: string) {
     const member = await this.invitationService.acceptInvitation(token, userId);
-    if (member) await this.trySyncSeats(member.orgId);
+    if (member) await this.syncSeats(member.orgId);
     return member;
   }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
@@ -1037,7 +1033,7 @@ export class OrgService {
     // Layer 1: agent seat creation may change billableSeats (agent #3+
     // adds a $20 line; agents 1–2 don't move the quantity but the syncer
     // safely no-ops via the quantity-unchanged short-circuit).
-    await this.trySyncSeats(entry.orgId);
+    await this.syncSeats(entry.orgId);
     return this.toServiceClient(rows[0]);
   }
 
@@ -1061,7 +1057,7 @@ export class OrgService {
       DELETE FROM service_clients WHERE org_id = ${orgId} AND client_id = ${clientId}
     `;
     const deleted = result.count > 0;
-    if (deleted) await this.trySyncSeats(orgId);
+    if (deleted) await this.syncSeats(orgId);
     return deleted;
   }
 

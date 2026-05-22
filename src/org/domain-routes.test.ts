@@ -158,6 +158,43 @@ describe('domain-routes', () => {
       expect(res.json()).toMatchObject({ org: { id: 'org-a', name: 'Acme' }, role: 'member' });
     });
 
+    it('calls orgService.syncSeats(claim.orgId) after the membership INSERT — wires the 5th seat-sync site', async () => {
+      // PR #221 analyst HOLD address-the-set fix: the 5th seat-sync site
+      // (domain-auto-join, out-of-class) had to inherit the log+swallow
+      // contract via the public OrgService.syncSeats API boundary.
+      // Disposition (β): OrgService.syncSeats is now log+swallow at the
+      // API contract (see src/org/org-service.ts and the contract test
+      // at org-service.test.ts: "syncer failure is swallowed by syncSeats
+      // (API-boundary discipline) — DB write still wins").
+      //
+      // This test addresses the WIRING half: prove domain-routes actually
+      // calls orgService.syncSeats with the right orgId after the
+      // org_members INSERT. The contract half (syncSeats never throws,
+      // even when seatSyncer does) composes structurally — every
+      // external caller that calls orgService.syncSeats inherits the
+      // swallow by construction. Together the two tests close the
+      // address-the-set: wire-in-place HERE + swallow-on-throw THERE =
+      // 5xx-free-by-composition at the 5th site.
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getUserOrgs: vi.fn().mockResolvedValue([]),
+        getOrg: vi.fn().mockResolvedValue({ id: 'org-a', name: 'Acme' }),
+      });
+      const domainService = createMockDomainService({
+        findVerifiedByDomain: vi.fn().mockResolvedValue({
+          orgId: 'org-a',
+          domain: 'acme.com',
+          autoJoinRole: 'member',
+        }),
+      });
+      app = await buildApp(orgService, domainService);
+
+      const res = await app.inject({ method: 'POST', url: '/api/me/claim' });
+
+      expect(res.statusCode).toBe(201);
+      expect(orgService.syncSeats).toHaveBeenCalledWith('org-a');
+    });
+
     it('returns 403 when the email is not verified — the account-takeover guard', async () => {
       authenticateAs({ ...TEST_USER, emailVerified: false });
       app = await buildApp(createMockOrgService(), createMockDomainService());
