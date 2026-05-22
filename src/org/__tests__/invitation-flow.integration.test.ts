@@ -60,16 +60,21 @@ async function bootstrap(): Promise<void> {
   `;
   await sql`
     CREATE TABLE org_invitations (
-      id          TEXT PRIMARY KEY,
-      org_id      TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      invited_by  TEXT NOT NULL REFERENCES users(id),
-      token_hash  TEXT NOT NULL,
-      expires_at  TIMESTAMPTZ NOT NULL,
-      accepted_by TEXT REFERENCES users(id),
-      accepted_at TIMESTAMPTZ,
-      max_uses    INTEGER,
-      use_count   INTEGER NOT NULL DEFAULT 0,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id              TEXT PRIMARY KEY,
+      org_id          TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      invited_by      TEXT NOT NULL REFERENCES users(id),
+      token_hash      TEXT NOT NULL,
+      expires_at      TIMESTAMPTZ NOT NULL,
+      accepted_by     TEXT REFERENCES users(id),
+      accepted_at     TIMESTAMPTZ,
+      max_uses        INTEGER,
+      use_count       INTEGER NOT NULL DEFAULT 0,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      -- Layer 1 columns: intended_role (migration 010) + recipient_email
+      -- (migration 034). Inlined here because this integration test stands
+      -- up its own minimal schema rather than running migrations end-to-end.
+      intended_role   TEXT CHECK (intended_role IS NULL OR intended_role IN ('owner', 'admin', 'member')),
+      recipient_email TEXT
     )
   `;
 }
