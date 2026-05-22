@@ -139,15 +139,28 @@ audit identified one new env coupling that landed post the original Phase-B
 standup; verify present in `conduit-prod-kv` BEFORE the cutover redeploy:
 
 - **`control-plane-secret`** (from PR #211 / `relay-control-plane-client.ts`).
-  Shared HMAC secret between the gateway and the on-prem relay. The gateway
-  reads `CONTROL_PLANE_SECRET` env var (KV-backed via `gateway-app.bicep`); the
-  relay signs requests with the same value from its own credential store.
-  Symmetric — both ends must read the SAME value. Provisioned 2026-05-22 into
-  both `conduit-prod-kv` and `mcpgw-staging-kv`; a missing secret = relay
-  calls silently fail (null === null skip-path in the client).
+  Shared HMAC secret between **a gateway** and **the relay(s) that talk to
+  that gateway**. The gateway reads `CONTROL_PLANE_SECRET` env var (KV-backed
+  via `gateway-app.bicep`); the relay signs requests with the same value from
+  its own credential store.
 
-  Verify: `az keyvault secret show --vault-name conduit-prod-kv --name
-  control-plane-secret --query name -o tsv` should print `control-plane-secret`.
+  **Symmetric WITHIN each stack-pair, INDEPENDENT across stacks.** `gateway-
+  app.bicep` resolves `control-plane-secret` from the deploying stack's
+  `keyVaultUri`, so each gateway stack reads from its own KV:
+
+  | Gateway stack | KV (`keyVaultUri`) | Relay-side reads from |
+  |---|---|---|
+  | `conduit-prod-gateway` (rg-conduit-prod) | `conduit-prod-kv` | same |
+  | `conduit-prod-staging-gateway` / `mcpgw-staging-gateway` | `mcpgw-staging-kv` | same |
+  | `mcpgw-prod-gateway` | `mcpgw-prod-kv` | same |
+
+  Provisioned 2026-05-22 into ALL THREE vaults (independent 32-hex values per
+  stack); a missing secret in any one = `gateway-app.bicep` deploy of that
+  stack fails on KV resolution.
+
+  Verify: `az keyvault secret show --vault-name <kv> --name
+  control-plane-secret --query name -o tsv` should print `control-plane-secret`
+  for whichever `<kv>` matches the stack being deployed.
 
 (If a future PR introduces another required env var, extend this section as
 part of the same PR. Cutover-day is not the place to discover env wiring gaps.)
