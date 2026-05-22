@@ -125,8 +125,21 @@ at Aaron's launch-window greenlight. Avoids two known traps documented inline.
      --name conduit-prod-gateway --resource-group rg-conduit-prod \
      --certificate mc-conduit-prod-env-conduit-wyre-ai
    ```
-5. **Validate on the cut-over domain:**
-   `curl https://conduit.wyre.ai/health` → `{"status":"ok"}`.
+5. **Validate on the cut-over domain.** Three checks; all three must pass:
+   - `curl https://conduit.wyre.ai/health` → `{"status":"ok"}`.
+   - `curl -s https://conduit.wyre.ai/.well-known/oauth-authorization-server
+     | jq -r .issuer` → `https://conduit.wyre.ai`. **Load-bearing**:
+     `gateway-app.bicep` derives `BASE_URL` from the `customDomain` param via
+     a ternary (`empty(customDomain) ? <env-default-fqdn> : '${customDomain}'`),
+     so the cutover redeploy with `customDomain=conduit.wyre.ai` IS what
+     refreshes the OAuth-issuer string from the kinddesert default FQDN to
+     `conduit.wyre.ai`. If `.issuer` still reads the Azure FQDN here, the
+     redeploy did not pick up the new customDomain — OAuth clients
+     authenticating against an issuer-mismatch will reject tokens.
+   - `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type:
+     application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"
+     ,"params":{}}' https://conduit.wyre.ai/v1/mcp` → `401` (auth-gated, not
+     5xx; proves the MCP path is reachable + auth-rejecting on the new env).
 6. The next `conduit-prod` workflow deploy (the steady-state path) sees the
    existing custom-domain binding via the `Read existing gateway state` step
    and synthesizes no new binding — a clean no-op on the customDomain side.
