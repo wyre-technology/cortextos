@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
-import { InvitationService } from './invitation-service.js';
+import { InvitationService, OwnerInviteAuthzError } from './invitation-service.js';
 import { MemberService } from './member-service.js';
 import { enterTestContext } from '../db/context.js';
 
@@ -47,6 +47,7 @@ function hash(token: string): string {
 function createMockSql() {
   const inviteRows = new Map<string, InvitationRowShape>();
   const memberRows: Record<string, unknown>[] = [];
+  const ownerships = new Map<string, Record<string, unknown>>();
   const insertStatements: string[] = [];
   const selectStatements: string[] = [];
 
@@ -128,6 +129,27 @@ function createMockSql() {
     }
 
     if (text.includes('SELECT * FROM org_members')) {
+      // Convention: in this test substrate, "owner-1" is the owner of
+      // "org-1". The owner-mint authz guard at createInvitation (lifted
+      // to runtime per task_1779464309991) calls getMembership(orgId,
+      // invitedBy) — return a matching owner row for the canonical pair,
+      // empty otherwise. Individual tests that need a different membership
+      // can use the seedMembership helper exposed on the mock.
+      const orgId = values[0] as string;
+      const userId = values[1] as string;
+      const seeded = ownerships.get(`${orgId}:${userId}`);
+      if (seeded) return Promise.resolve([seeded]);
+      // Default convention: owner-1 / org-1 is an owner.
+      if (orgId === 'org-1' && userId === 'owner-1') {
+        return Promise.resolve([{
+          id: 'm_default_owner',
+          org_id: 'org-1',
+          user_id: 'owner-1',
+          role: 'owner',
+          joined_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        }]);
+      }
       return Promise.resolve([]);
     }
 
@@ -139,6 +161,19 @@ function createMockSql() {
     inviteRows,
     insertStatements,
     selectStatements,
+    /** Seed a membership row visible to memberService.getMembership.
+     *  Used by tests asserting the owner-mint authz guard against
+     *  non-owner inviters. */
+    seedMembership(orgId: string, userId: string, role: 'owner' | 'admin' | 'member'): void {
+      ownerships.set(`${orgId}:${userId}`, {
+        id: `m_seeded_${orgId}_${userId}`,
+        org_id: orgId,
+        user_id: userId,
+        role,
+        joined_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+    },
   };
 }
 
@@ -348,5 +383,77 @@ describe('InvitationService — post-015 contract', () => {
     const { plainToken } = await svc.createInvitation('org-1', 'inviter-1');
     const result = await svc.acceptInvitation(plainToken, 'newuser-1', undefined, 'anyone@anywhere.com');
     expect(result).not.toEqual(expect.objectContaining({ kind: 'email_mismatch' }));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Owner-mint authz guard at createInvitation — lifted from by-construction
+  // call-site discipline to runtime structural check per task_1779464309991.
+  // ---------------------------------------------------------------------------
+
+  it('createInvitation throws OwnerInviteAuthzError when inviter is NOT the current owner', async () => {
+    // Inviter 'attacker-1' has no membership in org-1 → memberService.getMembership
+    // returns null → guard throws. Convention-to-structure conversion: today
+    // the only owner-mint caller (reseller/routes.ts customer-create) passes
+    // by construction; tomorrow this catches new callers structurally.
+    await expect(
+      svc.createInvitation('org-1', 'attacker-1', { intendedRole: 'owner' }),
+    ).rejects.toThrow(OwnerInviteAuthzError);
+  });
+
+  it('createInvitation throws OwnerInviteAuthzError when inviter is a member-but-not-owner', async () => {
+    // Inviter is a member of the org (legit access) but NOT owner → still
+    // refused. Member self-promotion-via-invite is the privilege-escalation
+    // surface this guard closes.
+    mock.seedMembership('org-1', 'member-1', 'member');
+    await expect(
+      svc.createInvitation('org-1', 'member-1', { intendedRole: 'owner' }),
+    ).rejects.toThrow(OwnerInviteAuthzError);
+  });
+
+  it('createInvitation throws OwnerInviteAuthzError when inviter is admin-but-not-owner', async () => {
+    // Admin role !== owner role; admin escalation is refused.
+    mock.seedMembership('org-1', 'admin-1', 'admin');
+    await expect(
+      svc.createInvitation('org-1', 'admin-1', { intendedRole: 'owner' }),
+    ).rejects.toThrow(OwnerInviteAuthzError);
+  });
+
+  it('createInvitation SUCCEEDS for owner-invite when inviter IS the current owner', async () => {
+    // Happy path: owner-1 is the seeded owner of org-1 (default convention
+    // in the mock). The runtime check passes → INSERT proceeds.
+    const result = await svc.createInvitation('org-1', 'owner-1', {
+      intendedRole: 'owner',
+      recipientEmail: 'newowner@customer.io',
+    });
+    expect(result.invitation.intendedRole).toBe('owner');
+    expect(result.invitation.recipientEmail).toBe('newowner@customer.io');
+  });
+
+  it('createInvitation guard does NOT fire for non-owner intendedRole (member/admin invites unchanged)', async () => {
+    // Member-invite path: inviter need not be owner. The guard runs only
+    // when intendedRole === 'owner'; admin/member invites preserve the
+    // existing flexibility (any member can mint a non-owner invite per
+    // route-layer requireOrgRole gates).
+    await expect(
+      svc.createInvitation('org-1', 'random-inviter', { intendedRole: 'member' }),
+    ).resolves.toBeDefined();
+    await expect(
+      svc.createInvitation('org-1', 'random-inviter', /* no intendedRole */),
+    ).resolves.toBeDefined();
+  });
+
+  it('OwnerInviteAuthzError carries orgId + invitedBy for caller-side recovery', async () => {
+    // Discriminated-error-shape discipline — caller can map to a precise
+    // HTTP response (403) with the right context rather than a generic 500.
+    try {
+      await svc.createInvitation('org-1', 'attacker-1', { intendedRole: 'owner' });
+    } catch (err) {
+      expect(err).toBeInstanceOf(OwnerInviteAuthzError);
+      expect((err as OwnerInviteAuthzError).orgId).toBe('org-1');
+      expect((err as OwnerInviteAuthzError).invitedBy).toBe('attacker-1');
+      expect((err as Error).name).toBe('OwnerInviteAuthzError');
+      return;
+    }
+    throw new Error('createInvitation should have thrown OwnerInviteAuthzError');
   });
 });

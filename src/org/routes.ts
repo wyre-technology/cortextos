@@ -246,7 +246,18 @@ export function orgRoutes(deps: OrgRouteDeps) {
           inviteEmail = v.email;
         }
 
-        const { invitation, plainToken } = await orgService.createInvitation(orgId, user.sub);
+        // Layer 1 (β) member-invite email-match extension (task_1779450095130):
+        // when the create-flow has an explicit recipient address, persist it
+        // on the invitation row so acceptInvitation enforces the same
+        // email-match guard as the owner-invite path. Share-link invites
+        // (no `email` field on the body) keep the (α) shape — null
+        // recipient_email, any-authenticated-user accepts. Discipline does
+        // not fork between owner-invite and member-invite paths.
+        const { invitation, plainToken } = await orgService.createInvitation(
+          orgId,
+          user.sub,
+          inviteEmail ? { recipientEmail: inviteEmail } : undefined,
+        );
         const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
 
         void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'member_invited', metadata: { invitationId: invitation.id } }).catch((err) => request.log.error(err, 'admin audit log failed'));
