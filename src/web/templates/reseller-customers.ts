@@ -19,14 +19,27 @@ export type CustomerPlan = 'free' | 'pro' | 'business';
 export interface ResellerCustomer {
   id: string;
   name: string;
-  /** White-label per-customer subdomain (Figma surfaces it inline). */
+  /**
+   * Customer URL slug (path-based per current architecture —
+   * `conduit.wyre.ai/v1/mcp/<reseller-slug>/<customer-slug>`). Derived
+   * from `name` at display-time; not yet stored on the org. The field
+   * keeps its legacy `subdomain` name; renaming is a separate cleanup.
+   */
   subdomain: string;
   plan: CustomerPlan;
-  userCount: number;
-  /** Primary usage metric per the Figma — MCP calls over the last 30 days. */
-  mcpCalls30d: number;
-  /** ISO 8601 — last activity timestamp; rendered relative. */
-  lastActivity: string;
+  /**
+   * Derived stats — `null` when the per-customer-stats aggregator has
+   * not yet wired them (currently the case post-#237 A-MVP). The
+   * template renders an em-dash placeholder for any `null`. Per the
+   * visibility-distinct-by-design discipline: never substitute a
+   * fabricated number for a pending one (#233 F3 lesson; #235 +
+   * #236 audit pattern).
+   */
+  userCount: number | null;
+  /** MCP calls over the last 30 days. Null while aggregator pending. */
+  mcpCalls30d: number | null;
+  /** ISO 8601 last activity. Null while aggregator pending. */
+  lastActivity: string | null;
 }
 
 export interface ResellerCustomersData {
@@ -40,7 +53,11 @@ const PLAN_LABEL: Record<CustomerPlan, string> = {
   business: 'BUSINESS',
 };
 
-function formatRelativeTime(iso: string, now: Date = new Date()): string {
+/** Em-dash placeholder for any not-yet-aggregated derived stat. */
+const EM_DASH = '—';
+
+function formatRelativeTime(iso: string | null, now: Date = new Date()): string {
+  if (iso === null) return EM_DASH;
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return 'unknown';
   const diffMs = Math.max(0, now.getTime() - then);
@@ -74,6 +91,10 @@ function renderRowActions(customer: ResellerCustomer): string {
     </div>`;
 }
 
+function fmtStat(n: number | null): string {
+  return n === null ? EM_DASH : n.toLocaleString();
+}
+
 function renderRow(c: ResellerCustomer): string {
   const name = escapeHtml(c.name);
   return `
@@ -83,8 +104,8 @@ function renderRow(c: ResellerCustomer): string {
         <div class="rc-sub">${escapeHtml(formatRelativeTime(c.lastActivity))} · ${escapeHtml(c.subdomain)}</div>
       </td>
       <td data-label="Plan">${renderPlanBadge(c.plan)}</td>
-      <td class="rc-num" data-label="Users">${c.userCount.toLocaleString()}</td>
-      <td class="rc-num" data-label="MCP Calls (30d)">${c.mcpCalls30d.toLocaleString()}</td>
+      <td class="rc-num" data-label="Users">${fmtStat(c.userCount)}</td>
+      <td class="rc-num" data-label="MCP Calls (30d)">${fmtStat(c.mcpCalls30d)}</td>
       <td class="rc-activity" data-label="Last Activity">${escapeHtml(formatRelativeTime(c.lastActivity))}</td>
       <td>${renderRowActions(c)}</td>
     </tr>`;

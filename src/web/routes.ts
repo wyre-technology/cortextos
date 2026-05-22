@@ -46,6 +46,7 @@ import {
   RESELLER_CUSTOMERS_STYLES,
   RESELLER_CUSTOMERS_SCRIPT,
   type ResellerCustomer,
+  type CustomerPlan,
 } from './templates/reseller-customers.js';
 import {
   renderResellerBranding,
@@ -686,6 +687,37 @@ export function webRoutes(deps: WebRouteDeps) {
     // not a 404. Real surfaces replace each stub in its own PR (same
     // play as the /org/billing stub → IA shell progression).
 
+    /**
+     * Path-based URL slug for a customer org, display-only. Lowercase
+     * + non-alphanumeric → hyphens + collapse repeats + trim. Matches
+     * the customer URL shape `conduit.wyre.ai/v1/mcp/<reseller>/<slug>`.
+     * Not stored on the org (architectural decision deferred — Aaron-
+     * batched task: customer URL routing path-based vs subdomain-based).
+     */
+    function customerUrlSlug(name: string): string {
+      return name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    /**
+     * Coerce the org's `plan` field to the template's `CustomerPlan`
+     * union (badge display). Layer 1 collapses all paid orgs onto a
+     * single plan; the template still carries three legacy labels
+     * (free/pro/business) for the badge. Display-only mapping — for
+     * paid-vs-free gating, route through `isPaidPlan(plan)` from
+     * `src/billing/gate.ts` (sub-pattern #10 regression guard).
+     */
+    function coerceCustomerPlan(plan: string | null | undefined): CustomerPlan {
+      const known: Record<string, CustomerPlan> = {
+        free: 'free',
+        pro: 'pro',
+        business: 'business',
+      };
+      return known[plan ?? ''] ?? 'business';
+    }
+
     function resellerStubBody(surface: string): string {
       // `surface` is a literal label today, but escape it anyway — a
       // latent injection point the moment a dynamic value is ever wired
@@ -705,26 +737,43 @@ export function webRoutes(deps: WebRouteDeps) {
 
     // ---------- GET /org/customers (Track C Surface 1 — Reseller Dashboard) ----------
     //
-    // Customer-organization list for a reseller. Mock-data-first: the
-    // customer rows below are placeholders shaped like the Track A
-    // customer-list read model. When that endpoint lands, the mock builder
-    // is the single swap-in point — the template renders unchanged.
-    // SWAP-IN CONTRACT: the real customer-list query MUST be reseller-scoped
-    // (only orgs whose parent_org_id === the caller's reseller). A bare
-    // SELECT here leaks every org. See warden Track C review, Finding 2.
+    // Real customer-organization list for a reseller. Reads from
+    // `orgService.getCustomersOfReseller(org.id)` — the data layer
+    // already enforces `parent_org_id === resellerId AND type='customer'`
+    // (warden Track C review, Finding 2). Auth gate is
+    // `requireResellerAccess`: org.type must be 'reseller' AND the caller
+    // must hold a membership on the reseller — so the listing is
+    // reseller-OWNERSHIP-scoped by construction at this site.
+    //
+    // Shape mapping Organization → ResellerCustomer:
+    //   id, name, plan          → direct
+    //   subdomain               → slugify(name), display-only (no storage;
+    //                             customer URL is path-based per
+    //                             conduit.wyre.ai/v1/mcp/<reseller>/<customer>)
+    //   userCount, mcpCalls30d, lastActivity
+    //                           → null (em-dash placeholders). The per-
+    //                             customer-stats aggregator is filed as
+    //                             a separate full-triangle task (see
+    //                             commit body); rendering an em-dash
+    //                             preserves the visibility-distinct-by-
+    //                             design rule (#233 F3 lesson + #235
+    //                             obvious-over-compelling pin) — never
+    //                             a fabricated stat alongside real id/name.
     app.get('/org/customers', async (request, reply) => {
       const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
       if (!ctx) return;
       const { user, org } = ctx;
 
-      const now = Date.now();
-      const min = 60 * 1000;
-      const customers: ResellerCustomer[] = [
-        { id: 'cust_mock_1', name: 'AM3 Technology & Cybersecurity', subdomain: 'am3.conduit.wyre.ai',     plan: 'business', userCount: 12, mcpCalls30d: 8247,  lastActivity: new Date(now - 2 * min).toISOString() },
-        { id: 'cust_mock_2', name: 'Team DNS Solutions',             subdomain: 'teamdns.conduit.wyre.ai', plan: 'pro',      userCount: 8,  mcpCalls30d: 3182,  lastActivity: new Date(now - 47 * min).toISOString() },
-        { id: 'cust_mock_3', name: 'Mountain MSP Group',             subdomain: 'mtnmsp.conduit.wyre.ai',  plan: 'pro',      userCount: 6,  mcpCalls30d: 1094,  lastActivity: new Date(now - 3 * 60 * min).toISOString() },
-        { id: 'cust_mock_4', name: 'Coastal IT Partners',            subdomain: 'coastal.conduit.wyre.ai', plan: 'business', userCount: 15, mcpCalls30d: 12403, lastActivity: new Date(now - 24 * 60 * min).toISOString() },
-      ];
+      const customerOrgs = await orgService.getCustomersOfReseller(org.id);
+      const customers: ResellerCustomer[] = customerOrgs.map((o) => ({
+        id: o.id,
+        name: o.name,
+        subdomain: customerUrlSlug(o.name),
+        plan: coerceCustomerPlan(o.plan),
+        userCount: null,
+        mcpCalls30d: null,
+        lastActivity: null,
+      }));
 
       const html = renderLayout(
         {
