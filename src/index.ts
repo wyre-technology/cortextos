@@ -54,6 +54,10 @@ import { waitlistRoutes } from './waitlist/routes.js';
 import { signupRoutes } from './signup/routes.js';
 import { ToolCache } from './proxy/tool-cache.js';
 import { unifiedProxyRoutes } from './proxy/unified-router.js';
+import {
+  RelayControlPlaneClient,
+  classifyControlPlaneBoot,
+} from './proxy/relay-control-plane-client.js';
 import { getUnifiedProtectedResourceMetadata, getUnifiedAuthMetadata } from './oauth/metadata.js';
 import { toolAccessRoutes } from './org/tool-access-routes.js';
 import { requireAdmin } from './lib/admin-auth.js';
@@ -468,12 +472,50 @@ await app.register(cliRoutes({
   toolCache,
 }));
 
+// Gateway-side on-prem relay client wiring. Three boot dispositions (see
+// `classifyControlPlaneBoot()` in `proxy/relay-control-plane-client.ts`):
+//   - wired:        both CONTROL_PLANE_{RELAY_URL,SECRET} set → construct
+//                   the client and hand it to the unified-router.
+//   - unconfigured: both absent → soft-skip (the gateway runs without the
+//                   on-prem path; dev/test friendly + an intentional state
+//                   in deployments that do not yet need on-prem routing).
+//   - ambiguous:    exactly ONE set → refuse-to-boot LOUD. An asymmetric
+//                   misconfig (typo, half-rotation, partial KV provision)
+//                   is far more dangerous than either fully-on or fully-off,
+//                   because it looks "almost configured" while being
+//                   non-functional. The named-actionable-choice in the
+//                   thrown error tells the operator exactly which way out.
+let relayControlPlane: RelayControlPlaneClient | null = null;
+{
+  const disposition = classifyControlPlaneBoot();
+  if (disposition.kind === 'ambiguous') {
+    throw new Error(disposition.reason);
+  }
+  if (disposition.kind === 'wired') {
+    relayControlPlane = new RelayControlPlaneClient({
+      relayUrl: disposition.relayUrl,
+      secret: disposition.secret,
+    });
+    app.log.info(
+      { relayUrl: disposition.relayUrl },
+      'on-prem control-plane client wired',
+    );
+  } else {
+    app.log.info(
+      'on-prem control-plane client unconfigured (CONTROL_PLANE_RELAY_URL + ' +
+        'CONTROL_PLANE_SECRET both absent); /v1/mcp on-prem-routed vendors ' +
+        'will short-circuit to the unknown-vendor arm.',
+    );
+  }
+}
+
 // Unified MCP endpoint — single URL for all vendors (/v1/mcp)
 await app.register(unifiedProxyRoutes({
   credentialService,
   orgService,
   billingGate,
   toolCache,
+  relayControlPlane,
 }));
 
 // Per-vendor MCP reverse proxy (deprecated — catches /v1/:vendor/mcp)
