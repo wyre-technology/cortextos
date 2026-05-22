@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Organization } from '../../org/org-service.js';
 import { getPlan } from '../../billing/plan-catalog.js';
-import { mockSeatBilling } from '../../billing/seat-billing.js';
+import { makeSeatBilling } from './test-helpers/seat-billing-fixture.js';
 import {
   renderDunningBanner,
   renderDunningChip,
@@ -42,7 +42,7 @@ function mockData(
   over: Partial<TeamBillingData> = {},
 ): TeamBillingData {
   const plan = getPlan('pro')!;
-  const seatBilling = mockSeatBilling(4, 0); // 4 humans, 0 agents
+  const seatBilling = makeSeatBilling(4, 0); // 4 humans, 0 agents
   return {
     org: mockOrg,
     plan,
@@ -259,7 +259,7 @@ describe('renderTeamBilling — billing details block (F3)', () => {
 describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('renders the composed bill and the inclusion-explicit seat line', () => {
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: mockSeatBilling(5, 2),
+      seatBilling: makeSeatBilling(5, 2),
     }));
     expect(html).toContain('$600 base + 5 seats × $20 = $700/mo');
     expect(html).toContain('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
@@ -268,7 +268,7 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
 
   it('shows the included-vs-billed split when agents exceed the inclusion', () => {
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: mockSeatBilling(5, 4),
+      seatBilling: makeSeatBilling(5, 4),
     }));
     expect(html).toContain('9 seats — 5 members + 4 agents (2 included, 2 billed)');
     expect(html).toContain('$740/mo');
@@ -289,7 +289,7 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('on-trial: trial banner shown + the bill framed as post-trial', () => {
     const endsAt = new Date(Date.now() + 9 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: mockSeatBilling(1, 0), // $620/mo recurring total
+      seatBilling: makeSeatBilling(1, 0), // $620/mo recurring total
       trial: { endsAt },
     }));
     expect(html).toContain('trial-banner');
@@ -303,7 +303,7 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('the trial first-charge amount equals the composed-bill total (single source)', () => {
     const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: mockSeatBilling(5, 4), // $740/mo
+      seatBilling: makeSeatBilling(5, 4), // $740/mo
       trial: { endsAt },
     }));
     expect(html).toContain('Your first charge is $740.00 on ');

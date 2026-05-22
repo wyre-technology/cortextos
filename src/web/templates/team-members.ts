@@ -1,5 +1,5 @@
 import type { OrgRole } from '../../org/org-service.js';
-import type { SeatBilling } from '../../billing/seat-billing.js';
+import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
 import { formatUsd } from './seat-billing-copy.js';
 
@@ -14,14 +14,14 @@ export interface TeamMembersData {
     email: string | null;
     name: string | null;
   }[];
-  /** Seat-billing view object — drives the per-seat cost note. */
-  seatBilling: SeatBilling;
 }
 
 export function renderTeamMembers(data: TeamMembersData): string {
-  const { orgId, viewerUserId, viewerRole, members, seatBilling } = data;
+  const { orgId, viewerUserId, viewerRole, members } = data;
   const isViewerOwner = viewerRole === 'owner';
-  const perSeat = formatUsd(seatBilling.perSeatPriceCents);
+  // Price comes from the named SoT constant (seat-service.ts), not a
+  // per-org view object — single-source price independent of any snapshot.
+  const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
 
   const memberRows = members
     .map((m) => {

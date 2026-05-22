@@ -1,11 +1,11 @@
 import type { Organization } from '../../org/org-service.js';
 import type { PlanDefinition } from '../../billing/plan-catalog.js';
-import type { SeatBilling } from '../../billing/seat-billing.js';
+import type { SeatBilling } from '../../billing/seat-service.js';
+import { BASE_PRICE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
 import {
   composedBillLine,
   seatBreakdownLine,
-  monthlyTotalCents,
   formatUsd,
   formatUsdExact,
 } from './seat-billing-copy.js';
@@ -356,9 +356,10 @@ export function renderTrialBanner(trial: TrialState, seatBilling: SeatBilling): 
   const daysLabel = daysLeft === 0 ? 'ends today'
     : daysLeft === 1 ? '1 day left'
     : `${daysLeft} days left`;
-  // Exact currency for an actual charge amount; same number as the
-  // composed bill's monthlyTotalCents, charge-formatted.
-  const amount = formatUsdExact(monthlyTotalCents(seatBilling));
+  // Exact currency for an actual charge amount; same `monthlyTotalCents`
+  // the plan card renders + the Stripe subscription will charge —
+  // read directly off the SeatBilling snapshot, never recomputed.
+  const amount = formatUsdExact(seatBilling.monthlyTotalCents);
   const chargeLine = valid
     ? `Your first charge is ${amount} on ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Nothing is billed before then.`
     : `Your first charge is ${amount} when the trial ends. Nothing is billed before then.`;
@@ -382,11 +383,11 @@ function renderPlanCard(data: TeamBillingData): string {
   const { seatBilling, trial, creditsAllocated } = data;
   const billLabel = trial ? 'After your trial' : 'Monthly bill';
   return `
-    <p class="section-desc">One plan, billed monthly — ${escapeHtml(formatUsd(seatBilling.basePriceCents))} base plus ${escapeHtml(formatUsd(seatBilling.perSeatPriceCents))} per seat.</p>
+    <p class="section-desc">One plan, billed monthly — ${escapeHtml(formatUsd(BASE_PRICE_CENTS))} base plus ${escapeHtml(formatUsd(PER_SEAT_PRICE_CENTS))} per seat.</p>
     <div class="plan-summary">
       <div class="plan-line">
         <span class="plan-line-label">${escapeHtml(billLabel)}</span>
-        <span class="bill-amount">${escapeHtml(formatUsd(monthlyTotalCents(seatBilling)))}/mo</span>
+        <span class="bill-amount">${escapeHtml(formatUsd(seatBilling.monthlyTotalCents))}/mo</span>
       </div>
       <div class="plan-line plan-line--composed">
         <span class="composed-bill">${escapeHtml(composedBillLine(seatBilling))}</span>
@@ -401,7 +402,7 @@ function renderPlanCard(data: TeamBillingData): string {
       </div>
     </div>
     <p class="invoice-reconcile-note">
-      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(seatBilling.basePriceCents))}
+      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(BASE_PRICE_CENTS))}
       base and the per-seat charge — and reconciles exactly with the breakdown above.
       The full invoice is in your Stripe billing portal below.
     </p>`;

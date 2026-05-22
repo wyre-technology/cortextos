@@ -84,7 +84,7 @@ import {
 } from './templates/reseller-customer-tabs.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
-import { mockSeatBilling } from '../billing/seat-billing.js';
+import { computeSeatBilling } from '../billing/seat-service.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
 import { assembleOrgVendorHealth, type VendorMonitor } from '../monitoring/vendor-monitor.js';
 import Stripe from 'stripe';
@@ -611,13 +611,17 @@ export function webRoutes(deps: WebRouteDeps) {
 
       const plan = getPlan(org.plan) ?? getDefaultPlan();
 
-      // Layer 1 §8 — seat-billing view object. SWAP-IN: when Hank's group A
-      // lands, replace this block with `await getSeatBilling(org.id)`.
-      // Sequential awaits, NOT Promise.all — each is a DB query on the
-      // request reserved-tx connection (#196/#199 hang class).
+      // Layer 1 §8 — seat-billing view object. Layer 1 data layer (PR #221)
+      // landed; reading via `computeSeatBilling({ humans, agents })`, the pure
+      // no-I/O variant explicitly written for callers that already hold the
+      // counts (seat-service.ts:73-80). Same Object.freeze snapshot, zero
+      // extra DB roundtrip. Sequential awaits on the two count loads (each
+      // is a SELECT on the request reserved-tx; postgres.js queues plain
+      // SELECTs cleanly, but the #196/#199 hang-class discipline keeps them
+      // sequential here regardless).
       const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
-      const seatBilling = mockSeatBilling(members.length, serviceClients.length);
+      const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
       // 2500 credits/seat × all functional seats (humans + agents, including
       // the 2 base-included agents). Locked at decision-of-record §4.
       const creditsAllocated = plan.creditAllocation * seatBilling.creditSeats;
@@ -1226,10 +1230,8 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org, membership } = ctx;
 
       const members = await orgService.getMembersWithProfiles(org.id);
-      // Layer 1 §8 — seat-billing for the per-seat cost note. Sequential
-      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
-      const memberServiceClients = await orgService.listServiceClients(org.id);
-      const memberSeatBilling = mockSeatBilling(members.length, memberServiceClients.length);
+      // Per-seat cost note reads PER_SEAT_PRICE_CENTS from the named SoT
+      // constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/members', title: `${org.name} - Members`, pageStyles: TEAM_MEMBERS_STYLES },
@@ -1244,7 +1246,6 @@ export function webRoutes(deps: WebRouteDeps) {
             email: m.email,
             name: m.name,
           })),
-          seatBilling: memberSeatBilling,
         }),
       );
       return reply.type('text/html').send(html);
@@ -1257,18 +1258,14 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const invitations = await orgService.listInvitations(org.id);
-      // Layer 1 §8 — seat-billing for the per-seat cost note. Sequential
-      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
-      const inviteMembers = await orgService.getMembers(org.id);
-      const inviteServiceClients = await orgService.listServiceClients(org.id);
-      const inviteSeatBilling = mockSeatBilling(inviteMembers.length, inviteServiceClients.length);
+      // Per-seat cost note reads PER_SEAT_PRICE_CENTS from the named SoT
+      // constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/invitations', title: `${org.name} - Invitations`, pageStyles: TEAM_INVITATIONS_STYLES },
         renderTeamInvitations({
           orgId: org.id,
           baseUrl: config.baseUrl,
-          seatBilling: inviteSeatBilling,
           // Post-015 contract: existing invitations don't carry the plaintext
           // token — only the hash persists. The list UI shows status only;
           // the copyable invite URL is shown exactly once at create time
@@ -1385,12 +1382,11 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
-      // Layer 1 §8 — seat-billing for the at-creation cost copy. Sequential
-      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: replace with
-      // `await getSeatBilling(org.id)` when Hank's group A lands.
+      // Layer 1 §8 — seat-billing for the at-creation cost copy. Real Layer 1
+      // data layer (PR #221) via the pure no-I/O `computeSeatBilling`.
       const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
-      const seatBilling = mockSeatBilling(members.length, serviceClients.length);
+      const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
 
       const html = renderLayout(
         { user, org, activePath: '/org/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
@@ -1451,11 +1447,8 @@ export function webRoutes(deps: WebRouteDeps) {
 
       const domainService = new OrgDomainService();
       const domains = await domainService.list(org.id);
-      // Layer 1 §8 — seat-billing for the auto-join seat-cost note. Sequential
-      // awaits, NOT Promise.all (#196/#199 hang class). SWAP-IN: getSeatBilling.
-      const domainMembers = await orgService.getMembers(org.id);
-      const domainServiceClients = await orgService.listServiceClients(org.id);
-      const domainSeatBilling = mockSeatBilling(domainMembers.length, domainServiceClients.length);
+      // Auto-join seat-cost note reads PER_SEAT_PRICE_CENTS from the named
+      // SoT constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/domains', title: `${org.name} - Domains`, pageStyles: TEAM_DOMAINS_STYLES },
@@ -1468,7 +1461,6 @@ export function webRoutes(deps: WebRouteDeps) {
             verifiedAt: d.verifiedAt,
             autoJoinRole: d.autoJoinRole,
           })),
-          seatBilling: domainSeatBilling,
         }),
       );
       return reply.type('text/html').send(html);

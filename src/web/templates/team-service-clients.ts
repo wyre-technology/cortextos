@@ -1,5 +1,5 @@
 import { escapeHtml } from '../helpers.js';
-import type { SeatBilling } from '../../billing/seat-billing.js';
+import type { SeatBilling } from '../../billing/seat-service.js';
 import { agentSeatConsentCopy } from './seat-billing-copy.js';
 
 export interface TeamServiceClientsData {

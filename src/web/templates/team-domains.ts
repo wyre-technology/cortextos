@@ -1,4 +1,4 @@
-import type { SeatBilling } from '../../billing/seat-billing.js';
+import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
 import { formatUsd } from './seat-billing-copy.js';
 
@@ -11,8 +11,6 @@ export interface TeamDomainsData {
     verifiedAt: string | null;
     autoJoinRole: 'member' | 'admin';
   }[];
-  /** Seat-billing view object — drives the auto-join seat-cost note. */
-  seatBilling: SeatBilling;
 }
 
 export const TEAM_DOMAINS_STYLES = `
@@ -33,8 +31,9 @@ export const TEAM_DOMAINS_STYLES = `
 `;
 
 export function renderTeamDomains(data: TeamDomainsData): string {
-  const { orgId, domains, seatBilling } = data;
-  const perSeat = formatUsd(seatBilling.perSeatPriceCents);
+  const { orgId, domains } = data;
+  // Price comes from the named SoT constant, not a per-org snapshot.
+  const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
 
   const rows = domains.length === 0
     ? `<div style="padding:16px;color:var(--text-muted);text-align:center">No domains claimed yet. Add one below.</div>`

@@ -1,19 +1,26 @@
 // Layer 1 §8 — seat-billing presentation layer (Pearl-owned).
 //
-// The data layer (src/billing/seat-billing.ts, SeatBilling) single-sources
-// the seat MATH and emits cents + integers. This module single-sources the
+// The data layer (src/billing/seat-service.ts, SeatBilling) single-sources
+// the seat MATH and emits cents + integers — Object.freeze snapshot,
+// monthlyTotalCents pre-derived. This module single-sources the
 // PRESENTATION — money formatting, the composed-bill line, the
 // inclusion-explicit seat line, the agent-seat consent copy. Every §8
 // surface (billing page, service-client create, member add) imports from
 // here so the copy cannot drift between surfaces.
 //
+// Price constants come from `seat-service.js` (BASE_PRICE_CENTS /
+// PER_SEAT_PRICE_CENTS — the named SoT per WI-1) rather than from the
+// view object, so the price source-of-truth lives in exactly one place
+// independent of any per-org snapshot.
+//
 // Pure functions, no escaping — callers escapeHtml at the interpolation
 // site. No surface here renders a number that can disagree with the real
-// source: the bill total is derived from the same SeatBilling the data
-// layer emits, proration is described in plain language (never a computed
+// source: the bill total is read directly off `monthlyTotalCents`, never
+// recomputed; proration is described in plain language (never a computed
 // dollar figure that could disagree with Stripe's actual proration).
 
-import type { SeatBilling } from '../../billing/seat-billing.js';
+import type { SeatBilling } from '../../billing/seat-service.js';
+import { BASE_PRICE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 
 /**
  * Terse money — whole-dollar cents → "$600", non-whole → "$6.50". For
@@ -41,23 +48,20 @@ export function formatUsdExact(cents: number): string {
   });
 }
 
-/** Total monthly charge in cents: base + perSeat × billableSeats. */
-export function monthlyTotalCents(sb: SeatBilling): number {
-  return sb.basePriceCents + sb.perSeatPriceCents * sb.billableSeats;
-}
-
 function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 /**
  * The composed bill, e.g. "$600 base + 5 seats × $20 = $700/mo".
- * `billableSeats` is the multiplied quantity; the total reconciles exactly
- * with the Stripe two-item subscription (base item + seat item).
+ * `billableSeats` is the multiplied quantity; the total is read directly
+ * off `sb.monthlyTotalCents` (the SoT field on the snapshot), never
+ * recomputed here — so this line cannot disagree with the trial banner,
+ * the invoice, or the Stripe subscription quantity.
  */
 export function composedBillLine(sb: SeatBilling): string {
-  return `${formatUsd(sb.basePriceCents)} base + ${plural(sb.billableSeats, 'seat')}`
-    + ` × ${formatUsd(sb.perSeatPriceCents)} = ${formatUsd(monthlyTotalCents(sb))}/mo`;
+  return `${formatUsd(BASE_PRICE_CENTS)} base + ${plural(sb.billableSeats, 'seat')}`
+    + ` × ${formatUsd(PER_SEAT_PRICE_CENTS)} = ${formatUsd(sb.monthlyTotalCents)}/mo`;
 }
 
 /**
@@ -68,13 +72,14 @@ export function composedBillLine(sb: SeatBilling): string {
  *   "9 seats — 5 members + 4 agents (2 included, 2 billed)"
  */
 export function seatBreakdownLine(sb: SeatBilling): string {
-  const head = `${plural(sb.creditSeats, 'seat')} — ${plural(sb.humans, 'member')}`;
-  if (sb.agents === 0) return head;
-  const agentPart = `${plural(sb.agents, 'agent')}`;
-  const split = sb.billedAgentCount === 0
-    ? `(${sb.includedAgentCount} of ${sb.includedAgentCount} agent seat`
-      + `${sb.includedAgentCount === 1 ? '' : 's'} included)`
-    : `(${sb.includedAgentCount} included, ${sb.billedAgentCount} billed)`;
+  const { humans, agents } = sb.counts;
+  const head = `${plural(sb.creditSeats, 'seat')} — ${plural(humans, 'member')}`;
+  if (agents === 0) return head;
+  const agentPart = `${plural(agents, 'agent')}`;
+  const split = sb.billedAgents === 0
+    ? `(${sb.includedAgents} of ${sb.includedAgents} agent seat`
+      + `${sb.includedAgents === 1 ? '' : 's'} included)`
+    : `(${sb.includedAgents} included, ${sb.billedAgents} billed)`;
   return `${head} + ${agentPart} ${split}`;
 }
 
@@ -90,11 +95,11 @@ export function agentSeatConsentCopy(
 ): string {
   // The agent being added is the (agents + 1)-th. It is included while the
   // current agent count is still below the 2-seat allowance.
-  const willBeIncluded = sb.agents < 2;
+  const willBeIncluded = sb.counts.agents < 2;
   if (willBeIncluded) {
     return 'Adds 1 agent seat — included in your plan, $0.';
   }
-  const price = formatUsd(sb.perSeatPriceCents);
+  const price = formatUsd(PER_SEAT_PRICE_CENTS);
   return opts.trialing
     ? `Adds 1 agent seat — ${price}/mo, applied when your trial ends.`
     : `Adds 1 agent seat — ${price}/mo, prorated for the remainder of this cycle.`;
@@ -105,10 +110,10 @@ export function agentSeatConsentCopy(
  * always a $20 event (no inclusions). Trial-aware, plain-language proration.
  */
 export function memberSeatConsentCopy(
-  sb: SeatBilling,
+  _sb: SeatBilling,
   opts: { trialing: boolean },
 ): string {
-  const price = formatUsd(sb.perSeatPriceCents);
+  const price = formatUsd(PER_SEAT_PRICE_CENTS);
   return opts.trialing
     ? `Adds 1 member seat — ${price}/mo, applied when your trial ends.`
     : `Adds 1 member seat — ${price}/mo, prorated for the remainder of this cycle.`;

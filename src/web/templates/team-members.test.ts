@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { renderTeamMembers, type TeamMembersData } from './team-members.js';
-import { mockSeatBilling } from '../../billing/seat-billing.js';
 
 function data(over: Partial<TeamMembersData> = {}): TeamMembersData {
   return {
@@ -8,7 +7,6 @@ function data(over: Partial<TeamMembersData> = {}): TeamMembersData {
     viewerUserId: 'u1',
     viewerRole: 'owner',
     members: [{ userId: 'u1', role: 'owner', joinedAt: null, email: 'a@x.com', name: 'A' }],
-    seatBilling: mockSeatBilling(1, 0),
     ...over,
   };
 }
