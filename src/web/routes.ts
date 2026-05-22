@@ -84,6 +84,7 @@ import {
 } from './templates/reseller-customer-tabs.js';
 import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
+import { computeSeatBilling } from '../billing/seat-service.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
 import { assembleOrgVendorHealth, type VendorMonitor } from '../monitoring/vendor-monitor.js';
 import Stripe from 'stripe';
@@ -609,11 +610,24 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const plan = getPlan(org.plan) ?? getDefaultPlan();
+
+      // Layer 1 §8 — seat-billing view object. Layer 1 data layer (PR #221)
+      // landed; reading via `computeSeatBilling({ humans, agents })`, the pure
+      // no-I/O variant explicitly written for callers that already hold the
+      // counts (seat-service.ts:73-80). Same Object.freeze snapshot, zero
+      // extra DB roundtrip. Sequential awaits on the two count loads (each
+      // is a SELECT on the request reserved-tx; postgres.js queues plain
+      // SELECTs cleanly, but the #196/#199 hang-class discipline keeps them
+      // sequential here regardless).
       const members = await orgService.getMembers(org.id);
-      const memberCount = members.length;
-      const creditsAllocated = plan.maxMembers === Infinity
-        ? plan.creditAllocation * memberCount
-        : plan.creditAllocation;
+      const serviceClients = await orgService.listServiceClients(org.id);
+      const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
+      // 2500 credits/seat × all functional seats (humans + agents, including
+      // the 2 base-included agents). Locked at decision-of-record §4.
+      const creditsAllocated = plan.creditAllocation * seatBilling.creditSeats;
+      // Trial state — SWAP-IN: the real trial read (Hank's §9.1 onboarding
+      // field) is not wired yet, so no org renders as trialing for now.
+      const trial = null;
 
       const dunning = await deriveDunningView(org.id, {
         orgService,
@@ -625,7 +639,8 @@ export function webRoutes(deps: WebRouteDeps) {
       const data: TeamBillingData = {
         org,
         plan,
-        memberCount,
+        seatBilling,
+        trial,
         creditsUsed: await creditService.getUsageThisMonth(org.id),
         creditsAllocated,
         // Payment method, upcoming invoice, and invoice history are not
@@ -1215,6 +1230,8 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org, membership } = ctx;
 
       const members = await orgService.getMembersWithProfiles(org.id);
+      // Per-seat cost note reads PER_SEAT_PRICE_CENTS from the named SoT
+      // constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/members', title: `${org.name} - Members`, pageStyles: TEAM_MEMBERS_STYLES },
@@ -1241,6 +1258,8 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const invitations = await orgService.listInvitations(org.id);
+      // Per-seat cost note reads PER_SEAT_PRICE_CENTS from the named SoT
+      // constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/invitations', title: `${org.name} - Invitations`, pageStyles: TEAM_INVITATIONS_STYLES },
@@ -1363,7 +1382,11 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
+      // Layer 1 §8 — seat-billing for the at-creation cost copy. Real Layer 1
+      // data layer (PR #221) via the pure no-I/O `computeSeatBilling`.
+      const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
+      const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
 
       const html = renderLayout(
         { user, org, activePath: '/org/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
@@ -1378,6 +1401,9 @@ export function webRoutes(deps: WebRouteDeps) {
             expiresAt: c.expiresAt,
             createdAt: c.createdAt,
           })),
+          seatBilling,
+          // SWAP-IN: real trial read (Hank's §9.1 field) not wired yet.
+          trialing: false,
         }),
       );
       return reply.type('text/html').send(html);
@@ -1421,6 +1447,8 @@ export function webRoutes(deps: WebRouteDeps) {
 
       const domainService = new OrgDomainService();
       const domains = await domainService.list(org.id);
+      // Auto-join seat-cost note reads PER_SEAT_PRICE_CENTS from the named
+      // SoT constant in the template — no seat-billing snapshot needed here.
 
       const html = renderLayout(
         { user, org, activePath: '/org/domains', title: `${org.name} - Domains`, pageStyles: TEAM_DOMAINS_STYLES },

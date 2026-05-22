@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Organization } from '../../org/org-service.js';
 import { getPlan } from '../../billing/plan-catalog.js';
+import { makeSeatBilling } from './test-helpers/seat-billing-fixture.js';
 import {
   renderDunningBanner,
   renderDunningChip,
@@ -36,17 +37,23 @@ const mockOrg: Organization = {
   updatedAt: '2026-05-15T00:00:00Z',
 };
 
-function mockData(dunning: DunningView): TeamBillingData {
+function mockData(
+  dunning: DunningView,
+  over: Partial<TeamBillingData> = {},
+): TeamBillingData {
   const plan = getPlan('pro')!;
+  const seatBilling = makeSeatBilling(4, 0); // 4 humans, 0 agents
   return {
     org: mockOrg,
     plan,
-    memberCount: 4,
+    seatBilling,
+    trial: null,
     creditsUsed: 1200,
-    creditsAllocated: plan.creditAllocation * 4,
+    creditsAllocated: plan.creditAllocation * seatBilling.creditSeats,
     dunning,
     firstName: 'Aaron',
     availableCreditPacks: [1000, 2500, 5000],
+    ...over,
   };
 }
 
@@ -246,5 +253,89 @@ describe('renderTeamBilling — billing details block (F3)', () => {
     expect(html).not.toContain('Payment method');  // the old mock card heading
     expect(html).not.toContain('Invoice history'); // the old mock invoice section
     expect(html).not.toContain('Next invoice');    // the old mock next-invoice card
+  });
+});
+
+describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
+  it('renders the composed bill and the inclusion-explicit seat line', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2),
+    }));
+    expect(html).toContain('$600 base + 5 seats × $20 = $700/mo');
+    expect(html).toContain('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
+    expect(html).toContain('$700/mo'); // the prominent total
+  });
+
+  it('shows the included-vs-billed split when agents exceed the inclusion', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 4),
+    }));
+    expect(html).toContain('9 seats — 5 members + 4 agents (2 included, 2 billed)');
+    expect(html).toContain('$740/mo');
+  });
+
+  it('drops the obsolete "Change plan" button (one paid plan, nothing to change to)', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).not.toContain('Change plan');
+  });
+
+  it('off-trial: the bill is labelled as the live monthly charge', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, { trial: null }));
+    expect(html).toContain('Monthly bill');
+    expect(html).not.toContain('After your trial');
+    expect(html).not.toContain('trial-banner');
+  });
+
+  it('on-trial: trial banner shown + the bill framed as post-trial', () => {
+    const endsAt = new Date(Date.now() + 9 * 86_400_000).toISOString();
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(1, 0), // $620/mo recurring total
+      trial: { endsAt },
+    }));
+    expect(html).toContain('trial-banner');
+    expect(html).toContain('Free trial — 9 days left');
+    // First-charge amount = the composed-bill recurring total, single-sourced.
+    expect(html).toContain('Your first charge is $620.00 on ');
+    expect(html).toContain('Nothing is billed before then');
+    expect(html).toContain('After your trial');
+  });
+
+  it('the trial first-charge amount equals the composed-bill total (single source)', () => {
+    const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 4), // $740/mo
+      trial: { endsAt },
+    }));
+    expect(html).toContain('Your first charge is $740.00 on ');
+    expect(html).toContain('$600 base + 7 seats × $20 = $740/mo'); // same number
+  });
+
+  it('on-trial with 1 day left — singular copy', () => {
+    const endsAt = new Date(Date.now() + 18 * 60 * 60 * 1000).toISOString();
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { endsAt },
+    }));
+    expect(html).toContain('Free trial — 1 day left');
+  });
+
+  it('on-trial ending today — "ends today" copy', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { endsAt: new Date().toISOString() },
+    }));
+    expect(html).toContain('Free trial — ends today');
+  });
+
+  it('a malformed trial-end date degrades to honest-vague, never "Invalid Date"', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      trial: { endsAt: 'not-a-date' },
+    }));
+    expect(html).not.toContain('Invalid Date');
+    expect(html).toContain('when the trial ends');
+  });
+
+  it('shows the two-line-item invoice reconcile note (S4)', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }));
+    expect(html).toContain('itemizes this as two lines');
+    expect(html).toContain('reconciles exactly');
   });
 });

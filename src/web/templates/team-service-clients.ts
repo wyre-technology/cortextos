@@ -1,4 +1,6 @@
 import { escapeHtml } from '../helpers.js';
+import type { SeatBilling } from '../../billing/seat-service.js';
+import { agentSeatConsentCopy } from './seat-billing-copy.js';
 
 export interface TeamServiceClientsData {
   orgId: string;
@@ -11,10 +13,18 @@ export interface TeamServiceClientsData {
     expiresAt: string | null;
     createdAt: string;
   }[];
+  /** Seat-billing view object — drives the at-creation cost copy. */
+  seatBilling: SeatBilling;
+  /** True while the org is inside its 14-day trial. */
+  trialing: boolean;
 }
 
 export function renderTeamServiceClients(data: TeamServiceClientsData): string {
-  const { orgId, baseUrl, serviceClients } = data;
+  const { orgId, baseUrl, serviceClients, seatBilling, trialing } = data;
+
+  // The billing consequence of creating one more agent seat — truthful per
+  // the 2-included-agent inclusion (agent #1/#2 is $0, #3+ adds a $20 line).
+  const agentConsent = agentSeatConsentCopy(seatBilling, { trialing });
 
   const clientsTable = serviceClients.length > 0 ? `
     <div class="org-section" style="padding:0;overflow:auto">
@@ -56,6 +66,7 @@ export function renderTeamServiceClients(data: TeamServiceClientsData): string {
         <button class="btn-connect" onclick="createServiceClient()" style="width:auto;padding:8px 16px">Create</button>
         <button class="btn-disconnect" onclick="document.getElementById('svcCreateForm').style.display='none'">Cancel</button>
       </div>
+      <p class="svc-billing-note">${escapeHtml(agentConsent)}</p>
       <div id="svcError" style="color:var(--error);font-size:13px;padding:0 16px 12px;display:none"></div>
     </div>
 
@@ -146,4 +157,10 @@ export const TEAM_SERVICE_CLIENTS_STYLES = `
     border: none; border-radius: 6px; cursor: pointer;
   }
   .btn-create-invite:hover { background: var(--accent-hover); }
+  .svc-billing-note {
+    margin: 0;
+    padding: 0 16px 14px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
 `;

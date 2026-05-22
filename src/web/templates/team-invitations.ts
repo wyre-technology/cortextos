@@ -1,4 +1,6 @@
+import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
+import { formatUsd } from './seat-billing-copy.js';
 
 export interface TeamInvitationsData {
   orgId: string;
@@ -23,6 +25,8 @@ function formatUsage(useCount: number, maxUses: number | null): string {
 
 export function renderTeamInvitations(data: TeamInvitationsData): string {
   const { orgId, baseUrl, invitations } = data;
+  // Price comes from the named SoT constant, not a per-org snapshot.
+  const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
 
   const invitationRows = invitations.length > 0
     ? invitations
@@ -46,7 +50,8 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
     <div style="display:flex;align-items:center;justify-content:space-between">
       <div>
         <h1 style="margin-bottom:4px">Invitations</h1>
-        <p class="section-desc">Share an invite link with your colleagues.</p>
+        <p class="section-desc">Share an invite link with your colleagues.
+          Each colleague who joins takes a ${escapeHtml(perSeat)}/mo member seat.</p>
       </div>
       <button class="btn-create-invite" onclick="showCreateModal()">Create Invite Link</button>
     </div>

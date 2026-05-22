@@ -1,4 +1,6 @@
+import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
+import { formatUsd } from './seat-billing-copy.js';
 
 export interface TeamDomainsData {
   orgId: string;
@@ -30,6 +32,8 @@ export const TEAM_DOMAINS_STYLES = `
 
 export function renderTeamDomains(data: TeamDomainsData): string {
   const { orgId, domains } = data;
+  // Price comes from the named SoT constant, not a per-org snapshot.
+  const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
 
   const rows = domains.length === 0
     ? `<div style="padding:16px;color:var(--text-muted);text-align:center">No domains claimed yet. Add one below.</div>`
@@ -69,6 +73,11 @@ export function renderTeamDomains(data: TeamDomainsData): string {
       <p class="section-desc">
         Teammates who sign up from a verified domain can one-click join your organization
         instead of needing an invite link. Public providers (gmail, outlook, …) can't be claimed.
+      </p>
+      <p class="section-desc domain-seat-note">
+        Heads up: each teammate who auto-joins takes a ${escapeHtml(perSeat)}/mo member
+        seat, the same as an invited member — auto-join can grow your bill without a
+        per-person confirmation step.
       </p>
     </div>
 
