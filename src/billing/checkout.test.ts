@@ -124,14 +124,31 @@ describe('billingRoutes', () => {
     await app.close();
   });
 
-  it('skips registration when STRIPE_PRO_PRICE_ID is missing', async () => {
+  it('still registers when STRIPE_PRO_PRICE_ID is missing (Layer 1: trialing sub already attached at org creation)', async () => {
+    // Pre-Layer-1 the entire billing route bundle was skipped without
+    // stripeProPriceId. Layer 1 attaches the trialing subscription at
+    // org creation (createConduitBillingProvisioner), so the portal flow
+    // works without stripeProPriceId. The legacy first-subscribe branch
+    // returns a 409 with an explanatory message when reached without the
+    // legacy price ID. Test exercises the 409 path by authenticating a
+    // user against a legacy 'free' org with no stripeCustomerId.
     vi.stubEnv('MASTER_KEY', MASTER_KEY);
     vi.stubEnv('JWT_SECRET', JWT_SECRET);
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_key');
     vi.stubEnv('STRIPE_PRO_PRICE_ID', '');
 
+    mockRequireAuth0.mockReturnValue({ sub: 'user_1', email: 'u@example.com' });
+
     const { billingRoutes } = await import('./checkout.js');
-    const orgService = createMockOrgService();
+    const orgService = createMockOrgService({
+      getMembership: vi.fn().mockResolvedValue({ role: 'owner', userId: 'user_1' }),
+      getOrg: vi.fn().mockResolvedValue({
+        id: 'org_123',
+        plan: 'free',
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+      }),
+    });
     const app = Fastify({ logger: false });
     await app.register(billingRoutes(orgService));
 
@@ -141,7 +158,10 @@ describe('billingRoutes', () => {
       payload: { org_id: 'org_123' },
     });
 
-    expect(response.statusCode).toBe(404);
+    // Legacy first-subscribe path with no stripeProPriceId configured →
+    // 409 with a named-actionable-choice error rather than failing late.
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatch(/first-subscribe path is not configured/);
     await app.close();
   });
 

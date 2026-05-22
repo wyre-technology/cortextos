@@ -32,14 +32,30 @@ export const CREDIT_PACKS: Record<number, string> = {
 
 export function billingRoutes(orgService: OrgService) {
   return async function plugin(app: FastifyInstance): Promise<void> {
-    if (!config.stripeSecretKey || !config.stripeProPriceId) {
-      app.log.warn('Stripe not fully configured — skipping billing routes');
+    // Layer 1: the registration gate drops the stripeProPriceId requirement.
+    // The trialing two-item subscription (conduit base + seat) is created
+    // server-side at org creation by createConduitBillingProvisioner; the
+    // pro single-price endpoint is legacy-only and per-route logic handles
+    // its absence. Credit-pack purchases (a separate route below) only
+    // need their own pack-specific price IDs; the per-route check (line
+    // ~130) catches missing packs at request time.
+    if (!config.stripeSecretKey) {
+      app.log.warn('Stripe not configured — skipping billing routes');
       return;
     }
 
     const stripe = new Stripe(config.stripeSecretKey);
 
-    // POST /api/billing/checkout — start subscription checkout
+    // POST /api/billing/checkout
+    //
+    // Layer 1 disposition (DOR §9.1 + §7): every standalone org is created
+    // with a Stripe trialing subscription attached, so stripeCustomerId is
+    // set from creation. This endpoint routes EVERY caller with a
+    // stripeCustomerId to the Customer Portal — that's where they add a
+    // payment method during/after trial, change card, cancel, etc. The
+    // legacy "first-subscribe" path below (lines ~120+) fires only for
+    // pre-Layer-1 orgs without a stripeCustomerId, which post-WI-8
+    // migration is the empty set.
     app.post<{ Body: { org_id: string; coupon?: string } }>(
       '/api/billing/checkout',
       async (request, reply) => {
@@ -62,13 +78,34 @@ export function billingRoutes(orgService: OrgService) {
           return reply.code(404).send({ error: 'Organization not found' });
         }
 
-        // If already on a paid plan, redirect to portal instead
+        // Layer 1 happy path: org has a Stripe customer (because every
+        // conduit org gets one at creation) → Customer Portal handles
+        // payment-method-attach, card change, cancel, invoice history.
+        // No new subscription is created here — the trialing sub already
+        // exists; portal updates default_payment_method on that sub.
+        // The isPaidPlan gate is kept as a safety check for the
+        // migration window (a legacy 'free' org with a stripeCustomerId
+        // from a prior aborted upgrade would otherwise short-circuit
+        // here; falls through to the legacy first-subscribe path below).
         if (isPaidPlan(org.plan) && org.stripeCustomerId) {
           const portalSession = await stripe.billingPortal.sessions.create({
             customer: org.stripeCustomerId,
             return_url: `${config.baseUrl}/settings`,
           });
           return reply.send({ url: portalSession.url });
+        }
+
+        // Legacy first-subscribe path (pre-Layer-1 / WI-8 migration in
+        // flight). Requires stripeProPriceId to be set; without it the
+        // endpoint returns a clear error rather than failing late in the
+        // Stripe call. Post-migration this branch is unreachable.
+        if (!config.stripeProPriceId) {
+          return reply
+            .code(409)
+            .send({
+              error:
+                'No subscription on this org and the legacy first-subscribe path is not configured (Layer 1: every conduit org gets a subscription at creation; this state should not occur post-migration).',
+            });
         }
 
         const sessionParams: Stripe.Checkout.SessionCreateParams = {
