@@ -907,13 +907,8 @@ export function webRoutes(deps: WebRouteDeps) {
           { when: '1d ago',   actor: 'C. Ramirez',      action: 'tool.access.grant', target: 'Tier 1 Support → search_tickets' },
           { when: '2d ago',   actor: 'WYRE Technology', action: 'customer.create',   target: 'AM3 Technology & Cybersecurity' },
         ],
-        billingPlan: 'Business',
-        billingRate: '$49 / user / month · 12 users',
-        invoices: [
-          { number: 'INV-2026-0042', date: '2026-05-01', amount: '$588.00', status: 'paid' },
-          { number: 'INV-2026-0031', date: '2026-04-01', amount: '$588.00', status: 'paid' },
-          { number: 'INV-2026-0020', date: '2026-03-01', amount: '$539.00', status: 'paid' },
-        ],
+        // Billing tab renders an honest empty state — no fabricated
+        // financial data. See renderBilling() + its seam comment.
       };
     }
 

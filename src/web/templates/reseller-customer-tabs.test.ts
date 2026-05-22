@@ -31,9 +31,6 @@ function data(tab: CustomerTabId, over: Partial<CustomerTabData> = {}): Customer
     toolDepartments: ['Service Delivery'],
     toolGroups: [{ name: 'Tickets', tools: [{ name: 'create_ticket', enabled: true }, { name: 'delete_ticket', enabled: false }] }],
     audit: [{ when: '12m ago', actor: 'C. Ramirez', action: 'mcp.tool.invoke', target: 'Autotask' }],
-    billingPlan: 'Business',
-    billingRate: '$49 / user / month',
-    invoices: [{ number: 'INV-2026-0042', date: '2026-05-01', amount: '$588.00', status: 'paid' }],
     ...over,
   };
 }
@@ -106,11 +103,18 @@ describe('renderCustomerTab — Audit Log (live)', () => {
 });
 
 describe('renderCustomerTab — Billing', () => {
-  it('renders the plan card and invoice rows', () => {
+  it('renders an honest empty state naming the missing reseller endpoint (F3 lesson applied to reseller-viewing-customer direction)', () => {
     const { body } = renderCustomerTab(data('billing'));
-    expect(body).toContain('Business');
-    expect(body).toContain('INV-2026-0042');
-    expect(body).toContain('cdt-inv-paid');
+    // Honest empty state — names the gate + the future content shape.
+    expect(body).toContain('Customer billing');
+    expect(body).toContain('reseller customer-billing endpoint');
+    expect(body).toContain('seat composition');
+    expect(body).toContain('monthly total');
+    expect(body).toContain('invoice history');
+    // No fabricated financial data — neither old-shape nor Layer-1-veneer.
+    expect(body).not.toMatch(/\$\d+(\.\d{2})?\s*(\/\s*(user|seat|mo|month))?/);
+    expect(body).not.toContain('INV-');
+    expect(body).not.toContain('cdt-inv-');
   });
 });
 
@@ -144,7 +148,8 @@ describe('renderCustomerTab — empty states', () => {
   it('renders an empty-state row for each zero-row mock tab', () => {
     expect(renderCustomerTab(data('mcps', { mcps: [] })).body).toContain('No MCPs connected');
     expect(renderCustomerTab(data('users', { members: [], memberTotal: 0 })).body).toContain('No members yet');
-    expect(renderCustomerTab(data('billing', { invoices: [] })).body).toContain('No invoices yet');
+    // Billing tab is unconditionally empty-state until the reseller
+    // customer-billing endpoint lands — see its own test above.
     // (Audit Log is live — its empty-state is a client-script fallback.)
   });
   it('omits the "+ N more" affordance when the roster is complete', () => {

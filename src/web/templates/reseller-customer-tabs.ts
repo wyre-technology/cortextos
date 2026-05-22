@@ -42,12 +42,11 @@ export interface AuditRow {
   action: string;
   target: string;
 }
-export interface InvoiceRow {
-  number: string;
-  date: string;
-  amount: string;
-  status: 'paid' | 'open' | 'void';
-}
+// InvoiceRow + cdt-inv-* CSS removed alongside the Billing tab's fabricated
+// data block (F3 lesson applied to the reseller-viewing-customer direction:
+// no fabricated financial data on a customer-billing surface, regardless of
+// render direction). Restore alongside the reseller customer-billing read
+// route — see the Billing tab seam comment.
 
 export interface CustomerTabData {
   org: Organization;
@@ -60,9 +59,6 @@ export interface CustomerTabData {
   toolDepartments: string[];
   toolGroups: ToolGroup[];
   audit: AuditRow[];
-  billingPlan: string;
-  billingRate: string;
-  invoices: InvoiceRow[];
 }
 
 const TAB_TITLE: Record<CustomerTabId, string> = {
@@ -315,28 +311,27 @@ function auditScript(resellerId: string, customerId: string): string {
 // ---- tab: Billing --------------------------------------------------------
 
 function renderBilling(data: CustomerTabData): string {
-  const badge: Record<InvoiceRow['status'], string> = {
-    paid: 'cdt-inv-paid', open: 'cdt-inv-open', void: 'cdt-inv-void',
-  };
-  const rows = data.invoices.map((i) => `
-    <tr>
-      <td class="cdt-strong">${escapeHtml(i.number)}</td>
-      <td>${escapeHtml(i.date)}</td>
-      <td class="cdt-num">${escapeHtml(i.amount)}</td>
-      <td><span class="cdt-inv ${badge[i.status]}">${escapeHtml(i.status)}</span></td>
-    </tr>`).join('');
+  // F3 lesson applied to the reseller-viewing-customer direction: no
+  // fabricated financial data on a customer-billing surface. The trust
+  // class ("render a number that can disagree with the real source") is
+  // INVARIANT under render direction — a reseller making decisions about
+  // a customer based on fabricated $/seat/invoice numbers is the same
+  // disagreement-with-source-of-truth class as the F3 fabricated-card
+  // breach on /org/billing, just in operator-facing direction.
+  //
+  // Until the reseller customer-billing READ ROUTE lands (see seam below),
+  // this tab renders an honest empty state naming the gate + the future
+  // content shape, so a reseller reading it understands WHY it is empty
+  // and what to coordinate against when the endpoint ships.
   return renderChrome(data, `
-    <div class="cdt-card">
-      <div class="cdt-card-label">Current plan</div>
-      <div class="cdt-card-value">${escapeHtml(data.billingPlan)}</div>
-      <div class="cdt-sub">${escapeHtml(data.billingRate)}</div>
+    <div class="cdt-empty-card">
+      <h2 class="cdt-section-title">Customer billing</h2>
+      <p class="cdt-empty-body">Live customer billing data lands when the
+        reseller customer-billing endpoint ships. This tab will surface
+        seat composition, monthly total, and invoice history scoped to
+        this customer once that endpoint is wired.</p>
     </div>
-    <h2 class="cdt-section-title">Invoices</h2>
-    <table class="cdt-table">
-      <thead><tr><th scope="col">Invoice</th><th scope="col">Date</th><th class="cdt-num" scope="col">Amount</th><th scope="col">Status</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="4" class="cdt-empty">No invoices yet.</td></tr>`}</tbody>
-    </table>
-    ${seam('Mock-data-first (reseller pricing/invoice migrations 025-027 exist; no read endpoint yet). SWAP-IN CONTRACT: the billing read MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).')}`);
+    ${seam('Mock-data-first. SWAP-IN CONTRACT: requires a reseller-scoped customer-billing READ ROUTE (not yet built) that verifies the calling reseller owns :id and internally calls seatService.getSeatBilling(customerId) under the verified access context. Until that route lands, this tab renders an honest empty state — never fabricated financial data on a customer-billing surface (F3 discipline applied to the reseller-viewing-customer direction).')}`);
 }
 
 // ---- tab: Settings -------------------------------------------------------
@@ -481,23 +476,13 @@ export const CUSTOMER_TAB_STYLES = `
   }
   .cdt-box-on { background: var(--accent); border-color: var(--accent); }
 
-  .cdt-inv {
-    display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 2px 8px; border-radius: 10px; border: 1px solid transparent;
-  }
-  .cdt-inv-paid { color: var(--success); border-color: var(--success); }
-  .cdt-inv-open { color: var(--warning-text); border-color: var(--warning-text); }
-  .cdt-inv-void { color: var(--text-tertiary); border-color: var(--border-secondary); }
-
-  .cdt-card {
+  .cdt-empty-card {
     background: var(--bg-card); border: 1px solid var(--border-subtle);
-    border-radius: 8px; padding: 18px; margin-top: 16px; max-width: 320px;
+    border-radius: 8px; padding: 24px; margin-top: 16px; max-width: 560px;
   }
-  .cdt-card-label {
-    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--text-tertiary); margin-bottom: 8px;
+  .cdt-empty-body {
+    margin: 8px 0 0; color: var(--text-tertiary); font-size: 13px; line-height: 1.5;
   }
-  .cdt-card-value { font-size: 20px; font-weight: 700; color: var(--text-primary); }
 
   .cdt-form { margin-top: 16px; max-width: 420px; }
   .cdt-field { display: block; margin-bottom: 16px; }
