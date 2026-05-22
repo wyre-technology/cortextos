@@ -21,8 +21,11 @@ import path from 'node:path';
 import { config } from './config.js';
 import { CredentialService } from './credentials/credential-service.js';
 import { TokenStore } from './oauth/token-store.js';
+import Stripe from 'stripe';
 import { OrgService } from './org/org-service.js';
+import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { DefaultBillingGate } from './billing/gate.js';
+import { DefaultSeatService } from './billing/seat-service.js';
 import { AuditService } from './audit/audit-service.js';
 import { AdminAuditService } from './audit/admin-audit-service.js';
 import { oauthRoutes, completeAuthorization } from './oauth/authorization-server.js';
@@ -116,10 +119,26 @@ initPools({
 // pool; HTTP requests resolve it to a request-path transaction instead.
 
 const orgService = new OrgService();
+const seatService = new DefaultSeatService(orgService);
+// Layer 1: standalone-org creation provisions a Stripe trialing
+// subscription via the conduit provisioner. Wired only when Stripe + the
+// two-item price IDs are configured — otherwise createOrg quietly skips
+// the Stripe attach and the org row's stripe IDs stay null (dev / CI /
+// pre-forge-cred environments boot cleanly without billing).
+if (config.stripeSecretKey && config.stripeConduitBasePriceId && config.stripeConduitSeatPriceId) {
+  orgService.setBillingProvisioner(
+    createConduitBillingProvisioner({
+      stripe: new Stripe(config.stripeSecretKey),
+      seatService,
+      basePriceId: config.stripeConduitBasePriceId,
+      seatPriceId: config.stripeConduitSeatPriceId,
+    }),
+  );
+}
 const domainService = new OrgDomainService();
 const credentialService = new CredentialService();
 const tokenStore = new TokenStore();
-const billingGate = new DefaultBillingGate(orgService);
+const billingGate = new DefaultBillingGate(orgService, seatService);
 const creditService = new CreditService(billingGate);
 const vendorOAuthStates = new VendorOAuthStateStore(Buffer.from(config.masterKey, 'hex'));
 const auditService = new AuditService();

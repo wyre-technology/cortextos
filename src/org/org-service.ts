@@ -1,6 +1,7 @@
 import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
-import type { PlanSlug } from '../billing/plan-catalog.js';
+import { getDefaultPlan, type PlanSlug } from '../billing/plan-catalog.js';
+import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
 import { MemberService } from './member-service.js';
 import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
@@ -34,6 +35,10 @@ export interface Organization {
 export interface CreateOrgOptions {
   type?: OrgType;
   parentOrgId?: string | null;
+  /** Owner's email — flowed through to Stripe for trial-ending notices.
+   *  Optional because the reseller/customer paths don't always have it
+   *  available at creation time and don't always need it. */
+  ownerEmail?: string;
 }
 
 export type OrgHierarchyErrorCode =
@@ -170,22 +175,48 @@ interface MemberRow {
 // Service
 // ---------------------------------------------------------------------------
 
+export interface OrgServiceOptions {
+  /**
+   * Optional billing-provisioner. When present, standalone-org creation
+   * attaches a Stripe trialing subscription (Layer 1 paid-with-trial path
+   * per DOR §9.1). When absent — tests, dev environments without Stripe —
+   * createOrg silently skips the Stripe attach and the org row is left
+   * with null stripe_customer_id / stripe_subscription_id. The fallback
+   * is structural; no flag, no env-check inside createOrg.
+   */
+  billingProvisioner?: OrgBillingProvisioner;
+}
+
 export class OrgService {
   private memberService: MemberService;
   private invitationService: InvitationService;
   private toolAllowlistService: ToolAllowlistService;
   private teamService: TeamService;
+  private billingProvisioner?: OrgBillingProvisioner;
 
   /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
   private get sql(): Sql {
     return getSql();
   }
 
-  constructor() {
+  constructor(options: OrgServiceOptions = {}) {
     this.memberService = new MemberService();
     this.invitationService = new InvitationService(this.memberService);
     this.toolAllowlistService = new ToolAllowlistService();
     this.teamService = new TeamService();
+    this.billingProvisioner = options.billingProvisioner;
+  }
+
+  /**
+   * Post-construction wiring for the billing provisioner. Used in
+   * src/index.ts to break the orgService ⇄ seatService dependency cycle:
+   * orgService constructs first (no provisioner), seatService binds to
+   * the live orgService, then the provisioner — which closes over
+   * seatService — attaches here. Tests use the constructor option
+   * instead and never hit this path.
+   */
+  setBillingProvisioner(provisioner: OrgBillingProvisioner): void {
+    this.billingProvisioner = provisioner;
   }
 
   // -------------------------------------------------------------------------
@@ -460,7 +491,11 @@ export class OrgService {
   ): Promise<Organization> {
     const orgId = nanoid();
     const memberId = nanoid();
-    const orgPlan = plan ?? 'free';
+    // Layer 1 default: every new org is conduit-with-trial (DOR §9.1).
+    // Callers retain the explicit-plan override for the reseller/customer
+    // paths that bill differently; standalone callers should let this
+    // default fire by passing undefined.
+    const orgPlan = plan ?? getDefaultPlan().slug;
     const orgType: OrgType = options?.type ?? 'standalone';
     const parentOrgId: string | null = options?.parentOrgId ?? null;
 
@@ -522,7 +557,43 @@ export class OrgService {
       VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
     `;
 
-    return this.toOrg(rows[0]);
+    // Layer 1: standalone orgs attach a Stripe trialing subscription at
+    // creation (DOR §9.1). Customer and reseller orgs are billed via the
+    // reseller path and skip this. Provisioner-absent (tests, dev w/o
+    // Stripe) is also a clean skip — the org row's stripe_customer_id /
+    // stripe_subscription_id stay null and downstream consumers handle
+    // the no-Stripe case (already exercised today on the F3 surface).
+    //
+    // Order of ops ratified by ruby (msg 1779411593149): org INSERT →
+    // owner-member INSERT → provisioner → UPDATE stripe IDs. Idempotency
+    // keys inside createTrialingSubscription (orgId-bound) make a retry
+    // after a mid-flight failure safe — Stripe returns the same objects
+    // rather than minting duplicates.
+    let stripeCustomerId: string | null = null;
+    let stripeSubscriptionId: string | null = null;
+    if (orgType === 'standalone' && this.billingProvisioner) {
+      const provisionResult = await this.billingProvisioner({
+        orgId,
+        orgName: name,
+        ownerEmail: options?.ownerEmail,
+      });
+      if (provisionResult) {
+        stripeCustomerId = provisionResult.stripeCustomerId;
+        stripeSubscriptionId = provisionResult.stripeSubscriptionId;
+        await this.sql`
+          UPDATE organizations
+          SET stripe_customer_id = ${stripeCustomerId},
+              stripe_subscription_id = ${stripeSubscriptionId},
+              updated_at = NOW()
+          WHERE id = ${orgId}
+        `;
+      }
+    }
+
+    const org = this.toOrg(rows[0]);
+    if (stripeCustomerId) org.stripeCustomerId = stripeCustomerId;
+    if (stripeSubscriptionId) org.stripeSubscriptionId = stripeSubscriptionId;
+    return org;
   }
 
   // -------------------------------------------------------------------------

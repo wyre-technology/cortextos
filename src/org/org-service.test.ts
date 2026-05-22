@@ -128,6 +128,23 @@ describe('OrgService', () => {
         return Promise.resolve([updated]);
       }
 
+      // Layer 1 createOrg: provisioner-attach UPDATE writes stripe IDs only.
+      if (query.includes('UPDATE organizations') && query.includes('stripe_customer_id') && !query.includes('plan')) {
+        const stripeCustomerId = values[0] as string | null;
+        const stripeSubscriptionId = values[1] as string | null;
+        const orgId = values[2] as string;
+        const existing = orgs.get(orgId);
+        if (existing) {
+          orgs.set(orgId, {
+            ...existing,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: stripeSubscriptionId,
+            updated_at: now,
+          });
+        }
+        return Promise.resolve([]);
+      }
+
       if (query.includes('UPDATE organizations SET') && query.includes('plan')) {
         const plan = values[0] as string;
         const stripeCustomerId = values[1] as string | null;
@@ -335,13 +352,126 @@ describe('OrgService', () => {
 
     expect(org.name).toBe('Acme Corp');
     expect(org.ownerId).toBe('user_owner');
-    expect(org.plan).toBe('free');
+    // Layer 1: getDefaultPlan() returns 'conduit' (DOR §9.1 — paid-with-trial,
+    // not free). The legacy 'free' default is gone.
+    expect(org.plan).toBe('conduit');
     expect(org.id).toBeDefined();
 
     // Owner should be a member
     const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_owner'));
     expect(membership).not.toBeNull();
     expect(membership!.role).toBe('owner');
+  });
+
+  describe('createOrg — Layer 1 billing-provisioner attach', () => {
+    it('standalone org with a provisioner: provisioner is called and Stripe IDs land on the org row', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_test_xyz',
+        stripeSubscriptionId: 'sub_test_xyz',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const org = await runWithSql(sql, () =>
+        service.createOrg('Acme Co', 'user_owner', undefined, {
+          ownerEmail: 'owner@acme.example',
+        }),
+      );
+
+      expect(provisioner).toHaveBeenCalledWith({
+        orgId: org.id,
+        orgName: 'Acme Co',
+        ownerEmail: 'owner@acme.example',
+      });
+      expect(org.stripeCustomerId).toBe('cus_test_xyz');
+      expect(org.stripeSubscriptionId).toBe('sub_test_xyz');
+
+      // The row in the DB also reflects the IDs (UPDATE actually ran).
+      const reread = await runWithSql(sql, () => service.getOrg(org.id));
+      expect(reread!.stripeCustomerId).toBe('cus_test_xyz');
+      expect(reread!.stripeSubscriptionId).toBe('sub_test_xyz');
+    });
+
+    it('standalone org WITHOUT a provisioner: createOrg is a clean no-op past the inserts', async () => {
+      // The provisioner-absent path is the dev / CI / pre-forge-cred shape.
+      // The org gets created with the conduit plan but no Stripe attach;
+      // downstream consumers already handle the null-customer case (F3).
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService();
+
+      const org = await runWithSql(sql, () =>
+        service.createOrg('Acme Co', 'user_owner'),
+      );
+
+      expect(org.plan).toBe('conduit');
+      expect(org.stripeCustomerId).toBeNull();
+      expect(org.stripeSubscriptionId).toBeNull();
+    });
+
+    it('provisioner returning null skips the UPDATE — controlled refusal signal', async () => {
+      // Used by createConduitBillingProvisioner when price IDs are unset:
+      // refuse to mint a half-created Stripe customer with empty price.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const org = await runWithSql(sql, () => service.createOrg('Acme Co', 'user_owner'));
+
+      expect(provisioner).toHaveBeenCalledTimes(1);
+      expect(org.stripeCustomerId).toBeNull();
+      expect(org.stripeSubscriptionId).toBeNull();
+    });
+
+    it('customer org skips the provisioner — billed via reseller path, not Stripe directly', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'should-not-be-used',
+        stripeSubscriptionId: 'should-not-be-used',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      // Seed a reseller to parent the customer under.
+      const reseller = await runWithSql(sql, () =>
+        service.createOrg('MSP Co', 'user_msp', undefined, { type: 'reseller' }),
+      );
+
+      const customer = await runWithSql(sql, () =>
+        service.createOrg('Customer Co', 'user_cust', undefined, {
+          type: 'customer',
+          parentOrgId: reseller.id,
+        }),
+      );
+
+      // Provisioner WAS called for the reseller (also standalone-like in
+      // the sense that it could attach), but explicitly NOT called for the
+      // customer. Asserting on the customer-specific call shape.
+      const customerCalls = provisioner.mock.calls.filter(
+        ([arg]) => (arg as { orgId: string }).orgId === customer.id,
+      );
+      expect(customerCalls).toHaveLength(0);
+    });
+
+    it('reseller org skips the provisioner — also billed outside Layer 1', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_should_not_be_used',
+        stripeSubscriptionId: 'sub_should_not_be_used',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const reseller = await runWithSql(sql, () =>
+        service.createOrg('MSP Co', 'user_msp', undefined, { type: 'reseller' }),
+      );
+
+      expect(provisioner).not.toHaveBeenCalled();
+      expect(reseller.stripeCustomerId).toBeNull();
+      expect(reseller.stripeSubscriptionId).toBeNull();
+    });
   });
 
   it('getOrg returns org or null', async () => {

@@ -276,7 +276,13 @@ describe('orgRoutes', () => {
 
       expect(response.statusCode).toBe(201);
       expect(response.json()).toEqual(TEST_ORG);
-      expect(orgService.createOrg).toHaveBeenCalledWith('Test Org', 'user-1', 'free');
+      // Layer 1 (DOR §9.1): routes.ts no longer attaches a plan slug at the
+      // call site — OrgService.createOrg defaults to getDefaultPlan() which
+      // returns 'conduit'. routes.ts threads ownerEmail so Stripe gets the
+      // trial-ending notification address.
+      expect(orgService.createOrg).toHaveBeenCalledWith('Test Org', 'user-1', undefined, {
+        ownerEmail: 'test@example.com',
+      });
     });
 
     it('returns 400 when name is empty', async () => {
