@@ -5,7 +5,7 @@ import { brand } from '../brand/index.js';
 import { requireAuth0 } from '../auth/auth0.js';
 import type { Auth0User } from '../auth/auth0.js';
 import type { OrgService, OrgRole } from './org-service.js';
-import { ROLE_LEVEL } from './org-service.js';
+import { ROLE_LEVEL, isAcceptInvitationError } from './org-service.js';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import { isPaidPlan } from '../billing/gate.js';
@@ -874,12 +874,31 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!user) return;
 
         const { token } = request.params;
-        const member = await orgService.acceptInvitation(token, user.sub, request.log);
-        if (!member) {
+        // Layer 1: acceptInvitation can now return a discriminated-union
+        // failure (email-match miss or owner-invite scope violation) in
+        // addition to OrgMember | null. Each kind maps to the right HTTP
+        // status + named-actionable-choice copy.
+        const result = await orgService.acceptInvitation(
+          token,
+          user.sub,
+          request.log,
+          user.email ?? null,
+        );
+        if (!result) {
           return reply.code(404).type('text/html').send(renderInviteErrorPage('This invitation has expired or is no longer valid.'));
         }
+        if (isAcceptInvitationError(result)) {
+          // Distinct surfaces — different recovery paths.
+          //   email_mismatch → 403, recovery is sign-in-with-invited-account
+          //     or reissue-from-admin.
+          //   owner_invite_scope_violation → 409, system-level invariant
+          //     violation (should never reach a user in production; design
+          //     constraint refused at the boundary).
+          const status = result.kind === 'email_mismatch' ? 403 : 409;
+          return reply.code(status).type('text/html').send(renderInviteErrorPage(result.message));
+        }
 
-        void adminAuditService.log({ orgId: member.orgId, actorId: user.sub, eventType: 'invitation_accepted' }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService.log({ orgId: result.orgId, actorId: user.sub, eventType: 'invitation_accepted' }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.redirect('/settings', 302);
       },
     );

@@ -19,6 +19,7 @@ import { config } from '../config.js';
 import type { ResellerService } from './reseller-service.js';
 import { OrgHierarchyError, type OrgService } from '../org/org-service.js';
 import type { PlanSlug } from '../billing/plan-catalog.js';
+import { sendInvitationEmail } from '../email/transactional.js';
 import {
   ResellerMemberError,
   RESELLER_ROLES,
@@ -138,6 +139,13 @@ function isCustomerPlanSlug(value: unknown): value is PlanSlug {
 interface CreateCustomerBody {
   name: string;
   plan: PlanSlug;
+  /**
+   * Email of the customer-org's eventual owner. The wizard collects this
+   * at step 2; on customer-create we mint an owner-invite addressed to
+   * this email. On accept, the atomic-swap transitions ownership from the
+   * interim reseller_admin to the invite acceptor. Required for Layer 1.
+   */
+  adminEmail: string;
 }
 
 function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: string } {
@@ -156,7 +164,25 @@ function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: s
     return { error: `plan must be one of: ${CUSTOMER_PLAN_SLUGS.join(', ')}` };
   }
   const plan: PlanSlug = isCustomerPlanSlug(planRaw) ? planRaw : 'free';
-  return { name: name.trim(), plan };
+
+  // Layer 1: admin_email is required — the wizard step-2 helper copy
+  // ("An invite is sent on create; the owner sets their own password via
+  // the link") asserts the invite fires. Without it the assertion is
+  // unbacked-by-build — caught pre-PR by scribe coordination + boss flag
+  // (msg 1779430440810).
+  const adminEmailRaw = body.admin_email;
+  if (typeof adminEmailRaw !== 'string' || adminEmailRaw.trim().length === 0) {
+    return { error: 'admin_email is required and must be a non-empty string' };
+  }
+  // Light shape check; normalization (lowercase+trim) happens inside
+  // createInvitation via src/email/normalize.ts. Rejecting an obviously
+  // malformed address surfaces the input error at the wizard layer rather
+  // than minting an invite that nobody can use.
+  if (!adminEmailRaw.includes('@') || adminEmailRaw.length > 320) {
+    return { error: 'admin_email must look like an email address' };
+  }
+
+  return { name: name.trim(), plan, adminEmail: adminEmailRaw.trim() };
 }
 
 /**
@@ -476,13 +502,53 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
         if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
 
         try {
+          // Step 1: create the customer org. ctx.user.sub (reseller_admin)
+          // is inserted as the interim owner via OrgService.createOrg.
           const customer = await orgService.createOrg(
             parsed.name,
             ctx.user.sub,
             parsed.plan,
             { type: 'customer', parentOrgId: ctx.resellerId },
           );
-          return reply.code(201).send(customer);
+
+          // Step 2: mint the owner-invite addressed to admin_email.
+          // AUTHORIZATION GUARD (warden ratify Q2 msg 1779450054436):
+          // ctx.user.sub IS the current owner of the customer org by
+          // construction — OrgService.createOrg just inserted them as
+          // owner. The structural property holds at this call site; no
+          // separate getMembership check needed.
+          //
+          // Invitation carries intendedRole='owner' + recipientEmail.
+          // On accept, invitation-service.ts performs the atomic-swap
+          // (insert acceptor as owner + delete interim reseller_admin
+          // from org_members). See acceptInvitation security comment.
+          const { invitation, plainToken } = await orgService.createInvitation(
+            customer.id,
+            ctx.user.sub,
+            {
+              intendedRole: 'owner',
+              recipientEmail: parsed.adminEmail,
+              maxUses: 1,
+              expiresInHours: 168, // 7 days
+            },
+          );
+
+          // Step 3: send the invitation email. NOTE: opts.brand is NOT
+          // wired here yet — PR #219 (pearl brand-inheritance-pr-3c) is
+          // still open. Per boss disposition (a) msg 1779441149007: build
+          // now against current signature, add `brand: await
+          // brandResolver.resolveBrand(customer.id)` as 1-line follow-up
+          // when #219 merges. Expected brief CI-red post-#219-rebase per
+          // his "same-branch-merge cadence" framing.
+          const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
+          sendInvitationEmail(request.log, {
+            to: parsed.adminEmail,
+            orgName: customer.name,
+            inviteUrl,
+            invitedByEmail: ctx.user.email ?? undefined,
+          });
+
+          return reply.code(201).send({ ...customer, invitation_id: invitation.id });
         } catch (err) {
           if (isOrgHierarchyError(err)) {
             return sendOrgHierarchyError(reply, err);
