@@ -110,10 +110,19 @@ export class DefaultSeatService implements SeatService {
   constructor(private orgService: OrgService) {}
 
   async getSeatCounts(orgId: string): Promise<SeatCounts> {
-    const [members, serviceClients] = await Promise.all([
-      this.orgService.getMembers(orgId),
-      this.orgService.listServiceClients(orgId),
-    ]);
+    // Sequential awaits — NOT Promise.all — per the #196/#199/#201
+    // reserved-tx hang class: Promise.all of service-method calls on a
+    // request-path-reserved-tx connection can stall. getSeatBilling is on
+    // the hot path of gate.getCreditAllocation, every seat-mutation via
+    // seat-syncer, and standalone-org creation via the billing provisioner
+    // — all request-path. The conservative serialization costs one extra
+    // round-trip on a single connection (negligible) and refuses the hang
+    // class structurally rather than relying on "Promise.all happens to
+    // work here." Caught by pearl's comment-anchored discipline at the
+    // PR-A consumer call sites (ruby msg 1779441145372) post-Layer-1
+    // merge — same shape as the standing analyst checklist axis.
+    const members = await this.orgService.getMembers(orgId);
+    const serviceClients = await this.orgService.listServiceClients(orgId);
     return { humans: members.length, agents: serviceClients.length };
   }
 
