@@ -100,4 +100,30 @@ describe('renderResellerCustomers', () => {
     ]));
     expect(html).toMatch(/2 minutes ago/);
   });
+
+  // F3 + #235 visibility-distinct-by-design: when derived stats are not
+  // yet aggregated (post-#237 A-MVP), the cells render an em-dash —
+  // never a fabricated stat alongside real id/name.
+  it('renders em-dash for null derived stats; never fabricates a number', () => {
+    const html = renderResellerCustomers(data([
+      customer({
+        id: 'cust_real',
+        name: 'Northwind IT',
+        userCount: null,
+        mcpCalls30d: null,
+        lastActivity: null,
+      }),
+    ]));
+    // Customer identity is real…
+    expect(html).toContain('Northwind IT');
+    expect(html).toContain('href="/org/customers/cust_real"');
+    // …but every derived-stat cell renders the em-dash placeholder.
+    // The Users + MCP Calls cells should each carry "—" (no fabricated numbers).
+    const usersCell = html.match(/data-label="Users">([^<]+)</)?.[1];
+    const mcpCell = html.match(/data-label="MCP Calls \(30d\)">([^<]+)</)?.[1];
+    const activityCell = html.match(/data-label="Last Activity">([^<]+)</)?.[1];
+    expect(usersCell).toBe('—');
+    expect(mcpCell).toBe('—');
+    expect(activityCell).toBe('—');
+  });
 });
