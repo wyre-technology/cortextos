@@ -11,12 +11,15 @@ import { escapeHtml } from '../helpers.js';
 // (reseller-onboard-mcp.ts) wizard chrome idiom — stepper, banner,
 // Next/Back links — for console consistency.
 //
-// Mock-data-first, like S1/S3/S4/S5: `?step=1..3` selects the body, the
-// fields render a coherent example draft, and the final "Create
-// customer" CTA is DISABLED — there is no provisioning endpoint yet.
-// That disabled CTA is the documented swap-in seam: when the Track A
-// customer-provisioning endpoint lands, the wizard POSTs and the CTA
-// activates, template otherwise unchanged.
+// LIVE end-to-end. The Track A customer-provisioning endpoint shipped
+// (POST /admin/reseller/:resellerId/customers, src/reseller/routes.ts) +
+// the owner-invite email pipeline shipped (#229), so the wizard now
+// genuinely creates a customer org. Step 3 wires the "Create customer"
+// CTA to `data-create-url` on the button + the page-script POSTs the
+// draft and redirects to the new customer's detail page on success
+// (see the create-POST handler in this file and the receiving route at
+// src/reseller/routes.ts). The form fields render an example draft on
+// first load; the user edits before submit.
 
 export type NewCustomerStep = 1 | 2 | 3;
 
