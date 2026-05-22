@@ -33,8 +33,10 @@ export interface McpCatalogEntry {
   isNew?: boolean;
 }
 
+export type WiringPatternId = 'byoc' | 'shared' | 'self-hosted';
+
 export interface WiringPattern {
-  id: 'byoc' | 'shared' | 'self-hosted';
+  id: WiringPatternId;
   title: string;
   desc: string;
   pros: string[];
@@ -44,6 +46,67 @@ export interface WiringPattern {
   /** false → card renders disabled (vendor doesn't support this pattern). */
   supported: boolean;
 }
+
+/**
+ * Permanent copy for the three wiring-pattern cards (Surface 3a).
+ *
+ * Pattern *copy* is stable across vendors — only the per-vendor
+ * `supported`/`recommended` booleans vary. Track A swap-in:
+ * the catalog/registry supplies `{ id, supported, recommended? }`
+ * for each pattern; the data builder spreads `WIRING_PATTERN_COPY[id]`
+ * to fill the rest. Update copy here, never in the data path.
+ */
+export type WiringPatternCopy = Omit<WiringPattern, 'id' | 'supported' | 'recommended'>;
+
+export const WIRING_PATTERN_COPY: Record<WiringPatternId, WiringPatternCopy> = {
+  byoc: {
+    title: 'Bring Your Own Credentials (BYOC)',
+    desc: "Each user adds their own API key. The vendor knows who's calling, and every action in their audit log carries the real person's name — not a shared service account.",
+    pros: [
+      "Per-user identity in the vendor's audit log — real names, not a shared account.",
+      'Each user only sees what their own vendor permissions allow.',
+      'Revoking access is per-user — disable one without touching the rest.',
+    ],
+    cons: [
+      'Every user has to complete their own setup (paste their API key once).',
+      "Each user needs a vendor account or seat on the customer's side.",
+    ],
+    bestFor:
+      'Teams where audit precision matters — compliance-sensitive customers, regulated industries, or any vendor that bills per-seat anyway.',
+  },
+  shared: {
+    title: 'Shared credentials',
+    desc: 'You supply one set of credentials. Every user under this customer makes calls through it. Faster to roll out — but the vendor sees one identity, not many.',
+    pros: [
+      'Set it up once — no per-user paste-the-key step.',
+      'Lower vendor-side admin: one account to manage instead of N.',
+      'Works for vendors that only issue org-level keys.',
+    ],
+    cons: [
+      "The vendor's audit log shows one identity for every user's actions — you lose the per-user attribution Conduit's own audit log still keeps.",
+      'One key compromise means every user is exposed; rotation is org-wide, not per-user.',
+      'Vendor rate limits are shared across the whole team — busy hours can throttle.',
+    ],
+    bestFor:
+      "Small teams, low-volume vendors, or read-only integrations where per-user attribution isn't the priority.",
+  },
+  'self-hosted': {
+    title: 'Self-hosted (on-prem gateway)',
+    desc: "Run the vendor's MCP server on the customer's own infrastructure, reached through a small WYRE on-prem gateway container. Credentials never leave their network — Conduit only proxies the request, it never sees the secret.",
+    pros: [
+      "Vendor credentials stay on the customer's network — WYRE never holds them.",
+      "No inbound ports open on the customer's side; the gateway dials WYRE out over TLS.",
+      'Best fit for compliance reviews that bar third-party credential custody.',
+    ],
+    cons: [
+      'The customer (or you) has to run a Docker container on their infrastructure.',
+      'Slightly higher operational overhead — one more thing to monitor and update.',
+      "Some vendors don't ship a self-hostable MCP server, so this pattern isn't always available.",
+    ],
+    bestFor:
+      'Customers with strict data-residency or "no third-party holds our credentials" requirements — regulated industries, government, or anyone whose security review blocks cloud credential custody. See the on-prem gateway docs for the deploy steps.',
+  },
+};
 
 export interface SeatRow {
   name: string;
@@ -217,8 +280,10 @@ function renderStep2(data: OnboardMcpData): string {
   return `
     <h2 class="ob-q">How will ${escapeHtml(data.customerName)} connect to ${escapeHtml(data.vendorName)}?</h2>
     <p class="ob-q-sub">
-      ${escapeHtml(data.vendorName)} uses OEM credentials (each user supplies their
-      own API key) OR shared credentials (you supply one, all users use it).
+      ${escapeHtml(data.vendorName)} can be connected with <strong>per-user
+      credentials</strong> (each user supplies their own API key — "BYOC")
+      or with <strong>shared credentials</strong> (you supply one set, all
+      users use it).
     </p>
     <div class="ob-pattern-grid">
       ${data.patterns.map((p) => renderPatternCard(p)).join('')}
@@ -256,7 +321,7 @@ function renderStep3(data: OnboardMcpData): string {
           API key via their Conduit profile.
         </p>
         <table class="ob-seats">
-          <thead><tr><th></th><th>User</th><th>Department</th><th>Seat</th></tr></thead>
+          <thead><tr><th></th><th>User</th><th>Department</th><th>Role</th></tr></thead>
           <tbody>${data.seats.map(renderSeatRow).join('')}</tbody>
         </table>
         ${more}
@@ -342,7 +407,7 @@ function renderStep4(data: OnboardMcpData): string {
 
     <div class="ob-actions">
       <button type="button" class="ob-finish" disabled
-        title="Onboarding persistence lands with the Track A endpoint">
+        title="Coming with launch.">
         Onboard ${escapeHtml(data.vendorName)} for ${escapeHtml(data.customerName)}
       </button>
     </div>`;
@@ -359,11 +424,10 @@ export function renderOnboardMcp(data: OnboardMcpData): string {
 
   const note = `
     <p class="ia-shell-note">
-      This wizard renders mock data until the Track A onboarding endpoint
-      lands. v1 ships the BYOC config variant; shared and self-hosted
-      wiring follow. The final action is disabled — onboarding writes
-      audit-log entries and sends customer emails, so it stays gated
-      until the endpoint is live.
+      Right now, only the BYOC wiring is available — shared and
+      self-hosted wiring are coming. Finishing this wizard creates an
+      audit-log entry and emails the customer's users, so the final
+      button is locked until you complete all four steps.
     </p>`;
 
   return renderChrome(data, body + note);
