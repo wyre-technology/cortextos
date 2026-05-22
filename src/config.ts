@@ -95,6 +95,13 @@ export const config = {
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
   stripeProPriceId: process.env.STRIPE_PRO_PRICE_ID ?? '',
+  // Layer 1 two-item subscription (DOR §7). Conduit base = $600 flat;
+  // Conduit seat = $20/unit. Forge mints both in Stripe ("Conduit
+  // Subscription" + "Conduit Seat" — product names locked 2026-05-20).
+  // Empty values during the build window are acceptable for unit tests;
+  // the integration test creates ephemeral test-mode prices.
+  stripeConduitBasePriceId: process.env.STRIPE_CONDUIT_BASE_PRICE_ID ?? '',
+  stripeConduitSeatPriceId: process.env.STRIPE_CONDUIT_SEAT_PRICE_ID ?? '',
   // One-off credit-pack price IDs (GAP-5). Each maps a pack size to its
   // Stripe Price. Unset packs are simply unavailable for purchase.
   stripeCredits1000PriceId: process.env.STRIPE_CREDITS_1000_PRICE_ID ?? '',
