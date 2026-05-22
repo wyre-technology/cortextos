@@ -4,10 +4,15 @@ import { escapeHtml } from '../helpers.js';
 // Track C Surface 1 — Reseller Dashboard ("Customers" list).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 1:2.
 //
-// Lists the customer organizations nested under a reseller org. Built
-// mock-data-first (same play as the billing IA shell): the route handler
-// passes mock `customers` until Hank's Track C customer-list endpoint
-// lands, then the data source swaps and this template renders unchanged.
+// Lists the customer organizations nested under a reseller org. The
+// CUSTOMER-LIST DATA SOURCE has shipped (`OrgService.getCustomersOfReseller`,
+// used by the reseller routes — see `src/reseller/routes.ts:320`), but
+// the `/org/customers` page-handler at `src/web/routes.ts` has not yet
+// been wired to read from it: the handler still passes a mock
+// `cust_mock_*` set to this template. Wiring the page-handler to the
+// real data source is a follow-up PR (separate from this audit-only
+// pass). The template itself renders unchanged on either source — its
+// only contract is the `ResellerCustomer[]` shape.
 
 export type CustomerPlan = 'free' | 'pro' | 'business';
 
@@ -137,8 +142,9 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
 
     <p class="ia-shell-note">
       Customer detail, onboarding, and impersonation route through follow-up
-      Track C surfaces. This dashboard renders mock data until the Track A
-      customer-list endpoint lands.
+      Track C surfaces. This dashboard currently renders mock data; the
+      data source (<code>OrgService.getCustomersOfReseller</code>) has
+      shipped, and a follow-up PR wires this page-handler to it.
     </p>
   `;
 }
