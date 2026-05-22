@@ -74,6 +74,72 @@ export function readControlPlaneConfigFromEnv(): { relayUrl: string | null; secr
   };
 }
 
+/**
+ * Three-state boot disposition for the gateway-side on-prem relay client.
+ *
+ * - `wired` — both `CONTROL_PLANE_RELAY_URL` and `CONTROL_PLANE_SECRET` are
+ *   set and non-empty. The gateway constructs `RelayControlPlaneClient` and
+ *   passes it to `unifiedProxyRoutes`; `/v1/mcp` calls for on-prem-routed
+ *   vendors flow through the relay.
+ * - `unconfigured` — both env vars are absent or empty. The gateway boots
+ *   without the relay client (dev/test friendly; `unifiedProxyRoutes` runs
+ *   with `relayControlPlane: null` and the unified-router short-circuits
+ *   on-prem-routed vendors to the same arm-b path as an unknown vendor).
+ * - `ambiguous` — exactly ONE of the two is set without the other. This is
+ *   a misconfig (typo, half-rotation, partial KV provision); the gateway
+ *   refuses to boot LOUD rather than guess which mode the operator
+ *   intended. The named-actionable-choice is "set BOTH or set NEITHER."
+ */
+export type ControlPlaneBootDisposition =
+  | { kind: 'wired'; relayUrl: string; secret: string }
+  | { kind: 'unconfigured' }
+  | { kind: 'ambiguous'; reason: string };
+
+/**
+ * Classify the gateway's on-prem relay config into the three boot
+ * dispositions. Pure function over env-state; the gateway boot path calls
+ * this and acts on the kind.
+ */
+export function classifyControlPlaneBoot(): ControlPlaneBootDisposition {
+  const { relayUrl, secret } = readControlPlaneConfigFromEnv();
+  if (relayUrl && secret) return { kind: 'wired', relayUrl, secret };
+  if (!relayUrl && !secret) return { kind: 'unconfigured' };
+  return {
+    kind: 'ambiguous',
+    reason:
+      relayUrl
+        ? 'CONTROL_PLANE_RELAY_URL is set but CONTROL_PLANE_SECRET is not. ' +
+          'Set BOTH (to wire the on-prem relay path) or set NEITHER (to run ' +
+          'the gateway without the on-prem path).'
+        : 'CONTROL_PLANE_SECRET is set but CONTROL_PLANE_RELAY_URL is not. ' +
+          'Set BOTH (to wire the on-prem relay path) or set NEITHER (to run ' +
+          'the gateway without the on-prem path).',
+  };
+}
+
+/**
+ * Convenience: read the HMAC secret from env, fail loud if missing.
+ *
+ * Parity with `src/relay/control-plane-server.ts:requireControlPlaneSecret()`.
+ * The relay side ALWAYS requires the secret (the relay is the on-prem path);
+ * the gateway side requires it ONLY when `classifyControlPlaneBoot()` resolves
+ * to `wired` or `ambiguous` (an unconfigured gateway is a legitimate state).
+ *
+ * Callers that always want the secret (relay-side parity) use this directly;
+ * the gateway boot path uses `classifyControlPlaneBoot()` instead so the
+ * `unconfigured` state stays a soft-skip.
+ */
+export function requireControlPlaneSecret(): string {
+  const value = process.env.CONTROL_PLANE_SECRET;
+  if (!value || value.length === 0) {
+    throw new Error(
+      'CONTROL_PLANE_SECRET env var is required — refusing to operate ' +
+        'without an HMAC secret for the gateway↔relay control-plane endpoint.',
+    );
+  }
+  return value;
+}
+
 export class RelayControlPlaneClient {
   private readonly relayUrl: string;
   private readonly secret: string;
