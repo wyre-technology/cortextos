@@ -131,6 +131,27 @@ at Aaron's launch-window greenlight. Avoids two known traps documented inline.
    existing custom-domain binding via the `Read existing gateway state` step
    and synthesizes no new binding — a clean no-op on the customDomain side.
 
+### Cutover-day env-refresh — required KV secrets
+
+The cutover-day deploy refreshes `conduit-prod-gateway` with **all required
+config**, not just the image. The 2026-05-22 bicep-completeness pre-cutover
+audit identified one new env coupling that landed post the original Phase-B
+standup; verify present in `conduit-prod-kv` BEFORE the cutover redeploy:
+
+- **`control-plane-secret`** (from PR #211 / `relay-control-plane-client.ts`).
+  Shared HMAC secret between the gateway and the on-prem relay. The gateway
+  reads `CONTROL_PLANE_SECRET` env var (KV-backed via `gateway-app.bicep`); the
+  relay signs requests with the same value from its own credential store.
+  Symmetric — both ends must read the SAME value. Provisioned 2026-05-22 into
+  both `conduit-prod-kv` and `mcpgw-staging-kv`; a missing secret = relay
+  calls silently fail (null === null skip-path in the client).
+
+  Verify: `az keyvault secret show --vault-name conduit-prod-kv --name
+  control-plane-secret --query name -o tsv` should print `control-plane-secret`.
+
+(If a future PR introduces another required env var, extend this section as
+part of the same PR. Cutover-day is not the place to discover env wiring gaps.)
+
 ### Why path (b) (controlled-name cert) not path (a) (update bicepparam to the auto-suffix name)
 
 Baking a non-reproducible `-3474` random suffix into IaC means every future
