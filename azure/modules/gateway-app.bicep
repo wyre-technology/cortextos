@@ -297,6 +297,19 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUri}secrets/rootly-vendor-webhook-url'
           identity: 'system'
         }
+        {
+          // Shared HMAC secret for the relay control-plane API (PR #211).
+          // The gateway verifies incoming relay requests against this secret;
+          // the on-prem relay signs outgoing requests with the SAME value.
+          // Symmetric: both ends read from THIS stack's Key Vault by the same
+          // secret name. relay-control-plane-client.ts reads it as
+          // process.env.CONTROL_PLANE_SECRET (defaults to null) — null = relay
+          // calls silently fail; this wiring ensures the gateway always has a
+          // value once conduit-prod-kv `control-plane-secret` is provisioned.
+          name: 'control-plane-secret'
+          keyVaultUrl: '${keyVaultUri}secrets/control-plane-secret'
+          identity: 'system'
+        }
       ]
     }
     template: {
@@ -356,6 +369,14 @@ resource gateway 'Microsoft.App/containerApps@2024-03-01' = {
             // Unset == logged no-op (src/monitoring/rootly.ts), so this is
             // safe to add ahead of any Rootly-side config.
             { name: 'ROOTLY_WEBHOOK_URL', secretRef: 'rootly-webhook-url' }
+            // Shared HMAC secret for the relay control-plane API (PR #211).
+            // relay-control-plane-client.ts reads as `process.env
+            // .CONTROL_PLANE_SECRET ?? null`; null = relay calls silently fail
+            // at runtime. The KV secret `control-plane-secret` must exist in
+            // this stack's Key Vault (conduit-prod-kv on prod /
+            // mcpgw-staging-kv on staging) with the SAME value as whatever
+            // the on-prem relay uses — symmetric HMAC.
+            { name: 'CONTROL_PLANE_SECRET', secretRef: 'control-plane-secret' }
           ])
           probes: [
             {
