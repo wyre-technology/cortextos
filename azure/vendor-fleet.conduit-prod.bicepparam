@@ -65,4 +65,31 @@ param vendors = [
   { slug: 'timezest',     image: 'ghcr.io/wyre-technology/timezest-mcp@sha256:8cb1f6f5c46a076e856ed5f77b0b7030220e3838240aa7124717bf4c9ff7ed8b' }
   { slug: 'unitrends',    image: 'ghcr.io/wyre-technology/unitrends-mcp@sha256:8c44f88afa2c3a3ef243da1224de76e7d096b5ff1cb7252f8fee639607d36499' }
   { slug: 'xero',         image: 'ghcr.io/wyre-technology/xero-mcp@sha256:7961283583009e9c783bd34f802af3ab0a9ea93961dc96b9c08de5fc376f08ff' }
+
+  // 8 new sidecars (2026-05-22 staging-gateway anchor, SECONDARY scope) —
+  // gwp-* slugs added to the conduit-prod fleet ahead of vendor-config.ts
+  // wiring. The conduit-prod-staging-gateway in kinddesert points at the
+  // existing 33-fleet via vendor-config defaults; these 8 are provisioned
+  // ahead of catalog-wiring so the full *-mcp fleet (42 less the 1
+  // deferred) is in-env before the conduit.wyre.ai cutover.
+  //
+  // Digests resolved 2026-05-22 from ghcr.io/wyre-technology/<slug>-mcp:latest
+  // — the image each gwp-<slug> in mcp-gateway-prod currently runs (post the
+  // *-mcp Release-rehab pass; the cluster of red Release workflows that was
+  // 16-of-45 dropped to 10 since this morning).
+  { slug: 'abnormal',              image: 'ghcr.io/wyre-technology/abnormal-mcp@sha256:0afd1e3d7dc4e4096d5f3844a12a188c586ffff924d8a2933d2689e0e2c6add0' }
+  { slug: 'azure',                 image: 'ghcr.io/wyre-technology/azure-mcp@sha256:645d43412218fbda7df1e33644be112ba249927bc49654e38eb2a16ddc3b55a3' }
+  { slug: 'connectwise-automate',  image: 'ghcr.io/wyre-technology/connectwise-automate-mcp@sha256:eb8a188473e2d7a7c3c97ebdd4dbaf53086a9b5b318dd84f65d1f68062760812' }
+  { slug: 'datto-bcdr',            image: 'ghcr.io/wyre-technology/datto-bcdr-mcp@sha256:ff459c44985ae5bb2cec55b67cac69a5de0df5d897e1c06a327bcbfe5bceca4f' }
+  { slug: 'datto-rmm',             image: 'ghcr.io/wyre-technology/datto-rmm-mcp@sha256:0eaeb649ea8de427ceb66717e4e9994c21c7c18723d40c2a00ef1fd9499fa88e' }
+  { slug: 'datto-saas-protection', image: 'ghcr.io/wyre-technology/datto-saas-protection-mcp@sha256:3b05fdc699bbaec9e35c478eff0c3e89c5a802cb6f762d8a458aca8cf9e37d6b' }
+  { slug: 'kaseya-bms',            image: 'ghcr.io/wyre-technology/kaseya-bms-mcp@sha256:d87a94621489cbcb778e301ee7d00920fcdddd5a236e69f77d361327276816a7' }
+  { slug: 'kaseya-vsa',            image: 'ghcr.io/wyre-technology/kaseya-vsa-mcp@sha256:7fa53555d7fa4a41f0439494b2ee1de0afc5aa18e8878f8de4edc587034fdce0' }
+
+  // DEFERRED (name-and-defer per murph 2026-05-22): connectwise-psa-mcp —
+  // repo + ghcr both 404; intent (rename of connectwise-manage-mcp vs
+  // separate-repo for a different ConnectWise PSA-suite surface vs
+  // aspirational placeholder) is a product-direction Q routed to Aaron via
+  // murph. Slots in here when an image lands and Aaron answers the (a/b/c).
+  // { slug: 'connectwise-psa',     image: 'ghcr.io/wyre-technology/connectwise-psa-mcp@sha256:...' }
 ]
