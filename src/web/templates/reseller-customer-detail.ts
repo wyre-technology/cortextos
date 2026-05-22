@@ -4,13 +4,13 @@ import { escapeHtml } from '../helpers.js';
 // Track C Surface 2 — Reseller Customer Detail (/org/customers/:id).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 4:2.
 //
-// A reseller drilled into one customer org. Unlike Surfaces 1/3/4/5
-// (mock-data-first), S2's analytics are wired LIVE: the page renders a
-// server-side shell, then fetches the reseller-scoped customer-dashboard
-// endpoints client-side and populates — the same pattern as the
-// customer's own /dashboard (see team-dashboard.ts). Endpoints (shipped
-// in conduit PR #130 + #136):
+// A reseller drilled into one customer org. S2's analytics are wired
+// LIVE: the page renders a server-side shell, then fetches the
+// reseller-scoped customer-dashboard endpoints client-side and populates
+// — the same pattern as the customer's own /dashboard (see
+// team-dashboard.ts). Endpoints live in main:
 //   GET /admin/reseller/:resellerId/customers/:customerId/dashboard/usage
+//   …/savings
 //   …/vendors
 // The four stat cards each pull /usage at a FIXED trailing window
 // (30d / 7d / 24h) per Track C design Rule 2 — a window-labeled card
@@ -20,19 +20,35 @@ import { escapeHtml } from '../helpers.js';
 // innerHTML): vendor names and user emails flow from request logs and
 // must not be trusted as markup.
 //
-// What is NOT live yet, and why (each is a documented swap-in seam):
-//   - Customer identity (name / plan / user + MCP counts / subdomain) —
-//     the Track A customer-list/detail endpoint has not shipped; same
-//     gap Surface 1 carries. Passed as mock `customer` here.
-//   - Error Rate — UsageSummary has no errorRate field yet (confirmed
-//     not in any branch). The card reads usage.errorRate and degrades to
-//     an em-dash; it is correct the instant the aggregate ships.
-//   - MCP wiring-type, per-connection status dot, last-call — need the
-//     connection-config + vendor-health read models (PR #127).
-//   - Per-user role / department / tool-access — need the customer
-//     org-member read model.
+// What is NOT live yet, and why (each is a documented swap-in seam).
+// SWAP-IN CONTRACT for every gap below: the new endpoint MUST be
+// reseller-scoped and :id-ownership-checked via requireResellerOrCustomerAccess
+// (warden Finding 2) — never a bare requireResellerAccess once real customer
+// data flows. The first-instance pattern is the Usage/Audit tabs already shipped.
+//
+//   - Customer identity (name / plan / userCount / mcpCount / subdomain) —
+//     no reseller-scoped single-customer-detail endpoint exists yet (the
+//     reseller customers LIST endpoint has shipped — see
+//     `getCustomersOfReseller` in src/reseller/routes.ts — but not a
+//     `GET /admin/reseller/:resellerId/customers/:customerId` returning
+//     the CustomerSummary shape). Passed as mock `customer` here until
+//     that endpoint lands.
+//   - MCP wiring-type, per-connection status dot, last-call — the
+//     OWNER-scoped vendor-health read model exists
+//     (`/api/orgs/:orgId/vendor-health`, `assembleOrgVendorHealth`); a
+//     RESELLER-SCOPED variant (`requireResellerOrCustomerAccess`-gated)
+//     does not. Wiring this surface needs that variant + a
+//     connection-config read for per-connection wiring-type + last-call.
+//   - Per-user role / department / tool-access — no reseller-scoped
+//     customer-org-member read endpoint exists yet.
+//
 // The Figma frame surfaces those; v1 ships the live-analytics subset and
 // flags the rest rather than mocking a whole page silently.
+//
+// NOTE: errorRate IS now live (UsageSummary aggregate, src/dashboard/
+// dashboard-service.ts:24 — guarded by usage-summary-error-rate.integration
+// .test.ts). The client correctly consumes it at the 7d card; the
+// em-dash fallback is defensive, not a placeholder.
 
 export interface CustomerSummary {
   id: string;
@@ -46,7 +62,11 @@ export interface CustomerSummary {
 export interface ResellerCustomerDetailData {
   /** The reseller org (the caller). */
   org: Organization;
-  /** The customer org being viewed — mock until the Track A endpoint lands. */
+  /**
+   * The customer org being viewed — mock until a reseller-scoped
+   * single-customer-detail endpoint (`requireResellerOrCustomerAccess`-gated)
+   * lands. The reseller customers LIST is wired; per-customer detail is not.
+   */
   customer: CustomerSummary;
 }
 
@@ -242,8 +262,9 @@ export function renderResellerCustomerDetail(
       Analytics on this page are live — sourced from the reseller-scoped
       customer-dashboard endpoints. Customer identity (plan, counts,
       subdomain), per-connection wiring type and health, and per-user
-      role/department render once the Track A customer-detail and member
-      read models land; this v1 ships the live-analytics subset.
+      role/department render once the reseller-scoped customer-detail,
+      vendor-health, and member read endpoints land; this v1 ships the
+      live-analytics subset.
     </p>
   `;
 
