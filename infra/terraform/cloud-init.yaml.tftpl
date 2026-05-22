@@ -202,5 +202,10 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable cortextos-bootstrap.service
   - systemctl enable cortextos.service
-  - systemctl start cortextos-bootstrap.service
-  # cortextos.service starts itself once bootstrap finishes (Requires=).
+  # Start cortextos.service explicitly; systemd resolves the
+  # Requires=cortextos-bootstrap.service dependency and runs the bootstrap
+  # oneshot first, then activates the daemon. Without this, `Requires=`
+  # only cascades failures — it does NOT trigger auto-start when the bootstrap
+  # eventually finishes. `--no-block` lets cloud-init's runcmd finish promptly
+  # while the dependency chain runs asynchronously.
+  - systemctl start --no-block cortextos.service
