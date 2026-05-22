@@ -21,8 +21,12 @@ import path from 'node:path';
 import { config } from './config.js';
 import { CredentialService } from './credentials/credential-service.js';
 import { TokenStore } from './oauth/token-store.js';
+import Stripe from 'stripe';
 import { OrgService } from './org/org-service.js';
+import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { DefaultBillingGate } from './billing/gate.js';
+import { DefaultSeatService } from './billing/seat-service.js';
+import { createConduitSeatSyncer } from './billing/seat-syncer.js';
 import { AuditService } from './audit/audit-service.js';
 import { AdminAuditService } from './audit/admin-audit-service.js';
 import { oauthRoutes, completeAuthorization } from './oauth/authorization-server.js';
@@ -116,10 +120,66 @@ initPools({
 // pool; HTTP requests resolve it to a request-path transaction instead.
 
 const orgService = new OrgService();
+const seatService = new DefaultSeatService(orgService);
+// Layer 1: standalone-org creation provisions a Stripe trialing
+// subscription via the conduit provisioner.
+//
+// Two-mode wiring (ruby msg 1779412681446 + boss disposition):
+//   - CONDUIT_BILLING_REQUIRED=true (prod): missing price IDs throw at
+//     boot via ConduitBillingConfigError. Failing-loud beats silent rot.
+//   - default (dev/test/CI): missing price IDs make the provisioner
+//     return null at invoke time → createOrg quietly skips the Stripe
+//     attach; org row's stripe IDs stay null. Pre-forge-cred environments
+//     boot cleanly.
+//
+// We always call createConduitBillingProvisioner when stripeSecretKey is
+// set — that's the seam where required-mode's boot-time throw fires. If
+// stripeSecretKey itself is unset (dev w/o Stripe at all), provisioner
+// stays undefined and createOrg degrades.
+if (config.stripeSecretKey) {
+  if (
+    !config.conduitBillingRequired &&
+    (!config.stripeConduitBasePriceId || !config.stripeConduitSeatPriceId)
+  ) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[conduit-billing] STRIPE_CONDUIT_BASE_PRICE_ID / STRIPE_CONDUIT_SEAT_PRICE_ID not set — ' +
+        'new orgs will be created WITHOUT a Stripe subscription. Set CONDUIT_BILLING_REQUIRED=true ' +
+        'in production to make this a boot failure instead.',
+    );
+  }
+  const stripe = new Stripe(config.stripeSecretKey);
+  orgService.setBillingProvisioner(
+    createConduitBillingProvisioner({
+      stripe,
+      seatService,
+      basePriceId: config.stripeConduitBasePriceId,
+      seatPriceId: config.stripeConduitSeatPriceId,
+      required: config.conduitBillingRequired,
+    }),
+  );
+  // Seat-syncer wired alongside the provisioner — same env-gating, same
+  // skip-when-IDs-missing-in-dev / throw-when-required disposition. The
+  // syncer's seatPriceId requirement subset matches the provisioner's
+  // (the syncer only needs seatPriceId because it touches the seat-item,
+  // never the base item).
+  orgService.setSeatSyncer(
+    createConduitSeatSyncer({
+      stripe,
+      seatService,
+      seatPriceId: config.stripeConduitSeatPriceId,
+      getSubscriptionId: async (orgId) => {
+        const org = await orgService.getOrg(orgId);
+        return org?.stripeSubscriptionId ?? null;
+      },
+      required: config.conduitBillingRequired,
+    }),
+  );
+}
 const domainService = new OrgDomainService();
 const credentialService = new CredentialService();
 const tokenStore = new TokenStore();
-const billingGate = new DefaultBillingGate(orgService);
+const billingGate = new DefaultBillingGate(orgService, seatService);
 const creditService = new CreditService(billingGate);
 const vendorOAuthStates = new VendorOAuthStateStore(Buffer.from(config.masterKey, 'hex'));
 const auditService = new AuditService();

@@ -1,6 +1,8 @@
 import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
-import type { PlanSlug } from '../billing/plan-catalog.js';
+import { getDefaultPlan, type PlanSlug } from '../billing/plan-catalog.js';
+import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
+import type { SeatSyncer } from '../billing/seat-syncer.js';
 import { MemberService } from './member-service.js';
 import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
@@ -36,6 +38,10 @@ export interface Organization {
 export interface CreateOrgOptions {
   type?: OrgType;
   parentOrgId?: string | null;
+  /** Owner's email — flowed through to Stripe for trial-ending notices.
+   *  Optional because the reseller/customer paths don't always have it
+   *  available at creation time and don't always need it. */
+  ownerEmail?: string;
 }
 
 export type OrgHierarchyErrorCode =
@@ -172,22 +178,107 @@ interface MemberRow {
 // Service
 // ---------------------------------------------------------------------------
 
+export interface OrgServiceOptions {
+  /**
+   * Optional billing-provisioner. When present, standalone-org creation
+   * attaches a Stripe trialing subscription (Layer 1 paid-with-trial path
+   * per DOR §9.1). When absent — tests, dev environments without Stripe —
+   * createOrg silently skips the Stripe attach and the org row is left
+   * with null stripe_customer_id / stripe_subscription_id. The fallback
+   * is structural; no flag, no env-check inside createOrg.
+   */
+  billingProvisioner?: OrgBillingProvisioner;
+  /**
+   * Optional seat-syncer. When present, the 5 seat-mutation sites
+   * (invitation-accept + domain-auto-join + member-remove + service-client
+   * create + service-client delete) call syncSeats(orgId) after their DB
+   * write, which pushes the new billableSeats to the org's Stripe
+   * subscription seat-item. Per DOR §6. When absent — tests, dev — the
+   * mutation sites complete cleanly with no Stripe push. Same shape and
+   * skip-semantics as billingProvisioner.
+   */
+  seatSyncer?: SeatSyncer;
+}
+
 export class OrgService {
   private memberService: MemberService;
   private invitationService: InvitationService;
   private toolAllowlistService: ToolAllowlistService;
   private teamService: TeamService;
+  private billingProvisioner?: OrgBillingProvisioner;
+  private seatSyncer?: SeatSyncer;
 
   /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
   private get sql(): Sql {
     return getSql();
   }
 
-  constructor() {
+  constructor(options: OrgServiceOptions = {}) {
     this.memberService = new MemberService();
     this.invitationService = new InvitationService(this.memberService);
     this.toolAllowlistService = new ToolAllowlistService();
     this.teamService = new TeamService();
+    this.billingProvisioner = options.billingProvisioner;
+    this.seatSyncer = options.seatSyncer;
+  }
+
+  /**
+   * Post-construction wiring for the billing provisioner. Used in
+   * src/index.ts to break the orgService ⇄ seatService dependency cycle:
+   * orgService constructs first (no provisioner), seatService binds to
+   * the live orgService, then the provisioner — which closes over
+   * seatService — attaches here. Tests use the constructor option
+   * instead and never hit this path.
+   */
+  setBillingProvisioner(provisioner: OrgBillingProvisioner): void {
+    this.billingProvisioner = provisioner;
+  }
+
+  /**
+   * Post-construction wiring for the seat-syncer. Same cycle-breaking
+   * pattern as setBillingProvisioner — syncer closes over seatService
+   * which closes over orgService.
+   */
+  setSeatSyncer(syncer: SeatSyncer): void {
+    this.seatSyncer = syncer;
+  }
+
+  /**
+   * Pushes the org's current billableSeats to its Stripe subscription
+   * seat-item. Called by every seat-mutation site (the 5 hookable sites:
+   * createServiceClient, deleteServiceClient, removeMember, acceptInvitation,
+   * domain-auto-join) after the underlying DB write completes.
+   *
+   * LOG + SWALLOW SEMANTIC (API CONTRACT, not caller-side discipline):
+   * Stripe errors are logged via console.warn and absorbed. The DB write
+   * is the source of truth for entitlement; the Stripe push is eventually-
+   * consistent. A reconciliation job (filed as launch-gate task with
+   * named triggers — first observed drift OR fleet >~100 orgs OR
+   * compliance ask) catches persistent drift; this method prevents a
+   * transient Stripe blip from cascading into a user-facing 5xx on a
+   * mutation whose DB write already committed.
+   *
+   * Per DOR §6 + ruby disposition: payments shouldn't gate auth/membership.
+   * Analyst HOLD on PR #221 caught a 4-of-5 address-the-set inconsistency
+   * where this method previously threw and 4 in-class callers used a
+   * private trySyncSeats wrapper — the 5th caller (domain-auto-join)
+   * could 5xx despite a committed INSERT. Disposition (β): lift the
+   * log+swallow to the API boundary so every caller gets the same
+   * semantic by construction; future mutation sites can't pick wrong.
+   *
+   * No-op when no syncer is wired (tests, dev w/o Stripe).
+   */
+  async syncSeats(orgId: string): Promise<void> {
+    if (!this.seatSyncer) return;
+    try {
+      await this.seatSyncer(orgId);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[seat-sync] failed for org ${orgId} after seat mutation; DB write is committed, Stripe quantity may be stale:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -463,7 +554,11 @@ export class OrgService {
   ): Promise<Organization> {
     const orgId = nanoid();
     const memberId = nanoid();
-    const orgPlan = plan ?? 'free';
+    // Layer 1 default: every new org is conduit-with-trial (DOR §9.1).
+    // Callers retain the explicit-plan override for the reseller/customer
+    // paths that bill differently; standalone callers should let this
+    // default fire by passing undefined.
+    const orgPlan = plan ?? getDefaultPlan().slug;
     const orgType: OrgType = options?.type ?? 'standalone';
     const parentOrgId: string | null = options?.parentOrgId ?? null;
 
@@ -525,12 +620,48 @@ export class OrgService {
       VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
     `;
 
-    // Notify new signup
+    // Notify new signup (from main — fire-and-forget signup analytics).
     if (log) {
       void notifyNewSignup(this.sql, { userId: ownerId, orgId, isOwner: true }, log);
     }
 
-    return this.toOrg(rows[0]);
+    // Layer 1: standalone orgs attach a Stripe trialing subscription at
+    // creation (DOR §9.1). Customer and reseller orgs are billed via the
+    // reseller path and skip this. Provisioner-absent (tests, dev w/o
+    // Stripe) is also a clean skip — the org row's stripe_customer_id /
+    // stripe_subscription_id stay null and downstream consumers handle
+    // the no-Stripe case (already exercised today on the F3 surface).
+    //
+    // Order of ops ratified by ruby (msg 1779411593149): org INSERT →
+    // owner-member INSERT → provisioner → UPDATE stripe IDs. Idempotency
+    // keys inside createTrialingSubscription (orgId-bound) make a retry
+    // after a mid-flight failure safe — Stripe returns the same objects
+    // rather than minting duplicates.
+    let stripeCustomerId: string | null = null;
+    let stripeSubscriptionId: string | null = null;
+    if (orgType === 'standalone' && this.billingProvisioner) {
+      const provisionResult = await this.billingProvisioner({
+        orgId,
+        orgName: name,
+        ownerEmail: options?.ownerEmail,
+      });
+      if (provisionResult) {
+        stripeCustomerId = provisionResult.stripeCustomerId;
+        stripeSubscriptionId = provisionResult.stripeSubscriptionId;
+        await this.sql`
+          UPDATE organizations
+          SET stripe_customer_id = ${stripeCustomerId},
+              stripe_subscription_id = ${stripeSubscriptionId},
+              updated_at = NOW()
+          WHERE id = ${orgId}
+        `;
+      }
+    }
+
+    const org = this.toOrg(rows[0]);
+    if (stripeCustomerId) org.stripeCustomerId = stripeCustomerId;
+    if (stripeSubscriptionId) org.stripeSubscriptionId = stripeSubscriptionId;
+    return org;
   }
 
   // -------------------------------------------------------------------------
@@ -653,7 +784,11 @@ export class OrgService {
   getMembers(orgId: string) { return this.memberService.getMembers(orgId); }
   getMembersWithProfiles(orgId: string) { return this.memberService.getMembersWithProfiles(orgId); }
   getMembership(orgId: string, userId: string) { return this.memberService.getMembership(orgId, userId); }
-  removeMember(orgId: string, userId: string) { return this.memberService.removeMember(orgId, userId); }
+  async removeMember(orgId: string, userId: string): Promise<boolean> {
+    const removed = await this.memberService.removeMember(orgId, userId);
+    if (removed) await this.syncSeats(orgId);
+    return removed;
+  }
 
   async updateMemberRole(orgId: string, userId: string, newRole: OrgRole): Promise<OrgMember | null> {
     if (newRole === 'owner') {
@@ -679,7 +814,11 @@ export class OrgService {
 
   createInvitation(orgId: string, invitedBy: string, options?: { maxUses?: number | null; expiresInHours?: number }) { return this.invitationService.createInvitation(orgId, invitedBy, options); }
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
-  acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger) { return this.invitationService.acceptInvitation(token, userId, log); }
+  async acceptInvitation(token: string, userId: string, log?: FastifyBaseLogger) {
+    const member = await this.invitationService.acceptInvitation(token, userId, log);
+    if (member) await this.syncSeats(member.orgId);
+    return member;
+  }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
   revokeInvitation(invitationId: string, orgId: string) { return this.invitationService.revokeInvitation(invitationId, orgId); }
 
@@ -899,6 +1038,10 @@ export class OrgService {
     const rows = await this.sql<ServiceClientRow[]>`
       SELECT * FROM service_clients WHERE id = ${id}
     `;
+    // Layer 1: agent seat creation may change billableSeats (agent #3+
+    // adds a $20 line; agents 1–2 don't move the quantity but the syncer
+    // safely no-ops via the quantity-unchanged short-circuit).
+    await this.syncSeats(entry.orgId);
     return this.toServiceClient(rows[0]);
   }
 
@@ -921,7 +1064,9 @@ export class OrgService {
     const result = await this.sql`
       DELETE FROM service_clients WHERE org_id = ${orgId} AND client_id = ${clientId}
     `;
-    return result.count > 0;
+    const deleted = result.count > 0;
+    if (deleted) await this.syncSeats(orgId);
+    return deleted;
   }
 
   async touchServiceClientLastUsed(clientId: string): Promise<void> {

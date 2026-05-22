@@ -22,6 +22,8 @@ describe('OrgService', () => {
     const orgs = new Map<string, Record<string, unknown>>();
     const members = new Map<string, Record<string, unknown>>();
     const invitations = new Map<string, Record<string, unknown>>();
+    const serviceClients = new Map<string, Record<string, unknown>>();
+    const serviceClientsById = new Map<string, Record<string, unknown>>();
 
     const now = new Date().toISOString();
 
@@ -128,6 +130,23 @@ describe('OrgService', () => {
         return Promise.resolve([updated]);
       }
 
+      // Layer 1 createOrg: provisioner-attach UPDATE writes stripe IDs only.
+      if (query.includes('UPDATE organizations') && query.includes('stripe_customer_id') && !query.includes('plan')) {
+        const stripeCustomerId = values[0] as string | null;
+        const stripeSubscriptionId = values[1] as string | null;
+        const orgId = values[2] as string;
+        const existing = orgs.get(orgId);
+        if (existing) {
+          orgs.set(orgId, {
+            ...existing,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: stripeSubscriptionId,
+            updated_at: now,
+          });
+        }
+        return Promise.resolve([]);
+      }
+
       if (query.includes('UPDATE organizations SET') && query.includes('plan')) {
         const plan = values[0] as string;
         const stripeCustomerId = values[1] as string | null;
@@ -149,6 +168,52 @@ describe('OrgService', () => {
       if (query.includes('DELETE FROM organizations')) {
         const orgId = values[0] as string;
         const existed = orgs.delete(orgId);
+        return Promise.resolve(resultWithCount([], existed ? 1 : 0));
+      }
+
+      // ----------------------------------------------------------------------
+      // Service clients (Layer 1 seat-sync uses these)
+      // ----------------------------------------------------------------------
+      if (query.includes('INSERT INTO service_clients')) {
+        const id = values[0] as string;
+        const orgId = values[1] as string;
+        const name = values[2] as string;
+        const clientId = values[3] as string;
+        const clientSecretHash = values[4] as string;
+        const createdBy = values[5] as string;
+        const expiresAt = values[6] as string | null;
+        const row = {
+          id,
+          org_id: orgId,
+          name,
+          client_id: clientId,
+          client_secret_hash: clientSecretHash,
+          created_by: createdBy,
+          expires_at: expiresAt,
+          created_at: now,
+        };
+        serviceClients.set(`${orgId}:${clientId}`, row);
+        serviceClientsById.set(id, row);
+        return Promise.resolve([]);
+      }
+
+      if (query.includes('SELECT * FROM service_clients WHERE id =')) {
+        const id = values[0] as string;
+        const row = serviceClientsById.get(id);
+        return Promise.resolve(row ? [row] : []);
+      }
+
+      if (query.includes('SELECT * FROM service_clients WHERE org_id =')) {
+        const orgId = values[0] as string;
+        const rows = [...serviceClients.values()].filter((r) => r.org_id === orgId);
+        return Promise.resolve(rows);
+      }
+
+      if (query.includes('DELETE FROM service_clients')) {
+        const orgId = values[0] as string;
+        const clientId = values[1] as string;
+        const key = `${orgId}:${clientId}`;
+        const existed = serviceClients.delete(key);
         return Promise.resolve(resultWithCount([], existed ? 1 : 0));
       }
 
@@ -335,13 +400,306 @@ describe('OrgService', () => {
 
     expect(org.name).toBe('Acme Corp');
     expect(org.ownerId).toBe('user_owner');
-    expect(org.plan).toBe('free');
+    // Layer 1: getDefaultPlan() returns 'conduit' (DOR §9.1 — paid-with-trial,
+    // not free). The legacy 'free' default is gone.
+    expect(org.plan).toBe('conduit');
     expect(org.id).toBeDefined();
 
     // Owner should be a member
     const membership = await runWithSql(sql, () => service.getMembership(org.id, 'user_owner'));
     expect(membership).not.toBeNull();
     expect(membership!.role).toBe('owner');
+  });
+
+  describe('createOrg — Layer 1 billing-provisioner attach', () => {
+    it('standalone org with a provisioner: provisioner is called and Stripe IDs land on the org row', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_test_xyz',
+        stripeSubscriptionId: 'sub_test_xyz',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const org = await runWithSql(sql, () =>
+        service.createOrg('Acme Co', 'user_owner', undefined, {
+          ownerEmail: 'owner@acme.example',
+        }),
+      );
+
+      expect(provisioner).toHaveBeenCalledWith({
+        orgId: org.id,
+        orgName: 'Acme Co',
+        ownerEmail: 'owner@acme.example',
+      });
+      expect(org.stripeCustomerId).toBe('cus_test_xyz');
+      expect(org.stripeSubscriptionId).toBe('sub_test_xyz');
+
+      // The row in the DB also reflects the IDs (UPDATE actually ran).
+      const reread = await runWithSql(sql, () => service.getOrg(org.id));
+      expect(reread!.stripeCustomerId).toBe('cus_test_xyz');
+      expect(reread!.stripeSubscriptionId).toBe('sub_test_xyz');
+    });
+
+    it('standalone org WITHOUT a provisioner: createOrg is a clean no-op past the inserts', async () => {
+      // The provisioner-absent path is the dev / CI / pre-forge-cred shape.
+      // The org gets created with the conduit plan but no Stripe attach;
+      // downstream consumers already handle the null-customer case (F3).
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService();
+
+      const org = await runWithSql(sql, () =>
+        service.createOrg('Acme Co', 'user_owner'),
+      );
+
+      expect(org.plan).toBe('conduit');
+      expect(org.stripeCustomerId).toBeNull();
+      expect(org.stripeSubscriptionId).toBeNull();
+    });
+
+    it('provisioner returning null skips the UPDATE — controlled refusal signal', async () => {
+      // Used by createConduitBillingProvisioner when price IDs are unset:
+      // refuse to mint a half-created Stripe customer with empty price.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const org = await runWithSql(sql, () => service.createOrg('Acme Co', 'user_owner'));
+
+      expect(provisioner).toHaveBeenCalledTimes(1);
+      expect(org.stripeCustomerId).toBeNull();
+      expect(org.stripeSubscriptionId).toBeNull();
+    });
+
+    it('customer org skips the provisioner — billed via reseller path, not Stripe directly', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'should-not-be-used',
+        stripeSubscriptionId: 'should-not-be-used',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      // Seed a reseller to parent the customer under.
+      const reseller = await runWithSql(sql, () =>
+        service.createOrg('MSP Co', 'user_msp', undefined, { type: 'reseller' }),
+      );
+
+      const customer = await runWithSql(sql, () =>
+        service.createOrg('Customer Co', 'user_cust', undefined, {
+          type: 'customer',
+          parentOrgId: reseller.id,
+        }),
+      );
+
+      // Provisioner WAS called for the reseller (also standalone-like in
+      // the sense that it could attach), but explicitly NOT called for the
+      // customer. Asserting on the customer-specific call shape.
+      const customerCalls = provisioner.mock.calls.filter(
+        ([arg]) => (arg as { orgId: string }).orgId === customer.id,
+      );
+      expect(customerCalls).toHaveLength(0);
+    });
+
+    it('reseller org skips the provisioner — also billed outside Layer 1', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_should_not_be_used',
+        stripeSubscriptionId: 'sub_should_not_be_used',
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const reseller = await runWithSql(sql, () =>
+        service.createOrg('MSP Co', 'user_msp', undefined, { type: 'reseller' }),
+      );
+
+      expect(provisioner).not.toHaveBeenCalled();
+      expect(reseller.stripeCustomerId).toBeNull();
+      expect(reseller.stripeSubscriptionId).toBeNull();
+    });
+  });
+
+  describe('Layer 1 seat-sync — 5 mutation sites push to Stripe via injected syncer (DOR §6)', () => {
+    function makeSyncedService() {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      return { sql, syncer, service };
+    }
+
+    it('createServiceClient: syncSeats fires after the INSERT', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      syncer.mockClear();
+
+      await runWithSql(sql, () =>
+        service.createServiceClient({
+          orgId: org.id,
+          name: 'agent-1',
+          clientId: 'cid-1',
+          clientSecretHash: 'hash',
+          createdBy: 'user_owner',
+        }),
+      );
+
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('deleteServiceClient (existing): syncSeats fires after the DELETE', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      await runWithSql(sql, () =>
+        service.createServiceClient({
+          orgId: org.id,
+          name: 'agent-1',
+          clientId: 'cid-1',
+          clientSecretHash: 'hash',
+          createdBy: 'user_owner',
+        }),
+      );
+      syncer.mockClear();
+
+      const deleted = await runWithSql(sql, () => service.deleteServiceClient(org.id, 'cid-1'));
+      expect(deleted).toBe(true);
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('deleteServiceClient (nonexistent): syncSeats does NOT fire — no row deleted, no seat change', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      syncer.mockClear();
+
+      const deleted = await runWithSql(sql, () => service.deleteServiceClient(org.id, 'cid-nope'));
+      expect(deleted).toBe(false);
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('removeMember (existing non-owner): syncSeats fires after the DELETE', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('Remove Org', 'user_owner'));
+      // Seed a non-owner member directly via the SQL template OrgService
+      // would itself execute (skips the invitation infrastructure for
+      // test scope; the assertion is on the removeMember path, not the
+      // invitation path).
+      await runWithSql(sql, () => {
+        const memberInsertSql = sql as unknown as (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => Promise<unknown>;
+        return memberInsertSql`
+          INSERT INTO org_members (id, org_id, user_id, role, joined_at)
+          VALUES (${'m_seeded'}, ${org.id}, ${'user_member'}, 'member', NOW())
+        `;
+      });
+      syncer.mockClear();
+
+      const removed = await runWithSql(sql, () => service.removeMember(org.id, 'user_member'));
+      expect(removed).toBe(true);
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('removeMember (owner refused): syncSeats does NOT fire — no seat change', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('Owner Org', 'user_owner'));
+      syncer.mockClear();
+
+      const removed = await runWithSql(sql, () => service.removeMember(org.id, 'user_owner'));
+      expect(removed).toBe(false);
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('acceptInvitation delegation wraps inner service + calls syncSeats on success', async () => {
+      // The OrgService delegation is `async acceptInvitation(token, userId) {
+      //   const member = await this.invitationService.acceptInvitation(...);
+      //   if (member) await this.syncSeats(member.orgId);
+      //   return member;
+      // }`. Validated by direct method composition: stub the inner
+      // invitation-service return, observe syncer firing with the
+      // returned member's orgId. Bypasses the full invitation DB flow
+      // (token hash, expiry, etc.) which is exercised by its own tests.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      // Patch the inner invitationService to return a controlled result.
+      const inner = (service as unknown as { invitationService: { acceptInvitation: typeof vi.fn } })
+        .invitationService;
+      inner.acceptInvitation = vi
+        .fn()
+        .mockResolvedValue({ orgId: 'org_invited', userId: 'user_new', role: 'member' });
+
+      const member = await runWithSql(sql, () => service.acceptInvitation('tok', 'user_new'));
+      expect(member).not.toBeNull();
+      expect(syncer).toHaveBeenCalledWith('org_invited');
+    });
+
+    it('acceptInvitation: syncSeats does NOT fire when invitation returns null', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      const inner = (service as unknown as { invitationService: { acceptInvitation: typeof vi.fn } })
+        .invitationService;
+      inner.acceptInvitation = vi.fn().mockResolvedValue(null);
+
+      const member = await runWithSql(sql, () => service.acceptInvitation('bad_tok', 'user_new'));
+      expect(member).toBeNull();
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('syncer failure is swallowed by syncSeats (API-boundary discipline) — DB write still wins', async () => {
+      // Per the disposition: payments shouldn't gate auth/membership.
+      // A Stripe outage during seat-sync must not throw out of the
+      // mutation method — the DB write is committed, the org-level Stripe
+      // quantity is eventually-consistent and reconciled separately.
+      // Post-HOLD: the log+swallow lives on the public syncSeats API
+      // boundary now (not a private trySyncSeats wrapper), so every
+      // external caller — in-class and out — inherits the discipline by
+      // construction.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockRejectedValue(new Error('stripe is down'));
+      const service = new OrgService({ seatSyncer: syncer });
+      const org = await runWithSql(sql, () => service.createOrg('Resilient Org', 'user_owner'));
+
+      // Should NOT throw despite the syncer's rejection.
+      await expect(
+        runWithSql(sql, () =>
+          service.createServiceClient({
+            orgId: org.id,
+            name: 'agent',
+            clientId: 'cid',
+            clientSecretHash: 'h',
+            createdBy: 'user_owner',
+          }),
+        ),
+      ).resolves.toBeDefined();
+
+      expect(syncer).toHaveBeenCalled();
+    });
+
+    it('no syncer wired: mutation sites complete cleanly with no Stripe push (dev/test default)', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService(); // no seatSyncer
+      const org = await runWithSql(sql, () => service.createOrg('Bare Org', 'user_owner'));
+
+      await expect(
+        runWithSql(sql, () =>
+          service.createServiceClient({
+            orgId: org.id,
+            name: 'agent',
+            clientId: 'cid',
+            clientSecretHash: 'h',
+            createdBy: 'user_owner',
+          }),
+        ),
+      ).resolves.toBeDefined();
+    });
   });
 
   it('getOrg returns org or null', async () => {

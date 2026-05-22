@@ -35,6 +35,7 @@ describe('DefaultBillingGate', () => {
     getUserOrgs: vi.fn<[string], Organization[]>(),
     getOrg: vi.fn<[string], Organization | null>(),
     getMembers: vi.fn().mockResolvedValue([]),
+    listServiceClients: vi.fn().mockResolvedValue([]),
     getSubscription: vi.fn<[string], unknown | null>(),
   };
 
@@ -96,12 +97,16 @@ describe('DefaultBillingGate', () => {
   // -------------------------------------------------------------------------
 
   describe('getConnectionLimit', () => {
-    it('returns 3 for free plan users', async () => {
+    it('returns the default plan limit for users with no orgs (Layer 1: conduit)', async () => {
+      // Pre-Layer-1 default was free (limit 3). DOR §9.1 made conduit the
+      // default (every new org is conduit-with-trial), so the "no-orgs"
+      // fallback also picks up conduit. A user with truly zero orgs is an
+      // edge case — they have no auth context for real requests anyway.
       mockOrgService.getUserOrgs.mockResolvedValue([]);
 
       const limit = await gate.getConnectionLimit('user-1');
 
-      expect(limit).toBe(3);
+      expect(limit).toBe(Infinity);
     });
 
     it('returns Infinity for pro plan users', async () => {
@@ -120,12 +125,13 @@ describe('DefaultBillingGate', () => {
   // -------------------------------------------------------------------------
 
   describe('getRateLimit', () => {
-    it('returns 100 for free plan users', async () => {
+    it('returns the default plan rate limit for users with no orgs (Layer 1: conduit = 5000/hr)', async () => {
+      // Same Layer 1 default shift as getConnectionLimit above.
       mockOrgService.getUserOrgs.mockResolvedValue([]);
 
       const limit = await gate.getRateLimit('user-1');
 
-      expect(limit).toBe(100);
+      expect(limit).toBe(5000);
     });
 
     it('returns 1000 for pro plan users', async () => {
@@ -280,40 +286,75 @@ describe('DefaultBillingGate', () => {
   });
 
   describe('getCreditAllocation', () => {
-    it('returns flat allocation for free orgs', async () => {
+    // Layer 1 LOCKED DOR §4: paid orgs use CREDITS_PER_SEAT × creditSeats
+    // where creditSeats = humans + agents. The arithmetic routes through
+    // SeatService.getSeatBilling so credits + bill total + seat composition
+    // single-source through one call. Free plan retains its flat catalog
+    // allocation until WI-8 migration retires it.
+
+    it('returns flat catalog allocation for legacy free orgs', async () => {
       mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'free' }));
       mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
 
       const result = await gate.getCreditAllocation('org-1');
 
+      // Free plan in default catalog has flat creditAllocation = 500;
+      // member count is intentionally ignored on the legacy free path.
       expect(result).toBe(500);
     });
 
-    it('multiplies pro allocation by seat count', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'pro' }));
+    it('conduit org: 2500 × creditSeats (humans + agents, included agents counted)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
       mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }, { userId: 'c' }]);
+      mockOrgService.listServiceClients.mockResolvedValue([{ clientId: 'x' }, { clientId: 'y' }]);
 
       const result = await gate.getCreditAllocation('org-1');
 
-      expect(result).toBe(4500); // 1500 × 3
+      // creditSeats = 3 humans + 2 agents = 5. Allocation = 2500 × 5.
+      // Note: includedAgents (2 of 2) count toward the pool because the
+      // base fee funds their credit allocation — DOR §3 locked.
+      expect(result).toBe(12_500);
     });
 
-    it('multiplies business allocation by seat count', async () => {
+    it('conduit org: agent #3 lifts pool by 2500 even though only 2 are billed', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
+      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }]);
+      mockOrgService.listServiceClients.mockResolvedValue([{ clientId: 'x' }, { clientId: 'y' }, { clientId: 'z' }]);
+
+      const result = await gate.getCreditAllocation('org-1');
+
+      // creditSeats = 1 + 3 = 4. Allocation = 2500 × 4 = 10000.
+      // billableSeats = 1 + max(0, 3−2) = 2 (humans+billedAgents); that
+      // drives Stripe but not credits. This row pins the divergence.
+      expect(result).toBe(10_000);
+    });
+
+    it('legacy pro/business orgs route through seat-service during migration window', async () => {
+      // During the WI-8 migration window, legacy paid orgs whose plan
+      // slug is still 'pro' or 'business' transitionally read 2500/seat —
+      // not their old plan.creditAllocation rate. Once migrated to conduit
+      // (WI-8) this distinction disappears entirely.
       mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'business' }));
       mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
+      mockOrgService.listServiceClients.mockResolvedValue([]);
 
       const result = await gate.getCreditAllocation('org-1');
 
-      expect(result).toBe(8000); // 4000 × 2
+      // creditSeats = 2 + 0 = 2. Allocation = 2500 × 2 = 5000.
+      expect(result).toBe(5_000);
     });
 
-    it('treats zero-member paid orgs as 1 seat', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'pro' }));
+    it('empty conduit org (no members, no agents) → base only, no credits', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
       mockOrgService.getMembers.mockResolvedValue([]);
+      mockOrgService.listServiceClients.mockResolvedValue([]);
 
       const result = await gate.getCreditAllocation('org-1');
 
-      expect(result).toBe(1500);
+      // Degenerate but well-defined: 2500 × 0 = 0. The legacy
+      // "treat zero seats as 1" floor is gone — a real org always has
+      // at least one human (its owner) by construction.
+      expect(result).toBe(0);
     });
   });
 });

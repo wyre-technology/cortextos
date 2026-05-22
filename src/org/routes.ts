@@ -92,12 +92,22 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(409).send({ error: 'You already own an organization', org: ownedOrg });
         }
 
-        // Alpha invite code grants pro plan
-        const plan = (inviteCode && config.alphaInviteCodes.has(inviteCode))
-          ? 'pro' as const
-          : 'free' as const;
+        // Layer 1: every standalone org is created on the conduit plan
+        // with a 14-day trial (DOR §9.1). The alpha-invite-code branch
+        // that used to grant `pro` and the `free` default both go to the
+        // same place now — conduit-with-trial. Passing undefined lets
+        // OrgService.createOrg attach getDefaultPlan().slug (= 'conduit').
+        // inviteCode is still accepted on the wire for backward compat
+        // but no longer changes the resulting plan.
+        void inviteCode;
 
-        const org = await orgService.createOrg(name.trim(), user.sub, plan, undefined, request.log);
+        const org = await orgService.createOrg(
+          name.trim(),
+          user.sub,
+          undefined,
+          { ownerEmail: user.email ?? undefined },
+          request.log,
+        );
 
         // Fire one Loops event so org-level drips can trigger without
         // starting a new contact (avoids overlap with the user-signup drip).
