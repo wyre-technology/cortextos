@@ -22,6 +22,8 @@ describe('OrgService', () => {
     const orgs = new Map<string, Record<string, unknown>>();
     const members = new Map<string, Record<string, unknown>>();
     const invitations = new Map<string, Record<string, unknown>>();
+    const serviceClients = new Map<string, Record<string, unknown>>();
+    const serviceClientsById = new Map<string, Record<string, unknown>>();
 
     const now = new Date().toISOString();
 
@@ -166,6 +168,52 @@ describe('OrgService', () => {
       if (query.includes('DELETE FROM organizations')) {
         const orgId = values[0] as string;
         const existed = orgs.delete(orgId);
+        return Promise.resolve(resultWithCount([], existed ? 1 : 0));
+      }
+
+      // ----------------------------------------------------------------------
+      // Service clients (Layer 1 seat-sync uses these)
+      // ----------------------------------------------------------------------
+      if (query.includes('INSERT INTO service_clients')) {
+        const id = values[0] as string;
+        const orgId = values[1] as string;
+        const name = values[2] as string;
+        const clientId = values[3] as string;
+        const clientSecretHash = values[4] as string;
+        const createdBy = values[5] as string;
+        const expiresAt = values[6] as string | null;
+        const row = {
+          id,
+          org_id: orgId,
+          name,
+          client_id: clientId,
+          client_secret_hash: clientSecretHash,
+          created_by: createdBy,
+          expires_at: expiresAt,
+          created_at: now,
+        };
+        serviceClients.set(`${orgId}:${clientId}`, row);
+        serviceClientsById.set(id, row);
+        return Promise.resolve([]);
+      }
+
+      if (query.includes('SELECT * FROM service_clients WHERE id =')) {
+        const id = values[0] as string;
+        const row = serviceClientsById.get(id);
+        return Promise.resolve(row ? [row] : []);
+      }
+
+      if (query.includes('SELECT * FROM service_clients WHERE org_id =')) {
+        const orgId = values[0] as string;
+        const rows = [...serviceClients.values()].filter((r) => r.org_id === orgId);
+        return Promise.resolve(rows);
+      }
+
+      if (query.includes('DELETE FROM service_clients')) {
+        const orgId = values[0] as string;
+        const clientId = values[1] as string;
+        const key = `${orgId}:${clientId}`;
+        const existed = serviceClients.delete(key);
         return Promise.resolve(resultWithCount([], existed ? 1 : 0));
       }
 
@@ -471,6 +519,182 @@ describe('OrgService', () => {
       expect(provisioner).not.toHaveBeenCalled();
       expect(reseller.stripeCustomerId).toBeNull();
       expect(reseller.stripeSubscriptionId).toBeNull();
+    });
+  });
+
+  describe('Layer 1 seat-sync — 5 mutation sites push to Stripe via injected syncer (DOR §6)', () => {
+    function makeSyncedService() {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      return { sql, syncer, service };
+    }
+
+    it('createServiceClient: syncSeats fires after the INSERT', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      syncer.mockClear();
+
+      await runWithSql(sql, () =>
+        service.createServiceClient({
+          orgId: org.id,
+          name: 'agent-1',
+          clientId: 'cid-1',
+          clientSecretHash: 'hash',
+          createdBy: 'user_owner',
+        }),
+      );
+
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('deleteServiceClient (existing): syncSeats fires after the DELETE', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      await runWithSql(sql, () =>
+        service.createServiceClient({
+          orgId: org.id,
+          name: 'agent-1',
+          clientId: 'cid-1',
+          clientSecretHash: 'hash',
+          createdBy: 'user_owner',
+        }),
+      );
+      syncer.mockClear();
+
+      const deleted = await runWithSql(sql, () => service.deleteServiceClient(org.id, 'cid-1'));
+      expect(deleted).toBe(true);
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('deleteServiceClient (nonexistent): syncSeats does NOT fire — no row deleted, no seat change', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('SC Org', 'user_owner'));
+      syncer.mockClear();
+
+      const deleted = await runWithSql(sql, () => service.deleteServiceClient(org.id, 'cid-nope'));
+      expect(deleted).toBe(false);
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('removeMember (existing non-owner): syncSeats fires after the DELETE', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('Remove Org', 'user_owner'));
+      // Seed a non-owner member directly via the SQL template OrgService
+      // would itself execute (skips the invitation infrastructure for
+      // test scope; the assertion is on the removeMember path, not the
+      // invitation path).
+      await runWithSql(sql, () => {
+        const memberInsertSql = sql as unknown as (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => Promise<unknown>;
+        return memberInsertSql`
+          INSERT INTO org_members (id, org_id, user_id, role, joined_at)
+          VALUES (${'m_seeded'}, ${org.id}, ${'user_member'}, 'member', NOW())
+        `;
+      });
+      syncer.mockClear();
+
+      const removed = await runWithSql(sql, () => service.removeMember(org.id, 'user_member'));
+      expect(removed).toBe(true);
+      expect(syncer).toHaveBeenCalledWith(org.id);
+    });
+
+    it('removeMember (owner refused): syncSeats does NOT fire — no seat change', async () => {
+      const { sql, syncer, service } = makeSyncedService();
+      const org = await runWithSql(sql, () => service.createOrg('Owner Org', 'user_owner'));
+      syncer.mockClear();
+
+      const removed = await runWithSql(sql, () => service.removeMember(org.id, 'user_owner'));
+      expect(removed).toBe(false);
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('acceptInvitation delegation wraps inner service + calls syncSeats on success', async () => {
+      // The OrgService delegation is `async acceptInvitation(token, userId) {
+      //   const member = await this.invitationService.acceptInvitation(...);
+      //   if (member) await this.trySyncSeats(member.orgId);
+      //   return member;
+      // }`. Validated by direct method composition: stub the inner
+      // invitation-service return, observe syncer firing with the
+      // returned member's orgId. Bypasses the full invitation DB flow
+      // (token hash, expiry, etc.) which is exercised by its own tests.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      // Patch the inner invitationService to return a controlled result.
+      const inner = (service as unknown as { invitationService: { acceptInvitation: typeof vi.fn } })
+        .invitationService;
+      inner.acceptInvitation = vi
+        .fn()
+        .mockResolvedValue({ orgId: 'org_invited', userId: 'user_new', role: 'member' });
+
+      const member = await runWithSql(sql, () => service.acceptInvitation('tok', 'user_new'));
+      expect(member).not.toBeNull();
+      expect(syncer).toHaveBeenCalledWith('org_invited');
+    });
+
+    it('acceptInvitation: syncSeats does NOT fire when invitation returns null', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockResolvedValue(null);
+      const service = new OrgService({ seatSyncer: syncer });
+      const inner = (service as unknown as { invitationService: { acceptInvitation: typeof vi.fn } })
+        .invitationService;
+      inner.acceptInvitation = vi.fn().mockResolvedValue(null);
+
+      const member = await runWithSql(sql, () => service.acceptInvitation('bad_tok', 'user_new'));
+      expect(member).toBeNull();
+      expect(syncer).not.toHaveBeenCalled();
+    });
+
+    it('syncer failure is swallowed by trySyncSeats — DB write still wins', async () => {
+      // Per the disposition: payments shouldn't gate auth/membership.
+      // A Stripe outage during seat-sync must not throw out of the
+      // mutation method — the DB write is committed, the org-level Stripe
+      // quantity is eventually-consistent and reconciled separately.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const syncer = vi.fn().mockRejectedValue(new Error('stripe is down'));
+      const service = new OrgService({ seatSyncer: syncer });
+      const org = await runWithSql(sql, () => service.createOrg('Resilient Org', 'user_owner'));
+
+      // Should NOT throw despite the syncer's rejection.
+      await expect(
+        runWithSql(sql, () =>
+          service.createServiceClient({
+            orgId: org.id,
+            name: 'agent',
+            clientId: 'cid',
+            clientSecretHash: 'h',
+            createdBy: 'user_owner',
+          }),
+        ),
+      ).resolves.toBeDefined();
+
+      expect(syncer).toHaveBeenCalled();
+    });
+
+    it('no syncer wired: mutation sites complete cleanly with no Stripe push (dev/test default)', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService(); // no seatSyncer
+      const org = await runWithSql(sql, () => service.createOrg('Bare Org', 'user_owner'));
+
+      await expect(
+        runWithSql(sql, () =>
+          service.createServiceClient({
+            orgId: org.id,
+            name: 'agent',
+            clientId: 'cid',
+            clientSecretHash: 'h',
+            createdBy: 'user_owner',
+          }),
+        ),
+      ).resolves.toBeDefined();
     });
   });
 

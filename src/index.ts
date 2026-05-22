@@ -26,6 +26,7 @@ import { OrgService } from './org/org-service.js';
 import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { DefaultBillingGate } from './billing/gate.js';
 import { DefaultSeatService } from './billing/seat-service.js';
+import { createConduitSeatSyncer } from './billing/seat-syncer.js';
 import { AuditService } from './audit/audit-service.js';
 import { AdminAuditService } from './audit/admin-audit-service.js';
 import { oauthRoutes, completeAuthorization } from './oauth/authorization-server.js';
@@ -147,12 +148,30 @@ if (config.stripeSecretKey) {
         'in production to make this a boot failure instead.',
     );
   }
+  const stripe = new Stripe(config.stripeSecretKey);
   orgService.setBillingProvisioner(
     createConduitBillingProvisioner({
-      stripe: new Stripe(config.stripeSecretKey),
+      stripe,
       seatService,
       basePriceId: config.stripeConduitBasePriceId,
       seatPriceId: config.stripeConduitSeatPriceId,
+      required: config.conduitBillingRequired,
+    }),
+  );
+  // Seat-syncer wired alongside the provisioner — same env-gating, same
+  // skip-when-IDs-missing-in-dev / throw-when-required disposition. The
+  // syncer's seatPriceId requirement subset matches the provisioner's
+  // (the syncer only needs seatPriceId because it touches the seat-item,
+  // never the base item).
+  orgService.setSeatSyncer(
+    createConduitSeatSyncer({
+      stripe,
+      seatService,
+      seatPriceId: config.stripeConduitSeatPriceId,
+      getSubscriptionId: async (orgId) => {
+        const org = await orgService.getOrg(orgId);
+        return org?.stripeSubscriptionId ?? null;
+      },
       required: config.conduitBillingRequired,
     }),
   );

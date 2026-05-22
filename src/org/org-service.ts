@@ -2,6 +2,7 @@ import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import { getDefaultPlan, type PlanSlug } from '../billing/plan-catalog.js';
 import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
+import type { SeatSyncer } from '../billing/seat-syncer.js';
 import { MemberService } from './member-service.js';
 import { InvitationService } from './invitation-service.js';
 import { ToolAllowlistService } from './tool-allowlist-service.js';
@@ -185,6 +186,16 @@ export interface OrgServiceOptions {
    * is structural; no flag, no env-check inside createOrg.
    */
   billingProvisioner?: OrgBillingProvisioner;
+  /**
+   * Optional seat-syncer. When present, the 5 seat-mutation sites
+   * (invitation-accept + domain-auto-join + member-remove + service-client
+   * create + service-client delete) call syncSeats(orgId) after their DB
+   * write, which pushes the new billableSeats to the org's Stripe
+   * subscription seat-item. Per DOR §6. When absent — tests, dev — the
+   * mutation sites complete cleanly with no Stripe push. Same shape and
+   * skip-semantics as billingProvisioner.
+   */
+  seatSyncer?: SeatSyncer;
 }
 
 export class OrgService {
@@ -193,6 +204,7 @@ export class OrgService {
   private toolAllowlistService: ToolAllowlistService;
   private teamService: TeamService;
   private billingProvisioner?: OrgBillingProvisioner;
+  private seatSyncer?: SeatSyncer;
 
   /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
   private get sql(): Sql {
@@ -205,6 +217,7 @@ export class OrgService {
     this.toolAllowlistService = new ToolAllowlistService();
     this.teamService = new TeamService();
     this.billingProvisioner = options.billingProvisioner;
+    this.seatSyncer = options.seatSyncer;
   }
 
   /**
@@ -217,6 +230,57 @@ export class OrgService {
    */
   setBillingProvisioner(provisioner: OrgBillingProvisioner): void {
     this.billingProvisioner = provisioner;
+  }
+
+  /**
+   * Post-construction wiring for the seat-syncer. Same cycle-breaking
+   * pattern as setBillingProvisioner — syncer closes over seatService
+   * which closes over orgService.
+   */
+  setSeatSyncer(syncer: SeatSyncer): void {
+    this.seatSyncer = syncer;
+  }
+
+  /**
+   * Pushes the org's current billableSeats to its Stripe subscription
+   * seat-item. Called by every seat-mutation site after the underlying
+   * DB write completes. No-op when no syncer is wired (tests, dev w/o
+   * Stripe). Errors propagate — the caller is responsible for deciding
+   * whether a Stripe-sync failure should fail the mutation; default
+   * disposition (see hookable sites below) is "log + swallow" so a
+   * Stripe outage cannot block org membership changes.
+   */
+  async syncSeats(orgId: string): Promise<void> {
+    if (!this.seatSyncer) return;
+    await this.seatSyncer(orgId);
+  }
+
+  /**
+   * Same as syncSeats, but log + swallow Stripe errors so an upstream
+   * outage cannot block the seat-mutating operation that just succeeded
+   * (member add, member remove, service-client create/delete). The DB
+   * write is the source of truth for entitlement; the Stripe push is
+   * eventually-consistent — a reconciliation job (out of Layer 1 scope)
+   * catches drift if a sync drops.
+   *
+   * Per DOR §6 + ruby disposition: payments shouldn't gate auth/membership.
+   */
+  private async trySyncSeats(orgId: string): Promise<void> {
+    if (!this.seatSyncer) return;
+    try {
+      await this.seatSyncer(orgId);
+    } catch (err) {
+      // Caller's caller has no recourse here — the DB write is committed.
+      // Surface to logs (best-effort: console.warn if no structured logger
+      // available at this layer). A separate reconciliation/alert path
+      // catches persistent drift; this prevents a transient Stripe blip
+      // from cascading into a user-facing 5xx.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[seat-sync] failed for org ${orgId} after seat mutation; DB write is committed, Stripe quantity may be stale:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -716,7 +780,11 @@ export class OrgService {
   getMembers(orgId: string) { return this.memberService.getMembers(orgId); }
   getMembersWithProfiles(orgId: string) { return this.memberService.getMembersWithProfiles(orgId); }
   getMembership(orgId: string, userId: string) { return this.memberService.getMembership(orgId, userId); }
-  removeMember(orgId: string, userId: string) { return this.memberService.removeMember(orgId, userId); }
+  async removeMember(orgId: string, userId: string): Promise<boolean> {
+    const removed = await this.memberService.removeMember(orgId, userId);
+    if (removed) await this.trySyncSeats(orgId);
+    return removed;
+  }
 
   async updateMemberRole(orgId: string, userId: string, newRole: OrgRole): Promise<OrgMember | null> {
     if (newRole === 'owner') {
@@ -742,7 +810,11 @@ export class OrgService {
 
   createInvitation(orgId: string, invitedBy: string, options?: { maxUses?: number | null; expiresInHours?: number }) { return this.invitationService.createInvitation(orgId, invitedBy, options); }
   getInvitationByToken(token: string) { return this.invitationService.getInvitationByToken(token); }
-  acceptInvitation(token: string, userId: string) { return this.invitationService.acceptInvitation(token, userId); }
+  async acceptInvitation(token: string, userId: string) {
+    const member = await this.invitationService.acceptInvitation(token, userId);
+    if (member) await this.trySyncSeats(member.orgId);
+    return member;
+  }
   listInvitations(orgId: string) { return this.invitationService.listInvitations(orgId); }
   revokeInvitation(invitationId: string, orgId: string) { return this.invitationService.revokeInvitation(invitationId, orgId); }
 
@@ -962,6 +1034,10 @@ export class OrgService {
     const rows = await this.sql<ServiceClientRow[]>`
       SELECT * FROM service_clients WHERE id = ${id}
     `;
+    // Layer 1: agent seat creation may change billableSeats (agent #3+
+    // adds a $20 line; agents 1–2 don't move the quantity but the syncer
+    // safely no-ops via the quantity-unchanged short-circuit).
+    await this.trySyncSeats(entry.orgId);
     return this.toServiceClient(rows[0]);
   }
 
@@ -984,7 +1060,9 @@ export class OrgService {
     const result = await this.sql`
       DELETE FROM service_clients WHERE org_id = ${orgId} AND client_id = ${clientId}
     `;
-    return result.count > 0;
+    const deleted = result.count > 0;
+    if (deleted) await this.trySyncSeats(orgId);
+    return deleted;
   }
 
   async touchServiceClientLastUsed(clientId: string): Promise<void> {

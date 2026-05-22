@@ -34,6 +34,9 @@ function createMockOrgService(overrides: Partial<OrgService> = {}): OrgService {
     getMembership: vi.fn().mockResolvedValue(null),
     getUserOrgs: vi.fn().mockResolvedValue([]),
     getOrg: vi.fn().mockResolvedValue(null),
+    // Layer 1 seat-sync: domain auto-join calls orgService.syncSeats
+    // after the membership INSERT (DOR §6 — "human added" event).
+    syncSeats: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as OrgService;
 }
