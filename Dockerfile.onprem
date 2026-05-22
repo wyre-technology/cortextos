@@ -1,0 +1,78 @@
+# =============================================================================
+# Dockerfile.onprem — Customer-deploy on-prem-gateway container.
+#
+# PR #3 scope-doc decisions (locked green from boss + analyst + warden):
+#   (i)  Container baseline: node:25-alpine (matches conduit's existing
+#        Dockerfile baseline + digest-pinned per warden CI-QW-2 — image
+#        SHA must be present, never tag-only).
+#        Re-review trigger (warden scope-stage pin): if M2/M3 adds Node
+#        native modules (sharp/bcrypt/equivalent) where musl libc has edge
+#        cases, re-evaluate distroless-vs-alpine. Echo-only at M2 has zero
+#        native deps; alpine is correct lean.
+#   (vi) Container USER non-root (analyst lift-to-named-decision): runtime
+#        runs as a dedicated non-root `onprem` user (UID 1001), NOT root.
+#        Container-escape mitigation; customer security reviews will ask.
+#
+# DISCIPLINE-IN-CODE COMMENTARY (boss observation #5 on PR #211): this
+# Dockerfile header explicitly names the rules its shape obeys. Future
+# maintainers see WHY the digest pin + WHY non-root + WHY multi-stage —
+# the constraints are documented at the point of consequence, not in a
+# separate skill doc that can drift.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1 — Build TypeScript -> dist/onprem/index.js (+ deps)
+# -----------------------------------------------------------------------------
+# Digest-pinned per warden CI-QW-2; same image SHA as conduit's main Dockerfile
+# for fleet consistency. Future release-workflow updates this in lockstep.
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS builder
+
+WORKDIR /app
+
+# Install all deps (dev included) for the TS compile.
+COPY package*.json ./
+RUN npm ci
+
+# Compile TypeScript. The on-prem-gateway is one entry point in the same
+# source tree as the rest of conduit; tsconfig.json builds the whole tree
+# into dist/, and we cherry-pick the on-prem entry + its transitive deps
+# at runtime.
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Production runtime
+# -----------------------------------------------------------------------------
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Non-root user — decision (vi). Same shape as conduit's main Dockerfile
+# (UID 1001 system user/group; no shell beyond what alpine ships).
+RUN addgroup --system --gid 1001 onprem && \
+    adduser --system --uid 1001 --ingroup onprem onprem
+
+# Copy compiled output + production deps from builder. We copy the full
+# dist/ tree (not just dist/onprem/) because the on-prem-gateway imports
+# from other src/ paths (notably src/relay/enrollment-token.js, src/onprem/
+# no-inbound-assert.js, src/onprem/tunnel-client.js, src/onprem/echo-mcp-
+# server.js).
+COPY --from=builder --chown=onprem:onprem /app/dist ./dist
+COPY --from=builder --chown=onprem:onprem /app/node_modules ./node_modules
+COPY --from=builder --chown=onprem:onprem /app/package.json ./package.json
+
+USER onprem
+
+# OCI image labels — provenance + canonical references for ghcr.io.
+LABEL org.opencontainers.image.title="WYRE Conduit On-Prem Gateway"
+LABEL org.opencontainers.image.description="Customer-deployable on-prem-gateway container that dials the WYRE relay over WSS and exposes on-prem MCP capabilities through Conduit."
+LABEL org.opencontainers.image.vendor="WYRE Technology"
+LABEL org.opencontainers.image.source="https://github.com/wyre-technology/conduit"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.documentation="https://conduit.wyre.ai/docs/onprem"
+
+# Entry point — the on-prem-gateway, NOT the main conduit server.
+ENTRYPOINT ["node", "dist/onprem/index.js"]
