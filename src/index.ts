@@ -121,17 +121,39 @@ initPools({
 const orgService = new OrgService();
 const seatService = new DefaultSeatService(orgService);
 // Layer 1: standalone-org creation provisions a Stripe trialing
-// subscription via the conduit provisioner. Wired only when Stripe + the
-// two-item price IDs are configured — otherwise createOrg quietly skips
-// the Stripe attach and the org row's stripe IDs stay null (dev / CI /
-// pre-forge-cred environments boot cleanly without billing).
-if (config.stripeSecretKey && config.stripeConduitBasePriceId && config.stripeConduitSeatPriceId) {
+// subscription via the conduit provisioner.
+//
+// Two-mode wiring (ruby msg 1779412681446 + boss disposition):
+//   - CONDUIT_BILLING_REQUIRED=true (prod): missing price IDs throw at
+//     boot via ConduitBillingConfigError. Failing-loud beats silent rot.
+//   - default (dev/test/CI): missing price IDs make the provisioner
+//     return null at invoke time → createOrg quietly skips the Stripe
+//     attach; org row's stripe IDs stay null. Pre-forge-cred environments
+//     boot cleanly.
+//
+// We always call createConduitBillingProvisioner when stripeSecretKey is
+// set — that's the seam where required-mode's boot-time throw fires. If
+// stripeSecretKey itself is unset (dev w/o Stripe at all), provisioner
+// stays undefined and createOrg degrades.
+if (config.stripeSecretKey) {
+  if (
+    !config.conduitBillingRequired &&
+    (!config.stripeConduitBasePriceId || !config.stripeConduitSeatPriceId)
+  ) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[conduit-billing] STRIPE_CONDUIT_BASE_PRICE_ID / STRIPE_CONDUIT_SEAT_PRICE_ID not set — ' +
+        'new orgs will be created WITHOUT a Stripe subscription. Set CONDUIT_BILLING_REQUIRED=true ' +
+        'in production to make this a boot failure instead.',
+    );
+  }
   orgService.setBillingProvisioner(
     createConduitBillingProvisioner({
       stripe: new Stripe(config.stripeSecretKey),
       seatService,
       basePriceId: config.stripeConduitBasePriceId,
       seatPriceId: config.stripeConduitSeatPriceId,
+      required: config.conduitBillingRequired,
     }),
   );
 }

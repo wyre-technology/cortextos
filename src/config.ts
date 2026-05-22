@@ -102,6 +102,13 @@ export const config = {
   // the integration test creates ephemeral test-mode prices.
   stripeConduitBasePriceId: process.env.STRIPE_CONDUIT_BASE_PRICE_ID ?? '',
   stripeConduitSeatPriceId: process.env.STRIPE_CONDUIT_SEAT_PRICE_ID ?? '',
+  // Layer 1 launch-gate. When true, createConduitBillingProvisioner throws
+  // at boot if either conduit price ID is unset — turning a silent-skip
+  // (rot in prod, fine in dev) into a fail-loud boot failure. Prod bicep
+  // sets this true; dev/test/CI leave it unset (default false) so empty
+  // price IDs are a silent-skip with warn-log preserved.
+  conduitBillingRequired:
+    (process.env.CONDUIT_BILLING_REQUIRED ?? '').toLowerCase() === 'true',
   // One-off credit-pack price IDs (GAP-5). Each maps a pack size to its
   // Stripe Price. Unset packs are simply unavailable for purchase.
   stripeCredits1000PriceId: process.env.STRIPE_CREDITS_1000_PRICE_ID ?? '',

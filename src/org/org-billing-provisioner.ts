@@ -55,6 +55,38 @@ export interface ConduitProvisionerDeps {
   seatService: SeatService;
   basePriceId: string;
   seatPriceId: string;
+  /**
+   * Launch-gate flag. When true (production), missing basePriceId or
+   * seatPriceId at provisioner-construction time throws — failing boot
+   * loud rather than silently creating new orgs without subscriptions.
+   * When false (dev/test/CI), missing IDs preserve the silent-skip-with-
+   * warn-log path. Set true via CONDUIT_BILLING_REQUIRED=true in prod env.
+   *
+   * Pinned by ruby (msg 1779412681446) + boss disposition: default-permissive
+   * -in-dev / rot-class-in-prod behavior gets its OWN env flag, prod-set,
+   * boot-fail-loud when violated. Same family as wire-proven boot-asserts.
+   */
+  required?: boolean;
+}
+
+/**
+ * Thrown at boot when CONDUIT_BILLING_REQUIRED=true but the Stripe price
+ * IDs are missing. Named so src/index.ts (or tests) can identify it and
+ * the message names both fixes per the named-actionable-choice discipline.
+ */
+export class ConduitBillingConfigError extends Error {
+  constructor(missing: { basePrice: boolean; seatPrice: boolean }) {
+    const which = [
+      missing.basePrice ? 'STRIPE_CONDUIT_BASE_PRICE_ID' : null,
+      missing.seatPrice ? 'STRIPE_CONDUIT_SEAT_PRICE_ID' : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    super(
+      `CONDUIT_BILLING_REQUIRED=true but ${which} not set; verify Azure Key Vault provisioning OR unset CONDUIT_BILLING_REQUIRED for dev/test.`,
+    );
+    this.name = 'ConduitBillingConfigError';
+  }
 }
 
 /**
@@ -63,16 +95,29 @@ export interface ConduitProvisionerDeps {
  * just-inserted org's seat counts via seatService.getSeatBilling (a brand-
  * new standalone org always has 1 human + 0 agents = billableSeats=1) and
  * passes them into createTrialingSubscription verbatim.
+ *
+ * Boot-time validation (Layer 1 launch-gate): if `required` is true and
+ * either price ID is unset, throws ConduitBillingConfigError synchronously
+ * from this factory call — caller in src/index.ts hits the throw during
+ * module init and the process fails loud. With `required` false (default),
+ * a missing price ID makes the returned provisioner return null at invoke
+ * time, which createOrg interprets as "skip the Stripe attach."
  */
 export function createConduitBillingProvisioner(
   deps: ConduitProvisionerDeps,
 ): OrgBillingProvisioner {
+  const missing = { basePrice: !deps.basePriceId, seatPrice: !deps.seatPriceId };
+  if (deps.required && (missing.basePrice || missing.seatPrice)) {
+    throw new ConduitBillingConfigError(missing);
+  }
+
   return async ({ orgId, orgName, ownerEmail }) => {
-    // Refuse to provision if the Stripe price IDs are unset — forge's
-    // credential surface lands these as env vars; before that, we'd be
-    // calling Stripe with empty strings. Better to skip than to fail noisily
-    // and orphan a half-created Stripe customer.
     if (!deps.basePriceId || !deps.seatPriceId) {
+      // Dev/test path: refuse to provision against empty price IDs (would
+      // orphan a half-created Stripe customer with empty product refs).
+      // In prod the boot-time guard above catches this; if execution
+      // reaches here with empty IDs, it's a dev/test environment by
+      // CONDUIT_BILLING_REQUIRED's signal — silent-skip is the right move.
       return null;
     }
     const seatBilling = await deps.seatService.getSeatBilling(orgId);
