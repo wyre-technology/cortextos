@@ -1,6 +1,7 @@
 import type { OrgService } from '../org/org-service.js';
 import { config } from '../config.js';
 import { getPlan, getDefaultPlan, type PlanDefinition, type PlanSlug } from './plan-catalog.js';
+import { DefaultSeatService, type SeatService } from './seat-service.js';
 
 // ---------------------------------------------------------------------------
 // BillingGate — plan checks for feature gating
@@ -29,14 +30,22 @@ export interface BillingGate {
   canUseSso(orgId: string): Promise<boolean>;
   canUseServiceClients(orgId: string): Promise<boolean>;
   /**
-   * Monthly credit allocation for an org. For free plans this is a flat
-   * total. For paid plans it is `creditAllocation × seat count`, pooled
-   * across the org.
+   * Monthly credit allocation for an org. Per Layer 1 LOCKED DOR §4 the
+   * allocation is `CREDITS_PER_SEAT × creditSeats` (humans + agents),
+   * routed through SeatService.getSeatBilling so the bill total, seat
+   * composition, and credit allocation all share one arithmetic path.
+   * Legacy free plan (transitional, pre-migration) returns its flat
+   * catalog allocation.
    */
   getCreditAllocation(orgId: string): Promise<number>;
 }
 
-const PLAN_RANK: Record<PlanSlug, number> = { free: 0, pro: 1, business: 2 };
+// PLAN_RANK assigns numeric tiers used by isPaidPlan (rank >= pro = paid) and
+// by getUserPlan to pick the highest plan across a user's orgs. Conduit slots
+// at rank 3 — it's the Layer 1 paid plan and outranks legacy pro/business
+// during the migration window so a user holding both `business` and `conduit`
+// memberships resolves to `conduit`.
+const PLAN_RANK: Record<PlanSlug, number> = { free: 0, pro: 1, business: 2, conduit: 3 };
 
 /**
  * "Is this plan paid?" — single source of truth for the team-features
@@ -133,7 +142,11 @@ export function isServiceActive(
 }
 
 export class DefaultBillingGate implements BillingGate {
-  constructor(private orgService: OrgService) {}
+  private seatService: SeatService;
+
+  constructor(private orgService: OrgService, seatService?: SeatService) {
+    this.seatService = seatService ?? new DefaultSeatService(orgService);
+  }
 
   private async resolveOrgPlan(orgId: string): Promise<PlanDefinition> {
     const org = await this.orgService.getOrg(orgId);
@@ -225,9 +238,12 @@ export class DefaultBillingGate implements BillingGate {
 
   async getCreditAllocation(orgId: string): Promise<number> {
     const plan = await this.resolveOrgPlan(orgId);
+    // Legacy free plan retains its flat catalog allocation until WI-8
+    // migration retires it. Every paid plan — including conduit — reads
+    // off the SeatBilling snapshot, so credits, bill total, and seat
+    // composition single-source through one getSeatBilling trip.
     if (plan.slug === 'free') return plan.creditAllocation;
-    const members = await this.orgService.getMembers(orgId);
-    const seatCount = Math.max(members.length, 1);
-    return plan.creditAllocation * seatCount;
+    const billing = await this.seatService.getSeatBilling(orgId);
+    return billing.monthlyCreditAllocation;
   }
 }
