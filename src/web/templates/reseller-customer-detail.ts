@@ -298,7 +298,7 @@ export const RESELLER_CUSTOMER_DETAIL_STYLES = `
     display: inline-block;
     padding: 9px 16px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     border-radius: 6px;

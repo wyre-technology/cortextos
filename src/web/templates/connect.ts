@@ -116,7 +116,7 @@ const BASE_STYLES = `
     width: 100%;
     padding: 12px 20px;
     background: var(--accent-light);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 15px;
     font-weight: 600;
     font-family: inherit;

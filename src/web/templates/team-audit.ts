@@ -255,7 +255,7 @@ export const TEAM_AUDIT_STYLES = `
     border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: inherit;
   }
   .btn {
-    padding: 6px 14px; background: var(--accent); color: #fff;
+    padding: 6px 14px; background: var(--accent); color: var(--text-on-accent);
     font-size: 13px; font-weight: 600; border: none; border-radius: 6px;
     cursor: pointer; font-family: inherit; text-decoration: none;
   }

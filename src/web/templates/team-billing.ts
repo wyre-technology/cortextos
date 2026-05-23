@@ -770,8 +770,8 @@ export const TEAM_BILLING_STYLES = `
     color: var(--text-primary);
   }
   .dunning-banner--info  .dunning-banner__icon { color: var(--accent-text); }
-  .dunning-banner--warn  .dunning-banner__icon { color: #f59e0b; }
-  .dunning-banner--urgent .dunning-banner__icon { color: #dc2626; }
+  .dunning-banner--warn  .dunning-banner__icon { color: var(--warning-text); }
+  .dunning-banner--urgent .dunning-banner__icon { color: var(--error); }
   .dunning-banner__copy { flex: 1; min-width: 0; }
   .dunning-banner__line1 {
     font-size: 15px;
@@ -789,7 +789,7 @@ export const TEAM_BILLING_STYLES = `
     align-items: center;
     padding: 8px 14px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     border-radius: 6px;
@@ -814,12 +814,12 @@ export const TEAM_BILLING_STYLES = `
   }
   .dunning-countdown--warn .dunning-countdown__fill {
     height: 100%;
-    background: #f59e0b;
+    background: var(--warning-text);
     transition: width 0.3s ease;
   }
   .dunning-countdown--urgent .dunning-countdown__fill {
     height: 100%;
-    background: #dc2626;
+    background: var(--error);
     transition: width 0.3s ease;
   }
   .dunning-countdown__digits {
@@ -847,7 +847,7 @@ export const TEAM_BILLING_STYLES = `
   }
   .dunning-chip--warn {
     background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    color: var(--warning-text);
   }
 
   /* Suspended full-page card */
@@ -863,7 +863,7 @@ export const TEAM_BILLING_STYLES = `
   .suspended-card__icon {
     display: inline-flex;
     margin-bottom: 16px;
-    color: #f59e0b;
+    color: var(--warning-text);
   }
   .suspended-card__title {
     font-family: var(--font-heading);
@@ -889,7 +889,7 @@ export const TEAM_BILLING_STYLES = `
     box-sizing: border-box;
     padding: 12px 16px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 14px;
     font-weight: 600;
     border-radius: 6px;
@@ -934,7 +934,7 @@ export const TEAM_BILLING_STYLES = `
     transition: opacity 0.3s ease, transform 0.3s ease;
   }
   .dunning-toast--success .dunning-toast__icon {
-    color: #10b981;
+    color: var(--success-text);
     display: flex;
   }
   .dunning-toast__body { flex: 1; min-width: 0; }

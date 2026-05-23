@@ -203,7 +203,7 @@ export const RESELLER_CUSTOMERS_STYLES = `
     display: inline-block;
     padding: 9px 16px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;

@@ -170,7 +170,7 @@ export const TEAM_SCIM_STYLES = `
   td { color: var(--text-label); }
   .btn-create-invite {
     display: inline-flex; align-items: center;
-    padding: 8px 16px; background: var(--accent); color: #fff;
+    padding: 8px 16px; background: var(--accent); color: var(--text-on-accent);
     font-size: 13px; font-weight: 600; font-family: inherit;
     border: none; border-radius: 6px; cursor: pointer;
   }

@@ -65,8 +65,8 @@ export const TEAM_CONNECTIONS_STYLES = `
     min-width: 0;
   }
   .vc-status-healthy  { color: var(--success-text); }
-  .vc-status-degraded { color: #f59e0b; }
-  .vc-status-down     { color: #dc2626; }
+  .vc-status-degraded { color: var(--warning-text); }
+  .vc-status-down     { color: var(--error); }
   .vc-status-unknown  { color: var(--text-tertiary); }
   .vc-status { white-space: nowrap; }
   .vc-status[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }

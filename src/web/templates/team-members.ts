@@ -122,6 +122,11 @@ export const TEAM_MEMBERS_STYLES = `
     border-radius: 4px;
   }
   .role-badge.owner { background: rgba(37, 99, 235, 0.15); color: var(--accent-text); }
+  /* Admin role-badge is purple per design — no canonical role-admin token
+     in THEME_VARS yet; defining the role-color palette is a separate task
+     (covered alongside PR-3 native-dialog work as a UX component-tokens
+     refactor surface). Hardcoded literal is the obvious-over-compelling
+     choice until that token lands. */
   .role-badge.admin { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
   .role-badge.member { background: var(--border-tertiary); color: var(--text-secondary); }
   .role-select {

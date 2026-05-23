@@ -369,14 +369,14 @@ export const RESELLER_BRANDING_STYLES = `
   .rb-switch input:checked + .rb-switch-track { background: var(--accent); }
   .rb-switch input:checked + .rb-switch-track .rb-switch-thumb {
     transform: translateX(16px);
-    background: #0a0a0a;
+    background: var(--text-on-accent);
   }
 
   .rb-actions { margin: 8px 0 16px; }
   .rb-save {
     padding: 9px 18px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;
