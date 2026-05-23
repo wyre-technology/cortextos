@@ -35,6 +35,16 @@ export const THEME_VARS = `
     --warning-text: #f59e0b;
     --badge-event-bg: #0a2a2d;
     --badge-personal-bg: #2a1a1a;
+    /**
+     * Text-on-bright-bg tokens. Used for text rendered on top of the
+     * accent / success / warning fills (e.g. primary CTAs, step dots,
+     * status badges). Single SoT so individual sites stop hardcoding
+     * #0a0a0a / #fff for the same intent. Dark + light values match
+     * the inverse-of-the-bright-bg-luminance, not the page-mode.
+     */
+    --text-on-accent: #0a0a0a;
+    --text-on-success: #0a0a0a;
+    --text-on-warning: #0a0a0a;
     --font-heading: 'Oswald', sans-serif;
     --font-body: 'Nunito Sans', 'Inter', system-ui, sans-serif;
     --font-mono: 'IBM Plex Mono', monospace;
@@ -88,6 +98,32 @@ export const PAGE_STYLES = `
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
+
+  /* Global anchor + native-form-element theming. Without these resets,
+     browser defaults leak through: anchors render dark-blue (#0000EE)
+     regardless of theme, and inputs/selects/textareas render white in
+     dark mode. Per-component overrides (e.g. .btn-connect, .nc-input,
+     .rb-input-readonly) still win via specificity — these globals only
+     catch the otherwise-unstyled elements. */
+  a {
+    color: var(--accent-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+  }
+  a:hover { color: var(--accent-hover); }
+  input, select, textarea {
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-primary);
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+  /* Keyboard focus ring — applies to anchors, buttons, and any element
+     that receives keyboard focus and does not already define a visible
+     focus style of its own. WCAG 2.4.7 (Focus Visible). */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .page {
     width: 100%;
     max-width: 720px;
