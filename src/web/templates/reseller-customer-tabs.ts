@@ -471,7 +471,7 @@ export const CUSTOMER_TAB_STYLES = `
   .cdt-tool-off { color: var(--text-tertiary); }
   .cdt-box {
     width: 16px; height: 16px; border-radius: 3px; display: inline-flex;
-    align-items: center; justify-content: center; font-size: 10px; color: #0a0a0a;
+    align-items: center; justify-content: center; font-size: 10px; color: var(--text-on-accent);
     border: 1px solid var(--border-secondary); background: var(--bg-card);
   }
   .cdt-box-on { background: var(--accent); border-color: var(--accent); }
@@ -506,7 +506,7 @@ export const CUSTOMER_TAB_STYLES = `
 
   .cdt-actions { margin: 20px 0; }
   .cdt-save {
-    padding: 9px 18px; background: var(--accent); color: #0a0a0a;
+    padding: 9px 18px; background: var(--accent); color: var(--text-on-accent);
     font-size: 13px; font-weight: 600; font-family: inherit; border: none;
     border-radius: 6px; cursor: pointer;
   }

@@ -338,9 +338,9 @@ export const NEW_CUSTOMER_STYLES = `
     flex-shrink: 0;
   }
   .nc-step-label { color: var(--text-tertiary); white-space: nowrap; }
-  .nc-step-active .nc-step-dot { background: var(--accent); color: #0a0a0a; }
+  .nc-step-active .nc-step-dot { background: var(--accent); color: var(--text-on-accent); }
   .nc-step-active .nc-step-label { color: var(--text-primary); font-weight: 600; }
-  .nc-step-done .nc-step-dot { background: var(--success); color: #0a0a0a; }
+  .nc-step-done .nc-step-dot { background: var(--success); color: var(--text-on-success); }
   .nc-step-done .nc-step-label { color: var(--text-primary); }
   /* visually-hidden text — exposes step state to screen readers only */
   .nc-sr {
@@ -417,7 +417,7 @@ export const NEW_CUSTOMER_STYLES = `
   .nc-switch input:checked + .nc-switch-track { background: var(--accent); }
   .nc-switch input:checked + .nc-switch-track .nc-switch-thumb {
     transform: translateX(16px);
-    background: #0a0a0a;
+    background: var(--text-on-accent);
   }
 
   .nc-summary {
@@ -450,7 +450,7 @@ export const NEW_CUSTOMER_STYLES = `
     display: inline-block;
     padding: 10px 22px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     border-radius: 6px;
@@ -467,7 +467,7 @@ export const NEW_CUSTOMER_STYLES = `
   .nc-create {
     padding: 10px 22px;
     background: var(--success);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;

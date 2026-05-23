@@ -163,7 +163,7 @@ export const TEAM_INVITATIONS_STYLES = `
   .btn-copy:hover { border-color: var(--accent-light); }
   .btn-create-invite {
     display: inline-flex; align-items: center;
-    padding: 8px 16px; background: var(--accent); color: #fff;
+    padding: 8px 16px; background: var(--accent); color: var(--text-on-accent);
     font-size: 13px; font-weight: 600; font-family: inherit;
     border: none; border-radius: 6px; cursor: pointer; white-space: nowrap;
   }

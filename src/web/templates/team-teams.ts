@@ -297,7 +297,7 @@ export const TEAM_TEAMS_STYLES = `
   }
   .btn-primary {
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
   }
   .btn-primary:hover { opacity: 0.9; }
   .btn-danger {

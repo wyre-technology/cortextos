@@ -115,11 +115,11 @@ export const VENDOR_HEALTH_STYLES = `
     box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
   }
   .vc-dot-degraded {
-    background: #f59e0b;
+    background: var(--warning-text);
     box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
   }
   .vc-dot-down {
-    background: #dc2626;
+    background: var(--error);
     box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.25);
   }
   .vc-dot-unknown {

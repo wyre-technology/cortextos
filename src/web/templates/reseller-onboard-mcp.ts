@@ -494,9 +494,9 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
     flex-shrink: 0;
   }
   .ob-step-label { color: var(--text-tertiary); white-space: nowrap; }
-  .ob-step-active .ob-step-dot { background: var(--accent); color: #0a0a0a; }
+  .ob-step-active .ob-step-dot { background: var(--accent); color: var(--text-on-accent); }
   .ob-step-active .ob-step-label { color: var(--text-primary); font-weight: 600; }
-  .ob-step-done .ob-step-dot { background: var(--success); color: #0a0a0a; }
+  .ob-step-done .ob-step-dot { background: var(--success); color: var(--text-on-success); }
   .ob-step-done .ob-step-label { color: var(--text-primary); }
   /* visually-hidden text — exposes step state to screen readers only */
   .ob-sr {
@@ -530,7 +530,7 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
     display: inline-block;
     padding: 10px 22px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     border-radius: 6px;
@@ -539,7 +539,7 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
   .ob-finish {
     padding: 12px 24px;
     background: var(--success);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 14px;
     font-weight: 600;
     font-family: inherit;
@@ -612,6 +612,11 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
     justify-content: center;
     font-size: 16px;
     font-weight: 700;
+    /* Intentional theme-independent near-white: the icon tile background
+       is set per-vendor via safeCssColor() to a vivid color (red/blue/
+       orange/etc.), so the contrast pairing is always white-on-vivid
+       regardless of light/dark mode. Not a token because no other surface
+       carries this "text-on-arbitrary-vivid" pairing. */
     color: #f2f2f5;
   }
   .ob-new {
@@ -709,7 +714,7 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
     border: 1px solid var(--border-secondary);
     background: var(--bg-card);
     font-size: 10px;
-    color: #0a0a0a;
+    color: var(--text-on-accent);
   }
   .ob-box-on { background: var(--accent); border-color: var(--accent); }
 
@@ -741,7 +746,7 @@ export const RESELLER_ONBOARD_MCP_STYLES = `
   .ob-preview-activate {
     padding: 7px 18px;
     background: var(--accent);
-    color: #0a0a0a;
+    color: var(--text-on-accent);
     font-size: 12px;
     font-weight: 600;
     border-radius: 6px;

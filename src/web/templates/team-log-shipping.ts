@@ -293,7 +293,7 @@ export const TEAM_LOG_SHIPPING_STYLES = `
   .btn-secondary:hover { border-color: var(--text-secondary); color: var(--text-primary); }
   .btn-create-invite {
     display: inline-flex; align-items: center;
-    padding: 8px 16px; background: var(--accent); color: #fff;
+    padding: 8px 16px; background: var(--accent); color: var(--text-on-accent);
     font-size: 13px; font-weight: 600; font-family: inherit;
     border: none; border-radius: 6px; cursor: pointer;
   }

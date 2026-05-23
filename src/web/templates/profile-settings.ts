@@ -54,7 +54,7 @@ export const PROFILE_SETTINGS_STYLES = `
     border: none;
     border-radius: 6px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 14px;
     font-weight: 500;
     font-family: inherit;
@@ -89,7 +89,7 @@ export const PROFILE_SETTINGS_STYLES = `
     transform: translateY(0);
   }
   .toast.error {
-    border-color: #dc2626;
+    border-color: var(--error);
     color: #fca5a5;
   }
 `;

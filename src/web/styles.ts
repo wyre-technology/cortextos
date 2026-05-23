@@ -45,6 +45,7 @@ export const THEME_VARS = `
     --text-on-accent: #0a0a0a;
     --text-on-success: #0a0a0a;
     --text-on-warning: #0a0a0a;
+    --text-on-error: #0a0a0a;
     --font-heading: 'Oswald', sans-serif;
     --font-body: 'Nunito Sans', 'Inter', system-ui, sans-serif;
     --font-mono: 'IBM Plex Mono', monospace;
@@ -295,7 +296,7 @@ export const PAGE_STYLES = `
     width: 100%;
     padding: 8px 14px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;
@@ -370,7 +371,7 @@ export const PAGE_STYLES = `
     align-items: center;
     padding: 8px 16px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-on-accent);
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;
@@ -434,7 +435,7 @@ export const PAGE_STYLES = `
     gap: 14px;
     flex-wrap: wrap;
   }
-  .invite-banner strong { color: #00C9DB; }
+  .invite-banner strong { color: var(--accent-text); }
   .invite-banner code {
     font-family: 'IBM Plex Mono', monospace;
     background: rgba(0, 201, 219, 0.14);
@@ -442,7 +443,7 @@ export const PAGE_STYLES = `
     border-radius: 4px;
     padding: 3px 8px;
     font-size: 13px;
-    color: #00C9DB;
+    color: var(--accent-text);
     letter-spacing: 0.05em;
   }
   .toast {
