@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 /**
  * Robots / crawler policy for the gateway (docs + all responses).
  *
@@ -41,23 +43,31 @@ export const INTERNAL_DOCS_PREFIX = '/docs/internal';
  * end-of-path or a slash.
  *
  * Decides on the path `@fastify/send` will actually SERVE, not the raw
- * request-target: send percent-decodes + collapses slashes before resolving
- * the file, so the matcher does the same first — otherwise an encoded variant
- * (`/docs/%69nternal/`, `/docs//internal/`) would serve internal bytes while
- * dodging the noindex header. Same principle that justifies the belt: gate on
- * the served path, not the typed one.
+ * request-target. send normalizes via THREE operations before resolving the
+ * file — `decodeURIComponent` + collapse-slashes + `path.normalize` (`..`
+ * resolution) — so the matcher applies the SAME primitives first. Otherwise an
+ * encoded / doubled / dot-segment variant (`/docs/%69nternal/`,
+ * `/docs//internal/`, `/docs/foo/../internal/`) would serve internal bytes
+ * while dodging the noindex header. Normalizing with `path.posix.normalize`
+ * (rather than enumerating encodings) makes the matcher provably see what send
+ * serves — the "gate on the served path, not the typed one" principle done
+ * completely.
  */
 export function isInternalDocsPath(url: string): boolean {
-  let path = url.split(/[?#]/, 1)[0];
+  let decoded = url.split(/[?#]/, 1)[0];
   try {
-    path = decodeURIComponent(path);
+    decoded = decodeURIComponent(decoded);
   } catch {
     // Malformed %-sequence (decodeURIComponent throws URIError) — keep the raw
-    // form. Such a URL won't resolve to a served file, and the raw form is
-    // still prefix-tested below, so internal/ stays covered either way.
+    // form. send throws on the same input → 404, not served → no gap; and the
+    // raw form is still normalized + prefix-tested below, so internal/ stays
+    // covered either way.
   }
-  path = path.replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '/';
-  return path === INTERNAL_DOCS_PREFIX || path.startsWith(`${INTERNAL_DOCS_PREFIX}/`);
+  // path.posix.normalize collapses `//` and resolves `..`/`.` — the same
+  // normalization send applies. Strip the trailing slash it preserves so
+  // `/docs/internal/` matches the exact-dir case.
+  const p = path.posix.normalize(decoded).replace(/\/+$/, '') || '/';
+  return p === INTERNAL_DOCS_PREFIX || p.startsWith(`${INTERNAL_DOCS_PREFIX}/`);
 }
 
 /**

@@ -120,6 +120,18 @@ describe('isInternalDocsPath — the /docs/internal/* noindex belt', () => {
     expect(isInternalDocsPath('/docs/internal/%ZZ')).toBe(true);
   });
 
+  it('resolves `..` dot-segments the way @fastify/send does', () => {
+    // send path.normalize's before serving, so this resolves to
+    // /docs/internal/agents-impl/ and IS served — the matcher must see that.
+    expect(isInternalDocsPath('/docs/foo/../internal/agents-impl/')).toBe(true);
+    expect(isInternalDocsPath('/docs/./internal/')).toBe(true);
+  });
+
+  it('a `..` that escapes OUT of internal does not match (send serves elsewhere)', () => {
+    // normalizes to /docs/public/ — not internal, so correctly no noindex.
+    expect(isInternalDocsPath('/docs/internal/../public/')).toBe(false);
+  });
+
   it('INTERNAL_DOCS_PREFIX is the internal subtree root', () => {
     expect(INTERNAL_DOCS_PREFIX).toBe('/docs/internal');
   });
