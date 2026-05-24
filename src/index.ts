@@ -2,7 +2,7 @@
  * MCP Gateway — main entry point
  *
  * Starts a Fastify server that:
- *   - Serves OAuth 2.1 + PKCE endpoints for Claude Desktop/Code authentication
+ *   - Serves OAuth 2.1 + PKCE endpoints for MCP client authentication (Claude Desktop/Code and any MCP-capable client)
  *   - Provides a credential entry web UI for vendor API keys
  *   - Reverse-proxies MCP requests to vendor containers with injected credentials
  *   - Manages organizations, team memberships, and billing

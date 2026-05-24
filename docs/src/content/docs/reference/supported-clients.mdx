@@ -1,0 +1,55 @@
+---
+title: Supported clients
+description: Which AI clients work with Conduit. Conduit speaks the standard Model Context Protocol, so any MCP-capable client connects — Claude Desktop, Claude Code, Cline, Continue, Cursor, and more.
+---
+
+Conduit is **provider-neutral by design.** It speaks the standard **Model Context Protocol (MCP)** end to end — it does not translate tools into any one AI vendor's format. That means Conduit is the connection fabric for *any* MCP-capable AI assistant: it gives your AI the **access and visibility** it needs into your MSP tools, without locking you to a single AI vendor.
+
+Claude Desktop and Claude Code are the clients we document end-to-end today, but they are examples — not a requirement. Any client that implements the MCP client spec connects the same way.
+
+---
+
+## How any MCP client connects
+
+There are exactly two connection methods, and every MCP-capable client uses one of them:
+
+1. **Native remote MCP** — for clients that connect to a remote MCP server by URL directly (e.g. Claude Code's `claude mcp add --transport http`).
+2. **The `mcp-remote` bridge** — for clients that only connect to local (stdio) MCP servers; a small community tool bridges them to Conduit's remote endpoint.
+
+Both methods use the same Conduit endpoint (`/v1/mcp`) and the same OAuth 2.1 sign-in. See [Connecting an AI client](/docs/guides/connecting-a-client/) for the step-by-step.
+
+## Client matrix
+
+| Client | Connection method | Status |
+|--------|-------------------|--------|
+| **Claude Code** | Native remote (`claude mcp add --transport http`) | **Documented** — see the connect guide |
+| **Claude Desktop** | `mcp-remote` bridge | **Documented** — see the connect guide |
+| **Cline** (VS Code) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Continue** (VS Code / JetBrains) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Cursor** | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Any MCP-spec client** | Native remote or `mcp-remote` | Compatible by protocol |
+
+**What the statuses mean:**
+
+- **Documented** — Conduit has a written, worked connection path for this client (the [connect guide](/docs/guides/connecting-a-client/)).
+- **MCP-spec compatible** — the client implements the MCP client spec, so it connects through the same standard methods and OAuth flow. Conduit doesn't special-case any client; if it speaks MCP, it works. Formal per-client connection walkthroughs for these are being added.
+
+:::note
+This matrix reflects MCP-protocol compatibility, not per-client certification. Because Conduit is MCP-native, support is a property of the protocol, not a per-vendor integration — a new MCP-capable client works on day one without any change to Conduit.
+:::
+
+## What "provider-neutral" means here
+
+- **At the protocol layer** — Conduit passes through each vendor's own MCP tool schemas (JSON-Schema `inputSchema`); it never reshapes them into a specific AI vendor's tool-calling format. Any MCP client reads them natively.
+- **At the auth layer** — connection is standard OAuth 2.1 + PKCE (the MCP authorization spec), not a Claude-specific flow.
+- **What this is not** — Conduit is not a workflow-automation or chaining tool. It is the connection-and-access layer: it gives your AI assistant secure, permissioned access to the MSP tools you already run, and visibility into how they're used. The AI does the thinking; Conduit does the connecting.
+
+## Clients that don't speak MCP
+
+Some AI platforms do tool-calling but don't speak MCP natively (for example, an app built directly on a provider's function-calling API). Support for those is a roadmap item — an additive per-provider adapter layer — and is demand-driven rather than shipped today. If you have a specific non-MCP provider need, raise it with your WYRE contact.
+
+## Related
+
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — the step-by-step connect path.
+- [Architecture](/docs/reference/architecture/) — why the gateway is MCP-native and provider-neutral.
+- [Security](/docs/reference/security/) — the OAuth 2.1 + PKCE client-authentication model.

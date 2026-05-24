@@ -47,6 +47,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Architecture', slug: 'reference/architecture' },
+            { label: 'Supported Clients', slug: 'reference/supported-clients' },
             { label: 'API', slug: 'reference/api' },
             { label: 'CLI Wrapper', slug: 'reference/cli' },
             { label: 'Permissions', slug: 'reference/permissions' },

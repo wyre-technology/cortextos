@@ -3,9 +3,11 @@ title: Connecting an AI client
 description: How to connect Claude Code, Claude Desktop, or another MCP client to your organization's Conduit gateway.
 ---
 
-Conduit is the gateway between your AI client and the vendor tools your MSP has connected. To use those tools from Claude, you point your AI client at your organization's Conduit MCP endpoint and sign in once. This guide walks through it.
+Conduit is the gateway between your AI client and the vendor tools your MSP has connected. To use those tools, you point your AI client at your organization's Conduit MCP endpoint and sign in once. This guide walks through it.
 
 You do not install Conduit — it is a hosted gateway. You **connect** an MCP client to it.
+
+Conduit speaks the standard **Model Context Protocol (MCP)**, so **any MCP-capable client works** — Claude Desktop and Claude Code are the worked examples below, but Cline, Continue, Cursor, and other MCP clients connect the same way. See [Supported clients](/docs/reference/supported-clients/) for the current list.
 
 ## Before you start
 
@@ -63,7 +65,7 @@ The token is cached and refreshed automatically — you sign in once, not on eve
 
 Once connected, your organization's connected vendors appear as tools in your client. To confirm:
 
-- Ask Claude to run a simple read-only tool call against one of your connected vendors.
+- Ask your assistant to run a simple read-only tool call against one of your connected vendors.
 - The call should return real data from the vendor.
 
 If tools do not appear, see Troubleshooting below.

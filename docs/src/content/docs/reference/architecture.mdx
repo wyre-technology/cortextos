@@ -3,7 +3,7 @@ title: Architecture
 description: Conduit's system architecture — the Fastify gateway, its component services, and the data flow of an MCP tool call.
 ---
 
-Conduit is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between AI clients (Claude Desktop, Claude Code, custom agents) and the vendor MCP servers used by Managed Service Providers. The specific vendors available depend on the deployment.
+Conduit is a Fastify/TypeScript application that acts as an OAuth 2.1 reverse proxy between MCP clients (Claude Desktop, Claude Code, and any other MCP-capable client) and the vendor MCP servers used by Managed Service Providers. The specific vendors available depend on the deployment.
 
 The production deployment runs on **Azure Container Apps** (provisioned via Bicep — see `azure/main.bicep`); `docker-compose` is used for local development.
 

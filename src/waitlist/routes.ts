@@ -75,7 +75,7 @@ export function waitlistRoutes() {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Join the Waitlist - MCP Gateway - ${brand.name}</title>
-  <meta name="description" content="Get early access to the MCP Gateway — a hosted proxy that connects Claude to your MSP tools securely." />
+  <meta name="description" content="Get early access to the MCP Gateway — a hosted proxy that connects any MCP-capable AI assistant to your MSP tools securely." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -240,7 +240,7 @@ export function waitlistRoutes() {
   <div class="card">
     <div class="brand">${brand.name}</div>
     <h1>Get Early Access</h1>
-    <p class="subtitle">The MCP Gateway connects Claude to your MSP tools — Autotask, Datto RMM, IT Glue, HaloPSA, and more. Sign up to be notified when we open access.</p>
+    <p class="subtitle">The MCP Gateway connects your AI assistant — Claude or any MCP-capable client — to your MSP tools: Autotask, Datto RMM, IT Glue, HaloPSA, and more. Sign up to be notified when we open access.</p>
 
     <form id="waitlistForm">
       <div class="form-group">
@@ -260,7 +260,7 @@ export function waitlistRoutes() {
     <div class="features">
       <h2>What you get</h2>
       <ul class="feature-list">
-        <li>Connect Claude Desktop & Claude Code to 12 MSP platforms</li>
+        <li>Connect Claude Desktop, Claude Code, or any MCP-capable client to 50+ MSP platforms</li>
         <li>Encrypted credential storage — your API keys never leave the gateway</li>
         <li>Team sharing — one set of credentials for your whole team</li>
         <li>Audit logging for every MCP request</li>
