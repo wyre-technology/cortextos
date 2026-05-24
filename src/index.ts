@@ -16,6 +16,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { computeDocsNoindex, buildRobotsTxt } from './robots.js';
 import path from 'node:path';
 
 import { config } from './config.js';
@@ -87,6 +88,55 @@ const app = Fastify({
         : undefined,
   },
 });
+
+// ---------------------------------------------------------------------------
+// Robots / crawler policy (docs + all responses)
+// ---------------------------------------------------------------------------
+// Non-production surfaces (staging, the pre-cutover kinddesert FQDN, local)
+// must NOT be indexed by search engines or ingested by AI crawlers — they
+// serve pre-launch docs + customer data and are not public-access. The
+// production customer-facing docs host (conduit.wyre.ai) MUST be indexable +
+// crawlable (the docs are a customer-acquisition surface at launch).
+//
+// Gate keys on BASE_URL host: index ONLY on `conduit.wyre.ai`; everything else
+// noindex. Fail-safe (noindex-unless-explicitly-prod-apex) and ties the
+// index-flip to the RECORD-2 cutover automatically — the conduit-prod gateway
+// runs the kinddesert FQDN (noindex) until cutover sets BASE_URL to
+// conduit.wyre.ai, which flips it indexable. `DOCS_NOINDEX=true|false` is an
+// explicit override that wins when set.
+//
+// NOTE: noindex/robots is crawler+AI-agent POLITENESS, not access-control —
+// well-behaved crawlers respect it; malicious scrapers ignore robots.txt. The
+// concern here is search-index-pollution + AI-training-ingestion of pre-launch
+// product docs, not secret-protection (the docs contain no secrets), so
+// politeness-not-authgate is the correct + sufficient tool.
+const docsNoindex = computeDocsNoindex(config.baseUrl, process.env.DOCS_NOINDEX);
+
+// Layer 1 — X-Robots-Tag header on every response when noindex. The most
+// reliable signal: applies to non-HTML responses too + is honored even if a
+// crawler never fetches robots.txt. Absent entirely on the prod apex.
+if (docsNoindex) {
+  app.addHook('onSend', async (_req, reply, payload) => {
+    reply.header('X-Robots-Tag', 'noindex, nofollow');
+    return payload;
+  });
+}
+
+// Layer 2 — robots.txt. Registered as an explicit route (priority over
+// @fastify/static) so its content is env-gated at runtime rather than a static
+// build artifact.
+const robotsTxt = buildRobotsTxt(docsNoindex, config.baseUrl);
+app.get('/robots.txt', async (_req, reply) => {
+  reply.header('Content-Type', 'text/plain; charset=utf-8');
+  return robotsTxt;
+});
+
+app.log.info(
+  { docsNoindex },
+  docsNoindex
+    ? 'robots policy: NOINDEX (non-production surface — crawlers + AI agents disallowed)'
+    : 'robots policy: INDEXED (production docs host — crawlable)',
+);
 
 // ---------------------------------------------------------------------------
 // Plugins
@@ -347,6 +397,17 @@ if (existsSync(publicDir)) {
     prefix: '/',
     wildcard: false,
     decorateReply: false,
+    // redirect: a directory requested WITHOUT a trailing slash (e.g. `/docs`,
+    // `/docs/getting-started`) 301s to the slashed form that serves the
+    // directory index. Without this, @fastify/static 404s the no-slash form
+    // (the natural URL a customer types) while `/docs/` serves 200 — the docs
+    // site is live but its entry URL appears broken. Only DIRECTORY requests
+    // redirect; file requests (`/docs/_astro/*.css`) serve directly, never
+    // redirected. Valid with wildcard:false ONLY because this Fastify instance
+    // does not set ignoreTrailingSlash (defaults false) — @fastify/static
+    // forbids redirect:true when wildcard:false AND ignoreTrailingSlash:true.
+    // Do not enable ignoreTrailingSlash on the app without revisiting this.
+    redirect: true,
   });
 } else {
   app.log.info(
