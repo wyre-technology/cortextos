@@ -21,6 +21,31 @@
 export const PROD_DOCS_HOST = 'conduit.wyre.ai';
 
 /**
+ * The published-docs path that must NEVER be indexed, on any surface including
+ * the indexed prod apex: the internal/ docs carry full per-agent system-prompt
+ * contents. This is the path-belt prefix for the X-Robots-Tag header (Finding A).
+ */
+export const INTERNAL_DOCS_PREFIX = '/docs/internal';
+
+/**
+ * True if `url` addresses the internal docs subtree (`/docs/internal` or
+ * anything beneath it), ignoring any query string. Used to apply a noindex
+ * header REGARDLESS of env — the durable fix is build-exclusion, this belt
+ * covers compliant crawlers + a build-regression window.
+ *
+ * Header-based, NOT a robots.txt `Disallow:` — a Disallow line on the indexed
+ * prod robots.txt would advertise the hidden path (reconnaissance leak).
+ *
+ * Matches the directory exactly (`/docs/internal`, `/docs/internal/…`) but not
+ * a sibling like `/docs/internal-changelog` — the prefix must be followed by
+ * end-of-path, a slash, or a query/fragment delimiter.
+ */
+export function isInternalDocsPath(url: string): boolean {
+  const path = url.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
+  return path === INTERNAL_DOCS_PREFIX || path.startsWith(`${INTERNAL_DOCS_PREFIX}/`);
+}
+
+/**
  * Known AI-crawler user-agents, named explicitly in the noindex robots.txt.
  * `User-agent: * / Disallow: /` already covers compliant crawlers; naming the
  * AI UAs is belt-and-suspenders + an explicit pre-launch-content signal.
