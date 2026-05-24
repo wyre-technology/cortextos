@@ -17,7 +17,7 @@ import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { computeDocsNoindex, buildRobotsTxt, isInternalDocsPath } from './robots.js';
-import { buildLlmsTxt } from './llms.js';
+import { LLMS_TXT } from './llms.js';
 import path from 'node:path';
 
 import { config } from './config.js';
@@ -156,7 +156,7 @@ app.get('/robots.txt', async (_req, reply) => {
 // contradicts the staging-noindex posture (advertised-resource-must-exist:
 // the map only exists where its link targets are live). Body is a placeholder
 // pending docs-content curation.
-const llmsTxt = buildLlmsTxt(config.baseUrl);
+const llmsTxt = LLMS_TXT;
 app.get('/llms.txt', async (_req, reply) => {
   if (docsNoindex) {
     reply.code(404).header('Content-Type', 'text/plain; charset=utf-8');
