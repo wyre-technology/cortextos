@@ -16,7 +16,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { computeDocsNoindex, buildRobotsTxt } from './robots.js';
+import { computeDocsNoindex, buildRobotsTxt, isInternalDocsPath } from './robots.js';
 import path from 'node:path';
 
 import { config } from './config.js';
@@ -121,6 +121,24 @@ if (docsNoindex) {
     return payload;
   });
 }
+
+// Belt — path-matched X-Robots-Tag: noindex on /docs/internal/* REGARDLESS of
+// env, including the indexed prod apex. The internal/ docs carry full per-agent
+// system-prompt contents and must never be indexed; the durable fix is
+// build-excluding internal/ from the published site (enforced by the
+// /docs/internal/-404 cutover gate in CONDUIT-PROD-DEPLOY.md). This belt is
+// defense-in-depth: it covers compliant crawlers in the window before the
+// build-exclusion lands AND a regression that re-includes internal/. Registered
+// unconditionally — when docsNoindex the Layer-1 hook already covers it; on the
+// indexed apex this is the only header protecting internal/. Header-based, NOT a
+// robots.txt Disallow (a Disallow on the indexed prod robots.txt advertises the
+// path — reconnaissance leak). [Finding A, docs-publish triangle 2026-05-24]
+app.addHook('onSend', async (req, reply, payload) => {
+  if (isInternalDocsPath(req.url)) {
+    reply.header('X-Robots-Tag', 'noindex, nofollow');
+  }
+  return payload;
+});
 
 // Layer 2 — robots.txt. Registered as an explicit route (priority over
 // @fastify/static) so its content is env-gated at runtime rather than a static

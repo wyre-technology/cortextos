@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 /**
  * Robots / crawler policy for the gateway (docs + all responses).
  *
@@ -19,6 +21,54 @@
 
 /** The production customer-facing docs host — the only surface that indexes. */
 export const PROD_DOCS_HOST = 'conduit.wyre.ai';
+
+/**
+ * The published-docs path that must NEVER be indexed, on any surface including
+ * the indexed prod apex: the internal/ docs carry full per-agent system-prompt
+ * contents. This is the path-belt prefix for the X-Robots-Tag header (Finding A).
+ */
+export const INTERNAL_DOCS_PREFIX = '/docs/internal';
+
+/**
+ * True if `url` addresses the internal docs subtree (`/docs/internal` or
+ * anything beneath it), ignoring any query string. Used to apply a noindex
+ * header REGARDLESS of env — the durable fix is build-exclusion, this belt
+ * covers compliant crawlers + a build-regression window.
+ *
+ * Header-based, NOT a robots.txt `Disallow:` — a Disallow line on the indexed
+ * prod robots.txt would advertise the hidden path (reconnaissance leak).
+ *
+ * Matches the directory exactly (`/docs/internal`, `/docs/internal/…`) but not
+ * a sibling like `/docs/internal-changelog` — the prefix must be followed by
+ * end-of-path or a slash.
+ *
+ * Decides on the path `@fastify/send` will actually SERVE, not the raw
+ * request-target. send normalizes via THREE operations before resolving the
+ * file — `decodeURIComponent` + collapse-slashes + `path.normalize` (`..`
+ * resolution) — so the matcher applies the SAME primitives first. Otherwise an
+ * encoded / doubled / dot-segment variant (`/docs/%69nternal/`,
+ * `/docs//internal/`, `/docs/foo/../internal/`) would serve internal bytes
+ * while dodging the noindex header. Normalizing with `path.posix.normalize`
+ * (rather than enumerating encodings) makes the matcher provably see what send
+ * serves — the "gate on the served path, not the typed one" principle done
+ * completely.
+ */
+export function isInternalDocsPath(url: string): boolean {
+  let decoded = url.split(/[?#]/, 1)[0];
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Malformed %-sequence (decodeURIComponent throws URIError) — keep the raw
+    // form. send throws on the same input → 404, not served → no gap; and the
+    // raw form is still normalized + prefix-tested below, so internal/ stays
+    // covered either way.
+  }
+  // path.posix.normalize collapses `//` and resolves `..`/`.` — the same
+  // normalization send applies. Strip the trailing slash it preserves so
+  // `/docs/internal/` matches the exact-dir case.
+  const p = path.posix.normalize(decoded).replace(/\/+$/, '') || '/';
+  return p === INTERNAL_DOCS_PREFIX || p.startsWith(`${INTERNAL_DOCS_PREFIX}/`);
+}
 
 /**
  * Known AI-crawler user-agents, named explicitly in the noindex robots.txt.

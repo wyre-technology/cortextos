@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { computeDocsNoindex, buildRobotsTxt, AI_CRAWLER_UAS, PROD_DOCS_HOST } from './robots.js';
+import {
+  computeDocsNoindex,
+  buildRobotsTxt,
+  isInternalDocsPath,
+  AI_CRAWLER_UAS,
+  PROD_DOCS_HOST,
+  INTERNAL_DOCS_PREFIX,
+} from './robots.js';
 
 describe('computeDocsNoindex — fail-safe env gate', () => {
   it('INDEXES only the prod apex docs host (conduit.wyre.ai)', () => {
@@ -68,5 +75,64 @@ describe('buildRobotsTxt', () => {
 
   it('PROD_DOCS_HOST is the apex (guards against an accidental host rename)', () => {
     expect(PROD_DOCS_HOST).toBe('conduit.wyre.ai');
+  });
+});
+
+describe('isInternalDocsPath — the /docs/internal/* noindex belt', () => {
+  it('matches the internal docs dir + everything beneath it', () => {
+    for (const url of [
+      '/docs/internal',
+      '/docs/internal/',
+      '/docs/internal/agents-impl/',
+      '/docs/internal/agents-impl/index.html',
+      '/docs/internal/deep/nested/page/',
+    ]) {
+      expect(isInternalDocsPath(url)).toBe(true);
+    }
+  });
+
+  it('matches even with a query string or fragment appended', () => {
+    expect(isInternalDocsPath('/docs/internal/agents-impl/?foo=bar')).toBe(true);
+    expect(isInternalDocsPath('/docs/internal#section')).toBe(true);
+  });
+
+  it('does NOT match public docs paths', () => {
+    for (const url of ['/docs', '/docs/', '/docs/api-reference/', '/', '/robots.txt']) {
+      expect(isInternalDocsPath(url)).toBe(false);
+    }
+  });
+
+  it('does NOT match a sibling that merely shares the prefix string', () => {
+    // guards against a naive startsWith('/docs/internal') matching too much
+    expect(isInternalDocsPath('/docs/internal-changelog/')).toBe(false);
+    expect(isInternalDocsPath('/docs/internals/')).toBe(false);
+  });
+
+  it('matches an encoded variant that @fastify/send would still serve', () => {
+    // send percent-decodes + collapses slashes before resolving the file, so
+    // these serve internal bytes; the matcher must decode/collapse to match.
+    expect(isInternalDocsPath('/docs/%69nternal/agents-impl/')).toBe(true); // %69 = i
+    expect(isInternalDocsPath('/docs//internal/agents-impl/')).toBe(true); // double slash
+    expect(isInternalDocsPath('/docs/internal%2Fagents-impl/')).toBe(true); // %2F = /
+  });
+
+  it('a malformed %-sequence falls back to the raw prefix test (still covered)', () => {
+    expect(isInternalDocsPath('/docs/internal/%ZZ')).toBe(true);
+  });
+
+  it('resolves `..` dot-segments the way @fastify/send does', () => {
+    // send path.normalize's before serving, so this resolves to
+    // /docs/internal/agents-impl/ and IS served — the matcher must see that.
+    expect(isInternalDocsPath('/docs/foo/../internal/agents-impl/')).toBe(true);
+    expect(isInternalDocsPath('/docs/./internal/')).toBe(true);
+  });
+
+  it('a `..` that escapes OUT of internal does not match (send serves elsewhere)', () => {
+    // normalizes to /docs/public/ — not internal, so correctly no noindex.
+    expect(isInternalDocsPath('/docs/internal/../public/')).toBe(false);
+  });
+
+  it('INTERNAL_DOCS_PREFIX is the internal subtree root', () => {
+    expect(INTERNAL_DOCS_PREFIX).toBe('/docs/internal');
   });
 });
