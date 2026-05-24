@@ -108,6 +108,18 @@ describe('isInternalDocsPath — the /docs/internal/* noindex belt', () => {
     expect(isInternalDocsPath('/docs/internals/')).toBe(false);
   });
 
+  it('matches an encoded variant that @fastify/send would still serve', () => {
+    // send percent-decodes + collapses slashes before resolving the file, so
+    // these serve internal bytes; the matcher must decode/collapse to match.
+    expect(isInternalDocsPath('/docs/%69nternal/agents-impl/')).toBe(true); // %69 = i
+    expect(isInternalDocsPath('/docs//internal/agents-impl/')).toBe(true); // double slash
+    expect(isInternalDocsPath('/docs/internal%2Fagents-impl/')).toBe(true); // %2F = /
+  });
+
+  it('a malformed %-sequence falls back to the raw prefix test (still covered)', () => {
+    expect(isInternalDocsPath('/docs/internal/%ZZ')).toBe(true);
+  });
+
   it('INTERNAL_DOCS_PREFIX is the internal subtree root', () => {
     expect(INTERNAL_DOCS_PREFIX).toBe('/docs/internal');
   });

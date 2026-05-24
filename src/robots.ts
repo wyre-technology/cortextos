@@ -38,10 +38,25 @@ export const INTERNAL_DOCS_PREFIX = '/docs/internal';
  *
  * Matches the directory exactly (`/docs/internal`, `/docs/internal/…`) but not
  * a sibling like `/docs/internal-changelog` — the prefix must be followed by
- * end-of-path, a slash, or a query/fragment delimiter.
+ * end-of-path or a slash.
+ *
+ * Decides on the path `@fastify/send` will actually SERVE, not the raw
+ * request-target: send percent-decodes + collapses slashes before resolving
+ * the file, so the matcher does the same first — otherwise an encoded variant
+ * (`/docs/%69nternal/`, `/docs//internal/`) would serve internal bytes while
+ * dodging the noindex header. Same principle that justifies the belt: gate on
+ * the served path, not the typed one.
  */
 export function isInternalDocsPath(url: string): boolean {
-  const path = url.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
+  let path = url.split(/[?#]/, 1)[0];
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // Malformed %-sequence (decodeURIComponent throws URIError) — keep the raw
+    // form. Such a URL won't resolve to a served file, and the raw form is
+    // still prefix-tested below, so internal/ stays covered either way.
+  }
+  path = path.replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '/';
   return path === INTERNAL_DOCS_PREFIX || path.startsWith(`${INTERNAL_DOCS_PREFIX}/`);
 }
 
