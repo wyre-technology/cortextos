@@ -125,7 +125,7 @@ at Aaron's launch-window greenlight. Avoids two known traps documented inline.
      --name conduit-prod-gateway --resource-group rg-conduit-prod \
      --certificate mc-conduit-prod-env-conduit-wyre-ai
    ```
-5. **Validate on the cut-over domain.** Three checks; all three must pass:
+5. **Validate on the cut-over domain.** Four checks; all four must pass:
    - `curl https://conduit.wyre.ai/health` → `{"status":"ok"}`.
    - `curl -s https://conduit.wyre.ai/.well-known/oauth-authorization-server
      | jq -r .issuer` → `https://conduit.wyre.ai`. **Load-bearing**:
@@ -140,6 +140,20 @@ at Aaron's launch-window greenlight. Avoids two known traps documented inline.
      application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"
      ,"params":{}}' https://conduit.wyre.ai/v1/mcp` → `401` (auth-gated, not
      5xx; proves the MCP path is reachable + auth-rejecting on the new env).
+   - `curl -s -o /dev/null -w '%{http_code}'
+     https://conduit.wyre.ai/docs/internal/agents-impl/` → **`404`**
+     (BLOCKING — the internal/ docs, including full per-agent system-prompt
+     contents, MUST be build-excluded from the published Starlight site before
+     the index-flip; a `200` means those bytes still ship and would be indexed
+     the moment this apex goes live). **The gate-condition is the DURABLE state,
+     not the mitigated one:** the env-gated `X-Robots-Tag: noindex` belt on
+     `/docs/internal/*` (shipped to discourage compliant crawlers + cover a
+     regression window) returns `200`+header — that is mitigated, NOT closed.
+     Only build-exclusion produces the `404`. The belt cannot satisfy this
+     check by design, so a `200` here blocks the cutover until internal/ is
+     actually removed from the build — tying the index-flip to the durable fix.
+     (Finding A, docs-publish triangle 2026-05-24; durable removal owned by
+     scribe/docs-content + Aaron-confirm on whether internal/ ships at all.)
 6. The next `conduit-prod` workflow deploy (the steady-state path) sees the
    existing custom-domain binding via the `Read existing gateway state` step
    and synthesizes no new binding — a clean no-op on the customDomain side.
