@@ -32,6 +32,14 @@ describe('computeDocsNoindex — fail-safe env gate', () => {
   it('DOCS_NOINDEX override wins when set — forces index even on staging', () => {
     expect(computeDocsNoindex('https://staging.conduit.wyre.ai', 'false')).toBe(false);
   });
+
+  it('DOCS_NOINDEX override hardening — only exact "false" indexes; typos default-DENY (noindex)', () => {
+    // warden Finding B: a typo on the override must NOT invert the fail-safe.
+    for (const typo of ['1', 'yes', 'TRUE', 'False', 'no', '', '0']) {
+      expect(computeDocsNoindex('https://conduit.wyre.ai', typo)).toBe(true);
+    }
+    expect(computeDocsNoindex('https://conduit.wyre.ai', 'false')).toBe(false);
+  });
 });
 
 describe('buildRobotsTxt', () => {

@@ -48,7 +48,10 @@ export const AI_CRAWLER_UAS = [
  * override that wins when set.
  */
 export function computeDocsNoindex(baseUrl: string, docsNoindexEnv: string | undefined): boolean {
-  if (docsNoindexEnv != null) return docsNoindexEnv === 'true';
+  // Override hardening: any set value EXCEPT exactly 'false' → noindex, so a
+  // typo (DOCS_NOINDEX=1|yes|TRUE) defaults-to-DENY rather than accidentally
+  // flipping the surface to INDEXED. Only the explicit 'false' opts into index.
+  if (docsNoindexEnv != null) return docsNoindexEnv !== 'false';
   let host = '';
   try {
     host = new URL(baseUrl).hostname;
