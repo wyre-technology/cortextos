@@ -17,6 +17,7 @@ import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { computeDocsNoindex, buildRobotsTxt, isInternalDocsPath } from './robots.js';
+import { buildLlmsTxt } from './llms.js';
 import path from 'node:path';
 
 import { config } from './config.js';
@@ -147,6 +148,22 @@ const robotsTxt = buildRobotsTxt(docsNoindex, config.baseUrl);
 app.get('/robots.txt', async (_req, reply) => {
   reply.header('Content-Type', 'text/plain; charset=utf-8');
   return robotsTxt;
+});
+
+// llms.txt — GEO AI-crawler map (llmstxt.org). Env-gated by the SAME
+// discriminator as robots: served ONLY on the indexed prod surface. On a
+// noindex surface it 404s — advertising an AI-crawler map to pre-launch docs
+// contradicts the staging-noindex posture (advertised-resource-must-exist:
+// the map only exists where its link targets are live). Body is a placeholder
+// pending docs-content curation.
+const llmsTxt = buildLlmsTxt(config.baseUrl);
+app.get('/llms.txt', async (_req, reply) => {
+  if (docsNoindex) {
+    reply.code(404).header('Content-Type', 'text/plain; charset=utf-8');
+    return 'Not found';
+  }
+  reply.header('Content-Type', 'text/plain; charset=utf-8');
+  return llmsTxt;
 });
 
 app.log.info(

@@ -1,13 +1,64 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import sitemap from '@astrojs/sitemap';
+
+// schema.org structured data injected into every docs page <head> for
+// SEO/AEO/GEO. Claims are grounded + minimal — name/category/description/url/
+// publisher only. NO aggregateRating/offers/reviewCount: search + AI engines
+// ingest structured data as fact, so unbacked claims are a trust breach, not
+// a marketing flourish. Per-page FAQPage schema is added separately (content-
+// owned) once the docs-content lane supplies the Q/A pairs.
+const ORG_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'WYRE Technology',
+  url: 'https://wyre.ai',
+  description:
+    'WYRE Technology builds Conduit, the white-label MSP channel gateway connecting AI agents to vendor MCP servers.',
+};
+const SOFTWARE_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Conduit',
+  applicationCategory: 'BusinessApplication',
+  operatingSystem: 'Web',
+  url: 'https://conduit.wyre.ai',
+  description:
+    'Conduit is the white-label MSP channel gateway that connects AI agents to the vendor MCP servers MSPs already rely on.',
+  publisher: {
+    '@type': 'Organization',
+    name: 'WYRE Technology',
+    url: 'https://wyre.ai',
+  },
+};
 
 // https://astro.build/config
 export default defineConfig({
   site: 'https://conduit.wyre.ai',
   base: '/docs',
   integrations: [
+    // Emits /docs/sitemap-index.xml (the URL the prod robots.txt already
+    // advertises). The filter excludes internal/ — the per-agent system-prompt
+    // docs must not be discoverable via the sitemap channel any more than via
+    // the page-serve, robots, or llms.txt channels (Finding A: exclude across
+    // ALL crawler-discovery channels, not just the page).
+    sitemap({
+      filter: (page) => !page.includes('/internal/'),
+    }),
     starlight({
+      head: [
+        {
+          tag: 'script',
+          attrs: { type: 'application/ld+json' },
+          content: JSON.stringify(ORG_SCHEMA),
+        },
+        {
+          tag: 'script',
+          attrs: { type: 'application/ld+json' },
+          content: JSON.stringify(SOFTWARE_SCHEMA),
+        },
+      ],
       title: 'Conduit Docs',
       description:
         'Conduit is the white-label MSP channel gateway that connects AI agents to the vendor MCP servers MSPs already rely on.',
