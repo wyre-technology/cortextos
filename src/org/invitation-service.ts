@@ -41,6 +41,32 @@ export type AcceptInvitationError =
   | { kind: 'email_mismatch'; message: string }
   | { kind: 'owner_invite_scope_violation'; message: string };
 
+/**
+ * Thrown by createInvitation when opts.intendedRole === 'owner' but the
+ * inviter is not the current owner of the target org. Per task_1779464309991
+ * — lifts the by-construction owner-mint guard at call sites into a runtime
+ * structural check at the API boundary.
+ *
+ * Distinct from AcceptInvitationError (a discriminated-union return value)
+ * because the create-side guard fires in a context where a 403 from the
+ * caller is the right HTTP response, NOT a "the invitation was minted but
+ * something is wrong" partial state. Throw → caller catches → 403.
+ */
+export class OwnerInviteAuthzError extends Error {
+  public readonly orgId: string;
+  public readonly invitedBy: string;
+
+  constructor(orgId: string, invitedBy: string) {
+    super(
+      `Only the current owner of an org can mint an owner-invite. ` +
+        `Caller ${invitedBy} is not the current owner of org ${orgId}.`,
+    );
+    this.name = 'OwnerInviteAuthzError';
+    this.orgId = orgId;
+    this.invitedBy = invitedBy;
+  }
+}
+
 export function isAcceptInvitationError(
   result: OrgMember | AcceptInvitationError | null,
 ): result is AcceptInvitationError {
@@ -110,10 +136,17 @@ export class InvitationService {
       /**
        * Role granted on accept. Defaults to 'member' (NULL in DB → legacy
        * pre-Layer-1 behavior, which acceptInvitation treats as 'member').
-       * 'owner' triggers the atomic-swap path on accept; AUTHORIZATION
-       * GUARD: callers minting an owner-invite must verify the inviter
-       * is the current owner of the org BEFORE calling this method —
-       * see acceptInvitation security comment for the threat model.
+       * 'owner' triggers the atomic-swap path on accept.
+       *
+       * AUTHORIZATION GUARD (task_1779464309991, post-#229 warden follow-up):
+       * lifted from by-construction at call sites to a runtime check IN
+       * this method. When intendedRole === 'owner', verifies invitedBy is
+       * the current owner of orgId before the INSERT. Throws
+       * OwnerInviteAuthzError on violation. Today the check is no-op for
+       * the existing single call site (reseller/routes.ts customer-create,
+       * where invitedBy IS the just-inserted interim owner). Tomorrow
+       * catches new callers structurally — same factory-as-seam pattern
+       * as syncSeats lifting log+swallow at #221.
        */
       intendedRole?: OrgRole;
       /**
@@ -126,6 +159,20 @@ export class InvitationService {
       recipientEmail?: string;
     },
   ): Promise<CreatedInvitation> {
+    // Owner-mint authz guard (lifted to API boundary per task_1779464309991).
+    // Convention → structure: today the only owner-mint caller is the
+    // customer-create flow where invitedBy is the just-inserted interim
+    // owner; tomorrow when a second owner-mint call site lands, this
+    // runtime check catches privilege-escalation attempts structurally.
+    // The check fires BEFORE any DB write so a guard violation produces
+    // zero side effects.
+    if (options?.intendedRole === 'owner') {
+      const inviterMembership = await this.memberService.getMembership(orgId, invitedBy);
+      if (!inviterMembership || inviterMembership.role !== 'owner') {
+        throw new OwnerInviteAuthzError(orgId, invitedBy);
+      }
+    }
+
     const id = nanoid();
     const plainToken = nanoid(32);
     const tokenHash = this.hashToken(plainToken);

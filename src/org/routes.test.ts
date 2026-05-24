@@ -600,6 +600,95 @@ describe('orgRoutes', () => {
       // Validation precedes the mutation — no invitation row is created.
       expect(createInvitation).not.toHaveBeenCalled();
     });
+
+    it('passes recipientEmail through to createInvitation when an email is provided (β-extension to member-invites)', async () => {
+      // Per task_1779450095130 / launch-gate-batch: when the create-flow
+      // has an explicit recipient address, persist it on the invitation
+      // row so acceptInvitation enforces the same email-match guard as
+      // the owner-invite path. Discipline does not fork between
+      // owner-invite and member-invite paths.
+      authenticateAs();
+      const createInvitation = vi.fn().mockResolvedValue({
+        invitation: {
+          id: 'inv1',
+          orgId: 'org-1',
+          invitedBy: 'user-1',
+          expiresAt: '2024-03-01T00:00:00.000Z',
+          acceptedBy: null,
+          acceptedAt: null,
+          maxUses: 1,
+          useCount: 0,
+          createdAt: '2024-03-01T00:00:00.000Z',
+          intendedRole: null,
+          recipientEmail: 'invited@example.com',
+        },
+        plainToken: 'tok-1',
+      });
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        createInvitation,
+      });
+      const billingGate = createMockBillingGate({
+        canUseTeamFeatures: vi.fn().mockResolvedValue(true),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/invitations',
+        payload: { email: 'invited@example.com' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(createInvitation).toHaveBeenCalledWith(
+        'org-1',
+        'user-1',
+        expect.objectContaining({ recipientEmail: 'invited@example.com' }),
+      );
+    });
+
+    it('omits recipientEmail when no email is provided (share-link/(α) shape preserved)', async () => {
+      // Share-link invites stay on the (α) shape — null recipient_email,
+      // any-authenticated-user accepts. The launch-gate-batch extension
+      // is opt-in via the body.email field; absence preserves the
+      // existing behavior.
+      authenticateAs();
+      const createInvitation = vi.fn().mockResolvedValue({
+        invitation: {
+          id: 'inv1',
+          orgId: 'org-1',
+          invitedBy: 'user-1',
+          expiresAt: '2024-03-01T00:00:00.000Z',
+          acceptedBy: null,
+          acceptedAt: null,
+          maxUses: 1,
+          useCount: 0,
+          createdAt: '2024-03-01T00:00:00.000Z',
+          intendedRole: null,
+          recipientEmail: null,
+        },
+        plainToken: 'tok-1',
+      });
+      const orgService = createMockOrgService({
+        getMembership: ownerMembership(),
+        createInvitation,
+      });
+      const billingGate = createMockBillingGate({
+        canUseTeamFeatures: vi.fn().mockResolvedValue(true),
+      });
+      app = await buildApp(orgService, undefined, billingGate);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/invitations',
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(201);
+      // Either omitted entirely or undefined — both signal "share-link
+      // shape, no recipient binding."
+      expect(createInvitation).toHaveBeenCalledWith('org-1', 'user-1', undefined);
+    });
   });
 
   // -------------------------------------------------------------------------
