@@ -12,7 +12,9 @@ import {
 } from './faq.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const docsRoot = join(here, '..', 'docs', 'src', 'content', 'docs');
+// faq.test.ts lives at docs/src/lib/ — content docs are at docs/src/content/docs.
+// here = docs/src/lib → ../content/docs reaches the MDX source.
+const docsRoot = join(here, '..', 'content', 'docs');
 const MDX_FOR_SLUG: Record<string, string> = {
   'getting-started': join(docsRoot, 'getting-started.mdx'),
   'guides/connecting-a-client': join(docsRoot, 'guides', 'connecting-a-client.mdx'),

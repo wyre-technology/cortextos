@@ -1,8 +1,13 @@
 ---
 // Emits the FAQPage JSON-LD for a docs slug. The schema text is the visible
 // rendered Q/A (markdown-normalized) and is `<`-escaped at build, so an
-// authored answer can never break out of the <script>. See ../../../src/faq.ts.
-import { buildFaqJsonLd } from '../../../src/faq';
+// authored answer can never break out of the <script>. See ../lib/faq.ts.
+//
+// faq.ts lives at docs/src/lib/ (NOT repo-root src/) so it resolves inside
+// the docs-builder Docker stage, whose context is WORKDIR /docs + COPY
+// docs/src ./src — a repo-root ../../../src import escaped that context and
+// reddened main on #249 (the docker docs-build is not a PR check).
+import { buildFaqJsonLd } from '../lib/faq';
 
 interface Props {
   slug: string;
