@@ -1,0 +1,15 @@
+---
+// Emits the FAQPage JSON-LD for a docs slug. The schema text is the visible
+// rendered Q/A (markdown-normalized) and is `<`-escaped at build, so an
+// authored answer can never break out of the <script>. See ../../../src/faq.ts.
+import { buildFaqJsonLd } from '../../../src/faq';
+
+interface Props {
+  slug: string;
+}
+
+const { slug } = Astro.props;
+const jsonLd = buildFaqJsonLd(slug);
+---
+
+<script type="application/ld+json" is:inline set:html={jsonLd} />
