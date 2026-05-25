@@ -97,6 +97,32 @@ cached and refreshed automatically.
 - Open the vendor health view and confirm every connected vendor
   shows green.
 
+## Frequently asked questions
+
+### What is Conduit?
+
+Conduit is a white-label MCP gateway for MSPs. It connects any tool-calling AI assistant to the vendor MCP servers an MSP and its customers rely on (RMM, PSA, documentation, security, and more), behind one auditable, permissioned endpoint per customer — under the MSP's own brand.
+
+### What is an MCP gateway?
+
+An MCP gateway sits between AI assistants and the tools they call. It speaks the Model Context Protocol (a provider-neutral standard for connecting AI to tools) and brokers each tool call — handling authentication, credentials, permissions, and audit — so an AI assistant can use your business systems without each system being wired to each AI client. Conduit is an MCP gateway built for MSPs: it gives an AI the access and visibility it needs into the business; it is not a workflow-automation tool.
+
+### Do I need to install anything to use Conduit?
+
+No. Conduit is a hosted gateway — you **connect** an AI client to it, you don't install Conduit itself. Setup is pointing your AI client at your Conduit MCP endpoint and signing in once.
+
+### Which AI clients work with Conduit?
+
+Any MCP-capable client. Conduit speaks the standard Model Context Protocol, so Claude Desktop, Claude Code, Cline, Continue, Cursor, and other MCP clients all connect. See [Supported clients](/docs/reference/supported-clients/).
+
+### How long does first-time setup take?
+
+About 20–40 minutes the first time — create your MSP organization, connect one vendor, connect an AI client, and make a test tool call.
+
+### What do I need before I start?
+
+An Auth0-backed login for your MSP, an alpha invite code (it unlocks the Pro plan), and API credentials for at least one vendor you want to connect.
+
 ## Where to go next
 
 - [MSP onboarding](/docs/guides/msp-onboarding/) — the end-to-end

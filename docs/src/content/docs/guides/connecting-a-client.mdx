@@ -80,6 +80,24 @@ If tools do not appear, see Troubleshooting below.
 | A tool call returns a permissions error | Your role may not be granted access to that vendor or tool. Your MSP admin controls vendor and tool access. |
 | Connection worked, then stopped | Your session may have been revoked, or a vendor credential changed. Reconnect; if it persists, contact your MSP. |
 
+## Frequently asked questions
+
+### Which AI clients can connect to Conduit?
+
+Any MCP-capable client. Conduit speaks the standard Model Context Protocol, so Claude Desktop, Claude Code, Cline, Continue, Cursor, and other MCP clients all work — there's no per-vendor lock-in. See [Supported clients](/docs/reference/supported-clients/).
+
+### Do I need `mcp-remote`?
+
+Only if your client connects to local programs but not to a remote URL. Clients with native remote-MCP support (like Claude Code via `claude mcp add --transport http`) connect directly. Claude Desktop and similar stdio-only clients use the `mcp-remote` bridge.
+
+### How do I sign in — do I paste an API key?
+
+No API keys. The first time your client connects, Conduit runs a standard OAuth 2.1 sign-in in your browser (email/password or Microsoft / Entra ID). The token is cached and refreshed automatically — you sign in once.
+
+### I connected but no tools appear. Why?
+
+Either your organization hasn't connected any vendors yet, or your role's tool allowlist restricts them. Your MSP admin controls which vendors and tools your role can reach.
+
 ## Related
 
 - [Getting Started](/docs/getting-started/) — the MSP-side setup that stands up the gateway you are connecting to.
