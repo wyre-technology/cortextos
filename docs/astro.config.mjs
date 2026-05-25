@@ -33,6 +33,29 @@ const SOFTWARE_SCHEMA = {
   },
 };
 
+// Google Analytics (GA4), PROD-GATED client-side. The docs are built ONCE into
+// the gateway image and served by BOTH the staging and prod gateways
+// (single-image-both-envs), so a baked head tag ships identically to both — a
+// build-time gate can't distinguish them. The guard below is the runtime
+// equivalent of the `computeDocsNoindex` prod-apex-host discriminator, enforced
+// in the browser: it injects the gtag.js <script> AND runs init ONLY when the
+// page is served from the prod apex (GA_PROD_HOST). Off-prod (staging, preview,
+// local) it makes ZERO request to googletagmanager.com and fires nothing —
+// keeping the GA property clean of pre-launch/internal traffic. The measurement
+// ID is a public client-side identifier (ships in HTML by design, not a secret).
+const GA_PROD_HOST = 'conduit.wyre.ai';
+const GA_MEASUREMENT_ID = 'G-V3W6M1YEHL';
+const GA_GUARD = `if (location.hostname === ${JSON.stringify(GA_PROD_HOST)}) {
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}';
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', ${JSON.stringify(GA_MEASUREMENT_ID)});
+}`;
+
 // https://astro.build/config
 export default defineConfig({
   site: 'https://conduit.wyre.ai',
@@ -57,6 +80,10 @@ export default defineConfig({
           tag: 'script',
           attrs: { type: 'application/ld+json' },
           content: JSON.stringify(SOFTWARE_SCHEMA),
+        },
+        {
+          tag: 'script',
+          content: GA_GUARD,
         },
       ],
       title: 'Conduit Docs',
