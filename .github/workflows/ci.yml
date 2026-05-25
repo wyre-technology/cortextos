@@ -149,6 +149,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # PR-time gate for the FULL Docker build CONTEXT. The `docker` job above runs
+  # ONLY on push-to-main, so a Dockerfile-context break — a stage importing a
+  # path outside its COPY context — ships green and reddens main post-merge
+  # (#249/#250: the docs-builder stage could not resolve ../../../src/faq because
+  # it copies docs/ only, not repo src/). The required `docs-build` job builds in
+  # FULL-repo context and resolves such imports — false assurance. This job builds
+  # the real image (push:false) at PR time so a build-context break fails BEFORE
+  # merge, not on the post-merge push. No push / provenance / sbom / ghcr-login —
+  # pure build-context gate. (warden, CI-hardening; closes the gap that shipped #249.)
+  docker-build-check:
+    name: docker-build-check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4
+
+      - name: Build image (no push) — gates the full Docker build context at PR time
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Static-analysis gate (CI-QW-5). Diff-aware — only findings this PR
   # INTRODUCES count, computed against the PR merge-base, so the pre-existing
   # backlog never wedges a PR. ERROR findings block; WARNING/INFO are
