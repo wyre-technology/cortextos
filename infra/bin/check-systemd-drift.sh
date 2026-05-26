@@ -61,6 +61,10 @@ for path, content in sorted(embedded.items()):
         fail = 1
         continue
     standalone = open(standalone_path).read()
+    # The embedded copy lives in a Terraform template, so a literal ${...} that
+    # must survive rendering is written as $${...}. templatefile() collapses
+    # every $$ -> $, so apply the same collapse before comparing.
+    content = content.replace("$$", "$")
     if content != standalone:
         print(f"DRIFT: {unit_name} differs between {standalone_path} and {tftpl_path}")
         import difflib
