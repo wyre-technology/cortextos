@@ -304,7 +304,7 @@ git push -u origin feat/sp2c-tunnel-backups
     INSTANCE=$(az dataprotection backup-instance list -g cortextos-prod-rg --vault-name "$VAULT" --query "[0].name" -o tsv)
     az dataprotection backup-instance adhoc-backup -g cortextos-prod-rg \
       --vault-name "$VAULT" --backup-instance-name "$INSTANCE" \
-      --rule-name BackupDaily --retention-tag-override Default
+      --rule-name BackupIntervals --retention-tag-override Default
 
 ### Restore drill
 
