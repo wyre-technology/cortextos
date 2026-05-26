@@ -119,6 +119,16 @@ export default defineConfig({
             { label: 'Billing & Plans', slug: 'guides/billing' },
             { label: 'Monitoring Your Tenant', slug: 'guides/monitoring' },
             { label: 'SCIM Provisioning', slug: 'guides/scim' },
+            {
+              label: 'On-prem Gateway',
+              items: [
+                { label: 'Overview', slug: 'guides/onprem' },
+                { label: 'Quickstart', slug: 'guides/onprem/quickstart' },
+                { label: 'Architecture Context', slug: 'guides/onprem/architecture' },
+                { label: 'Reference', slug: 'guides/onprem/reference' },
+                { label: 'Troubleshooting', slug: 'guides/onprem/troubleshooting' },
+              ],
+            },
           ],
         },
         {

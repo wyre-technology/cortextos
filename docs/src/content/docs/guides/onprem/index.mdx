@@ -1,0 +1,45 @@
+---
+title: On-prem gateway
+description: When to use the WYRE on-prem gateway, what it is, and where to go next — overview and routing page for the on-prem deploy.
+---
+
+The **on-prem gateway** is a small container an MSP deploys on a customer's own infrastructure so the customer's on-prem MCP capabilities are reachable through Conduit — without opening any inbound port on the customer's network. Conduit only proxies the request; the credentials and the MCP servers stay inside the customer's network.
+
+This page orients you. The deeper docs are linked below by goal.
+
+## When you want it
+
+In Conduit, every vendor an MSP onboards for a customer uses one of three **wiring patterns** (decided in the Onboard-MCP wizard — see [Onboarding a customer](/docs/guides/customer-provisioning/#adding-vendors-for-the-customer)):
+
+- **Bring Your Own Credentials (BYOC)** — each user supplies their own API key.
+- **Shared credentials** — you supply one set of credentials, all users go through it.
+- **Self-hosted (on-prem gateway)** — the customer runs the vendor's MCP server on their own infrastructure, reached through the on-prem gateway.
+
+The on-prem gateway is the **third pattern.** Pick it when:
+
+- The customer's security review or compliance posture bars third-party custody of vendor credentials.
+- The customer has on-prem systems (AD, SQL, legacy ERPs) that have no cloud-callable MCP equivalent — the MCP server has to live next to the system.
+- Data-residency rules require vendor responses to stay on the customer's network.
+
+If those don't apply, BYOC or Shared is simpler — no on-prem container to deploy and operate.
+
+## What you get
+
+- **One Docker container** the customer runs on their infrastructure.
+- **Outbound-only** — dials WYRE's relay over TLS WebSocket; **no inbound port** opens on the customer's network.
+- **Credentials never leave the customer's network** — the on-prem gateway is a stateless router; vendor secrets live on the customer's local MCP servers, not on the gateway and never on WYRE.
+- **Signed images, digest-pinned** — supply-chain verification is part of the deploy.
+
+For the full security model — data flow, the six load-bearing security properties, audit-log split, and what's deferred post-launch — see the **[Architecture Context](/docs/guides/onprem/architecture)** page (written for the security/compliance review most MSP deployments need).
+
+## Go to
+
+- **[Quickstart](/docs/guides/onprem/quickstart)** — deploy the on-prem gateway in 3 steps. For MSP ops doing first deploy.
+- **[Architecture Context](/docs/guides/onprem/architecture)** — what the gateway *is*, the security spine, data flow, image verification. For security / compliance review *before* deploy.
+- **[Reference](/docs/guides/onprem/reference)** — full env-var contract, the canonical compose shape, operational reference.
+- **[Troubleshooting](/docs/guides/onprem/troubleshooting)** — failure modes and fixes. Error messages appear verbatim as section headings so you can search-key directly from the error you saw.
+
+## Related
+
+- [Onboarding a customer](/docs/guides/customer-provisioning/) — where the on-prem gateway fits in the customer-onboarding flow (the Self-hosted wiring pattern in the Onboard-MCP wizard).
+- [Subtenant Model](/docs/reference/subtenants/) — the multi-tenant security model the on-prem gateway extends.
