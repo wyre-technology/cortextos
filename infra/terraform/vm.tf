@@ -31,6 +31,7 @@ locals {
     cortextos_repo_url = var.cortextos_repo_url
     cortextos_branch   = var.cortextos_branch
     node_major_version = var.node_major_version
+    key_vault_uri      = azurerm_key_vault.main.vault_uri
   })
 }
 

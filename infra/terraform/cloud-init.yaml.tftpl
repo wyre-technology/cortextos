@@ -149,6 +149,35 @@ write_files:
       sudo -u cortextos --preserve-env=HOME,CTX_INSTANCE_ID,CTX_FRAMEWORK_ROOT,CTX_PROJECT_ROOT,CTX_ORG bash -lc "cd /opt/cortextos && CTX_FRAMEWORK_ROOT=/opt/cortextos node dist/cli.js install --instance $INSTANCE || true"
       sudo -u cortextos --preserve-env=HOME,CTX_INSTANCE_ID,CTX_FRAMEWORK_ROOT,CTX_PROJECT_ROOT,CTX_ORG bash -lc "cd /opt/cortextos && CTX_FRAMEWORK_ROOT=/opt/cortextos node dist/cli.js ecosystem --instance $INSTANCE --org $ORG --output /opt/cortextos/ecosystem.config.js"
 
+      # ── cloudflared install + token fetch ──────────────────────
+      if ! id cloudflared >/dev/null 2>&1; then
+        log "creating cloudflared system user"
+        useradd --system --no-create-home --shell /usr/sbin/nologin cloudflared
+      fi
+      if ! command -v cloudflared >/dev/null 2>&1; then
+        log "installing cloudflared"
+        ARCH=$(dpkg --print-architecture)
+        curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$ARCH.deb" -o /tmp/cloudflared.deb
+        dpkg -i /tmp/cloudflared.deb
+        rm -f /tmp/cloudflared.deb
+      fi
+
+      # Fetch the tunnel token from Key Vault via the VM's managed identity.
+      log "fetching cloudflared token from Key Vault"
+      KV_URI="${key_vault_uri}"
+      IMDS_TOKEN=$(curl -s -H "Metadata: true" \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net" \
+        | jq -r .access_token)
+      CF_TOKEN=$(curl -s -H "Authorization: Bearer $IMDS_TOKEN" \
+        "$${KV_URI}secrets/cloudflared-token?api-version=7.4" | jq -r .value)
+      if [ -z "$CF_TOKEN" ] || [ "$CF_TOKEN" = "null" ]; then
+        log "FATAL: could not fetch cloudflared-token from Key Vault ($${KV_URI})"
+        exit 1
+      fi
+      umask 077
+      printf 'TUNNEL_TOKEN=%s\n' "$CF_TOKEN" > /etc/cloudflared.env
+      chmod 600 /etc/cloudflared.env
+
       # ── sentinel ───────────────────────────────────────────────
       touch "$DATA_MOUNT/.bootstrap-done"
       chown cortextos:cortextos "$DATA_MOUNT/.bootstrap-done"
@@ -198,6 +227,28 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  # ── 5. cloudflared.service (tunnel; token written by bootstrap script) ──
+  - path: /etc/systemd/system/cloudflared.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=cloudflared tunnel (WYRE Agents)
+      After=network-online.target cortextos.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=cloudflared
+      Group=cloudflared
+      EnvironmentFile=/etc/cloudflared.env
+      ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token $${TUNNEL_TOKEN}
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
 runcmd:
   - systemctl daemon-reload
   - systemctl enable cortextos-bootstrap.service
@@ -209,3 +260,5 @@ runcmd:
   # eventually finishes. `--no-block` lets cloud-init's runcmd finish promptly
   # while the dependency chain runs asynchronously.
   - systemctl start --no-block cortextos.service
+  - systemctl enable cloudflared.service
+  - systemctl start --no-block cloudflared.service
