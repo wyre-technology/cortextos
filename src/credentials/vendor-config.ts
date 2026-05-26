@@ -355,6 +355,33 @@ export const VENDORS: Record<string, VendorConfig> = {
     },
   },
 
+  'kaseya-quote-manager': {
+    name: 'Kaseya Quote Manager',
+    slug: 'kaseya-quote-manager',
+    category: 'sales',
+    containerUrl: 'http://kaseya-quote-manager-mcp:8080',
+    fields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true },
+    ],
+    headerMapping: {
+      apiKey: 'X-Kaseya-Quote-Manager-API-Key',
+    },
+    docsUrl: 'https://help.quotemanager.kaseya.com/help/Content/2-integrate/api.htm',
+    async validate(creds) {
+      const res = await fetch('https://api.kaseyaquotemanager.com/v1/warehouse?pageSize=1', {
+        headers: { apiKey: creds.apiKey, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: 'Invalid Kaseya Quote Manager API key.' };
+        }
+        return { valid: false, error: `Kaseya Quote Manager returned HTTP ${res.status}.` };
+      }
+      return { valid: true };
+    },
+  },
+
   superops: {
     name: 'SuperOps',
     slug: 'superops',

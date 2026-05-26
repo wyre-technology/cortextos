@@ -23,6 +23,7 @@ services:
       - VENDOR_URL_AUTOTASK=http://autotask-mcp:8080
       - VENDOR_URL_SYNCRO=http://syncro-mcp:8080
       - VENDOR_URL_ATERA=http://atera-mcp:8080
+      - VENDOR_URL_KASEYA_QUOTE_MANAGER=http://kaseya-quote-manager-mcp:8080
       - VENDOR_URL_SUPEROPS=http://superops-mcp:8080
       - VENDOR_URL_HALOPSA=http://halopsa-mcp:8080
       - VENDOR_URL_CONNECTWISE_MANAGE=http://connectwise-manage-mcp:8080
@@ -118,6 +119,14 @@ services:
 
   atera-mcp:
     image: ghcr.io/wyre-technology/atera-mcp:latest
+    environment:
+      - AUTH_MODE=gateway
+      - PORT=8080
+    expose:
+      - "8080"
+
+  kaseya-quote-manager-mcp:
+    image: ghcr.io/wyre-technology/kaseya-quote-manager-mcp:latest
     environment:
       - AUTH_MODE=gateway
       - PORT=8080
