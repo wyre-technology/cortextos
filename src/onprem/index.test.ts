@@ -10,7 +10,7 @@
  *
  * Verbatim-error-as-troubleshooting-section discipline (Walter's pin): the
  * specific error messages these tests assert on become section headings in
- * `docs/onprem/customer-deploy-troubleshooting.md` so a customer seeing the
+ * `docs/guides/onprem/troubleshooting` so a customer seeing the
  * error in production can search-key directly to the matching docs section.
  *
  * Coverage shape (per analyst's "name per-test which are pure-wire-proven
@@ -81,7 +81,7 @@ describe('guard 1 — requireCustomerEnvVars', () => {
     process.env.ENROLLMENT_TOKEN = 'x';
     process.env.CAPABILITIES = 'echo';
     expect(() => requireCustomerEnvVars()).toThrow(
-      /RELAY_URL env var is required.*conduit\.wyre\.ai\/docs\/onprem/,
+      /RELAY_URL env var is required.*conduit\.wyre\.ai\/docs\/guides\/onprem/,
     );
   });
 

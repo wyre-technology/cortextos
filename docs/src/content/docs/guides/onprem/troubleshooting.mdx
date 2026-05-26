@@ -38,6 +38,7 @@ The boot guard found `CAPABILITIES` missing or empty.
 
 ---
 
+<a id="enrollment-token-structure-invalid"></a>
 ## `FATAL: ENROLLMENT_TOKEN structure invalid — expected 3 segments`
 
 The structural-validate guard rejected the token because it's not in JWT `header.payload.signature` shape.
@@ -58,6 +59,7 @@ The structural-validate guard could parse the segments but at least one isn't va
 
 ---
 
+<a id="enrollment-token-expired"></a>
 ## `FATAL: ENROLLMENT_TOKEN appears expired`
 
 The token's `exp` claim is in the past.
@@ -68,6 +70,7 @@ The token's `exp` claim is in the past.
 
 ---
 
+<a id="enrollment-token-issuer-mismatch"></a>
 ## `FATAL: ENROLLMENT_TOKEN iss claim mismatch`
 
 The token's `iss` (issuer) claim doesn't match the gateway's expected issuer.
@@ -78,6 +81,7 @@ The token's `iss` (issuer) claim doesn't match the gateway's expected issuer.
 
 ---
 
+<a id="enrollment-token-audience-mismatch"></a>
 ## `FATAL: ENROLLMENT_TOKEN aud claim mismatch`
 
 The token's `aud` (audience) claim doesn't match the gateway's expected audience.

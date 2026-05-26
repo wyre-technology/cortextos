@@ -9,6 +9,7 @@ This reference covers every env var the on-prem-gateway accepts, the canonical c
 
 The on-prem-gateway boot sequence **refuses to start** if any of these is unset. Each error message names the var + WHY required + WHERE to get the value + docs anchor.
 
+<a id="relay-url"></a>
 ### `RELAY_URL`
 
 The WYRE relay endpoint your on-prem-gateway dials.
@@ -17,6 +18,7 @@ The WYRE relay endpoint your on-prem-gateway dials.
 - **Staging:** `wss://relay.staging.wyre.ai`
 - **MUST be `wss://`** — the gateway's `assertSecureRelayUrl` boot guard rejects any other scheme (no plain non-TLS `ws`, no `http://`, no `https://`).
 
+<a id="enrollment-token"></a>
 ### `ENROLLMENT_TOKEN`
 
 Your WYRE-issued short-TTL JWT (default 5 minutes from issuance). Bound to:
@@ -30,6 +32,7 @@ Your WYRE-issued short-TTL JWT (default 5 minutes from issuance). Bound to:
 mTLS per-tunnel identity at M2 Gate A supersedes this JWT shape entirely. Do not rely on extending the TTL to compensate for env-var refresh friction — the proper fix is mTLS at M2, not longer-lived bearer tokens.
 :::
 
+<a id="capabilities"></a>
 ### `CAPABILITIES`
 
 Comma-separated MCP capability slugs your tunnel exposes.

@@ -47,7 +47,7 @@ import { TunnelClient, assertSecureRelayUrl } from './tunnel-client.js';
 import { handleEchoMcp } from './echo-mcp-server.js';
 
 /** Docs URL base — the customer-facing quickstart. */
-const DOCS_BASE = 'https://conduit.wyre.ai/docs/onprem';
+const DOCS_BASE = 'https://conduit.wyre.ai/docs/guides/onprem';
 const CUSTOMER_PORTAL_URL = 'https://customer.wyre.ai/onprem-deploy';
 
 /** Env vars the customer MUST set. */
@@ -68,7 +68,7 @@ export function requireCustomerEnvVars(): CustomerEnv {
     throw new Error(
       `FATAL: RELAY_URL env var is required. The on-prem-gateway refuses to start without ` +
         `a WYRE relay endpoint to dial. Set RELAY_URL=wss://relay.wyre.ai (or your staging ` +
-        `equivalent). See: ${DOCS_BASE}/customer-deploy-quickstart#relay-url`,
+        `equivalent). See: ${DOCS_BASE}/reference#relay-url`,
     );
   }
   const enrollmentToken = process.env.ENROLLMENT_TOKEN;
@@ -76,7 +76,7 @@ export function requireCustomerEnvVars(): CustomerEnv {
     throw new Error(
       `FATAL: ENROLLMENT_TOKEN env var is required. The on-prem-gateway refuses to start ` +
         `without a WYRE-issued enrollment token. Get yours at ${CUSTOMER_PORTAL_URL}. See: ` +
-        `${DOCS_BASE}/customer-deploy-quickstart#enrollment-token`,
+        `${DOCS_BASE}/reference#enrollment-token`,
     );
   }
   const capabilitiesRaw = process.env.CAPABILITIES;
@@ -87,7 +87,7 @@ export function requireCustomerEnvVars(): CustomerEnv {
         `(echo-only), set CAPABILITIES=echo. NOTE: slug match is BYTE-FOR-BYTE AFTER per-entry ` +
         `trim — case must match exactly (Echo ≠ echo); whitespace WITHIN a slug must match; ` +
         `surrounding whitespace per entry is auto-trimmed. See: ` +
-        `${DOCS_BASE}/customer-deploy-reference#capabilities`,
+        `${DOCS_BASE}/reference#capabilities`,
     );
   }
   // Parse + reject empty entries (e.g. "echo,,foo" → would silently include "" without filter).
@@ -98,7 +98,7 @@ export function requireCustomerEnvVars(): CustomerEnv {
   if (capabilities.length === 0) {
     throw new Error(
       `FATAL: CAPABILITIES env var is set but contains no valid slugs (after trim + ` +
-        `empty-filter). See: ${DOCS_BASE}/customer-deploy-reference#capabilities`,
+        `empty-filter). See: ${DOCS_BASE}/reference#capabilities`,
     );
   }
   return { RELAY_URL: relayUrl, ENROLLMENT_TOKEN: enrollmentToken, CAPABILITIES: capabilities };
@@ -140,7 +140,7 @@ export function structurallyValidateEnrollmentToken(
     throw new Error(
       `FATAL: ENROLLMENT_TOKEN structure invalid — expected 3 segments (header.payload.signature), ` +
         `got ${parts.length}. Likely cause: copy-paste truncation or wrong env var value. ` +
-        `See: ${DOCS_BASE}/customer-deploy-troubleshooting#enrollment-token-structure-invalid`,
+        `See: ${DOCS_BASE}/troubleshooting#enrollment-token-structure-invalid`,
     );
   }
 
@@ -155,7 +155,7 @@ export function structurallyValidateEnrollmentToken(
     throw new Error(
       `FATAL: ENROLLMENT_TOKEN structure invalid — header or payload is not valid base64url-` +
         `encoded JSON. Likely cause: copy-paste corruption. ` +
-        `See: ${DOCS_BASE}/customer-deploy-troubleshooting#enrollment-token-structure-invalid`,
+        `See: ${DOCS_BASE}/troubleshooting#enrollment-token-structure-invalid`,
     );
   }
 
@@ -165,7 +165,7 @@ export function structurallyValidateEnrollmentToken(
     throw new Error(
       `FATAL: ENROLLMENT_TOKEN appears expired (exp=${payload.exp ?? 'absent'}, now=${nowSec}). ` +
         `Get a fresh token at ${CUSTOMER_PORTAL_URL}. ` +
-        `See: ${DOCS_BASE}/customer-deploy-troubleshooting#enrollment-token-expired`,
+        `See: ${DOCS_BASE}/troubleshooting#enrollment-token-expired`,
     );
   }
 
@@ -175,7 +175,7 @@ export function structurallyValidateEnrollmentToken(
       `FATAL: ENROLLMENT_TOKEN iss claim mismatch (got '${payload.iss ?? 'absent'}', ` +
         `expected '${expected.expectedIssuer}'). Likely cause: token from wrong environment ` +
         `(staging-token-against-prod or vice versa). ` +
-        `See: ${DOCS_BASE}/customer-deploy-troubleshooting#enrollment-token-issuer-mismatch`,
+        `See: ${DOCS_BASE}/troubleshooting#enrollment-token-issuer-mismatch`,
     );
   }
   const audList = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
@@ -183,7 +183,7 @@ export function structurallyValidateEnrollmentToken(
     throw new Error(
       `FATAL: ENROLLMENT_TOKEN aud claim mismatch (got ${JSON.stringify(audList)}, ` +
         `expected '${expected.expectedAudience}'). ` +
-        `See: ${DOCS_BASE}/customer-deploy-troubleshooting#enrollment-token-audience-mismatch`,
+        `See: ${DOCS_BASE}/troubleshooting#enrollment-token-audience-mismatch`,
     );
   }
 }

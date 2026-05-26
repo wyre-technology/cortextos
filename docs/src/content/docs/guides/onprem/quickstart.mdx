@@ -16,29 +16,34 @@ If you are reviewing this before deploying (compliance / procurement gate), star
 
 ## 3-step deploy
 
-### 1. Pull the canonical compose file
+### 1. Create the compose file
 
-```bash
-curl -fsSLO https://conduit.wyre.ai/docs/onprem/docker-compose.onprem.yml
-mv docker-compose.onprem.yml docker-compose.yml
+Save this as `docker-compose.yml`. The image is pinned to a specific `@sha256:...` digest — the supply-chain verification gate. Do **not** change it to `:latest`. The current digest is always published in the [latest GitHub release notes](https://github.com/wyre-technology/conduit/releases/latest); the value below is the latest at time of writing.
+
+```yaml
+services:
+  onprem-gateway:
+    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:ee80a6305df168e53a6e7c41b949bdacada021dd29a11b73c53c625e5e1e84d4
+    restart: unless-stopped
+    env_file:
+      - .env
+    # NO `ports:` clause — the gateway is outbound-only (assertNoInbound enforces zero LAN-listening).
 ```
-
-The canonical compose pins the image to a specific `@sha256:...` digest (per release). Do not edit the image reference to use `:latest` — the digest pin is the supply-chain verification gate.
 
 ### 2. Configure your env file
 
-```bash
-cp .env.onprem.example .env
-$EDITOR .env
-echo ".env" >> .gitignore   # CRITICAL — do not commit your enrollment token
-```
-
-Fill the three required vars:
+Create a `.env` file next to the compose file with your three required vars:
 
 ```
 RELAY_URL=wss://relay.wyre.ai
 ENROLLMENT_TOKEN=<paste-the-JWT-your-WYRE-ops-contact-gave-you>
 CAPABILITIES=echo
+```
+
+Then make sure it is gitignored so the token never lands in source control:
+
+```bash
+echo ".env" >> .gitignore   # CRITICAL — do not commit your enrollment token
 ```
 
 :::caution[Customer-side secret handling]

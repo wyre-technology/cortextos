@@ -7,7 +7,7 @@
 #     fold (digest-pinning in customer deploy docs, not :latest).
 #   - Customer fills env_file (`.env`) with their three required env vars
 #     (RELAY_URL + ENROLLMENT_TOKEN + CAPABILITIES). The .env file MUST be
-#     gitignored (see customer-deploy-quickstart.md) — warden's load-bearing
+#     gitignored (see the Quickstart, /docs/guides/onprem/quickstart) — warden's load-bearing
 #     customer-side secret-handling pin.
 #   - No ports exposed — assertNoInbound enforces this at boot; the only
 #     egress is the WSS dial-out to RELAY_URL.
@@ -15,9 +15,10 @@
 #     posture; container dies → docker restarts; persistent intentional
 #     stop requires `docker compose down`.
 #
-# CUSTOMER QUICKSTART (3-step):
-#   1. curl https://conduit.wyre.ai/docs/onprem/docker-compose.onprem.yml -o docker-compose.yml
-#   2. cp .env.example .env  &&  $EDITOR .env  &&  echo ".env" >> .gitignore
+# CUSTOMER QUICKSTART (3-step) — full walkthrough at
+# https://conduit.wyre.ai/docs/guides/onprem/quickstart :
+#   1. Save this compose as docker-compose.yml (digest-pinned image below).
+#   2. Create .env with RELAY_URL + ENROLLMENT_TOKEN + CAPABILITIES; gitignore it.
 #   3. docker compose up -d
 #
 # Verify: docker compose logs onprem-gateway | grep 'on-prem-gateway ready'
@@ -31,11 +32,12 @@ services:
     # customers who pin to :latest forfeit the supply-chain verification
     # gate that the digest provides.
     #
-    # The release workflow (PR #3 §4 step 6, follow-up chunk) publishes
-    # per-release digests; the customer docs publish the canonical digest
-    # alongside each release. This example uses a placeholder that the
-    # release workflow updates per tag.
-    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:REPLACE_WITH_RELEASE_DIGEST
+    # The release workflow (release-onprem-gateway.yml) publishes a per-release
+    # digest + cosign signature; the canonical digest is published in the
+    # GitHub release notes alongside each release. The digest below is for
+    # v1.17.0 — update it per release (see the FINALIZE-FOLLOWUP note in the PR
+    # about auto-stamping this from the release workflow).
+    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:ee80a6305df168e53a6e7c41b949bdacada021dd29a11b73c53c625e5e1e84d4
 
     # Restart on failure; do not auto-start at boot unless the MSP
     # configures the daemon for that.

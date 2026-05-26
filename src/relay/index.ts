@@ -33,6 +33,8 @@
 import { assertInternalIngress } from './assert-internal-ingress.js';
 import { RelayServer } from './relay-server.js';
 import { ControlPlaneServer, requireControlPlaneSecret } from './control-plane-server.js';
+import { initPools } from '../db/context.js';
+import { config } from '../config.js';
 
 /** Default ports — override via env. */
 const DEFAULT_WSS_PORT = 8080;
@@ -65,6 +67,22 @@ export async function bootRelay(opts: BootOptions = {}): Promise<{
 
   // 2 — HMAC secret required; fail-loud before any listen() call.
   const secret = requireControlPlaneSecret();
+
+  // 2b — Initialise the DB pools BEFORE anything touches the database. The
+  // relay's only DB user is the system-path tunnel-registry (findLiveTunnel +
+  // the periodic sweepStaleTunnels safety net scheduled by RelayServer.start()
+  // below), all via runAsSystem → systemPool(). Without this, the very first
+  // sweep tick throws "DB pools not initialised" and crashes the process after
+  // boot. The gateway calls initPools at src/index.ts boot; the relay is a
+  // separate entrypoint and must do the same. Same two-connection-class config
+  // (system = BYPASSRLS for the registry; request kept for parity even though
+  // the relay has no request-path). Cheap guards (1, 2) run first so a misconfig
+  // fails loud before we open any pool; pools open before start() schedules the
+  // sweep timer.
+  initPools({
+    systemUrl: config.databaseUrl,
+    requestUrl: config.databaseUrlRequest,
+  });
 
   // 3 — WSS terminator first (the public port; on-prem tunnels dial it).
   const wssPort = opts.wssPort ?? Number(process.env.RELAY_WSS_PORT ?? DEFAULT_WSS_PORT);

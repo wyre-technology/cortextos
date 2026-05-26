@@ -72,7 +72,7 @@ LABEL org.opencontainers.image.description="Customer-deployable on-prem-gateway 
 LABEL org.opencontainers.image.vendor="WYRE Technology"
 LABEL org.opencontainers.image.source="https://github.com/wyre-technology/conduit"
 LABEL org.opencontainers.image.licenses="MIT"
-LABEL org.opencontainers.image.documentation="https://conduit.wyre.ai/docs/onprem"
+LABEL org.opencontainers.image.documentation="https://conduit.wyre.ai/docs/guides/onprem/quickstart"
 
 # Entry point — the on-prem-gateway, NOT the main conduit server.
 ENTRYPOINT ["node", "dist/onprem/index.js"]
