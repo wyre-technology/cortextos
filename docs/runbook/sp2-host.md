@@ -81,3 +81,32 @@ undelete then hard-delete:
 In production you generally do **not** destroy this stack — these notes are for
 test/iteration cycles. The `deleted-backup-instance` CLI has no direct purge;
 undelete→delete (with soft-delete off) is the supported path.
+
+## SP2c-2 apply prerequisites (Cloudflare Tunnel + Access)
+
+Before `terraform apply` with the Cloudflare resources:
+
+1. **Cloudflare API token** — create one scoped to:
+   - Zone : DNS : Edit  (on the `wyre.ai` zone)
+   - Account : Cloudflare Tunnel : Edit
+   - Account : Access: Apps and Policies : Edit
+   Export it: `export CLOUDFLARE_API_TOKEN=...` (never commit).
+
+2. **Account / zone ids** — put in `terraform.tfvars`:
+   - `cloudflare_account_id` = (Cloudflare dashboard → account id)
+   - `cloudflare_zone_id`    = (wyre.ai zone → zone id)
+
+3. **Entra IdP in Cloudflare Zero Trust** — Zero Trust dashboard → Settings →
+   Authentication → add **Azure AD** login method (app registration in the
+   `wyretechnology.com` Entra tenant; redirect URI from the CF setup wizard).
+   Copy the resulting IdP id into `terraform.tfvars` as `cloudflare_access_idp_id`.
+
+4. `terraform apply`. Then verify:
+   - `https://agents.internal.wyre.ai` → Cloudflare Access login → WYRE SSO → dashboard.
+   - Local `~/.ssh/config`:
+     ```
+     Host agents-ssh.internal.wyre.ai
+       ProxyCommand cloudflared access ssh --hostname %h
+       User ops
+     ```
+     then `ssh agents-ssh.internal.wyre.ai`.
