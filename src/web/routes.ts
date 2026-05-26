@@ -801,18 +801,32 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
-      const step = coerceNewCustomerStep((request.query as { step?: string }).step);
+      // The draft is carried across the 3 steps via the form-GET query string
+      // (each step's Next submits its inputs forward as query params). The
+      // wizard is the source of truth — first load (no query) shows an empty
+      // identity + sensible defaults, NOT mock data, so the create POST sends
+      // exactly what the reseller-admin typed. (Previously a hard-coded
+      // "Northwind IT Group" example draft that ignored input + omitted
+      // admin_email from the POST.)
+      const q = request.query as Record<string, string | undefined>;
+      const step = coerceNewCustomerStep(q.step);
+      const draftName = typeof q.name === 'string' ? q.name : '';
+      const derivedSlug = draftName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
       const data: NewCustomerData = {
         org,
         step,
         planTiers: ['Free', 'Pro', 'Business'],
         draft: {
-          name: 'Northwind IT Group',
-          subdomain: 'northwind-it-group',
-          plan: 'Pro',
-          adminEmail: 'admin@northwind.example',
-          inheritBranding: true,
-          accent: '#00C9DB',
+          name: draftName,
+          subdomain:
+            typeof q.subdomain === 'string' && q.subdomain.length > 0 ? q.subdomain : derivedSlug,
+          plan: typeof q.plan === 'string' && q.plan.length > 0 ? q.plan : 'Pro',
+          adminEmail: typeof q.adminEmail === 'string' ? q.adminEmail : '',
+          inheritBranding: q.inheritBranding !== 'false',
+          accent: typeof q.accent === 'string' && q.accent.length > 0 ? q.accent : '#00C9DB',
         },
       };
 

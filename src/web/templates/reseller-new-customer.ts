@@ -18,12 +18,15 @@ import { escapeHtml } from '../helpers.js';
 // CTA to `data-create-url` on the button + the page-script POSTs the
 // draft and redirects to the new customer's detail page on success
 // (see the create-POST handler in this file and the receiving route at
-// src/reseller/routes.ts). The form fields render an example draft on
-// first load; the user edits before submit.
+// src/reseller/routes.ts). The wizard has no server-side draft store: each
+// step is a form-GET whose Next serializes its inputs into the query string,
+// so the query IS the draft and the reseller-admin's real input is carried
+// step-to-step (first load is empty + defaults, NOT an example). Step 3's
+// create POST sends name + admin_email + plan — the full create contract.
 
 export type NewCustomerStep = 1 | 2 | 3;
 
-/** The customer-org being drafted — a fixed example for the mock-first flow. */
+/** The customer-org being drafted — populated from the carried form-GET query string. */
 export interface NewCustomerDraft {
   name: string;
   /** Collision-safe path segment, derived from the name. */
@@ -62,8 +65,35 @@ export function coerceNewCustomerStep(raw: unknown): NewCustomerStep {
   return 1;
 }
 
-function stepPath(step: NewCustomerStep): string {
-  return `/org/customers/new?step=${step}`;
+/**
+ * Build a step URL that CARRIES the collected draft forward/back as query
+ * params, so navigating between steps preserves the reseller-admin's input
+ * (the wizard has no server-side draft store — the query string IS the draft).
+ * Returned value is HTML-attribute-safe (escaped) for use in an href.
+ */
+function stepUrl(step: NewCustomerStep, draft: NewCustomerDraft): string {
+  const params = new URLSearchParams({
+    step: String(step),
+    name: draft.name,
+    subdomain: draft.subdomain,
+    plan: draft.plan,
+    adminEmail: draft.adminEmail,
+  });
+  return escapeHtml(`/org/customers/new?${params.toString()}`);
+}
+
+/** Hidden inputs that carry the already-collected draft fields through a step's form-GET. */
+function carryFields(draft: NewCustomerDraft, omit: Set<string> = new Set()): string {
+  const fields: Array<[string, string]> = [
+    ['name', draft.name],
+    ['subdomain', draft.subdomain],
+    ['plan', draft.plan],
+    ['adminEmail', draft.adminEmail],
+  ];
+  return fields
+    .filter(([k]) => !omit.has(k))
+    .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}" />`)
+    .join('\n    ');
 }
 
 function renderStepper(current: NewCustomerStep): string {
@@ -93,19 +123,21 @@ function renderStep1(data: NewCustomerData): string {
     data.org.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
   );
   return `
+    <form method="GET" action="/org/customers/new">
+    <input type="hidden" name="step" value="2" />
     <h2 class="nc-q">Customer organization</h2>
     <p class="nc-q-sub">The new org's identity. The subdomain is path-based and
       collision-safe — derived from the name, editable.</p>
 
     <label class="nc-field">
       <span class="nc-label">Organization name</span>
-      <input type="text" id="ncName" class="nc-input" value="${escapeHtml(draft.name)}"
-        oninput="ncSyncSlug()" />
+      <input type="text" id="ncName" name="name" class="nc-input" value="${escapeHtml(draft.name)}"
+        oninput="ncSyncSlug()" required />
     </label>
 
     <label class="nc-field">
       <span class="nc-label">Subdomain</span>
-      <input type="text" id="ncSlug" class="nc-input" value="${slug}" />
+      <input type="text" id="ncSlug" name="subdomain" class="nc-input" value="${slug}" />
       <span class="nc-help">
         URL: conduit.wyre.ai/v1/mcp/${resellerSlug}/<span id="ncSlugEcho">${slug}</span>
       </span>
@@ -113,7 +145,7 @@ function renderStep1(data: NewCustomerData): string {
 
     <label class="nc-field">
       <span class="nc-label">Plan tier</span>
-      <select class="nc-select">
+      <select class="nc-select" name="plan">
         ${planTiers.map((p) =>
           `<option${p === draft.plan ? ' selected' : ''}>${escapeHtml(p)}</option>`,
         ).join('')}
@@ -121,29 +153,34 @@ function renderStep1(data: NewCustomerData): string {
     </label>
 
     <div class="nc-actions">
-      <a class="nc-next" href="${stepPath(2)}">Next &rarr;</a>
-    </div>`;
+      <button type="submit" class="nc-next">Next &rarr;</button>
+    </div>
+    </form>`;
 }
 
 function renderStep2(data: NewCustomerData): string {
   const { draft } = data;
   return `
+    <form method="GET" action="/org/customers/new">
+    <input type="hidden" name="step" value="3" />
+    ${carryFields(draft, new Set(['adminEmail']))}
     <h2 class="nc-q">Initial admin</h2>
     <p class="nc-q-sub">Invite the first user — they become the owner of
       ${escapeHtml(draft.name)} and can invite the rest of the team.</p>
 
     <label class="nc-field">
       <span class="nc-label">Owner email</span>
-      <input type="email" class="nc-input" value="${escapeHtml(draft.adminEmail)}"
-        placeholder="admin@customer.com" />
+      <input type="email" id="ncAdminEmail" name="adminEmail" class="nc-input" value="${escapeHtml(draft.adminEmail)}"
+        placeholder="admin@customer.com" required />
       <span class="nc-help">An invite is sent on create; the owner sets their
         own password via the link.</span>
     </label>
 
     <div class="nc-actions nc-actions-split">
-      <a class="nc-back" href="${stepPath(1)}">&larr; Back</a>
-      <a class="nc-next" href="${stepPath(3)}">Next &rarr;</a>
-    </div>`;
+      <a class="nc-back" href="${stepUrl(1, draft)}">&larr; Back</a>
+      <button type="submit" class="nc-next">Next &rarr;</button>
+    </div>
+    </form>`;
 }
 
 function renderStep3(data: NewCustomerData): string {
@@ -194,10 +231,11 @@ function renderStep3(data: NewCustomerData): string {
     </div>
 
     <div class="nc-actions nc-actions-split">
-      <a class="nc-back" href="${stepPath(2)}">&larr; Back</a>
+      <a class="nc-back" href="${stepUrl(2, draft)}">&larr; Back</a>
       <button type="button" id="ncCreateBtn" class="nc-create"
         data-create-url="${escapeHtml(createUrl)}"
         data-plan="${escapeHtml(draft.plan)}"
+        data-admin-email="${escapeHtml(draft.adminEmail)}"
         data-name="${escapeHtml(draft.name)}">
         Create customer
       </button>
@@ -261,6 +299,7 @@ export function renderNewCustomer(data: NewCustomerData): { body: string; pageSc
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: btn.dataset.name,
+            admin_email: btn.dataset.adminEmail,
             plan: (btn.dataset.plan || 'free').toLowerCase(),
           }),
         });

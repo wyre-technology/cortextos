@@ -157,3 +157,31 @@ describe('renderNewCustomer — escaping', () => {
     expect(body).toContain('&lt;script&gt;');
   });
 });
+
+// Regression — the create-customer flow shipped broken twice: (1) the step-3
+// POST omitted admin_email entirely (only name+plan) -> API "admin_email is
+// required"; (2) inputs were not bound/carried so a hard-coded mock draft was
+// submitted regardless of input. These lock both.
+describe('renderNewCustomer — create contract + input carry (regression)', () => {
+  it('step-3 POST sends admin_email (was omitted -> "admin_email is required")', () => {
+    const { body, pageScripts } = renderNewCustomer(data(3, { adminEmail: 'real@customer.com' }));
+    // The owner email must reach the POST: as a button data-attr + in the body.
+    expect(body).toContain('data-admin-email="real@customer.com"');
+    expect(pageScripts).toContain('admin_email: btn.dataset.adminEmail');
+  });
+
+  it('each step is a form-GET with named inputs so typed input is carried, not ignored', () => {
+    const step1 = renderNewCustomer(data(1)).body;
+    expect(step1).toContain('<form method="GET" action="/org/customers/new">');
+    expect(step1).toContain('name="name"'); // org-name input is named -> serialized
+    expect(step1).toContain('name="plan"');
+    expect(step1).toMatch(/<button type="submit"[^>]*class="nc-next"/); // Next submits the form
+
+    const step2 = renderNewCustomer(data(2)).body;
+    expect(step2).toContain('<form method="GET" action="/org/customers/new">');
+    expect(step2).toContain('name="adminEmail"'); // owner email input is named
+    // Step 2 carries the step-1 fields forward as hidden inputs (no server draft store).
+    expect(step2).toContain('<input type="hidden" name="name"');
+    expect(step2).toContain('<input type="hidden" name="plan"');
+  });
+});
