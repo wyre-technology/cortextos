@@ -66,3 +66,68 @@ resource "cloudflare_dns_record" "ssh" {
   proxied = true
   ttl     = 1
 }
+
+# ── Zero Trust Access policy + applications ──────────────────────────────────
+
+# One reusable policy: allow identities from the Entra IdP whose email is in the
+# WYRE domain. Referenced by both Access applications below.
+#
+# Schema note (v5.19.1): `include` and `require` are nested_type with
+# nesting_mode="set", so assignment syntax (= [...]) is required. Each element
+# is an object with optional typed sub-keys (email_domain, login_method, etc.)
+# whose own attributes are themselves nested_type/single objects.
+resource "cloudflare_zero_trust_access_policy" "wyre_staff" {
+  account_id = var.cloudflare_account_id
+  name       = "WYRE staff (Entra, ${var.access_email_domain})"
+  decision   = "allow"
+
+  include = [
+    {
+      email_domain = {
+        domain = var.access_email_domain
+      }
+    },
+  ]
+
+  # Require the Entra IdP specifically (not just any login method).
+  require = [
+    {
+      login_method = {
+        id = var.cloudflare_access_idp_id
+      }
+    },
+  ]
+}
+
+# Schema note (v5.19.1): `policies` on the application is nested_type with
+# nesting_mode="list". All sub-attributes are optional/computed; providing
+# only `id` (cross-reference to the policy above) and `precedence` is valid.
+resource "cloudflare_zero_trust_access_application" "dashboard" {
+  account_id       = var.cloudflare_account_id
+  name             = "WYRE Agents"
+  domain           = var.dashboard_hostname
+  type             = "self_hosted"
+  session_duration = "24h"
+
+  policies = [
+    {
+      id         = cloudflare_zero_trust_access_policy.wyre_staff.id
+      precedence = 1
+    },
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "ssh" {
+  account_id       = var.cloudflare_account_id
+  name             = "WYRE Agents — SSH"
+  domain           = var.ssh_hostname
+  type             = "ssh"
+  session_duration = "24h"
+
+  policies = [
+    {
+      id         = cloudflare_zero_trust_access_policy.wyre_staff.id
+      precedence = 1
+    },
+  ]
+}
