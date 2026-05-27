@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderResellerHierarchy,
+  buildResellerTree,
   MAX_TREE_DEPTH,
   type TenantNode,
   type ResellerHierarchyData,
@@ -164,5 +165,58 @@ describe('renderResellerHierarchy', () => {
     const html = renderResellerHierarchy(data());
     expect(html).toContain('AM3 — Internal IT');
     expect(html).toContain('AM3 — Client Services');
+  });
+});
+
+describe('buildResellerTree', () => {
+  const customerOrg = (id: string, name: string, plan: string): Organization => ({
+    ...org,
+    id,
+    name,
+    plan: plan as Organization['plan'],
+    type: 'customer',
+    parentOrgId: org.id,
+  });
+
+  it('roots at the reseller and maps each direct customer to a childless node', () => {
+    const root = buildResellerTree(org, 8, [
+      { org: customerOrg('c1', 'Acme Co', 'business'), userCount: 12 },
+      { org: customerOrg('c2', 'Beta LLC', 'pro'), userCount: 1 },
+    ]);
+
+    expect(root.kind).toBe('reseller');
+    expect(root.id).toBe(org.id);
+    expect(root.meta).toBe('2 customers · 8 users · Business');
+    expect(root.children).toHaveLength(2);
+    expect(root.children[0]).toMatchObject({ id: 'c1', name: 'Acme Co', kind: 'customer', meta: '12 users · Business', children: [] });
+    // depth-2 cap: customers never carry their own children
+    expect(root.children.every((c) => c.children.length === 0)).toBe(true);
+  });
+
+  it('renders a childless reseller node for a reseller with no customers (empty state)', () => {
+    const root = buildResellerTree(org, 3, []);
+    expect(root.children).toHaveLength(0);
+    expect(root.meta).toBe('0 customers · 3 users · Business');
+    // the template surfaces the empty-state copy when children are absent
+    expect(renderResellerHierarchy({ org, root })).toContain('No customers under this reseller yet.');
+  });
+
+  it('singularizes customer/user labels and falls back to the slug for an unknown plan', () => {
+    const root = buildResellerTree(org, 1, [
+      { org: customerOrg('c1', 'Solo Inc', 'enterprise-x'), userCount: 1 },
+    ]);
+    expect(root.meta).toBe('1 customer · 1 user · Business');
+    expect(root.children[0].meta).toBe('1 user · enterprise-x');
+  });
+
+  it('only ever renders real customer names — no mock literals leak through', () => {
+    const root = buildResellerTree(org, 0, [
+      { org: customerOrg('c1', 'Real Customer', 'pro'), userCount: 4 },
+    ]);
+    const html = renderResellerHierarchy({ org, root });
+    for (const ghost of ['AM3', 'Mountain MSP', 'Coastal IT', 'Team DNS', 'cust_mock', 'sub_mock']) {
+      expect(html).not.toContain(ghost);
+    }
+    expect(html).toContain('Real Customer');
   });
 });

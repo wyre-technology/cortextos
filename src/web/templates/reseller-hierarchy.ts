@@ -1,13 +1,14 @@
 import type { Organization } from '../../org/org-service.js';
+import { getPlan } from '../../billing/plan-catalog.js';
 import { escapeHtml } from '../helpers.js';
 
 // Track C Surface 4 — Reseller Tenant Hierarchy (/org/hierarchy).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 9:2.
 //
-// The org tree below a reseller: reseller → customers → subtenants.
-// Built mock-data-first (same play as Surfaces 1 & 5): the route handler
-// passes a mock `root` tree until the Track A org-hierarchy endpoint
-// lands, then the data source swaps and this template renders unchanged.
+// The org tree below a reseller. The data model caps the hierarchy at
+// depth 2 (reseller → customer; enforced by the org-hierarchy DB trigger),
+// so the real tree is the caller's reseller plus its direct customer orgs —
+// `buildResellerTree` builds it from `OrgService.getResellerHierarchy`.
 //
 // Axis note: the Figma static frame draws a horizontal org-chart. This
 // template renders the same tree on a vertical indented axis with an
@@ -31,6 +32,43 @@ export interface TenantNode {
 export interface ResellerHierarchyData {
   org: Organization;
   root: TenantNode;
+}
+
+/** Human plan label for the meta line, e.g. 'conduit' → "Conduit". */
+function planLabel(slug: string): string {
+  return getPlan(slug)?.name ?? slug;
+}
+
+function usersLabel(n: number): string {
+  return `${n} ${n === 1 ? 'user' : 'users'}`;
+}
+
+/**
+ * Build the real reseller tenant tree from {@link OrgService.getResellerHierarchy}
+ * data: root = the caller's reseller, children = its direct customer orgs (the
+ * depth-2 cap means there is no subtenant level). Pure + presentation-only —
+ * the tenant scoping lives in the query, not here. Replaces the former mock
+ * tree; an empty `customers` list yields a reseller node with no children
+ * (the template renders the "no customers yet" empty state).
+ */
+export function buildResellerTree(
+  reseller: Organization,
+  resellerUserCount: number,
+  customers: Array<{ org: Organization; userCount: number }>,
+): TenantNode {
+  return {
+    id: reseller.id,
+    name: reseller.name,
+    kind: 'reseller',
+    meta: `${customers.length} ${customers.length === 1 ? 'customer' : 'customers'} · ${usersLabel(resellerUserCount)} · ${planLabel(reseller.plan)}`,
+    children: customers.map(({ org, userCount }) => ({
+      id: org.id,
+      name: org.name,
+      kind: 'customer' as const,
+      meta: `${usersLabel(userCount)} · ${planLabel(org.plan)}`,
+      children: [],
+    })),
+  };
 }
 
 const KIND_LABEL: Record<TenantNodeKind, string> = {

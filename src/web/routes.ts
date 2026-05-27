@@ -57,6 +57,7 @@ import {
   renderResellerHierarchy,
   RESELLER_HIERARCHY_STYLES,
   RESELLER_HIERARCHY_SCRIPT,
+  buildResellerTree,
   type TenantNode,
 } from './templates/reseller-hierarchy.js';
 import {
@@ -1157,33 +1158,12 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
-      const root: TenantNode = {
-        id: org.id,
-        name: org.name,
-        kind: 'reseller',
-        meta: '4 customers · 8 users · BUSINESS',
-        children: [
-          {
-            id: 'cust_mock_1', name: 'AM3 Technology', kind: 'customer',
-            meta: '12 users · BUSINESS',
-            children: [
-              { id: 'sub_mock_1', name: 'AM3 — Internal IT',     kind: 'subtenant', meta: '5 users', children: [] },
-              { id: 'sub_mock_2', name: 'AM3 — Client Services', kind: 'subtenant', meta: '7 users', children: [] },
-            ],
-          },
-          { id: 'cust_mock_2', name: 'Team DNS Solutions', kind: 'customer', meta: '8 users · PRO', children: [] },
-          {
-            id: 'cust_mock_3', name: 'Mountain MSP Group', kind: 'customer',
-            meta: '6 users · PRO',
-            children: [
-              { id: 'sub_mock_3', name: 'Mountain — Healthcare', kind: 'subtenant', meta: '3 users', children: [] },
-              { id: 'sub_mock_4', name: 'Mountain — Legal',      kind: 'subtenant', meta: '2 users', children: [] },
-              { id: 'sub_mock_5', name: 'Mountain — SMB Pool',   kind: 'subtenant', meta: '1 user',  children: [] },
-            ],
-          },
-          { id: 'cust_mock_4', name: 'Coastal IT Partners', kind: 'customer', meta: '15 users · BUSINESS', children: [] },
-        ],
-      };
+      // Real reseller-rooted tree: the caller's reseller + its direct customer
+      // orgs. getResellerHierarchy is scoped by parent_org_id = org.id AND
+      // type = 'customer' (the tenant boundary); the depth-2 hierarchy cap
+      // means direct customers are the whole tree (no subtenant level).
+      const { customers, resellerUserCount } = await orgService.getResellerHierarchy(org.id);
+      const root: TenantNode = buildResellerTree(org, resellerUserCount, customers);
 
       const html = renderLayout(
         {

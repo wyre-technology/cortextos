@@ -712,6 +712,38 @@ export class OrgService {
   }
 
   /**
+   * Reseller tenant-tree data for /org/hierarchy: the reseller's own member
+   * count plus each direct customer org with its member count. Two cheap
+   * queries (no per-customer N+1). The hierarchy is capped at depth 2 by the
+   * DB trigger (reseller → customer), so direct children are the whole tree —
+   * no recursion needed. Scoped by `parent_org_id = resellerOrgId AND
+   * type = 'customer'`, the same tenant boundary as {@link getCustomersOfReseller}.
+   */
+  async getResellerHierarchy(resellerOrgId: string): Promise<{
+    customers: Array<{ org: Organization; userCount: number }>;
+    resellerUserCount: number;
+  }> {
+    const [customerRows, resellerCountRows] = await Promise.all([
+      this.sql<(OrgRow & { user_count: number })[]>`
+        SELECT o.*, COUNT(m.user_id)::int AS user_count
+          FROM organizations o
+          LEFT JOIN org_members m ON m.org_id = o.id
+         WHERE o.parent_org_id = ${resellerOrgId}
+           AND o.type = 'customer'
+         GROUP BY o.id
+         ORDER BY o.created_at
+      `,
+      this.sql<{ c: number }[]>`
+        SELECT COUNT(*)::int AS c FROM org_members WHERE org_id = ${resellerOrgId}
+      `,
+    ]);
+    return {
+      customers: customerRows.map((r) => ({ org: this.toOrg(r), userCount: r.user_count })),
+      resellerUserCount: resellerCountRows[0]?.c ?? 0,
+    };
+  }
+
+  /**
    * Fetch the parent reseller of a customer org. Returns null when the org
    * has no parent (standalone or reseller at the top of the tree).
    */
