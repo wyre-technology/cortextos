@@ -90,7 +90,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Datto RMM',
     slug: 'datto-rmm',
     category: 'rmm',
-    containerUrl: 'http://datto-rmm-mcp:8080',
+    containerUrl: 'http://datto-rmm-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true },
       { key: 'apiSecret', label: 'API Secret', required: true, secret: true },
@@ -138,7 +138,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Action1',
     slug: 'action1',
     category: 'rmm',
-    containerUrl: 'http://action1-mcp:8080',
+    containerUrl: 'http://action1-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, placeholder: 'Client ID from Action1 → Settings → API Credentials' },
       { key: 'secret', label: 'Secret', required: true, secret: true, placeholder: 'Non-recoverable — copy on creation' },
@@ -196,7 +196,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Domotz',
     slug: 'domotz',
     category: 'network',
-    containerUrl: 'http://domotz-mcp:8080',
+    containerUrl: 'http://domotz-mcp',
     docsUrl: 'https://portal.domotz.com/developers/',
     fields: [
       {
@@ -235,7 +235,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'IT Glue',
     slug: 'itglue',
     category: 'documentation',
-    containerUrl: 'http://itglue-mcp:8080',
+    containerUrl: 'http://itglue-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
     ],
@@ -262,7 +262,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Autotask PSA',
     slug: 'autotask',
     category: 'psa',
-    containerUrl: 'http://autotask-mcp:8080',
+    containerUrl: 'http://autotask-mcp',
     fields: [
       { key: 'username', label: 'Username', required: true },
       { key: 'secret', label: 'Secret', required: true, secret: true },
@@ -299,7 +299,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Syncro',
     slug: 'syncro',
     category: 'rmm',
-    containerUrl: 'http://syncro-mcp:8080',
+    containerUrl: 'http://syncro-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
       {
@@ -332,7 +332,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Atera',
     slug: 'atera',
     category: 'rmm',
-    containerUrl: 'http://atera-mcp:8080',
+    containerUrl: 'http://atera-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
     ],
@@ -359,7 +359,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Kaseya Quote Manager',
     slug: 'kaseya-quote-manager',
     category: 'sales',
-    containerUrl: 'http://kaseya-quote-manager-mcp:8080',
+    containerUrl: 'http://kaseya-quote-manager-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
     ],
@@ -386,7 +386,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'SuperOps',
     slug: 'superops',
     category: 'rmm',
-    containerUrl: 'http://superops-mcp:8080',
+    containerUrl: 'http://superops-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
       {
@@ -426,7 +426,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'HaloPSA',
     slug: 'halopsa',
     category: 'psa',
-    containerUrl: 'http://halopsa-mcp:8080',
+    containerUrl: 'http://halopsa-mcp',
     fields: [
       { key: 'clientId', label: 'Client ID', required: true },
       {
@@ -470,7 +470,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'ConnectWise PSA',
     slug: 'connectwise-psa',
     category: 'psa',
-    containerUrl: 'http://connectwise-psa-mcp:8080',
+    containerUrl: 'http://connectwise-psa-mcp',
     fields: [
       { key: 'companyId', label: 'Company ID', required: true },
       { key: 'publicKey', label: 'Public Key', required: true },
@@ -513,7 +513,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'ConnectWise Automate',
     slug: 'connectwise-automate',
     category: 'rmm',
-    containerUrl: 'http://connectwise-automate-mcp:8080',
+    containerUrl: 'http://connectwise-automate-mcp',
     fields: [
       {
         key: 'serverUrl',
@@ -565,7 +565,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Liongard',
     slug: 'liongard',
     category: 'documentation',
-    containerUrl: 'http://liongard-mcp:8080',
+    containerUrl: 'http://liongard-mcp',
     fields: [
       {
         key: 'instance',
@@ -606,7 +606,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Hudu',
     slug: 'hudu',
     category: 'documentation',
-    containerUrl: 'http://hudu-mcp:8080',
+    containerUrl: 'http://hudu-mcp',
     fields: [
       {
         key: 'baseUrl',
@@ -650,7 +650,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'RocketCyber',
     slug: 'rocketcyber',
     category: 'security',
-    containerUrl: 'http://rocketcyber-mcp:8080',
+    containerUrl: 'http://rocketcyber-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
       {
@@ -689,7 +689,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     // Conduit's VendorCategory union does not define. Revisit if a cloud /
     // infrastructure category is added.
     category: 'network',
-    containerUrl: 'http://azure-mcp:8080',
+    containerUrl: 'http://azure-mcp',
     fields: [
       { key: 'tenantId', label: 'Azure Tenant ID', required: true, placeholder: 'Directory (tenant) ID of the Entra tenant' },
       { key: 'clientId', label: 'Service Principal Client ID', required: true, placeholder: 'Application (client) ID of the service principal' },
@@ -782,7 +782,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'SalesBuildr',
     slug: 'salesbuildr',
     category: 'sales',
-    containerUrl: 'http://salesbuildr-mcp:8080',
+    containerUrl: 'http://salesbuildr-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
     ],
@@ -859,7 +859,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Xero',
     slug: 'xero',
     category: 'accounting',
-    containerUrl: 'http://xero-mcp:8080',
+    containerUrl: 'http://xero-mcp',
     fields: [],
     headerMapping: {
       accessToken: 'X-Xero-Access-Token',
@@ -880,7 +880,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'QuickBooks Online',
     slug: 'qbo',
     category: 'accounting',
-    containerUrl: 'http://qbo-mcp:8080',
+    containerUrl: 'http://qbo-mcp',
     fields: [],
     headerMapping: {
       accessToken: 'X-Qbo-Access-Token',
@@ -960,7 +960,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Huntress',
     slug: 'huntress',
     category: 'security',
-    containerUrl: 'http://huntress-mcp:8080',
+    containerUrl: 'http://huntress-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true },
       { key: 'apiSecret', label: 'API Secret', required: true, secret: true },
@@ -991,7 +991,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Blumira',
     slug: 'blumira',
     category: 'security',
-    containerUrl: 'http://blumira-mcp:8080',
+    containerUrl: 'http://blumira-mcp',
     fields: [
       { key: 'jwtToken', label: 'JWT Token', required: true, secret: true },
     ],
@@ -1021,7 +1021,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'SentinelOne',
     slug: 'sentinelone',
     category: 'security',
-    containerUrl: 'http://sentinelone-mcp:8080',
+    containerUrl: 'http://sentinelone-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
       {
@@ -1056,7 +1056,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'NinjaOne',
     slug: 'ninjaone',
     category: 'rmm',
-    containerUrl: 'http://ninjaone-mcp:8080',
+    containerUrl: 'http://ninjaone-mcp',
     fields: [
       { key: 'clientId', label: 'Client ID', required: true },
       {
@@ -1324,7 +1324,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Abnormal Security',
     slug: 'abnormal-security',
     category: 'security',
-    containerUrl: 'http://abnormal-mcp:8080',
+    containerUrl: 'http://abnormal-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
     ],
@@ -1349,7 +1349,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Checkpoint Avanan',
     slug: 'avanan',
     category: 'email-security',
-    containerUrl: 'http://avanan-mcp:8080',
+    containerUrl: 'http://avanan-mcp',
     fields: [
       { key: 'clientId', label: 'Client ID', required: true },
       { key: 'secretKey', label: 'API Secret Key', required: true, secret: true },
@@ -1365,7 +1365,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Proofpoint',
     slug: 'proofpoint',
     category: 'email-security',
-    containerUrl: 'http://proofpoint-mcp:8080',
+    containerUrl: 'http://proofpoint-mcp',
     fields: [
       { key: 'servicePrincipal', label: 'Service Principal', required: true },
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
@@ -1383,7 +1383,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'KnowBe4',
     slug: 'knowbe4',
     category: 'email-security',
-    containerUrl: 'http://knowbe4-mcp:8080',
+    containerUrl: 'http://knowbe4-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
       {
@@ -1405,7 +1405,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Sherweb',
     slug: 'sherweb',
     category: 'marketplace',
-    containerUrl: 'http://sherweb-mcp:8080',
+    containerUrl: 'http://sherweb-mcp',
     fields: [
       { key: 'clientId', label: 'Client ID', required: true },
       { key: 'clientSecret', label: 'Client Secret', required: true, secret: true },
@@ -1423,7 +1423,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Blackpoint Cyber',
     slug: 'blackpoint',
     category: 'security',
-    containerUrl: 'http://blackpoint-mcp:8080',
+    containerUrl: 'http://blackpoint-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
       {
@@ -1470,7 +1470,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'CIPP',
     slug: 'cipp',
     category: 'productivity',
-    containerUrl: 'http://cipp-mcp:8080',
+    containerUrl: 'http://cipp-mcp',
     fields: [
       {
         key: 'baseUrl',
@@ -1576,7 +1576,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Crewhu',
     slug: 'crewhu',
     category: 'productivity',
-    containerUrl: 'http://crewhu-mcp:8080',
+    containerUrl: 'http://crewhu-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
     ],
@@ -1613,7 +1613,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Datto BCDR',
     slug: 'datto-bcdr',
     category: 'bcdr',
-    containerUrl: 'http://datto-bcdr-mcp:8080',
+    containerUrl: 'http://datto-bcdr-mcp',
     fields: [
       { key: 'publicKey', label: 'Public Key', required: true },
       { key: 'privateKey', label: 'Private Key', required: true, secret: true },
@@ -1656,7 +1656,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Datto SaaS Protection',
     slug: 'datto-saas-protection',
     category: 'bcdr',
-    containerUrl: 'http://datto-saas-protection-mcp:8080',
+    containerUrl: 'http://datto-saas-protection-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
       {
@@ -1784,7 +1784,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'ImmyBot',
     slug: 'immybot',
     category: 'rmm',
-    containerUrl: 'http://immybot-mcp:8080',
+    containerUrl: 'http://immybot-mcp',
     fields: [
       {
         key: 'instanceSubdomain',
@@ -1887,7 +1887,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Kaseya BMS',
     slug: 'kaseya-bms',
     category: 'psa',
-    containerUrl: 'http://kaseya-bms-mcp:8080',
+    containerUrl: 'http://kaseya-bms-mcp',
     fields: [
       {
         key: 'tenantSubdomain',
@@ -1938,7 +1938,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Kaseya VSA',
     slug: 'kaseya-vsa',
     category: 'rmm',
-    containerUrl: 'http://kaseya-vsa-mcp:8080',
+    containerUrl: 'http://kaseya-vsa-mcp',
     fields: [
       {
         key: 'tenantUrl',
@@ -2007,7 +2007,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Spanning',
     slug: 'spanning',
     category: 'bcdr',
-    containerUrl: 'http://spanning-mcp:8080',
+    containerUrl: 'http://spanning-mcp',
     fields: [
       {
         key: 'platform',
@@ -2061,7 +2061,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'ThreatLocker',
     slug: 'threatlocker',
     category: 'security',
-    containerUrl: 'http://threatlocker-mcp:8080',
+    containerUrl: 'http://threatlocker-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true },
       { key: 'organizationId', label: 'Organization ID', required: false, placeholder: 'Leave blank for primary org' },
@@ -2104,7 +2104,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'TimeZest',
     slug: 'timezest',
     category: 'productivity',
-    containerUrl: 'http://timezest-mcp:8080',
+    containerUrl: 'http://timezest-mcp',
     fields: [
       { key: 'apiToken', label: 'API Token', required: true, secret: true },
     ],
@@ -2141,7 +2141,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Unitrends',
     slug: 'unitrends',
     category: 'bcdr',
-    containerUrl: 'http://unitrends-mcp:8080',
+    containerUrl: 'http://unitrends-mcp',
     fields: [
       {
         key: 'baseUrl',
@@ -2203,7 +2203,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Ironscales',
     slug: 'ironscales',
     category: 'security',
-    containerUrl: 'http://ironscales-mcp:8080',
+    containerUrl: 'http://ironscales-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true, placeholder: 'Generate in Ironscales partner portal' },
       { key: 'companyId', label: 'Company ID', required: true, placeholder: 'Ironscales tenant/company identifier' },
@@ -2232,7 +2232,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'Mimecast',
     slug: 'mimecast',
     category: 'security',
-    containerUrl: 'http://mimecast-mcp:8080',
+    containerUrl: 'http://mimecast-mcp',
     fields: [
       { key: 'clientId', label: 'Client ID', required: true, placeholder: 'Mimecast API 2.0 Client ID' },
       { key: 'clientSecret', label: 'Client Secret', required: true, secret: true },
@@ -2293,7 +2293,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     name: 'SpamTitan',
     slug: 'spamtitan',
     category: 'security',
-    containerUrl: 'http://spamtitan-mcp:8080',
+    containerUrl: 'http://spamtitan-mcp',
     fields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true, placeholder: 'Generate in SpamTitan admin console' },
       {

@@ -45,7 +45,7 @@ describe('vendor-config', () => {
 
   it('uses default containerUrl when env var is not set', () => {
     const vendor = getVendor('datto-rmm');
-    expect(vendor!.containerUrl).toBe('http://datto-rmm-mcp:8080');
+    expect(vendor!.containerUrl).toBe('http://datto-rmm-mcp');
   });
 
   it('every vendor has a header mapping or buildHeaders for each required field', () => {
@@ -124,7 +124,7 @@ describe('vendor-config', () => {
     it('is registered as a sidecar vendor with three credential fields', () => {
       const vendor = getVendor('azure-mcp');
       expect(vendor).toBeDefined();
-      expect(vendor!.containerUrl).toBe('http://azure-mcp:8080');
+      expect(vendor!.containerUrl).toBe('http://azure-mcp');
       const fieldKeys = vendor!.fields.map((f) => f.key).sort();
       expect(fieldKeys).toEqual(['clientId', 'clientSecret', 'tenantId']);
       const secret = vendor!.fields.find((f) => f.key === 'clientSecret');
