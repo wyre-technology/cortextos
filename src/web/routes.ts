@@ -993,8 +993,9 @@ export function webRoutes(deps: WebRouteDeps) {
     // customer (requireCustomerOwnership) before rendering real identity, then
     // renders honest empty-states (no fabricated data). The usage tab fetches
     // its body live (endpoint-authz'd); the rest await their wire-phase source.
-    // 'audit' (live feed) and 'users' (real members, below) have dedicated handlers.
-    for (const tab of CUSTOMER_TAB_IDS.filter((t) => t !== 'audit' && t !== 'users')) {
+    // 'audit' (live feed), 'users' (real members), and 'mcps' (real connected
+    // vendors + health, below) have dedicated handlers.
+    for (const tab of CUSTOMER_TAB_IDS.filter((t) => t !== 'audit' && t !== 'users' && t !== 'mcps')) {
       app.get(`/org/customers/:id/${tab}`, async (request, reply) => {
         const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
@@ -1031,6 +1032,31 @@ export function webRoutes(deps: WebRouteDeps) {
       const data = buildCustomerTabData(ctx.org, customerSummaryOf(owned), 'users');
       return sendCustomerTab(reply, ctx.user, ctx.org, customerId,
         { ...data, members, memberTotal: members.length });
+    });
+
+    // ---------- GET /org/customers/:id/mcps (Track A — real connected vendors) ----------
+    // The MCPs tab lists the customer's real connected vendors + live health.
+    // Ownership-gated (parent_org_id === reseller). Vendor name + health status
+    // come from the real connection set (listOrgVendors) joined with the vendor
+    // monitor cache (assembleOrgVendorHealth — the SAME source as the connections
+    // health-dot, so status incl 'reachable'/'unknown' is consistent). The
+    // wiring `pattern` + per-vendor `seats` have no source in the data model yet
+    // -> honest em-dash (never fabricated; F3 discipline).
+    app.get('/org/customers/:id/mcps', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const customerId = (request.params as { id: string }).id;
+      const owned = await requireCustomerOwnership(reply, ctx, customerId, orgService);
+      if (!owned) return;
+      const slugs = await credentialService.listOrgVendors(owned.id);
+      const mcps = assembleOrgVendorHealth(slugs, vendorMonitor.getStatus()).map((h) => ({
+        vendor: h.displayName,
+        pattern: '—',
+        seats: '—',
+        status: h.status,
+      }));
+      const data = buildCustomerTabData(ctx.org, customerSummaryOf(owned), 'mcps');
+      return sendCustomerTab(reply, ctx.user, ctx.org, customerId, { ...data, mcps });
     });
 
     // ---------- GET /org/customers/:id/audit (Track A — wired to real data) ----------

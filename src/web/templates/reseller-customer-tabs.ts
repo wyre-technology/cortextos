@@ -1,5 +1,6 @@
 import type { Organization } from '../../org/org-service.js';
 import type { CustomerSummary } from './reseller-customer-detail.js';
+import type { VendorHealthState } from '../../monitoring/vendor-monitor.js';
 import { escapeHtml } from '../helpers.js';
 
 // Track C step 5 — per-org management tabs (Aaron "ship it all").
@@ -22,7 +23,10 @@ export interface McpRow {
   vendor: string;
   pattern: string;
   seats: string;
-  status: 'healthy' | 'degraded' | 'down';
+  // Full vendor-health union (shared with the connections health-dot): adds
+  // 'reachable' (auth-gated probe, alive) + 'unknown' (not yet probed) beyond
+  // healthy/degraded/down. See vendor-monitor.deriveVendorHealth.
+  status: VendorHealthState;
 }
 export interface MemberRow {
   name: string;
@@ -102,7 +106,8 @@ function seam(text: string): string {
 
 function renderMcps(data: CustomerTabData): string {
   const dot: Record<McpRow['status'], string> = {
-    healthy: 'cdt-dot-healthy', degraded: 'cdt-dot-degraded', down: 'cdt-dot-down',
+    healthy: 'cdt-dot-healthy', reachable: 'cdt-dot-reachable', degraded: 'cdt-dot-degraded',
+    down: 'cdt-dot-down', unknown: 'cdt-dot-unknown',
   };
   const rows = data.mcps.map((m) => `
     <tr>
@@ -436,8 +441,10 @@ export const CUSTOMER_TAB_STYLES = `
 
   .cdt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .cdt-dot-healthy { background: var(--success); }
+  .cdt-dot-reachable { background: #0ea5e9; }
   .cdt-dot-degraded { background: var(--warning-text); }
   .cdt-dot-down { background: var(--error); }
+  .cdt-dot-unknown { background: #9ca3af; }
 
   .cdt-loading { color: var(--text-tertiary); font-style: italic; padding: 16px 0; }
   .cdt-load-error { color: var(--error-text); font-style: normal; }
