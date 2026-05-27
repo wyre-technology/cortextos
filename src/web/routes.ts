@@ -783,13 +783,19 @@ export function webRoutes(deps: WebRouteDeps) {
       if (!ctx) return;
       const { user, org } = ctx;
 
-      const customerOrgs = await orgService.getCustomersOfReseller(org.id);
-      const customers: ResellerCustomer[] = customerOrgs.map((o) => ({
+      // getResellerHierarchy is parent_org_id+type=customer scoped (same
+      // boundary as getCustomersOfReseller) and returns each customer's REAL
+      // member count in the same 2 cheap queries — no per-customer N+1. The
+      // usage stats (mcpCalls30d / lastActivity) stay null (honest em-dash)
+      // until the batched per-customer usage aggregator lands — never a
+      // fabricated number for a pending one (F3 discipline).
+      const { customers: hierarchy } = await orgService.getResellerHierarchy(org.id);
+      const customers: ResellerCustomer[] = hierarchy.map(({ org: o, userCount }) => ({
         id: o.id,
         name: o.name,
         subdomain: customerUrlSlug(o.name),
         plan: coerceCustomerPlan(o.plan),
-        userCount: null,
+        userCount,
         mcpCalls30d: null,
         lastActivity: null,
       }));
