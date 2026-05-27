@@ -989,11 +989,12 @@ export function webRoutes(deps: WebRouteDeps) {
       return reply.type('text/html').send(html);
     }
 
-    // The 6 non-audit tabs — one loop. Each verifies the caller OWNS the
+    // The remaining tabs — one loop. Each verifies the caller OWNS the
     // customer (requireCustomerOwnership) before rendering real identity, then
     // renders honest empty-states (no fabricated data). The usage tab fetches
     // its body live (endpoint-authz'd); the rest await their wire-phase source.
-    for (const tab of CUSTOMER_TAB_IDS.filter((t) => t !== 'audit')) {
+    // 'audit' (live feed) and 'users' (real members, below) have dedicated handlers.
+    for (const tab of CUSTOMER_TAB_IDS.filter((t) => t !== 'audit' && t !== 'users')) {
       app.get(`/org/customers/:id/${tab}`, async (request, reply) => {
         const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
         if (!ctx) return;
@@ -1004,6 +1005,33 @@ export function webRoutes(deps: WebRouteDeps) {
           buildCustomerTabData(ctx.org, customerSummaryOf(owned), tab));
       });
     }
+
+    // ---------- GET /org/customers/:id/users (Track A — real members) ----------
+    // The Users tab lists the customer's real org members. Ownership-gated
+    // (parent_org_id === reseller). Identity fields (name/email/role) come from
+    // the real profile join; department / toolAccess / lastActive have no source
+    // in the data model yet -> honest em-dash (never fabricated; F3 discipline),
+    // wired when their sources land (tool-access in the tools surface, activity
+    // in the usage aggregator, task_1779916566910).
+    app.get('/org/customers/:id/users', async (request, reply) => {
+      const ctx = await requireResellerAccess(request, reply, orgService, billingGate);
+      if (!ctx) return;
+      const customerId = (request.params as { id: string }).id;
+      const owned = await requireCustomerOwnership(reply, ctx, customerId, orgService);
+      if (!owned) return;
+      const profiles = await orgService.getMembersWithProfiles(owned.id);
+      const members = profiles.map((m) => ({
+        name: m.name ?? m.email ?? '—',
+        email: m.email ?? '—',
+        role: m.role,
+        department: '—',
+        toolAccess: '—',
+        lastActive: '—',
+      }));
+      const data = buildCustomerTabData(ctx.org, customerSummaryOf(owned), 'users');
+      return sendCustomerTab(reply, ctx.user, ctx.org, customerId,
+        { ...data, members, memberTotal: members.length });
+    });
 
     // ---------- GET /org/customers/:id/audit (Track A — wired to real data) ----------
     //
