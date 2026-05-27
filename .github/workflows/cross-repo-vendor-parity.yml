@@ -1,0 +1,113 @@
+name: Cross-repo vendor parity
+
+# Standing enforcement of the Phase-1 vendor-registry single-source invariant:
+# this repo's committed canonical-map.json must agree with the SIBLING repo's
+# (equal-on-26 + the deliberately field-scoped allow-5), and the files that
+# DEFINE the gate (canonicalizer RULER + batch-1/allow-list POLICY + assert
+# LOGIC) must be byte-identical across both repos. Fail-closed.
+#
+# DORMANT-SKIP until provisioned: if CROSS_REPO_READ_TOKEN is unset, or the
+# sibling repo's canonical-map.json is not yet present at the compared ref
+# (e.g. the sibling hasn't landed on main), the gate SKIPS with a ::warning::
+# (green, not red) so it never reds main pre-provisioning. It auto-enforces the
+# moment the token + sibling map are both present. Token = fine-grained
+# contents:read on conduit + mcp-gateway, minted by an org admin (gh cannot).
+
+on:
+  pull_request:
+    paths:
+      - 'canonical-map.json'
+      - 'src/credentials/vendor-canonical.ts'
+      - 'src/credentials/vendor-canonical-parity.ts'
+      - 'src/credentials/vendor-batch1.ts'
+  push:
+    branches: [main]
+    paths:
+      - 'canonical-map.json'
+      - 'src/credentials/vendor-canonical.ts'
+      - 'src/credentials/vendor-canonical-parity.ts'
+      - 'src/credentials/vendor-batch1.ts'
+  workflow_dispatch:
+    inputs:
+      other_ref:
+        description: 'Ref of the sibling repo to compare against (use the sibling PR branch during the coordinated initial dual-merge; main thereafter)'
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  cross-repo-parity:
+    runs-on: ubuntu-latest
+    env:
+      OTHER_REPO: wyre-technology/mcp-gateway
+      OTHER_REF: ${{ github.event.inputs.other_ref || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Preflight — is the cross-repo gate provisioned? (dormant-skip if not)
+        id: pre
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning title=Cross-repo parity DORMANT::CROSS_REPO_READ_TOKEN not provisioned (org admin mints fine-grained contents:read on conduit + mcp-gateway). Skipping — the gate auto-enforces once the token lands."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/${OTHER_REPO}/contents/canonical-map.json?ref=${OTHER_REF}")
+          if [ "$code" != "200" ]; then
+            echo "::warning title=Cross-repo parity DORMANT::Sibling ${OTHER_REPO}@${OTHER_REF} canonical-map.json not found (HTTP ${code}); sibling not yet on the compared ref. Skipping — enforces once both sides are on the ref."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch sibling gate-definition files + canonical-map (read-only, pinned ref)
+        if: steps.pre.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in \
+            src/credentials/vendor-canonical.ts \
+            src/credentials/vendor-batch1.ts \
+            src/credentials/vendor-canonical-parity.ts \
+            canonical-map.json; do
+            curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/${OTHER_REPO}/contents/${f}?ref=${OTHER_REF}" \
+              -o "/tmp/other-$(basename "$f")"
+          done
+
+      - name: Assert gate definition byte-identical (ruler + policy + logic)
+        if: steps.pre.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          # Pin all three files that DEFINE the gate, so the two symmetric jobs
+          # provably run the same RULER (canonicalizer), same POLICY (batch-1 set
+          # + allow-list), and same LOGIC (assert). If any diverged, the symmetric
+          # jobs could disagree on the same maps (fail-closed-safe but confusing) —
+          # block it here.
+          for f in vendor-canonical.ts vendor-batch1.ts vendor-canonical-parity.ts; do
+            if ! diff -q "src/credentials/$f" "/tmp/other-$f" >/dev/null; then
+              echo "::error::Gate definition '$f' diverged from ${OTHER_REPO}. The two repos no longer share an identical ruler/policy/logic — mirror it byte-for-byte in BOTH repos (and the golden-vector if the canonicalizer changed)."
+              diff "src/credentials/$f" "/tmp/other-$f" || true
+              exit 1
+            fi
+          done
+          echo "Gate definition (canonicalizer + batch-1/allow-list + assert) byte-identical with ${OTHER_REPO} — same ruler, policy, and logic."
+
+      - name: Assert cross-repo vendor parity (equal-on-26 + deliberate scoped-allow-5)
+        if: steps.pre.outputs.run == 'true'
+        run: npx tsx scripts/assert-cross-repo-parity.ts ./canonical-map.json /tmp/other-canonical-map.json

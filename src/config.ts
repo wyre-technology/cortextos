@@ -212,5 +212,12 @@ export const config = {
     // Public reseller signup (Funnel A, PRD prd-onboarding.md §4).
     // Dark by default — flip after legal/ops sign off on ToS + DPA links.
     signup: process.env.SIGNUP_ENABLED === 'true',
+    // Vendor-registry decoupling Phase 1 (analyst design 2026-05-27). When ON,
+    // the VENDORS map is hydrated from the DB-backed `vendors` registry at boot
+    // (data-fied vendor definitions) so a pure-data vendor add/update is a row,
+    // not an image rebuild. Dark by default — flip ONLY after the parity-gate is
+    // green (registry deep-equals the compiled map for every migrated vendor,
+    // all accessors). Off = today's behavior (pure compiled map).
+    vendorRegistry: process.env.VENDOR_REGISTRY_ENABLED === 'true',
   },
 };

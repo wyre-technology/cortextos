@@ -39,6 +39,7 @@ import { VendorOAuthStateStore } from './oauth/vendor-state-store.js';
 import { CreditService } from './billing/credit-service.js';
 import { runMigrations } from './db/migrate.js';
 import { initPools, runAsSystem, systemPool, getSql, closePools } from './db/context.js';
+import { hydrateVendorsFromRegistry } from './credentials/vendor-registry.js';
 import { requestContextPlugin } from './db/request-context-plugin.js';
 import { orgRoutes } from './org/routes.js';
 import { domainRoutes } from './org/domain-routes.js';
@@ -643,6 +644,16 @@ process.on('SIGTERM', shutdown);
 // ---------------------------------------------------------------------------
 
 try {
+  // Vendor-registry Phase 1: hydrate the in-memory VENDORS map from the DB
+  // registry BEFORE serving (flag-gated; no-op + today's compiled-map behavior
+  // when VENDOR_REGISTRY_ENABLED is off). Must complete pre-listen — there are
+  // no top-level VENDORS reads (all are request-time), so a boot-time hydrate
+  // cannot race a stale read. initPools already ran above.
+  if (config.features.vendorRegistry) {
+    const { merged, inserted } = await hydrateVendorsFromRegistry();
+    app.log.info({ merged, inserted }, 'vendor registry hydrated (Phase 1)');
+  }
+
   await app.listen({ port: config.port, host: config.host });
   app.log.info(`MCP Gateway listening on ${config.host}:${config.port}`);
 } catch (err) {
