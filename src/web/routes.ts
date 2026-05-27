@@ -891,7 +891,18 @@ export function webRoutes(deps: WebRouteDeps) {
       // (parent_org_id === reseller). Real verified identity — no mock.
       const owned = await requireCustomerOwnership(reply, ctx, customerId, orgService);
       if (!owned) return;
-      const customer = customerSummaryOf(owned);
+
+      // Real overview counts for the verified-owned customer. Sequential
+      // (NOT Promise.all) — both queries run on the request's single
+      // reserved-tx connection; a concurrent pair stalls it (#196/#199 hang
+      // class). Each is org-scoped to the owned customer.
+      const members = await orgService.getMembers(owned.id);
+      const vendorSlugs = await credentialService.listOrgVendors(owned.id);
+      const customer: CustomerSummary = {
+        ...customerSummaryOf(owned),
+        userCount: members.length,
+        mcpCount: vendorSlugs.length,
+      };
 
       // Real reseller-scoped sibling roster for the tenant switcher.
       const siblings = await resellerSiblings(org.id);
