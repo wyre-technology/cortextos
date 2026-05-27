@@ -125,6 +125,39 @@ describe('VendorMonitor', () => {
     expect(status['test-vendor'].consecutiveFailures).toBe(3);
   });
 
+  it('records REACHABLE (not down) when the auth-gated probe returns 401', async () => {
+    mockFailureResponse(401);
+    await monitor.probeAll();
+
+    const status = monitor.getStatus();
+    expect(status['test-vendor'].status).toBe('reachable');
+    expect(status['test-vendor'].consecutiveFailures).toBe(0);
+    expect(status['test-vendor'].lastError).toBeNull();
+  });
+
+  it('a 403 auth-gated probe is also reachable; repeated 401s never go down', async () => {
+    mockFailureResponse(403);
+    await monitor.probeAll();
+    expect(monitor.getStatus()['test-vendor'].status).toBe('reachable');
+
+    // The container keeps answering 401 to the credless probe — it must stay
+    // reachable, never crossing the down threshold (it is alive, not failing).
+    for (let i = 0; i < 3; i++) {
+      mockFailureResponse(401);
+      await monitor.probeAll();
+    }
+    expect(monitor.getStatus()['test-vendor'].status).toBe('reachable');
+    expect(monitor.getStatus()['test-vendor'].consecutiveFailures).toBe(0);
+  });
+
+  it('keeps 5xx and network errors on the down path (not reachable)', async () => {
+    for (let i = 0; i < 3; i++) {
+      mockFailureResponse(500);
+      await monitor.probeAll();
+    }
+    expect(monitor.getStatus()['test-vendor'].status).toBe('down');
+  });
+
   it('sends DOWN webhook only at threshold (not before, not after)', async () => {
     const { sendWebhook } = await import('./webhook.js');
     const { config } = await import('../config.js');
@@ -278,6 +311,11 @@ describe('deriveVendorHealth', () => {
   it('maps down to down regardless of latency', () => {
     expect(deriveVendorHealth({ status: 'down', consecutiveFailures: 5, responseMs: 50 }))
       .toBe('down');
+  });
+
+  it('maps a reachable (auth-gated) vendor to reachable, not healthy or down', () => {
+    expect(deriveVendorHealth({ status: 'reachable', consecutiveFailures: 0, responseMs: 120 }))
+      .toBe('reachable');
   });
 
   it('maps an unprobed vendor to unknown', () => {

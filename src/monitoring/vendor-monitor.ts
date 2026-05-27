@@ -5,7 +5,7 @@ import { sendRootlyAlert, type RootlyVendorAlert } from './rootly.js';
 
 export interface VendorStatus {
   slug: string;
-  status: 'up' | 'down' | 'unknown';
+  status: 'up' | 'reachable' | 'down' | 'unknown';
   version: string | null;
   responseMs: number;
   lastChecked: Date;
@@ -22,23 +22,32 @@ const FAILURE_THRESHOLD = 3;
  */
 export const DEGRADED_LATENCY_MS = 2000;
 
-/** Tenant-facing 4-state health derived from the raw monitor status. */
-export type VendorHealthState = 'healthy' | 'degraded' | 'down' | 'unknown';
+/** Tenant-facing health derived from the raw monitor status. */
+export type VendorHealthState = 'healthy' | 'reachable' | 'degraded' | 'down' | 'unknown';
 
 /**
- * Map a raw monitor {@link VendorStatus} to the tenant-facing 4-state model.
+ * Map a raw monitor {@link VendorStatus} to the tenant-facing model.
  *
- *   down     — the monitor has declared the vendor down (>= 3 failures)
- *   degraded — responding, but slow (latency over threshold) OR carrying
- *              1-2 consecutive failures (below the hard down threshold)
- *   healthy  — up, fast, no recent failures
- *   unknown  — not yet probed
+ *   down      — the monitor has declared the vendor down (>= 3 failures)
+ *   reachable — the container ANSWERED but the monitor's UNAUTHENTICATED probe
+ *               was auth-gated (HTTP 401/403): the vendor is ALIVE + serving,
+ *               it just rejected the credless health probe (AUTH_MODE=gateway
+ *               -mcp servers gate `initialize` behind auth). NOT down — authed
+ *               tool-calls through the gateway still work; the probe simply
+ *               cannot verify the authed path. Distinct from `healthy` (which
+ *               implies a clean 2xx) so a working auth-gated vendor is never
+ *               mislabeled "Not responding".
+ *   degraded  — responding, but slow (latency over threshold) OR carrying
+ *               1-2 consecutive failures (below the hard down threshold)
+ *   healthy   — up, fast, no recent failures
+ *   unknown   — not yet probed
  */
 export function deriveVendorHealth(
   s: Pick<VendorStatus, 'status' | 'consecutiveFailures' | 'responseMs'>,
 ): VendorHealthState {
   if (s.status === 'down') return 'down';
   if (s.status === 'unknown') return 'unknown';
+  if (s.status === 'reachable') return 'reachable';
   if (s.consecutiveFailures > 0 || s.responseMs > DEGRADED_LATENCY_MS) return 'degraded';
   return 'healthy';
 }
@@ -187,6 +196,17 @@ export class VendorMonitor {
       const elapsed = Date.now() - start;
 
       if (!res.ok) {
+        // A REACHED response (the fetch resolved) with an auth-gate status
+        // (401/403) means the container is ALIVE + serving — it just rejected
+        // the monitor's UNAUTHENTICATED probe (AUTH_MODE=gateway -mcp servers
+        // gate `initialize` behind auth). That is "reachable", NOT down: the
+        // gateway's authed tool-calls still work. Record it distinctly so a
+        // working auth-gated vendor is not mislabeled "Not responding". Other
+        // non-2xx (4xx-misc, 5xx) are real probe failures and still record down.
+        if (res.status === 401 || res.status === 403) {
+          this.recordReachable(slug, elapsed, now, prev);
+          return;
+        }
         this.recordFailure(slug, `HTTP ${res.status}`, elapsed, now, prev);
         return;
       }
@@ -229,6 +249,45 @@ export class VendorMonitor {
       const elapsed = Date.now() - start;
       const msg = err instanceof Error ? err.message : String(err);
       this.recordFailure(slug, msg, elapsed, now, prev);
+    }
+  }
+
+  /**
+   * Record a REACHED-but-auth-gated probe (HTTP 401/403): the container is
+   * alive + serving, it just rejected the credless probe. Resets the failure
+   * counter (it answered) and sets the distinct `reachable` status — never
+   * `down`. If the vendor was previously down, this counts as a recovery
+   * (it is answering again), logged + paged-resolved like the up path.
+   */
+  private recordReachable(
+    slug: string,
+    responseMs: number,
+    now: Date,
+    prev: VendorStatus | undefined,
+  ): void {
+    const wasDown = prev?.status === 'down';
+    const stateChange = wasDown || !prev || prev.status !== 'reachable' ? now : prev.lastStateChange;
+
+    this.state.set(slug, {
+      slug,
+      status: 'reachable',
+      version: prev?.version ?? null,
+      responseMs,
+      lastChecked: now,
+      lastStateChange: stateChange,
+      consecutiveFailures: 0,
+      lastError: null,
+    });
+
+    if (wasDown) {
+      const downDuration = formatDuration(now.getTime() - prev.lastStateChange.getTime());
+      this.logger.info({ slug }, `vendor-monitor: ${slug} reachable (auth-gated probe)`);
+      void this.alert(`🟡 Vendor REACHABLE: ${slug} — container answering (auth-gated probe) after ${downDuration}`);
+      this.pageRootly({
+        vendorSlug: slug,
+        status: 'resolved',
+        summary: `Vendor MCP container reachable again: ${slug} — answering (auth-gated probe) after ${downDuration}`,
+      });
     }
   }
 

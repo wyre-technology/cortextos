@@ -7,7 +7,7 @@ import {
   type VendorHealthStatus,
 } from './vendor-health-view.js';
 
-const ALL_STATUSES: VendorHealthStatus[] = ['healthy', 'degraded', 'down', 'unknown'];
+const ALL_STATUSES: VendorHealthStatus[] = ['healthy', 'reachable', 'degraded', 'down', 'unknown'];
 
 describe('statusDotClass', () => {
   it('maps every status to a distinct dot class', () => {
@@ -20,6 +20,7 @@ describe('statusDotClass', () => {
 describe('statusLabel', () => {
   it('maps every status to dignified tenant-facing copy', () => {
     expect(statusLabel('healthy')).toBe('Connected');
+    expect(statusLabel('reachable')).toBe('Reachable');
     expect(statusLabel('degraded')).toBe('Degraded');
     expect(statusLabel('down')).toBe('Not responding');
     expect(statusLabel('unknown')).toBe('Checking…');
@@ -31,6 +32,7 @@ describe('hasErrorContext', () => {
     expect(hasErrorContext('degraded')).toBe(true);
     expect(hasErrorContext('down')).toBe(true);
     expect(hasErrorContext('healthy')).toBe(false);
+    expect(hasErrorContext('reachable')).toBe(false);
     expect(hasErrorContext('unknown')).toBe(false);
   });
 });

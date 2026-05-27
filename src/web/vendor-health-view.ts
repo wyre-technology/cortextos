@@ -42,11 +42,12 @@ function assertNever(x: never): never {
  */
 export function statusDotClass(status: VendorHealthStatus): string {
   switch (status) {
-    case 'healthy':  return 'vc-dot-healthy';
-    case 'degraded': return 'vc-dot-degraded';
-    case 'down':     return 'vc-dot-down';
-    case 'unknown':  return 'vc-dot-unknown';
-    default:         return assertNever(status);
+    case 'healthy':   return 'vc-dot-healthy';
+    case 'reachable': return 'vc-dot-reachable';
+    case 'degraded':  return 'vc-dot-degraded';
+    case 'down':      return 'vc-dot-down';
+    case 'unknown':   return 'vc-dot-unknown';
+    default:          return assertNever(status);
   }
 }
 
@@ -56,11 +57,12 @@ export function statusDotClass(status: VendorHealthStatus): string {
  */
 export function statusLabel(status: VendorHealthStatus): string {
   switch (status) {
-    case 'healthy':  return 'Connected';
-    case 'degraded': return 'Degraded';
-    case 'down':     return 'Not responding';
-    case 'unknown':  return 'Checking…';
-    default:         return assertNever(status);
+    case 'healthy':   return 'Connected';
+    case 'reachable': return 'Reachable';
+    case 'degraded':  return 'Degraded';
+    case 'down':      return 'Not responding';
+    case 'unknown':   return 'Checking…';
+    default:          return assertNever(status);
   }
 }
 
@@ -114,6 +116,14 @@ export const VENDOR_HEALTH_STYLES = `
     background: var(--success);
     box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
   }
+  /* Reachable: container is alive but the credless health-probe was auth-gated
+     (401/403). A NEUTRAL/informational token (blue) — distinct from healthy-green,
+     degraded-amber, and down-red — so an auth-gated-but-working vendor reads as
+     "reachable", not a problem. (Ruby owns the final auth-gated token.) */
+  .vc-dot-reachable {
+    background: #0ea5e9;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.25);
+  }
   .vc-dot-degraded {
     background: var(--warning-text);
     box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
@@ -128,7 +138,8 @@ export const VENDOR_HEALTH_STYLES = `
   }
   /* Light cards: ring is a low-alpha halo; dark bg eats it slightly, so
      light mode drops the alpha back to the spec's 0.20 baseline. */
-  .light .vc-dot-healthy  { box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.20); }
-  .light .vc-dot-degraded { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.20); }
-  .light .vc-dot-down     { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.20); }
+  .light .vc-dot-healthy   { box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.20); }
+  .light .vc-dot-reachable { box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.20); }
+  .light .vc-dot-degraded  { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.20); }
+  .light .vc-dot-down      { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.20); }
 `;
