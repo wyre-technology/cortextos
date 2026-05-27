@@ -34,6 +34,23 @@
 - `AGENT_NAME_REGEX` exported from `src/utils/validate.ts` for reuse.
 - Forked to `wyre-technology/cortextos`; `CONTRIBUTING.md` documents upstream sync.
 
+### Fixed
+- **BUG-061 — multi-instance roster bleed.** A non-default daemon instance
+  (e.g. `--instance wyre-gateway`, `CTX_ORG=wyre-gateway`) started the *wrong*
+  roster: `AgentManager.discoverAgents()` scans every org under the shared
+  framework root, and the instance enable-list is disable-only (absence ⇒
+  enabled, per BUG-028), so a second instance re-discovered and started the
+  default instance's agents (a different org). Instances were isolated by
+  `CTX_ROOT` (state) but not by agent roster. `discoverAndStart()` now skips
+  any discovered agent whose `resolveAgentOrg(name)` differs from the daemon's
+  `CTX_ORG` — **only for non-default instances**; the `default` instance keeps
+  the legacy discover-all-orgs behavior (multi-org / single-install catch-all),
+  so there is zero change to existing single-instance installs. Paired with the
+  `ecosystem.config.js` PM2 process-name suffix (`cortextos-daemon-<instance>`
+  for non-default instances; `default` stays `cortextos-daemon`) so multiple
+  instances run side-by-side without renaming/restarting the running default
+  fleet.
+
 ## [0.2.0] — 2026-05-04 — External Persistent Crons
 
 Crons move from session-local (`/loop`, `CronCreate`) to daemon-managed `crons.json` files under `${CTX_ROOT}/state/{agent}/`. Auto-migrates from existing `config.json` on first daemon boot. Fully backward-compatible additive feature.
