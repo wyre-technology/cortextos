@@ -213,7 +213,14 @@ async function applyMigrations(sql: postgres.Sql): Promise<void> {
 }
 
 export async function startIntegrationDb(): Promise<IntegrationDb> {
-  const container = await new PostgreSqlContainer('postgres:15-alpine').start();
+  // Use pgvector/pgvector:pg15 — a drop-in superset of postgres:15-alpine
+  // that ships with the `vector` extension binaries. Required by migration
+  // 035_org_memory_schema.sql's `CREATE EXTENSION IF NOT EXISTS vector` and
+  // the `vector(1536)` column types on orgmem_entities / orgmem_facts.
+  // (Plain postgres:15-alpine works for every other migration but cannot
+  // satisfy the vector extension dependency, which is otherwise installed
+  // on Azure FS PG via the `azure.extensions` allowlist.)
+  const container = await new PostgreSqlContainer('pgvector/pgvector:pg15').start();
   const connStr = container.getConnectionUri();
   const sql = postgres(connStr, { max: 4, onnotice: () => {} });
 
