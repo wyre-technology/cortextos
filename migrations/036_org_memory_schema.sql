@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration:      035_org_memory_schema.sql
+-- Migration:      036_org_memory_schema.sql
 -- Date:           2026-05-28
 -- Task:           org-memory Phase-3 PR-1' (analyst Walter, task_1779931361228)
 --
