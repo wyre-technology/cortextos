@@ -15,10 +15,18 @@ denies all inbound, no public IP) and **has no backups**. SP2c closes both
 gaps and ships the operations runbook, making the host genuinely usable by
 the team.
 
-Decisions already locked (SP2 parent brainstorm + SP2c review 2026-05-26):
+Decisions already locked (SP2 parent brainstorm + SP2c review 2026-05-26;
+routing revised 2026-05-24 — see below):
 - **Reachability:** Cloudflare Tunnel only (no public IP).
-- **Dashboard URL:** `internal.wyre.ai/agents` (path-based). The team-facing
-  surface drops the upstream "cortextos" name — see the rename note below.
+- **Dashboard URL:** `wyre-agents.wyre.ai` (subdomain, host-based). The
+  team-facing surface drops the upstream "cortextos" name — see the rename note.
+  **Revised from the earlier `wyre-agents.wyre.ai` path-based plan**: the
+  dashboard has 54 client-side `fetch('/api/...')` calls that a Next.js
+  `basePath` does not rewrite (basePath only prefixes `next/link`/`next/router`/
+  `_next` assets, not raw `fetch`), so path-based routing would require
+  rewriting all 54 call sites with real regression risk. A subdomain serves the
+  dashboard at `/` exactly as local dev with **zero application-code change** —
+  the simpler, lower-risk path to the same clean WYRE-Agents URL.
 - **Access identity:** Entra ID (Azure AD) SSO, restricted to `@wyretechnology.com`.
 - **Backups:** single Azure managed data disk, daily snapshot, 14-day retention.
 
@@ -26,9 +34,10 @@ Decisions already locked (SP2 parent brainstorm + SP2c review 2026-05-26):
 
 This is a hard fork; the team-facing surface is branded **WYRE Agents**, not
 "cortextos". SP2c renames only what the team sees:
-- Hostname/path: `internal.wyre.ai/agents` (not `/cortextos`).
-- Ops SSH host: `agents-ssh.internal.wyre.ai`.
-- Dashboard title / Access app names: "WYRE Agents".
+- Hostname: `wyre-agents.wyre.ai` (subdomain, serves the dashboard at `/`).
+- Ops SSH host: `wyre-agents-ssh.wyre.ai`.
+- Access app names: "WYRE Agents". (A dashboard page-title rebrand is an
+  optional one-string nicety, not load-bearing.)
 
 The internal guts stay `cortextos` for now — the CLI command (`cortextos`),
 paths (`/opt/cortextos`, `/var/lib/cortextos`), systemd unit names
@@ -50,9 +59,9 @@ command is left untouched.
 ## Goal (SP2c)
 
 After SP2c:
-- The dashboard is reachable at `https://internal.wyre.ai/agents`, gated by
+- The dashboard is reachable at `https://wyre-agents.wyre.ai`, gated by
   Cloudflare Access (WYRE identity only).
-- Ops SSH reaches the VM at `agents-ssh.internal.wyre.ai` through the same
+- Ops SSH reaches the VM at `wyre-agents-ssh.wyre.ai` through the same
   tunnel (no public :22).
 - The data disk is snapshotted daily with 14-day retention; a restore drill
   has been run and documented.
@@ -67,13 +76,14 @@ After SP2c:
    `cloudflared tunnel run --token <token>`. Ingress + DNS + Access are all
    Terraform-managed.
 
-2. **Path-based routing at `/agents` requires a dashboard `basePath` change.**
-   Cloudflare Tunnel ingress matches host + path but does **not** rewrite
-   paths. To serve the dashboard under `/agents`, Next.js must build with
-   `basePath: '/agents'`. This is the **only application-code change** in SP2c
-   (`dashboard/next.config.ts`), gated behind the `DASHBOARD_BASE_PATH` env var
-   (default empty) so local dev at `/` is unaffected. Implementation greps the
-   dashboard for hardcoded leading-slash `/api/...` paths and fixes any.
+2. **Host-based routing on a subdomain — no dashboard code change.**
+   The dashboard is served at `https://wyre-agents.wyre.ai/` (root).
+   Cloudflare Tunnel ingress matches the hostname and proxies to
+   `localhost:3000` unchanged, so the dashboard runs exactly as in local dev.
+   This replaces the earlier path-based `/agents` plan, which would have
+   required a Next.js `basePath` plus rewriting 54 client-side `fetch('/api/...')`
+   calls (basePath does not touch raw `fetch`). **SP2c-2 therefore has no
+   application-code change** beyond an optional dashboard page-title rebrand.
 
 3. **Cloudflare Access identity = Entra ID (Azure AD) SSO.** WYRE is a
    Microsoft shop (Entra tenant for `wyretechnology.com`, M365, CIPP). Access
@@ -94,17 +104,17 @@ After SP2c:
 ## Architecture (additions to SP2a/b)
 
 ```
-Engineers ── browser ──▶ https://internal.wyre.ai/agents
-Ops      ── ssh ───────▶ agents-ssh.internal.wyre.ai
+Engineers ── browser ──▶ https://wyre-agents.wyre.ai
+Ops      ── ssh ───────▶ wyre-agents-ssh.wyre.ai
                               │  Cloudflare edge (TLS terminated)
                               │  Access policy: Entra SSO, @wyretechnology.com
                               ▼  Cloudflare Tunnel (outbound from VM)
 ┌── Azure VM (unchanged NSG: deny all inbound) ───────────────┐
 │  cloudflared.service (systemd) — tunnel run --token <kv>    │
 │     ingress:                                                │
-│       internal.wyre.ai /agents*           → localhost:3000  │
-│       agents-ssh.internal.wyre.ai         → ssh://localhost:22│
-│  cortextos.service — daemon + dashboard (basePath /agents)  │
+│       wyre-agents.wyre.ai             → localhost:3000  │
+│       wyre-agents-ssh.wyre.ai         → ssh://localhost:22│
+│  cortextos.service — daemon + dashboard (served at /)       │
 │  data disk /var/lib/cortextos ── Azure Backup (daily, 14d)  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -114,9 +124,9 @@ Ops      ── ssh ───────▶ agents-ssh.internal.wyre.ai
 1. **`infra/terraform/cloudflare.tf`** — provider config + resources:
    - `cloudflare_zero_trust_tunnel_cloudflared "cortextos"` (remotely-managed).
    - `cloudflare_zero_trust_tunnel_cloudflared_config` — two ingress rules
-     (dashboard path, ssh hostname) + catch-all 404.
-   - `cloudflare_record` — CNAME `internal` and `agents-ssh` → the tunnel's
-     `cfargotunnel.com` target.
+     (dashboard hostname → :3000, ssh hostname → ssh://:22) + catch-all 404.
+   - `cloudflare_record` — CNAME `agents.internal` and `agents-ssh.internal` →
+     the tunnel's `cfargotunnel.com` target.
    - `cloudflare_zero_trust_access_application` ×2 ("WYRE Agents" dashboard,
      ssh) + `cloudflare_zero_trust_access_policy` requiring the Entra IdP
      (`var.cloudflare_access_idp_id`) and restricting to `@wyretechnology.com`.
@@ -138,10 +148,10 @@ Ops      ── ssh ───────▶ agents-ssh.internal.wyre.ai
    - `cloudflared.service` runs `cloudflared tunnel run --token <token>`.
    - Drift checker (`check-systemd-drift.sh`) extended to cover the new unit.
 
-4. **Dashboard `basePath`** — `dashboard/next.config.ts` reads
-   `DASHBOARD_BASE_PATH` (default empty for local dev); cloud-init sets it to
-   `/agents` in the dashboard's environment. The only app-code change. The
-   dashboard page title / header is rebranded "WYRE Agents".
+4. **No dashboard routing change** — host-based subdomain routing serves the
+   dashboard at `/`, so `next.config.ts` and the 54 client `fetch('/api/...')`
+   calls are untouched. Optional: rebrand the dashboard page title to
+   "WYRE Agents" (a one-string cosmetic change, not required for SP2c-2).
 
 5. **`docs/runbook/sp2-host.md`** — start/stop/restart, log locations,
    tunnel re-auth, disk growth, **restore-from-snapshot drill** (with timings),
@@ -149,11 +159,11 @@ Ops      ── ssh ───────▶ agents-ssh.internal.wyre.ai
 
 6. **`infra/terraform/variables.tf`** — new variables:
    `cloudflare_account_id`, `cloudflare_zone_id`, `cloudflare_zone_name`
-   (default `wyre.ai`), `dashboard_hostname` (default `internal.wyre.ai`),
-   `dashboard_base_path` (default `/agents`), `ssh_hostname`
-   (default `agents-ssh.internal.wyre.ai`), `cloudflare_access_idp_id`
-   (Entra IdP id — required for the Access policy), `access_email_domain`
-   (default `wyretechnology.com`).
+   (default `wyre.ai`), `dashboard_hostname` (default `wyre-agents.wyre.ai`),
+   `ssh_hostname` (default `wyre-agents-ssh.wyre.ai`),
+   `cloudflare_access_idp_id` (Entra IdP id — required for the Access policy),
+   `access_email_domain` (default `wyretechnology.com`). (No `dashboard_base_path` —
+   host-based routing needs none.)
 
 ## Decomposition inside SP2c
 
@@ -162,7 +172,7 @@ Three PRs against `main`, each leaving the system working:
 | # | Sub-step | Ships | Risk |
 |---|---|---|---|
 | **SP2c-1** | Backups | `backup.tf`, restore drill, runbook backup section | Low — pure Terraform + Azure |
-| **SP2c-2** | Tunnel + Access | `cloudflare.tf`, `cloudflared.service`, KV token, dashboard `basePath` | Medium — Cloudflare provider + dashboard change |
+| **SP2c-2** | Tunnel + Access | `cloudflare.tf`, `cloudflared.service`, KV token (subdomain routing, no dashboard change) | Medium — Cloudflare provider + Entra IdP wiring |
 | **SP2c-3** | Runbook + polish | full `docs/runbook/sp2-host.md`, drift-check extension, CHANGELOG, tag `v0.3.0` | Low |
 
 SP2c-1 first because it's independent and immediately valuable (a running host
@@ -173,10 +183,10 @@ with no backups is the scariest state). SP2c-2 is the headline. SP2c-3 closes ou
 - `terraform apply` (with `CLOUDFLARE_API_TOKEN` set) provisions the tunnel,
   DNS, Access apps/policies, and backup vault cleanly; `terraform destroy`
   tears them down without orphan DNS records or stuck tunnels.
-- `https://internal.wyre.ai/agents` loads the dashboard, gated by Access
+- `https://wyre-agents.wyre.ai` loads the dashboard at `/`, gated by Access
   (an un-authenticated request gets the Cloudflare Access login; a
   `@wyretechnology.com` identity gets in).
-- `ssh -o ProxyCommand="cloudflared access ssh --hostname agents-ssh.internal.wyre.ai" ops@agents-ssh.internal.wyre.ai` works for the ops user.
+- `ssh -o ProxyCommand="cloudflared access ssh --hostname wyre-agents-ssh.wyre.ai" ops@wyre-agents-ssh.wyre.ai` works for the ops user.
 - A daily snapshot has fired; one snapshot has been restored into a fresh VM
   and the daemon comes up with `smoke/foo` (or equivalent) intact. Timed and
   recorded in the runbook.
@@ -195,12 +205,12 @@ with no backups is the scariest state). SP2c-2 is the headline. SP2c-3 closes ou
   `cloudflare_zero_trust_tunnel_cloudflared`, etc.). SP2c pins the provider
   version and uses the v5 names; implementation must confirm against the
   installed provider version.
-- **`basePath` and the dashboard's API routes.** Setting `basePath` prefixes
-  *all* routes including `/api/*` and `/_next/*`. The dashboard's client code
-  must use relative or basePath-aware URLs. Next.js handles this automatically
-  for `next/link`, `next/router`, and `fetch` to same-origin relative paths —
-  but any hardcoded absolute `/api/...` strings will break. Implementation
-  greps the dashboard for hardcoded leading-slash API paths and fixes any.
+- **(Resolved) Path-based routing vs. the dashboard's API calls.** The original
+  path-based `/agents` plan was abandoned: the dashboard has 54 client-side
+  `fetch('/api/...')` calls that a Next.js `basePath` does not rewrite, so the
+  refactor risk was high. Host-based subdomain routing
+  (`wyre-agents.wyre.ai`) serves the dashboard at `/` and needs no code
+  change. Decided 2026-05-24.
 - **Access + SSH UX.** Engineers need `cloudflared` installed locally and an
   `~/.ssh/config` ProxyCommand entry. The runbook provides the snippet; this
   is the same setup Aaron already uses for Conduit.

@@ -81,3 +81,47 @@ undelete then hard-delete:
 In production you generally do **not** destroy this stack — these notes are for
 test/iteration cycles. The `deleted-backup-instance` CLI has no direct purge;
 undelete→delete (with soft-delete off) is the supported path.
+
+## SP2c-2 apply prerequisites (Cloudflare Tunnel + Access)
+
+Before `terraform apply` with the Cloudflare resources:
+
+1. **Cloudflare API token** — create one scoped to:
+   - Zone : DNS : Edit  (on the `wyre.ai` zone)
+   - Account : Cloudflare Tunnel : Edit
+   - Account : Access: Apps and Policies : Edit
+   Export it: `export CLOUDFLARE_API_TOKEN=...` (never commit).
+
+2. **Account / zone ids** — put in `terraform.tfvars`:
+   - `cloudflare_account_id` = (Cloudflare dashboard → account id)
+   - `cloudflare_zone_id`    = (wyre.ai zone → zone id)
+
+3. **Entra IdP in Cloudflare Zero Trust** — Zero Trust dashboard → Settings →
+   Authentication → add **Azure AD** login method (app registration in the
+   `wyretechnology.com` Entra tenant; redirect URI from the CF setup wizard).
+   Copy the resulting IdP id into `terraform.tfvars` as `cloudflare_access_idp_id`.
+
+4. `terraform apply`. Then verify:
+   - `https://wyre-agents.wyre.ai` → Cloudflare Access login → WYRE SSO → dashboard.
+   - Local `~/.ssh/config`:
+     ```
+     Host wyre-agents-ssh.wyre.ai
+       ProxyCommand cloudflared access ssh --hostname %h
+       User ops
+     ```
+     then `ssh wyre-agents-ssh.wyre.ai`.
+
+## SP2c-2 verification notes (2026-05-29)
+
+Two gotchas surfaced during the first end-to-end apply, both reflected in the
+infra and now documented for the next operator:
+
+1. **Universal SSL doesn't cover third-level subdomains.** The original plan used
+   `agents.internal.wyre.ai` (third level). Cloudflare's free Universal SSL only
+   covers `*.zone.tld` (single level), so TLS handshake failed at the edge.
+   Final hostname is `wyre-agents.wyre.ai` (single level → covered). Adding
+   Advanced Certificate Manager (~$10/mo) would re-enable arbitrary depth.
+2. **Operator IP must be on Key Vault's network ACL** for `terraform apply` to
+   write the cloudflared token secret. Set via the new `operator_ip_cidrs`
+   variable (default `[]`). Leave empty in steady state; set to your `/32` only
+   while applying changes that touch KV secrets.

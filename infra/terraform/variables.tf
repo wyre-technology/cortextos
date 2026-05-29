@@ -105,3 +105,66 @@ variable "backup_time_utc" {
   description = "Daily backup time, ISO 8601 UTC (e.g. 02:00 → 2026-01-01T02:00:00Z; only the time-of-day is used)."
   default     = "2026-01-01T07:00:00Z"
 }
+
+variable "cloudflare_account_id" {
+  type        = string
+  description = "Cloudflare account ID that owns the tunnel and Access apps."
+  default     = ""
+
+  validation {
+    condition     = length(var.cloudflare_account_id) > 0
+    error_message = "cloudflare_account_id must be set (Cloudflare account/zone/IdP id) — see docs/runbook/sp2-host.md."
+  }
+}
+
+variable "cloudflare_zone_id" {
+  type        = string
+  description = "Cloudflare zone ID for wyre.ai (DNS records are created here)."
+  default     = ""
+
+  validation {
+    condition     = length(var.cloudflare_zone_id) > 0
+    error_message = "cloudflare_zone_id must be set (Cloudflare account/zone/IdP id) — see docs/runbook/sp2-host.md."
+  }
+}
+
+variable "cloudflare_zone_name" {
+  type        = string
+  description = "Cloudflare zone name."
+  default     = "wyre.ai"
+}
+
+variable "dashboard_hostname" {
+  type        = string
+  description = "Public hostname for the dashboard (host-based routing, served at /)."
+  default     = "agents.internal.wyre.ai"
+}
+
+variable "ssh_hostname" {
+  type        = string
+  description = "Public hostname for ops SSH through the tunnel."
+  default     = "agents-ssh.internal.wyre.ai"
+}
+
+variable "cloudflare_access_idp_id" {
+  type        = string
+  description = "Cloudflare Zero Trust IdP id for the Entra (Azure AD) identity provider. Operator sets this up in the CF Zero Trust dashboard first (see runbook); required for the Access policy."
+  default     = ""
+
+  validation {
+    condition     = length(var.cloudflare_access_idp_id) > 0
+    error_message = "cloudflare_access_idp_id must be set (Cloudflare account/zone/IdP id) — see docs/runbook/sp2-host.md."
+  }
+}
+
+variable "access_email_domain" {
+  type        = string
+  description = "Email domain allowed through Cloudflare Access."
+  default     = "wyretechnology.com"
+}
+
+variable "operator_ip_cidrs" {
+  type        = list(string)
+  description = "IP CIDRs allowed to reach Key Vault from outside the VM subnet (operator break-glass). Empty in steady state."
+  default     = []
+}

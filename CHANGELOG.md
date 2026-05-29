@@ -24,6 +24,12 @@
   protecting the data disk, with snapshots in a dedicated snapshot resource
   group. Verified end-to-end (on-demand backup job + snapshot).
 - `docs/runbook/sp2-host.md` — operations runbook (backup section).
+- SP2c-2 — Cloudflare Tunnel + Zero-Trust Access. The dashboard is reachable at
+  `https://wyre-agents.wyre.ai` and ops SSH at `wyre-agents-ssh.wyre.ai`
+  through a Cloudflare Tunnel (no public IP), gated by Entra-SSO Access limited
+  to `@wyretechnology.com`. `cloudflared.service` runs the tunnel from a token
+  stored in Key Vault and fetched at first boot via the VM's managed identity.
+  Host-based subdomain routing — no dashboard code change.
 
 ### Changed
 - `listAgents` also discovers namespaced agents.
