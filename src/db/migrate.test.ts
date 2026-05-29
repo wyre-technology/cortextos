@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runMigrations, assertNumericContiguity } from './migrate.js';
 import type postgres from 'postgres';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, '../..');
 
 interface FakeQueryResult {
   count?: number;
@@ -230,5 +234,51 @@ describe('assertNumericContiguity', () => {
     expect(() =>
       assertNumericContiguity(['1_short.sql', '001_padded.sql']),
     ).toThrow(/duplicate migration numbers/);
+  });
+});
+
+// =============================================================================
+// Regression-guard: assertNumericContiguity must pass against the REAL
+// migrations/ dir shipped with this codebase.
+//
+// Why this test exists (find-the-answer-at-code-velocity rationale):
+//
+// On 2026-05-28, two PRs (#271 vendor-registry + #282 org-memory) both
+// claimed `035_*.sql` and BOTH merged to main. assertNumericContiguity
+// throws on duplicate numbers — meaning the next production deploy via
+// runMigrations would have refused to boot — but CI passed cleanly on
+// both merges. The unit tests above test the function's SHAPE on
+// synthetic arrays (CI-verification-layer); they never exercise the
+// assertion against the actual files shipped with this codebase.
+// The SCIM integration harness has its own applyMigrations that doesn't
+// call the assertion either. The production-runtime path (runMigrations
+// on the real migrations/ dir at Fastify boot) was the only place the
+// check would fire, and CI never invoked it.
+//
+// This regression-guard closes the gap structurally: any future PR
+// that introduces a duplicate-number / sequence-gap / missing-prefix
+// problem against the actual `migrations/` dir will fail this test at
+// PR-time, BEFORE the merge that lands the broken state on main.
+// Construction-side fix (the test is the gate) over discipline-side
+// fix (reviewers remember to check the migration number) — matches
+// the codebase's defence-by-construction pattern (mig 029's GRANT
+// guards, mig 036's DO-block policy guards, the canonical-key
+// UNIQUE INDEX in mig 036, etc.).
+//
+// Recovery PR: #283 (rename 035 → 036). CI-gap follow-up: this test.
+// =============================================================================
+
+describe('assertNumericContiguity — against the real migrations/ dir (regression-guard)', () => {
+  it('the production migrations/ dir passes assertNumericContiguity', () => {
+    const realMigrationsDir = join(REPO_ROOT, 'migrations');
+    const files = readdirSync(realMigrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+    // assertNumericContiguity throws on first violation with an
+    // operator-actionable message naming the offending files. If this
+    // test ever fails, the error itself names what to fix and the
+    // mig-035 incident's recovery PR (#283) is the worked-example
+    // template for the renumber-fix shape.
+    expect(() => assertNumericContiguity(files)).not.toThrow();
   });
 });
