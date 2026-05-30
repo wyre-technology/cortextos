@@ -45,5 +45,5 @@ resource "azurerm_key_vault_access_policy" "vm" {
   tenant_id    = var.tenant_id
   object_id    = azurerm_linux_virtual_machine.main.identity[0].principal_id
 
-  secret_permissions = ["Get", "List"]
+  secret_permissions = ["Get", "List", "Set"]
 }
