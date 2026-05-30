@@ -32,6 +32,8 @@ locals {
     cortextos_branch   = var.cortextos_branch
     node_major_version = var.node_major_version
     key_vault_uri      = azurerm_key_vault.main.vault_uri
+    key_vault_name     = azurerm_key_vault.main.name
+    dashboard_hostname = var.dashboard_hostname
   })
 }
 
