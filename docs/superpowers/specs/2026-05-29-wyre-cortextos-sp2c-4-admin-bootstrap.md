@@ -68,43 +68,69 @@ command flow that survives reboots.
 
 ## What ships
 
+> Scope expanded 2026-05-30 after first browser sign-in surfaced two more gaps
+> in addition to the missing `ADMIN_PASSWORD`: **`AUTH_SECRET` was unset**
+> (NextAuth refused to issue sessions, 500ing every `/api/auth/*` route) and
+> **`ecosystem.config.js` shipped `next dev`** instead of `next start`
+> (30-second cold compiles per route on first hit). Both fold cleanly into the
+> same "dashboard first-boot env" workstream.
+
 1. **`infra/terraform/cloud-init.yaml.tftpl`** — new bootstrap step
-   (`provision_admin_password.sh` helper) that:
-   - Skips if `/var/lib/cortextos/.admin-password-provisioned` exists.
-   - Otherwise: generate password, write `dashboard/.env.local` (or update only
-     `ADMIN_PASSWORD` if file pre-exists), set `ADMIN_USERNAME=admin`, store
-     the password to Key Vault via the VM's managed identity, write the
-     sentinel, log success.
+   (`provision_dashboard_env.sh` helper) that:
+   - Skips if `/var/lib/cortextos/.dashboard-env-provisioned` exists (sentinel).
+   - Otherwise generates:
+     - `ADMIN_PASSWORD` — 32-char `secrets.token_urlsafe`-style random string.
+     - `AUTH_SECRET` — 48-char `secrets.token_urlsafe` random string (NextAuth
+       v5 requires it; without it the dashboard 500s every `/api/auth/*` call).
+   - Writes `dashboard/.env.local` with: `ADMIN_USERNAME=admin`,
+     `ADMIN_PASSWORD=<generated>`, `AUTH_SECRET=<generated>`,
+     `AUTH_TRUST_HOST=true`, `NEXTAUTH_URL=<dashboard_url>`,
+     `AUTH_URL=<dashboard_url>`. File is `chmod 600`, `chown cortextos:cortextos`.
+   - Stores both `ADMIN_PASSWORD` and `AUTH_SECRET` in Key Vault as
+     `dashboard-admin-password` and `dashboard-auth-secret`. Operator-recoverable.
+   - Writes the sentinel, logs success.
 
-2. **`infra/terraform/keyvault.tf`** — add `Set` to the VM identity's
-   `secret_permissions` list. Operator policy unchanged.
+2. **`src/cli/ecosystem.ts`** — already fixed (commit `bf95efb`): use
+   `next start` when `NODE_ENV=production`, `next dev` otherwise. Included in
+   the spec so the change history is one place to look.
 
-3. **`infra/systemd/cortextos-bootstrap.service`** — no change needed; the
-   admin-password step runs inside the existing bootstrap script.
+3. **`infra/terraform/keyvault.tf`** — add `Set` to the VM identity's
+   `secret_permissions` list (currently `Get, List` only — set was never
+   needed before SP2c-4). Operator policy unchanged.
 
-4. **`docs/runbook/sp2-host.md`** — add a "Dashboard admin password" section:
-   - Where the password lives (Key Vault), how to retrieve it.
-   - Rotation via the dashboard UI (preferred).
-   - Hard-rotation via cloud-init (operator deletes sentinel + KV secret,
-     restarts the bootstrap service).
+4. **`infra/systemd/cortextos-bootstrap.service`** — no change needed; the
+   provision step runs inside the existing bootstrap script.
+
+5. **`docs/runbook/sp2-host.md`** — add a "Dashboard credentials" section:
+   - Where each value lives (Key Vault), how to retrieve.
+   - Rotation via the dashboard UI (preferred for `ADMIN_PASSWORD`).
+   - Hard-rotation via cloud-init (delete sentinel + KV secrets, restart
+     `cortextos-bootstrap.service`).
+   - `AUTH_SECRET` rotation — separate concern: rotating it invalidates all
+     active sessions (signs everyone out). Documented as expected behavior.
    - Note: the operator IP must be on the Key Vault network ACL
-     (`operator_ip_cidrs` variable) to read the secret from a laptop.
+     (`operator_ip_cidrs` variable) to read the secrets from a laptop.
 
-5. **CHANGELOG entry** under `[Unreleased]`.
+6. **CHANGELOG entry** under `[Unreleased]`.
 
 ## Definition of done
 
 - A `terraform destroy` + `terraform apply` cycle (on a feature branch with
   `cortextos_branch` pointed at this work) brings up a VM where:
-  - `az keyvault secret show --name dashboard-admin-password ...` returns a
-    non-empty value.
-  - `/opt/cortextos/dashboard/.env.local` exists, contains `ADMIN_USERNAME=admin`
-    and `ADMIN_PASSWORD=<same as KV>`, owned `cortextos:cortextos`, mode 600.
-  - Browser sign-in at `https://wyre-agents.wyre.ai` with the
-    KV-stored password succeeds end-to-end. No `SYNC_ADMIN_PASSWORD` dance.
-- A reboot does not change the password (sentinel skips the step).
+  - Both `dashboard-admin-password` and `dashboard-auth-secret` exist in Key
+    Vault and have non-empty values.
+  - `/opt/cortextos/dashboard/.env.local` exists, owned `cortextos:cortextos`,
+    mode 600, containing `ADMIN_USERNAME=admin`, `ADMIN_PASSWORD=<same as KV>`,
+    `AUTH_SECRET=<same as KV>`, `AUTH_TRUST_HOST=true`, `NEXTAUTH_URL`, `AUTH_URL`.
+  - `cortextos.service` is up, dashboard runs `next start` (NODE_ENV=production
+    → `npm run start`), `/api/auth/session` returns 200 (not 500), first page
+    load is sub-second.
+  - Browser sign-in at `https://wyre-agents.wyre.ai` with the KV-stored
+    password succeeds end-to-end. **No** `SYNC_ADMIN_PASSWORD` dance, **no**
+    `MissingSecret` errors in the logs, **no** Turbopack/`next dev` messages.
+- A reboot does not change the values (sentinel skips the step).
 - The hard-rotation runbook procedure has been exercised once and produces a
-  new working password.
+  new working credential set.
 
 ## Risks & open questions
 
