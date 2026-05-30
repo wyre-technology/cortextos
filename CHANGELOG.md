@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- SP2c-4 — dashboard env auto-provisioning at first boot. Cloud-init
+  generates `ADMIN_PASSWORD` and `AUTH_SECRET`, writes them to
+  `dashboard/.env.local`, and stores recoverable copies in Key Vault as
+  `dashboard-admin-password` and `dashboard-auth-secret`. Idempotent via
+  sentinel file. VM managed identity granted `Set` on Key Vault. A fresh
+  VM now presents a working dashboard login on first visit with no
+  manual env hacking.
 - Per-engineer agent namespaces: personal agents live under
   `orgs/<org>/engineers/<engineer>/agents/<name>`, addressed as `<engineer>/<name>`.
 - `cortextos add-engineer <name>` command to scaffold a namespace.
@@ -32,6 +39,10 @@
   Host-based subdomain routing — no dashboard code change.
 
 ### Changed
+- `cortextos ecosystem` now uses `next start` when `NODE_ENV=production`
+  (was hardcoded `next dev`, which caused 30-second cold compiles per
+  route on deployed installs). Cloud-init bootstrap also passes
+  `NODE_ENV=production` when calling `cortextos ecosystem`.
 - `listAgents` also discovers namespaced agents.
 - `cortextos ecosystem` agent count now includes namespaced agents.
 - `cortextos ecosystem` now emits the daemon entry even when zero agents
