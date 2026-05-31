@@ -17,6 +17,7 @@ import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import { getVendor, getVendorSlugs } from '../credentials/vendor-config.js';
+import { composeToolScope, scopeAllows, filterToolsByScope } from '../org/scope-enforcement.js';
 import { config } from '../config.js';
 import { ToolCache, type McpTool } from './tool-cache.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
@@ -386,29 +387,29 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               { allowUnscopedToken: true },
             );
 
-            // Tool allowlist enforcement (org credentials only)
-            if (injection.orgId) {
-              const membership = await orgService.getMembership(injection.orgId, injection.userId);
-              const role = membership?.role ?? 'member';
-
-              if (role !== 'owner') {
-                const allowlist = await orgService.getToolAllowlist(
-                  injection.orgId,
-                  vendorSlug,
-                  role,
-                );
-
-                if (allowlist !== null && !allowlist.includes(originalToolName)) {
-                  return reply.send({
-                    jsonrpc: '2.0',
-                    id: body?.id ?? null,
-                    error: {
-                      code: -32601,
-                      message: `Tool "${originalToolName}" is not permitted for your role`,
-                    },
-                  });
-                }
-              }
+            // Tool scope enforcement (WYREAI-61): composeToolScope handles
+            // org+role (existing behavior, flag-off) and optionally intersects
+            // a team allowlist when CONDUIT_TEAM_SCOPING=true AND injection
+            // carries a teamId. The previous "org credentials only" comment
+            // (now removed via this refactor) referred to which ALLOWLIST is
+            // consulted (org-row), not which CRED-PATH is enforced — the
+            // team-cred path already set injection.orgId, so the old gate
+            // ALREADY fired on team-cred. Flag-on layers team-allowlist in
+            // as an additional narrowing source; no pre-existing bypass.
+            const scope = await composeToolScope(orgService, vendorSlug, {
+              userId: injection.userId,
+              orgId: injection.orgId,
+              teamId: injection.teamId,
+            });
+            if (!scopeAllows(scope, originalToolName)) {
+              return reply.send({
+                jsonrpc: '2.0',
+                id: body?.id ?? null,
+                error: {
+                  code: -32601,
+                  message: `Tool "${originalToolName}" is not permitted for your scope`,
+                },
+              });
             }
 
             // Rewrite body with un-prefixed tool name
@@ -671,26 +672,21 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
         if (result.status !== 'fulfilled') continue;
         const { slug, vendorConfig, injection, tools } = result.value;
 
-        let filteredTools = tools;
-        if (injection.orgId) {
-          const membership = await orgService.getMembership(
-            injection.orgId,
-            injection.userId,
-          );
-          const role = membership?.role ?? 'member';
-
-          if (role !== 'owner') {
-            const allowlist = await orgService.getToolAllowlist(
-              injection.orgId,
-              slug,
-              role,
-            );
-
-            if (allowlist !== null) {
-              filteredTools = tools.filter((t) => allowlist.includes(t.name));
-            }
-          }
-        }
+        // Tool scope filtering (WYREAI-61): composeToolScope absorbs the
+        // org+role flag-off path AND the flag-on team-scope intersect. No
+        // pre-existing team-cred bypass: the team-cred path of
+        // injectCredentials sets injection.orgId (credential-injector.ts:189-190),
+        // so org+role already fired on team-cred. Flag-on adds the
+        // team-allowlist as an additional narrowing source. Sequential DB
+        // inside the helper (membership → org allowlist → optional team
+        // allowlist) preserves the reserved-tx-connection serial-only
+        // contract from Pass 3's comment above.
+        const scope = await composeToolScope(orgService, slug, {
+          userId: injection.userId,
+          orgId: injection.orgId,
+          teamId: injection.teamId,
+        });
+        const filteredTools = filterToolsByScope(tools, scope);
 
         // Prefix tool names; truncate descriptions to cap input-token cost.
         // 200 chars retains full semantic value while trimming marketing copy

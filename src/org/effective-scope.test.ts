@@ -7,92 +7,114 @@ import {
   ERR_AMBIGUOUS_TEAM,
   type CallerContext,
   type ScopeSet,
+  type TeamAllowlist,
 } from './effective-scope.js';
 
-// WYREAI-60: pure resolver, exhaustive unit coverage. No DB, no service —
-// these tests pin the structural correctness of the team ∩ org narrow-only
-// intersection + the safety-gated executor decision shape.
+// WYREAI-60: pure resolver, exhaustive unit coverage. Refactored 2026-05-31
+// (WYREAI-69) from parallel-array signature `effectiveScope(ctx, orgAllowlist,
+// teamAllowlists: Allowlist[])` to structural-pairing
+// `effectiveScope(orgAllowlist, teamAllowlists: {teamId, allowlist}[])` — the
+// layer-locality move at API-signature level (warden review: caller-managed
+// parallel-array invariant could over-grant via mismatch). ctx no longer
+// needed by the resolver itself (it still scopes resolveExecutorDecision).
 
 const ctx = (matchingTeams: readonly string[] = [], orgId = 'org_x'): CallerContext => ({
   userId: 'auth0|1', orgId, role: 'member', matchingTeams,
 });
 
+const pair = (teamId: string, allowlist: readonly string[] | null): TeamAllowlist => ({
+  teamId, allowlist,
+});
+
 const asSet = (s: ScopeSet) => (s === UNIVERSE ? UNIVERSE : new Set(s));
 
-describe('effectiveScope (WYREAI-60, parity port of gateway #189 resolver)', () => {
-  describe('no matching teams ⇒ org allowlist governs', () => {
+describe('effectiveScope (WYREAI-60 + WYREAI-69 structural-pairing refactor, gateway #189 parity)', () => {
+  describe('no team allowlists ⇒ org allowlist governs', () => {
     it('null org → UNIVERSE (no allowlist row = allow all)', () => {
-      expect(asSet(effectiveScope(ctx([]), null, []))).toBe(UNIVERSE);
+      expect(asSet(effectiveScope(null, []))).toBe(UNIVERSE);
     });
 
     it('non-empty org → set(org)', () => {
-      const r = effectiveScope(ctx([]), ['a', 'b'], []);
+      const r = effectiveScope(['a', 'b'], []);
       expect(r).toEqual(new Set(['a', 'b']));
     });
 
     it('empty org [] → empty set (explicit deny-all is legitimate)', () => {
-      const r = effectiveScope(ctx([]), [], []);
+      const r = effectiveScope([], []);
       expect(r).toEqual(new Set());
     });
   });
 
-  describe('one matching team ⇒ team ∩ org', () => {
+  describe('one team allowlist ⇒ team ∩ org', () => {
     it('team UNIVERSE + org UNIVERSE → UNIVERSE', () => {
-      expect(effectiveScope(ctx(['t1']), null, [null])).toBe(UNIVERSE);
+      expect(effectiveScope(null, [pair('t1', null)])).toBe(UNIVERSE);
     });
 
     it('team UNIVERSE + org set → set(org) (team is identity)', () => {
-      const r = effectiveScope(ctx(['t1']), ['a', 'b'], [null]);
+      const r = effectiveScope(['a', 'b'], [pair('t1', null)]);
       expect(r).toEqual(new Set(['a', 'b']));
     });
 
     it('team set + org UNIVERSE → set(team) (org is identity)', () => {
-      const r = effectiveScope(ctx(['t1']), null, [['a', 'b']]);
+      const r = effectiveScope(null, [pair('t1', ['a', 'b'])]);
       expect(r).toEqual(new Set(['a', 'b']));
     });
 
     it('team set + org set → intersection', () => {
-      const r = effectiveScope(ctx(['t1']), ['a', 'b', 'c'], [['b', 'c', 'd']]);
+      const r = effectiveScope(['a', 'b', 'c'], [pair('t1', ['b', 'c', 'd'])]);
       expect(r).toEqual(new Set(['b', 'c']));
     });
 
     it('team [] (empty allowlist) intersected with anything → empty set', () => {
-      const r = effectiveScope(ctx(['t1']), ['a', 'b'], [[]]);
+      const r = effectiveScope(['a', 'b'], [pair('t1', [])]);
       expect(r).toEqual(new Set());
     });
 
     it('disjoint team + org → empty set (legitimate least-privilege outcome)', () => {
-      const r = effectiveScope(ctx(['t1']), ['a', 'b'], [['x', 'y']]);
+      const r = effectiveScope(['a', 'b'], [pair('t1', ['x', 'y'])]);
       expect(r).toEqual(new Set());
     });
   });
 
   describe('multi-team ⇒ team ∩ team ∩ org (every team narrows)', () => {
     it('two teams sharing tools + org universe → intersection of the two teams', () => {
-      const r = effectiveScope(ctx(['t1', 't2']), null, [['a', 'b', 'c'], ['b', 'c', 'd']]);
+      const r = effectiveScope(null, [pair('t1', ['a', 'b', 'c']), pair('t2', ['b', 'c', 'd'])]);
       expect(r).toEqual(new Set(['b', 'c']));
     });
 
     it('multi-team with all UNIVERSE + org set → set(org)', () => {
-      const r = effectiveScope(ctx(['t1', 't2']), ['a', 'b'], [null, null]);
+      const r = effectiveScope(['a', 'b'], [pair('t1', null), pair('t2', null)]);
       expect(r).toEqual(new Set(['a', 'b']));
     });
 
     it('a single restrictive team narrows the rest (true least-privilege)', () => {
-      const r = effectiveScope(ctx(['t1', 't2']), ['a', 'b', 'c'], [['a', 'c'], ['c']]);
+      const r = effectiveScope(['a', 'b', 'c'], [pair('t1', ['a', 'c']), pair('t2', ['c'])]);
       expect(r).toEqual(new Set(['c']));
     });
 
     it('two teams with no overlap + org universe → empty (legitimate)', () => {
-      const r = effectiveScope(ctx(['t1', 't2']), null, [['a'], ['b']]);
+      const r = effectiveScope(null, [pair('t1', ['a']), pair('t2', ['b'])]);
       expect(r).toEqual(new Set());
     });
   });
 
   describe('narrow-only invariant: result ⊆ orgAllowlist (never grants past org)', () => {
     it('a team allow-list with tools NOT in org never adds them to the result', () => {
-      const r = effectiveScope(ctx(['t1']), ['a', 'b'], [['a', 'z']]);
+      const r = effectiveScope(['a', 'b'], [pair('t1', ['a', 'z'])]);
       expect(r).toEqual(new Set(['a'])); // 'z' would be a grant past org; never appears
+    });
+  });
+
+  describe('structural-pairing API (WYREAI-69) — invariant impossible to violate by accident', () => {
+    it('TeamAllowlist objects bind teamId to allowlist; no parallel-array misuse possible', () => {
+      // The previous parallel-array signature let a caller pass
+      // teamAllowlists with mismatched length vs ctx.matchingTeams, silently
+      // over-granting scope. With TeamAllowlist objects, each allowlist
+      // travels with its teamId — a length mismatch can't exist.
+      const teams: TeamAllowlist[] = [pair('t1', ['x']), pair('t2', ['y'])];
+      // Verify the iteration consumes the bound pairs:
+      const r = effectiveScope(null, teams);
+      expect(r).toEqual(new Set()); // disjoint teams + org universe
     });
   });
 });
@@ -165,7 +187,7 @@ describe('UNIVERSE sentinel identity', () => {
   });
 
   it('round-trips through effectiveScope unchanged when both inputs are null/UNIVERSE-equivalent', () => {
-    expect(effectiveScope(ctx([]), null, [])).toBe(UNIVERSE);
-    expect(effectiveScope(ctx(['t1']), null, [null])).toBe(UNIVERSE);
+    expect(effectiveScope(null, [])).toBe(UNIVERSE);
+    expect(effectiveScope(null, [pair('t1', null)])).toBe(UNIVERSE);
   });
 });

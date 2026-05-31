@@ -23,6 +23,7 @@ import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import type { ToolCache } from './tool-cache.js';
 import { getVendor } from '../credentials/vendor-config.js';
+import { composeToolScope, scopeAllows, filterToolsByScope } from '../org/scope-enforcement.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { getSql } from '../db/context.js';
 
@@ -130,23 +131,19 @@ export function cliRoutes(deps: CliRouterDeps) {
           const vendorConfig = getVendor(vendorSlug)!;
 
           // --------------- Tool allowlist enforcement ---------------
-          if (injection.orgId) {
-            const membership = await orgService.getMembership(injection.orgId, injection.userId);
-            const role = membership?.role ?? 'member';
-
-            if (role !== 'owner') {
-              const allowlist = await orgService.getToolAllowlist(
-                injection.orgId,
-                vendorSlug,
-                role,
-              );
-
-              if (allowlist !== null && !allowlist.includes(toolName)) {
-                return reply.code(403).send({
-                  error: `Tool "${toolName}" is not permitted for your role`,
-                });
-              }
-            }
+          // Delegates to composeToolScope (WYREAI-61): centralizes the org+role
+          // composition with optional team-scope intersect (flag-gated
+          // CONDUIT_TEAM_SCOPING). Flag-off = identical pre-refactor behavior
+          // (org+role allowlist, owner-bypass, allowlist null = UNIVERSE).
+          const scope = await composeToolScope(orgService, vendorSlug, {
+            userId: injection.userId,
+            orgId: injection.orgId,
+            teamId: injection.teamId,
+          });
+          if (!scopeAllows(scope, toolName)) {
+            return reply.code(403).send({
+              error: `Tool "${toolName}" is not permitted for your scope`,
+            });
           }
 
           // --------------- Cache scope (matches MCP routes) ---------------
@@ -319,23 +316,15 @@ export function cliRoutes(deps: CliRouterDeps) {
             injection.headers,
           );
 
-          // Apply allowlist filtering if applicable
-          let filteredTools = tools;
-          if (injection.orgId) {
-            const membership = await orgService.getMembership(injection.orgId, injection.userId);
-            const role = membership?.role ?? 'member';
-
-            if (role !== 'owner') {
-              const allowlist = await orgService.getToolAllowlist(
-                injection.orgId,
-                vendorSlug,
-                role,
-              );
-              if (allowlist !== null) {
-                filteredTools = tools.filter((t) => allowlist.includes(t.name));
-              }
-            }
-          }
+          // Apply allowlist filtering via composeToolScope (WYREAI-61).
+          // Same helper as the tools/call site above — flag-off keeps the
+          // existing org+role filter shape; flag-on adds team-scope intersect.
+          const scope = await composeToolScope(orgService, vendorSlug, {
+            userId: injection.userId,
+            orgId: injection.orgId,
+            teamId: injection.teamId,
+          });
+          const filteredTools = filterToolsByScope(tools, scope);
 
           // Convert to CLI-friendly schema
           const cliSchema = mcpToolsToCliSchema(filteredTools);

@@ -219,5 +219,17 @@ export const config = {
     // green (registry deep-equals the compiled map for every migrated vendor,
     // all accessors). Off = today's behavior (pure compiled map).
     vendorRegistry: process.env.VENDOR_REGISTRY_ENABLED === 'true',
+    // Team-scoped tool access (WYREAI-61, parity port of gateway #189). When ON,
+    // the proxy enforcement layer composes effectiveScope() = orgAllowlist ∩
+    // (⋂ team allowlists for matching teams), narrow-only. When OFF (default),
+    // behavior is byte-for-byte unchanged: org+role allowlist enforcement on
+    // cli + unified routers (which already fired on the team-cred path too,
+    // since injection.orgId is set when a team-cred matches — see
+    // credential-injector.ts:189-190). Flag-on layers the team-allowlist as an
+    // additional narrowing source on top. The aggregated-router ALWAYS-ON
+    // allowlist enforcement (closes WYREAI-65 gap) is INDEPENDENT of this flag
+    // — security-fix-on-feature-flag is anti-pattern; close-always +
+    // feature-flag-feature-layer-only is the cleaner shape.
+    teamScoping: process.env.CONDUIT_TEAM_SCOPING === 'true',
   },
 };

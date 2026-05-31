@@ -71,6 +71,18 @@ function intersect(a: ScopeSet, b: ScopeSet): ScopeSet {
 }
 
 /**
+ * Per-team allowlist bound to its team id. The structural pairing
+ * makes the (teamId, allowlist) correspondence inexpressible-when-wrong:
+ * a caller cannot mismatch parallel arrays because there are no parallel
+ * arrays — each team's id travels with its allowlist (WYREAI-69, the
+ * layer-locality refactor at API-signature level).
+ */
+export interface TeamAllowlist {
+  teamId: string;
+  allowlist: Allowlist;
+}
+
+/**
  * effectiveScope = orgAllowlist ∩ (⋂ teamAllowlist for each matching team).
  *
  * - A team with no allowlist contributes UNIVERSE (identity — doesn't narrow),
@@ -82,18 +94,26 @@ function intersect(a: ScopeSet, b: ScopeSet): ScopeSet {
  * UNIVERSE is never materialized into the live tool list here; callers
  * interpret it as "allow all", exactly as a `null` from getToolAllowlist
  * works today.
+ *
+ * SIGNATURE NOTE: `teamAllowlists` is a `{teamId, allowlist}[]` object array,
+ * NOT a parallel array zipped against `ctx.matchingTeams`. This is the
+ * WYREAI-69 layer-locality move: at the API-signature layer the structural
+ * type makes the invariant impossible to violate by accident (see warden
+ * review of WYREAI-60 — caller-managed parallel-array invariant could
+ * over-grant via mismatch). `ctx.matchingTeams` remains on `CallerContext`
+ * for the executor-decision path; the resolver itself iterates the bound
+ * pairs in `teamAllowlists`.
  */
 export function effectiveScope(
-  ctx: CallerContext,
   orgAllowlist: Allowlist,
-  teamAllowlists: readonly Allowlist[],
+  teamAllowlists: readonly TeamAllowlist[],
 ): ScopeSet {
   const orgSet = toScopeSet(orgAllowlist);
-  if (ctx.matchingTeams.length === 0) return orgSet;
+  if (teamAllowlists.length === 0) return orgSet;
 
   let acc = orgSet;
-  for (const teamList of teamAllowlists) {
-    acc = intersect(acc, toScopeSet(teamList));
+  for (const { allowlist } of teamAllowlists) {
+    acc = intersect(acc, toScopeSet(allowlist));
   }
   return acc;
 }

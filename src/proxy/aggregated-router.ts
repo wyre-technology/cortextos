@@ -3,6 +3,7 @@ import { resolveUserId, injectCredentials, AuthError } from './credential-inject
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService } from '../org/org-service.js';
 import { getVendor } from '../credentials/vendor-config.js';
+import { composeToolScope, scopeAllows, filterToolsByScope } from '../org/scope-enforcement.js';
 import { AggregatedSessionStore } from './aggregated-session-store.js';
 import { config } from '../config.js';
 
@@ -127,12 +128,12 @@ export function aggregatedProxyRoutes(deps: AggregatedProxyDeps) {
 
         // ─── tools/list ────────────────────────────────────────────
         if (mcpMethod === 'tools/list') {
-          return await handleToolsList(app, session, body, reply);
+          return await handleToolsList(app, session, body, reply, orgService);
         }
 
         // ─── tools/call ────────────────────────────────────────────
         if (mcpMethod === 'tools/call') {
-          return await handleToolsCall(app, session, body, reply);
+          return await handleToolsCall(app, session, body, reply, orgService);
         }
 
         // Unknown method — pass through error
@@ -214,6 +215,11 @@ async function handleInitialize(
           containerUrl: vendorConfig.containerUrl,
           mcpPath,
           headers: injection.headers,
+          // Capture (orgId, teamId) so the tools/list + tools/call handlers
+          // can enforce per-vendor allowlist with the right owner context
+          // (WYREAI-61 / closes WYREAI-65 unconditional allowlist gap).
+          orgId: injection.orgId,
+          teamId: injection.teamId,
         });
       } catch (err) {
         app.log.warn({ err, slug }, 'Vendor initialize error — skipping');
@@ -239,6 +245,7 @@ async function handleToolsList(
   session: import('./aggregated-session-store.js').AggregatedSession,
   body: { id?: unknown; method?: string; params?: Record<string, unknown> } | undefined,
   reply: any,
+  orgService: OrgService,
 ) {
   const allTools: { name: string; description?: string; inputSchema?: unknown }[] = [];
 
@@ -267,7 +274,21 @@ async function handleToolsList(
         };
 
         if (data.result?.tools) {
-          for (const tool of data.result.tools) {
+          // Per-vendor allowlist filter (WYREAI-65 close + WYREAI-61 team-scope).
+          // Pre-existing gap: aggregated `/mcp` previously did NO allowlist
+          // enforcement (any tool let through). Now: per-vendor scope composed
+          // from THIS vendor's cred-owner context (vs.orgId / vs.teamId),
+          // sequential queries via the shared helper (matches the
+          // reserved-conn discipline; this loop is OUTSIDE the Promise.all
+          // since each iteration is its own per-vendor branch — the
+          // composeToolScope inside is sequential).
+          const scope = await composeToolScope(orgService, vs.slug, {
+            userId: session.userId,
+            orgId: vs.orgId,
+            teamId: vs.teamId,
+          });
+          const filteredTools = filterToolsByScope(data.result.tools, scope);
+          for (const tool of filteredTools) {
             allTools.push({
               ...tool,
               name: `${vs.slug}__${tool.name}`,
@@ -292,6 +313,7 @@ async function handleToolsCall(
   session: import('./aggregated-session-store.js').AggregatedSession,
   body: { id?: unknown; method?: string; params?: Record<string, unknown> } | undefined,
   reply: any,
+  orgService: OrgService,
 ) {
   const rawName = (body?.params?.name as string) ?? '';
   const sepIdx = rawName.indexOf('__');
@@ -313,6 +335,26 @@ async function handleToolsCall(
       jsonrpc: '2.0',
       id: body?.id ?? null,
       error: { code: -32601, message: `No active session for vendor "${slug}"` },
+    });
+  }
+
+  // Tool scope enforcement (WYREAI-65 close + WYREAI-61 team-scope).
+  // Pre-existing gap: this endpoint previously let ANY tool through. Now:
+  // per-vendor scope composed from THIS vendor's stored cred-owner context
+  // (vs.orgId / vs.teamId, captured at handleInitialize-time).
+  const scope = await composeToolScope(orgService, slug, {
+    userId: session.userId,
+    orgId: vs.orgId,
+    teamId: vs.teamId,
+  });
+  if (!scopeAllows(scope, realToolName)) {
+    return reply.send({
+      jsonrpc: '2.0',
+      id: body?.id ?? null,
+      error: {
+        code: -32601,
+        message: `Tool "${realToolName}" is not permitted for your scope`,
+      },
     });
   }
 

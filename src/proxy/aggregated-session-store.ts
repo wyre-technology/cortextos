@@ -6,6 +6,13 @@ export interface VendorSession {
   containerUrl: string;
   mcpPath: string;
   headers: Record<string, string>;
+  // Resolved at handleInitialize-time from injectCredentials(authHeader, slug, ...).
+  // Carries the (orgId, teamId) binding for THIS vendor's credential under
+  // THIS session — needed for the allowlist enforcement composition
+  // (WYREAI-61 / closes WYREAI-65): aggregated `/mcp` enforces per-vendor
+  // allowlist using the cred's OWNER context, not session-wide.
+  orgId?: string;
+  teamId?: string;
 }
 
 export interface AggregatedSession {
