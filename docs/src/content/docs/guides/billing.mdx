@@ -1,56 +1,56 @@
 ---
 title: Billing & Plans
-description: Conduit's subscription plans — Free, Pro, and Business — what each unlocks, how billing works, and what happens when a payment fails.
+description: Conduit's pricing — one flat plan, everything included. A base organization fee plus a per-seat price, with a 14-day trial as the on-ramp, no usage tiers, no credits, and no per-call metering.
 ---
 
-This guide covers Conduit's **subscription billing** — the plan an MSP organization is on and how that subscription is managed.
+This guide covers Conduit's **subscription billing** — what an MSP organization pays for Conduit and how that subscription is managed.
 
 :::note
-This page covers subscription billing (the plan an MSP pays for). **Reseller-channel billing** — how an MSP marks up and bills its own customers — is a separate system; see the [Subtenant Model](/docs/reference/subtenants/#reseller-scoped-pricing).
+This page covers subscription billing (what an MSP pays WYRE for Conduit). **Reseller-channel billing** — how an MSP marks up and bills its own customers — is a separate system; see the [Subtenant Model](/docs/reference/subtenants/#reseller-scoped-pricing).
 :::
 
 ---
 
-## Plans
+## Pricing
 
-Conduit ships with three plans. The values below are the **default catalog** — a deployment can override them via the `PLAN_CATALOG` environment variable, so a self-hosted or white-label deployment may differ.
+Conduit is **one flat plan — everything included.** There are no feature tiers, no usage credits, and no per-call metering. You pay one predictable price and get the whole platform.
 
-| | Free | Pro | Business |
-|---|------|-----|----------|
-| Vendor connections | 3 | Unlimited | Unlimited |
-| Requests / hour / vendor | 100 | 1,000 | 5,000 |
-| Members | 1 | Unlimited | Unlimited |
-| Monthly credits | 500 (flat) | 1,500 / seat | 4,000 / seat |
-| Team features (teams, roles, invitations) | — | ✓ | ✓ |
-| Tool allowlists (RBAC) | — | ✓ | ✓ |
-| Log shipping (Loki, Graylog, LogScale) | — | ✓ | ✓ |
-| Prompt capture | — | ✓ | ✓ |
-| Audit log access | — | ✓ | ✓ |
-| Audit log CSV export | — | — | ✓ |
-| SSO | — | — | ✓ |
-| Service clients (M2M) | — | — | ✓ |
+| | Conduit |
+|---|---|
+| **Base organization fee** | $399 / month |
+| **Agent seats** | 2 included; $39 / additional agent seat / month |
+| **Human seats** | $39 / seat / month |
+| **What's included** | **Everything** — every feature, no gates |
 
-### Credits
+Everything in the platform is included at the flat price:
 
-Monthly credits are pooled across all members of an organization. The allocation is interpreted differently by tier:
+- **Unlimited vendor connections** — connect as many of the vendor integrations as you need.
+- **Unlimited members** and full **team features** (teams, roles, invitations).
+- **Role-based access** — per-vendor, per-role scoping of which tools each role can call.
+- **Full audit** — a clear record of every tool call, with CSV export.
+- **Log shipping** to your SIEM (Loki, Graylog, LogScale).
+- **Prompt capture**, **SSO**, and **service clients (M2M)** for automation.
 
-- **Free** — a flat 500 credits per month for the org.
-- **Pro / Business** — a per-seat allocation (1,500 or 4,000 credits) multiplied by the org's member count, then pooled.
+No per-tier feature gating, no monthly credit allocation, and no per-call rate metering — the capabilities above are all on from day one. You are billed the base organization fee plus $39 for each agent seat beyond the two included and each human seat in the organization.
+
+:::note
+The flat fee is the **default catalog**. A self-hosted or white-label deployment can override pricing via the `PLAN_CATALOG` environment variable.
+:::
 
 ---
 
-## Upgrading
+## Starting your subscription
 
-A new organization starts on the **Free** plan. There are two paths to a paid plan:
+There are two ways to start: a free **14-day trial** of the full platform, or activation via an alpha invite code.
 
-1. **Stripe checkout** — from the billing page at **`/org/billing`**, start a checkout session. Conduit creates a Stripe Checkout session and redirects to Stripe's hosted payment page.
-2. **Invite code** — an alpha invite code redeemed at org creation (or later via the billing page) upgrades the org immediately, without going through Stripe checkout.
+1. **14-day trial** — from the billing page at **`/org/billing`**, start your trial. You get the full platform for 14 days at no charge. If at any point you decide it is not for you, do nothing and the trial closes at the end of the 14 days; if you want to keep using Conduit, add a payment method through Stripe Checkout before the trial ends.
+2. **Alpha invite code** — an alpha invite code redeemed at org creation (or later via the billing page) activates the subscription immediately, without going through the trial.
 
 Conduit never stores card data — only the Stripe customer ID and subscription state. See [Security § Billing & Payment Security](/docs/reference/security/#billing--payment-security) for how the payment integration is secured.
 
 ## Managing a subscription
 
-From **`/org/billing`**, an org owner can open the **Stripe Customer Portal** — Stripe's hosted surface for updating the card on file, viewing invoices, and cancelling. Conduit creates a portal session and redirects to it.
+From **`/org/billing`**, an org owner can open the **Stripe Customer Portal** — Stripe's hosted surface for updating the card on file, viewing invoices, adjusting seats, and cancelling. Conduit creates a portal session and redirects to it.
 
 ---
 
@@ -65,9 +65,9 @@ The states, in order:
 | **Payment failing** | First failure, within ~24h | A warning banner; full access retained while Stripe retries |
 | **Past due** | 24h – 7d after first failure | A more prominent warning; full access still retained |
 | **Final warning** | Inside the WYRE grace window, approaching its end | An urgent banner; full access still retained |
-| **Suspended** | Grace window expired, or the subscription is canceled | Paid features are gated |
+| **Suspended** | Grace window expired, or the subscription is canceled | Platform access is gated |
 
-While in any pre-suspension state, the organization keeps full access — the grace window exists precisely so a failed renewal does not interrupt service. Once the grace window expires, plan-gated features are disabled at the service layer.
+While in any pre-suspension state, the organization keeps full access — the grace window exists precisely so a failed renewal does not interrupt service. Once the grace window expires, the platform is gated at the service layer until payment is recovered.
 
 ### The grace window
 
@@ -79,6 +79,6 @@ When a failed payment is recovered (the customer updates their card and Stripe s
 
 ---
 
-## Plan downgrades and cancellation
+## Cancellation
 
-Cancelling a subscription through the Stripe Customer Portal ends the paid plan at the end of the current billing period. After that, the organization returns to Free-plan limits — note that an org with more than one member, or more than three vendor connections, will be over the Free-plan limits and should reduce usage before the downgrade takes effect.
+Cancelling a subscription through the Stripe Customer Portal ends the subscription at the end of the current billing period. After that, the organization's platform access is suspended — the data is preserved per the dunning model, so the organization can resume by re-subscribing.

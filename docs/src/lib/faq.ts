@@ -55,7 +55,7 @@ export const FAQ_DATA: Record<string, readonly FaqEntry[]> = {
     },
     {
       q: 'What do I need before I start?',
-      a: 'An Auth0-backed login for your MSP, an alpha invite code (it unlocks the Pro plan), and API credentials for at least one vendor you want to connect.',
+      a: 'An Auth0-backed login for your MSP, an alpha invite code or the 14-day trial as your subscription on-ramp, and API credentials for at least one vendor you want to connect.',
     },
   ],
   'guides/connecting-a-client': [

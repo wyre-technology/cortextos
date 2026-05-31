@@ -269,7 +269,7 @@ Change member role. Cannot change your own role.
 
 ### POST /api/orgs/:orgId/invitations
 
-Create an invitation link. Rate limited: 10 per hour. Requires Pro plan.
+Create an invitation link. Rate limited: 10 per hour. Requires an active subscription.
 
 **Auth:** Auth0 session (admin+)
 **Response:**
@@ -347,7 +347,7 @@ Bulk-set a member's vendor access (replaces all grants).
 
 ### POST /api/orgs/:orgId/credentials/:vendor
 
-Store or update org-level credentials for a vendor. Rate limited: 10 per minute. Requires Pro plan. Validates credentials against vendor API when possible.
+Store or update org-level credentials for a vendor. Rate limited: 10 per minute. Requires an active subscription. Validates credentials against vendor API when possible.
 
 **Auth:** Auth0 session (admin+)
 **Body:** Vendor-specific fields (see vendor-integration.md)
@@ -382,7 +382,7 @@ Remove org-level credentials for a vendor.
 
 ### POST /api/orgs/:orgId/teams
 
-Create a team. Requires Pro plan.
+Create a team. Requires an active subscription.
 
 **Auth:** Auth0 session (admin+)
 **Body:** `{ "name": "Tier 1 Support" }`
@@ -554,7 +554,7 @@ Discover available tools from a vendor container (queries the live container).
 
 ### GET /api/audit
 
-Query the request audit log. Requires Pro plan and admin+ role.
+Query the request audit log. Requires an active subscription and admin+ role.
 
 **Auth:** Auth0 session
 **Query Parameters:**
@@ -571,7 +571,7 @@ Query the request audit log. Requires Pro plan and admin+ role.
 
 Query the admin audit log (administrative actions).
 
-**Auth:** Auth0 session (admin+, Pro plan)
+**Auth:** Auth0 session (admin+, active subscription)
 **Query Parameters:**
 - `org_id`, `event_type`, `actor_id`, `start`, `end`, `limit`, `offset`, `format`
 
@@ -615,12 +615,12 @@ Per-vendor usage breakdown.
 ## Billing
 
 :::note
-The billing endpoints are registered only when Stripe is configured for the deployment (`features.billing`). On a deployment without Stripe configured, these routes are absent. Billing covered here is **subscription billing** (the Pro plan). Reseller-channel billing — markup pricing for an MSP's customers — has a separate API surface that is still landing; see the [Subtenant Model](/docs/reference/subtenants/#reseller-scoped-pricing) for the data model.
+The billing endpoints are registered only when Stripe is configured for the deployment (`features.billing`). On a deployment without Stripe configured, these routes are absent. Billing covered here is **subscription billing** (the flat plan). Reseller-channel billing — markup pricing for an MSP's customers — has a separate API surface that is still landing; see the [Subtenant Model](/docs/reference/subtenants/#reseller-scoped-pricing) for the data model.
 :::
 
 ### POST /api/billing/checkout
 
-Create a Stripe Checkout session for Pro plan subscription.
+Create a Stripe Checkout session for the flat subscription.
 
 **Auth:** Auth0 session (owner)
 **Body:**
@@ -654,13 +654,13 @@ Stripe webhook ingest. Called by Stripe, not by API clients — signature-verifi
 
 List log shipping destinations (configs are masked).
 
-**Auth:** Auth0 session (admin+, Pro plan)
+**Auth:** Auth0 session (admin+, active subscription)
 
 ### POST /api/orgs/:orgId/log-shipping
 
 Create a log shipping destination.
 
-**Auth:** Auth0 session (admin+, Pro plan)
+**Auth:** Auth0 session (admin+, active subscription)
 **Body:**
 ```json
 {

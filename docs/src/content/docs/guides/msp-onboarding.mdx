@@ -53,34 +53,34 @@ The MSP owner creates an org from the dashboard, or via the API:
 POST /api/orgs
 {
   "name": "Acme MSP",
-  "invite_code": "<alpha-invite-code>"    // optional — grants the Pro plan
+  "invite_code": "<alpha-invite-code>"    // optional — activates the subscription
 }
 ```
 
-An alpha invite code immediately upgrades the org to the Pro plan. Without one, the org starts on the free plan (3 vendor connections, 100 requests/hour/vendor).
+An alpha invite code activates the subscription immediately. Without one, the owner starts a free 14-day trial of the full platform from the billing page; the trial converts to a paid subscription when a payment method is added through Stripe Checkout, or closes automatically at the end of the 14 days if no action is taken.
 
-### 2. Upgrade to the Pro plan
+### 2. Activate your subscription
 
-If not using an invite code, the owner can upgrade from the billing page at **`/org/billing`**, or redeem a code later:
+If not using an invite code, the owner can start the trial or add payment from the billing page at **`/org/billing`**, or redeem a code later:
 
 ```
 POST /api/orgs/:orgId/redeem-code
 { "code": "<code>" }
 ```
 
-The Pro plan unlocks:
+The subscription includes the full platform — every feature, no gates:
 
 - Unlimited vendor connections
-- 1,000 requests/hour/vendor
-- Team features (members, roles, invitations)
-- Tool allowlists (RBAC)
-- Audit log access
+- Standard rate limits per vendor
+- Full team features (members, roles, invitations)
+- Role-based access (per-vendor, per-role tool scoping)
+- A clear record of every tool call, with CSV export
 - Log shipping to SIEM (Loki, Graylog, LogScale)
 - Prompt capture
+- SSO and service clients (M2M)
 
-Audit log **CSV export**, SSO, and service clients are **Business**-tier
-features. See the [Billing & Plans guide](/docs/guides/billing/) for the
-full plan comparison.
+See the [Billing & Plans guide](/docs/guides/billing/) for the
+flat pricing detail.
 
 ### 3. Connect vendor credentials
 
@@ -144,9 +144,9 @@ PATCH /api/orgs/:orgId/members/:userId/role
 { "role": "admin" }
 ```
 
-### 8. Create service clients (optional, Business tier)
+### 8. Create service clients (optional)
 
-Service clients are a **Business**-tier feature. For machine-to-machine automation (AI agents, scripts, integrations), create service clients from **`/org/service-clients`**:
+For machine-to-machine automation (AI agents, scripts, integrations), create service clients from **`/org/service-clients`**:
 
 ```
 POST /api/orgs/:orgId/service-clients
@@ -163,13 +163,13 @@ For compliance or monitoring, ship audit logs to an external SIEM from **`/org/l
 
 ## Phase 3: Go-Live Checklist
 
-- [ ] Organization created and on the Pro plan
+- [ ] Organization created and subscription active (or in trial)
 - [ ] All required vendor credentials connected and validated
 - [ ] Server access grants configured for each member
 - [ ] Tool allowlists set for restricted roles (if needed)
 - [ ] Team members invited and accepted
 - [ ] An MCP client (Claude Desktop or Claude Code) configured with the Conduit server URL
-- [ ] Service clients created for any automation workflows (Business tier)
+- [ ] Service clients created for any automation workflows
 - [ ] Audit log verified — make a test tool call and check **`/org/audit`**
 - [ ] Log shipping tested (if configured)
 - [ ] MSP owner has verified access to the billing portal at **`/org/billing`**

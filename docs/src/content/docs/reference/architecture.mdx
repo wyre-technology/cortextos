@@ -66,7 +66,7 @@ Multi-tenant org management with role-based access (`owner` > `admin` > `member`
 
 ### Billing gate
 
-Plan-based feature gating (Free / Pro / Business). Controls connection limits, rate limits, team features, and audit access. Integrates with Stripe for subscription management — see the [Billing & Plans guide](/docs/guides/billing/).
+Subscription-state gating (active / trialing / past due / suspended). Controls platform access at the service layer based on the org's current subscription state, and tracks the 14-day trial on-ramp as a local grace marker (subscription row `status='trialing'`, `cancel_at_period_end=true`) — not a Stripe trial. Rate limits, team features, and audit access are included for every active subscription; the gate only suspends platform access once the dunning grace window closes. Integrates with Stripe for subscription management — see the [Billing & Plans guide](/docs/guides/billing/).
 
 ### Audit service
 

@@ -38,7 +38,7 @@ Conduit is the connection-and-access layer between AI assistants and MSP tools. 
 - [Onboarding a customer](https://conduit.wyre.ai/docs/guides/customer-provisioning/): How an MSP creates and manages a customer organization and its vendor integrations.
 - [Vendor connections](https://conduit.wyre.ai/docs/guides/vendor-connections/): The 50+ vendor catalog and how credentials are scoped (personal / team / org / service client).
 - [White-label setup](https://conduit.wyre.ai/docs/guides/white-label-setup/): How an MSP presents Conduit under its own brand.
-- [Billing & plans](https://conduit.wyre.ai/docs/guides/billing/): Conduit's Free / Pro / Business plans and how subscription billing works.
+- [Billing & plans](https://conduit.wyre.ai/docs/guides/billing/): Conduit's one flat plan ($399/org + $39/seat, everything included, no tiers/credits/metering) with a 14-day trial as the on-ramp.
 - [Monitoring your tenant](https://conduit.wyre.ai/docs/guides/monitoring/): The usage dashboard, vendor health, and audit log — the three org-scoped monitoring surfaces.
 - [SCIM provisioning](https://conduit.wyre.ai/docs/guides/scim/): Auto-provision users and teams from Entra ID, Okta, JumpCloud, or Google Workspace.
 
