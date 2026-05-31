@@ -33,12 +33,13 @@ export class ToolAllowlistService {
       DELETE FROM org_tool_allowlist
       WHERE org_id = ${orgId} AND vendor_slug = ${vendorSlug} AND role = ${role}
     `;
-    // Insert new entries
+    // Insert new entries (WYREAI-62: granted_at = NOW() captures the audit
+    // timestamp at write-time; getTeamToolAllowlistWithAudit reads it back).
     for (const toolName of toolNames) {
       const id = nanoid();
       await this.sql`
-        INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, role, tool_name, granted_by)
-        VALUES (${id}, ${orgId}, ${vendorSlug}, ${role}, ${toolName}, ${grantedBy})
+        INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, role, tool_name, granted_by, granted_at)
+        VALUES (${id}, ${orgId}, ${vendorSlug}, ${role}, ${toolName}, ${grantedBy}, NOW())
       `;
     }
   }
@@ -117,12 +118,72 @@ export class ToolAllowlistService {
       const id = nanoid();
       // role explicitly NULL — the CHECK invariant + the partial UNIQUE on
       // (org_id, vendor_slug, team_id, tool_name) WHERE role IS NULL keep
-      // the row in the team shape.
+      // the row in the team shape. granted_at = NOW() captures the audit
+      // timestamp (WYREAI-62, read back by getTeamToolAllowlistWithAudit).
       await this.sql`
-        INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, team_id, role, tool_name, granted_by)
-        VALUES (${id}, ${orgId}, ${vendorSlug}, ${teamId}, ${null}, ${toolName}, ${grantedBy})
+        INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, team_id, role, tool_name, granted_by, granted_at)
+        VALUES (${id}, ${orgId}, ${vendorSlug}, ${teamId}, ${null}, ${toolName}, ${grantedBy}, NOW())
       `;
     }
+  }
+
+  /**
+   * WYREAI-62 (parity port of gateway #200 step-2): get the team allowlist
+   * for (org, team, vendor) ALONG WITH the audit metadata — who granted (a
+   * friendly label COALESCEd from users.display_name/name/email) and when
+   * (granted_at). Returns null when no rows exist (caller renders the
+   * "inherit org defaults" empty state).
+   *
+   * LEFT JOIN to users: a missing user row (deleted account, legacy data)
+   * leaves grantedBy as the raw user_id rather than 500-ing.
+   *
+   * ORDER BY granted_at DESC NULLS LAST: today's setTeamToolAllowlist deletes-
+   * then-inserts atomically so all rows in a (team, vendor) group share a
+   * granted_at; but if that impl ever changes to incremental edits, this
+   * ordering returns the MOST-RECENT grant first — defense-in-depth against
+   * future row-drift (warden's gateway-#200 framing applied here too).
+   *
+   * Tools list returned in granted_at order; the caller can re-sort by name
+   * if presentation requires.
+   */
+  async getTeamToolAllowlistWithAudit(
+    orgId: string,
+    teamId: string,
+    vendorSlug: string,
+  ): Promise<{
+    tools: string[];
+    grantedBy: string | null;
+    grantedAt: string | null;
+  } | null> {
+    const rows = await this.sql<
+      {
+        tool_name: string;
+        granted_by: string;
+        granted_at: string | null;
+        granted_by_label: string | null;
+      }[]
+    >`
+      SELECT a.tool_name,
+             a.granted_by,
+             a.granted_at,
+             COALESCE(u.display_name, u.name, u.email) AS granted_by_label
+        FROM org_tool_allowlist a
+        LEFT JOIN users u ON u.id = a.granted_by
+       WHERE a.org_id = ${orgId}
+         AND a.vendor_slug = ${vendorSlug}
+         AND a.team_id = ${teamId}
+       ORDER BY a.granted_at DESC NULLS LAST, a.tool_name ASC
+    `;
+    if (rows.length === 0) return null;
+    // The replace-set semantics of setTeamToolAllowlist mean all rows share
+    // (granted_by, granted_at); take the first (most-recent if drift) for the
+    // audit surface, list every tool_name.
+    const first = rows[0];
+    return {
+      tools: rows.map((r) => r.tool_name),
+      grantedBy: first.granted_by_label ?? first.granted_by,
+      grantedAt: first.granted_at,
+    };
   }
 
   async clearTeamToolAllowlist(

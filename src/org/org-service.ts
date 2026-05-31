@@ -522,6 +522,24 @@ export class OrgService {
         WHERE role IS NULL
     `;
 
+    // 8) granted_at audit timestamp (WYREAI-62, gateway #200 parity).
+    //    Idempotent ADD + backfill from created_at for existing rows. Future
+    //    writes set granted_at = NOW() via setTeamToolAllowlist / setToolAllowlist
+    //    (the replace-set DELETE+INSERT cadence makes granted_at == row creation
+    //    time for new grants).
+    await this.sql`
+      ALTER TABLE org_tool_allowlist
+        ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ
+    `;
+    // Backfill: any row added before this column existed gets its created_at,
+    // or NOW() as a last-resort fallback (defensive — no rows lack created_at
+    // in practice since it's NOT NULL DEFAULT NOW() on insert).
+    await this.sql`
+      UPDATE org_tool_allowlist
+         SET granted_at = COALESCE(created_at, NOW())
+       WHERE granted_at IS NULL
+    `;
+
     // 7) Lookup index for team-scoped queries (mirrors the role-lookup index).
     await this.sql`
       CREATE INDEX IF NOT EXISTS idx_org_tool_allowlist_team_lookup
@@ -1045,6 +1063,8 @@ export class OrgService {
   getTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string) { return this.toolAllowlistService.getTeamToolAllowlist(orgId, teamId, vendorSlug); }
   setTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string, toolNames: string[], grantedBy: string) { return this.toolAllowlistService.setTeamToolAllowlist(orgId, teamId, vendorSlug, toolNames, grantedBy); }
   clearTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string) { return this.toolAllowlistService.clearTeamToolAllowlist(orgId, teamId, vendorSlug); }
+  // WYREAI-62 — team allowlist with audit metadata (grantedBy label + grantedAt).
+  getTeamToolAllowlistWithAudit(orgId: string, teamId: string, vendorSlug: string) { return this.toolAllowlistService.getTeamToolAllowlistWithAudit(orgId, teamId, vendorSlug); }
 
   // -------------------------------------------------------------------------
   // Org settings

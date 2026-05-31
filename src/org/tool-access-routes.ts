@@ -119,5 +119,71 @@ export function toolAccessRoutes(deps: ToolAccessRouteDeps) {
         return reply.send({ tools });
       },
     );
+
+    // -----------------------------------------------------------------------
+    // Team-scoped tool-access routes (WYREAI-62, parity port of gateway #200).
+    //
+    // GET returns `{ tools, grantedBy?, grantedAt? }` — audit metadata at the
+    // response shape per gateway #200. PUT + DELETE mirror the role-scoped
+    // routes' replace-set semantics; admin-tier authz throughout (admin-read +
+    // admin-write parity per WYREAI-58, "audit reads should not differ in tier
+    // from writes on the same resource").
+    //
+    // Authz baseline: `requireOrgRole(... 'admin')`. The team membership of
+    // the caller is NOT additionally checked here — admin owns team-tool-access
+    // for their org per the v1 baseline. The finer-grain team-membership
+    // restriction is a tracked v2 hardening item (sibling WYREAI-66).
+    // -----------------------------------------------------------------------
+
+    // GET /api/orgs/:orgId/teams/:teamId/tool-access/:vendor — team allowlist + audit
+    app.get<{ Params: { orgId: string; teamId: string; vendor: string } }>(
+      '/api/orgs/:orgId/teams/:teamId/tool-access/:vendor',
+      async (request, reply) => {
+        const { orgId, teamId, vendor: vendorSlug } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        if (!user) return;
+
+        const result = await orgService.getTeamToolAllowlistWithAudit(orgId, teamId, vendorSlug);
+        if (!result) {
+          // No team-scoped rows → "inherit org defaults" per gateway #200 UX rule.
+          return reply.send({ tools: null });
+        }
+        return reply.send(result);
+      },
+    );
+
+    // PUT /api/orgs/:orgId/teams/:teamId/tool-access/:vendor — set team allowlist
+    app.put<{
+      Params: { orgId: string; teamId: string; vendor: string };
+      Body: { tools: string[] };
+    }>(
+      '/api/orgs/:orgId/teams/:teamId/tool-access/:vendor',
+      async (request, reply) => {
+        const { orgId, teamId, vendor: vendorSlug } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        if (!user) return;
+
+        const { tools } = request.body;
+        if (!Array.isArray(tools)) {
+          return reply.code(400).send({ error: 'tools must be an array of tool names' });
+        }
+
+        await orgService.setTeamToolAllowlist(orgId, teamId, vendorSlug, tools, user.sub);
+        return reply.send({ success: true });
+      },
+    );
+
+    // DELETE /api/orgs/:orgId/teams/:teamId/tool-access/:vendor — clear team allowlist
+    app.delete<{ Params: { orgId: string; teamId: string; vendor: string } }>(
+      '/api/orgs/:orgId/teams/:teamId/tool-access/:vendor',
+      async (request, reply) => {
+        const { orgId, teamId, vendor: vendorSlug } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        if (!user) return;
+
+        await orgService.clearTeamToolAllowlist(orgId, teamId, vendorSlug);
+        return reply.code(204).send();
+      },
+    );
   };
 }

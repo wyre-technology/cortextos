@@ -85,8 +85,10 @@ describe('ToolAllowlistService team-scoped methods (WYREAI-59)', () => {
     // The INSERT must carry role=NULL so the CHECK invariant + the team
     // partial UNIQUE keep the row in the team shape. Source-grep — a silent
     // revert to role='member' default would silently violate the invariant.
+    // (Post-WYREAI-62 the INSERT also carries granted_at = NOW(); the
+    // granted_at-specific assertions live in the audit describe block below.)
     expect(allowlistSrc).toMatch(
-      /INSERT INTO org_tool_allowlist \(id, org_id, vendor_slug, team_id, role, tool_name, granted_by\)[\s\S]*VALUES \(\$\{id\}, \$\{orgId\}, \$\{vendorSlug\}, \$\{teamId\}, \$\{null\}, \$\{toolName\}, \$\{grantedBy\}\)/,
+      /INSERT INTO org_tool_allowlist \(id, org_id, vendor_slug, team_id, role, tool_name, granted_by, granted_at\)[\s\S]*VALUES \(\$\{id\}, \$\{orgId\}, \$\{vendorSlug\}, \$\{teamId\}, \$\{null\}, \$\{toolName\}, \$\{grantedBy\}, NOW\(\)\)/,
     );
   });
 
@@ -109,5 +111,63 @@ describe('OrgService team-allowlist delegation (WYREAI-59)', () => {
     expect(typeof OrgService.prototype.getTeamToolAllowlist).toBe('function');
     expect(typeof OrgService.prototype.setTeamToolAllowlist).toBe('function');
     expect(typeof OrgService.prototype.clearTeamToolAllowlist).toBe('function');
+  });
+});
+
+describe('granted_at audit (WYREAI-62, gateway #200 spine)', () => {
+  it('schema adds nullable granted_at column (idempotent ADD)', () => {
+    expect(orgServiceSrc).toMatch(
+      /ALTER TABLE org_tool_allowlist[\s\S]*ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ/,
+    );
+  });
+
+  it('backfills granted_at from created_at (COALESCE fallback to NOW())', () => {
+    expect(orgServiceSrc).toMatch(
+      /UPDATE org_tool_allowlist[\s\S]*SET granted_at = COALESCE\(created_at, NOW\(\)\)[\s\S]*WHERE granted_at IS NULL/,
+    );
+  });
+
+  it('setToolAllowlist INSERT writes granted_at = NOW()', () => {
+    // The role-scoped INSERT now carries granted_at column + NOW() value.
+    expect(allowlistSrc).toMatch(
+      /INSERT INTO org_tool_allowlist \(id, org_id, vendor_slug, role, tool_name, granted_by, granted_at\)[\s\S]*VALUES \([^)]*NOW\(\)\)/,
+    );
+  });
+
+  it('setTeamToolAllowlist INSERT writes granted_at = NOW()', () => {
+    // The team-scoped INSERT carries granted_at column + NOW() value.
+    expect(allowlistSrc).toMatch(
+      /INSERT INTO org_tool_allowlist \(id, org_id, vendor_slug, team_id, role, tool_name, granted_by, granted_at\)[\s\S]*VALUES \([^)]*NOW\(\)\)/,
+    );
+  });
+});
+
+describe('ToolAllowlistService.getTeamToolAllowlistWithAudit (WYREAI-62)', () => {
+  const svc = new ToolAllowlistService();
+
+  it('exposes the audit-read method on the class', () => {
+    expect(typeof svc.getTeamToolAllowlistWithAudit).toBe('function');
+  });
+
+  it('SELECTs LEFT JOIN users for the friendly grantedBy label (COALESCE display_name, name, email)', () => {
+    expect(allowlistSrc).toMatch(
+      /LEFT JOIN users u ON u\.id = a\.granted_by/,
+    );
+    expect(allowlistSrc).toMatch(
+      /COALESCE\(u\.display_name, u\.name, u\.email\) AS granted_by_label/,
+    );
+  });
+
+  it('ORDER BY granted_at DESC NULLS LAST defends against future row-drift', () => {
+    // Warden's gateway-#200 framing: if the replace-set semantics ever change to
+    // incremental edits, the audit metadata still returns the MOST-RECENT grant
+    // first. Pinning the ORDER BY clause.
+    expect(allowlistSrc).toMatch(
+      /ORDER BY a\.granted_at DESC NULLS LAST/,
+    );
+  });
+
+  it('OrgService delegation exists', () => {
+    expect(typeof OrgService.prototype.getTeamToolAllowlistWithAudit).toBe('function');
   });
 });
