@@ -453,6 +453,82 @@ export class OrgService {
         ON org_tool_allowlist(org_id, vendor_slug, role)
     `;
 
+    // ---------------------------------------------------------------------
+    // Team-scoped allowlist additions (WYREAI-59, parity port of gateway #189).
+    // Each org_tool_allowlist row is EITHER team-scoped (team_id NOT NULL,
+    // role NULL) OR role-scoped (team_id NULL, role NOT NULL) — never both
+    // and never neither. The CHECK invariant enforces that at the schema
+    // layer so the call-site never has to remember. (Structural-XOR pin.)
+    //
+    // Existing RLS policies on org_tool_allowlist are org-scoped (org_members
+    // check + reseller-admin parent check) and DON'T reference role or team_id
+    // — they continue to gate at the org-membership level, which is correct
+    // for both shapes. Whether team-scoped rows additionally need a finer-grain
+    // team-membership check is a warden-domain call (sibling Linear WYREAI-59).
+    //
+    // All additions idempotent (boot DDL). Existing role-scoped rows are
+    // untouched — they remain valid under the new partial UNIQUE for role rows.
+    // ---------------------------------------------------------------------
+
+    // 1) Add nullable team_id column (FK to org_teams, cascade on team delete).
+    await this.sql`
+      ALTER TABLE org_tool_allowlist
+        ADD COLUMN IF NOT EXISTS team_id TEXT
+        REFERENCES org_teams(id) ON DELETE CASCADE
+    `;
+
+    // 2) Make role nullable (was NOT NULL; team rows have role IS NULL).
+    //    ALTER COLUMN ... DROP NOT NULL is idempotent in PostgreSQL.
+    await this.sql`
+      ALTER TABLE org_tool_allowlist ALTER COLUMN role DROP NOT NULL
+    `;
+
+    // 3) Drop the existing UNIQUE(org_id, vendor_slug, role, tool_name)
+    //    constraint — it can't enforce uniqueness for team rows (role is NULL
+    //    there, and PG treats NULLs as distinct in UNIQUE). The two partial
+    //    UNIQUEs below replace it with shape-correct enforcement.
+    await this.sql`
+      ALTER TABLE org_tool_allowlist
+        DROP CONSTRAINT IF EXISTS org_tool_allowlist_org_id_vendor_slug_role_tool_name_key
+    `;
+
+    // 4) CHECK invariant: exactly one of (team_id, role) is non-NULL.
+    //    PostgreSQL doesn't support ADD CONSTRAINT IF NOT EXISTS, so guard via
+    //    pg_constraint lookup. Same idempotency idiom as the rest of initTables.
+    await this.sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'org_tool_allowlist_team_xor_role'
+        ) THEN
+          ALTER TABLE org_tool_allowlist
+            ADD CONSTRAINT org_tool_allowlist_team_xor_role
+            CHECK ((team_id IS NULL) <> (role IS NULL));
+        END IF;
+      END $$;
+    `;
+
+    // 5) Partial UNIQUE for role-scoped rows (team_id IS NULL).
+    await this.sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_org_tool_allowlist_role
+        ON org_tool_allowlist(org_id, vendor_slug, role, tool_name)
+        WHERE team_id IS NULL
+    `;
+
+    // 6) Partial UNIQUE for team-scoped rows (role IS NULL).
+    await this.sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_org_tool_allowlist_team
+        ON org_tool_allowlist(org_id, vendor_slug, team_id, tool_name)
+        WHERE role IS NULL
+    `;
+
+    // 7) Lookup index for team-scoped queries (mirrors the role-lookup index).
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS idx_org_tool_allowlist_team_lookup
+        ON org_tool_allowlist(org_id, vendor_slug, team_id)
+        WHERE team_id IS NOT NULL
+    `;
+
     await this.sql`
       CREATE TABLE IF NOT EXISTS admin_audit_log (
         id         TEXT PRIMARY KEY,
@@ -965,6 +1041,10 @@ export class OrgService {
   setToolAllowlist(orgId: string, vendorSlug: string, role: string, toolNames: string[], grantedBy: string) { return this.toolAllowlistService.setToolAllowlist(orgId, vendorSlug, role, toolNames, grantedBy); }
   clearToolAllowlist(orgId: string, vendorSlug: string, role: string) { return this.toolAllowlistService.clearToolAllowlist(orgId, vendorSlug, role); }
   getAllToolAllowlists(orgId: string, vendorSlug: string) { return this.toolAllowlistService.getAllToolAllowlists(orgId, vendorSlug); }
+  // Team-scoped variants (WYREAI-59, parity port of gateway #189). Same shape as the role-scoped trio above; the schema CHECK enforces (team_id IS NULL) <> (role IS NULL) so a row is either-or by construction.
+  getTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string) { return this.toolAllowlistService.getTeamToolAllowlist(orgId, teamId, vendorSlug); }
+  setTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string, toolNames: string[], grantedBy: string) { return this.toolAllowlistService.setTeamToolAllowlist(orgId, teamId, vendorSlug, toolNames, grantedBy); }
+  clearTeamToolAllowlist(orgId: string, teamId: string, vendorSlug: string) { return this.toolAllowlistService.clearTeamToolAllowlist(orgId, teamId, vendorSlug); }
 
   // -------------------------------------------------------------------------
   // Org settings
