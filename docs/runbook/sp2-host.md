@@ -286,3 +286,33 @@ If both Cloudflare Tunnel and the dashboard SSO break (CF outage, expired token,
 | `AADSTS50011: redirect URI does not match` | Entra app's redirect URI differs from CF team domain | Ensure web redirect URI is `https://jolly-bar-cdb4.cloudflareaccess.com/cdn-cgi/access/callback`. CF team domain visible at `https://one.dash.cloudflare.com → Settings → Custom Pages` |
 | `https://wyre-agents.wyre.ai` returns 502/503 | `cortextos.service` is down, OR tunnel ingress unhealthy | `sudo systemctl status cortextos cloudflared` on the VM; restart whichever is failed |
 | TLS handshake failure on a new hostname | Universal SSL doesn't cover sub-sub-domains | Use one-level hostnames (e.g. `wyre-agents.wyre.ai`) OR pay for Advanced Certificate Manager — see the "SP2c-2 verification notes" above |
+
+## Dashboard credentials
+
+The dashboard auth model is NextAuth credentials (single admin user, SQLite). Both values are generated at first boot by cloud-init and mirrored to Key Vault:
+
+| Secret | Key Vault name |
+|---|---|
+| Admin password | `dashboard-admin-password` |
+| NextAuth session secret | `dashboard-auth-secret` |
+
+### Recovery
+
+    az keyvault secret show --vault-name cortextos-prod-kv-d1fd92 \
+      --name dashboard-admin-password --query value -o tsv
+
+(Your IP must be in `operator_ip_cidrs` first.)
+
+### Rotation — admin password (preferred via dashboard UI)
+
+Sign in → settings → change password. KV gets out of sync after this; the runbook's hard-rotation path is the alternative if you ever need the values to match.
+
+### Hard rotation (delete sentinel, re-provision)
+
+    ssh wyre-agents-ssh.wyre.ai
+    sudo rm /var/lib/cortextos/.dashboard-env-provisioned
+    sudo az keyvault secret delete --vault-name cortextos-prod-kv-d1fd92 --name dashboard-admin-password
+    sudo az keyvault secret delete --vault-name cortextos-prod-kv-d1fd92 --name dashboard-auth-secret
+    sudo systemctl start cortextos-bootstrap.service
+
+The provisioning step re-runs, generates fresh values, writes them. **Note:** rotating `AUTH_SECRET` invalidates every active dashboard session — everyone signs out.

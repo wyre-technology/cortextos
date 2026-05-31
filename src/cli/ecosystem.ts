@@ -109,13 +109,22 @@ export const ecosystemCommand = new Command('ecosystem')
     // PM2 on Windows can't execute `npm` directly — `npm.cmd` is a Windows
     // .cmd shim that PM2's node-based loader tries to interpret as JS, which
     // fails immediately ("Unexpected token ':'"). Bypass the shim by pointing
-    // PM2 at the local Next.js binary that `npm run dev` would run anyway.
+    // PM2 at the local Next.js binary that `npm run` would invoke anyway.
     // The `next` entry resolves under dashboard/node_modules/next/dist/bin/next
     // and is just a Node script, so PM2 spawns it cleanly on every platform.
+    //
+    // Dev vs. production: `next dev` is the right default for local laptops
+    // (hot reload, fast feedback). For a deployed install (NODE_ENV=production)
+    // it's catastrophic for UX — Turbopack lazy-compiles each route on first
+    // hit, so the dashboard load can take 30+ seconds per page. We choose
+    // `start` whenever NODE_ENV=production (assumes `next build` has run; the
+    // cloud-init bootstrap does this).
     const isWindows = process.platform === 'win32';
+    const isProduction = process.env.NODE_ENV === 'production';
+    const mode = isProduction ? 'start' : 'dev';
     const nextBin = join(dashboardDir, 'node_modules', 'next', 'dist', 'bin', 'next');
     const dashboardScript = isWindows && existsSync(nextBin) ? nextBin : 'npm';
-    const dashboardArgs = isWindows && existsSync(nextBin) ? 'dev' : 'run dev';
+    const dashboardArgs = isWindows && existsSync(nextBin) ? mode : `run ${mode}`;
 
     // windowsHide: stops PM2 from attaching a visible "next-server" console
     // window to the dashboard process at boot on Windows. PM2's default

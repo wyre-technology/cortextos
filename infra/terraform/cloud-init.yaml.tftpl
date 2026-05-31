@@ -88,6 +88,12 @@ write_files:
         npm install -g pm2
       fi
 
+      # ── install azure-cli for managed-identity-driven KV writes ────
+      if ! command -v az >/dev/null 2>&1; then
+        log "installing azure-cli (for cloud-init KV writes via managed identity)"
+        curl -sL https://aka.ms/InstallAzureCLIDeb | bash >/dev/null
+      fi
+
       # ── clone repo ─────────────────────────────────────────────
       if [ ! -d /opt/cortextos/.git ]; then
         log "cloning $REPO_URL (branch $REPO_BRANCH) to /opt/cortextos"
@@ -133,6 +139,49 @@ write_files:
         sudo -u cortextos --preserve-env=HOME bash -lc 'cd /opt/cortextos/dashboard && npm run build'
       fi
 
+      # ── provision dashboard env on first boot (SP2c-4) ─────────
+      # Generates ADMIN_PASSWORD + AUTH_SECRET, writes dashboard/.env.local,
+      # stores both in Key Vault. Sentinel makes the step idempotent.
+      DASHBOARD_ENV=/opt/cortextos/dashboard/.env.local
+      SENTINEL=$DATA_MOUNT/.dashboard-env-provisioned
+      KV_NAME="${key_vault_name}"
+      DASHBOARD_URL="https://${dashboard_hostname}"
+      if [ ! -f "$SENTINEL" ] && [ -d /opt/cortextos/dashboard ]; then
+        log "provisioning dashboard env (admin password + auth secret)"
+
+        # Login to az with the VM's managed identity (no client secret).
+        if ! az account show >/dev/null 2>&1; then
+          az login --identity --allow-no-subscriptions >/dev/null
+        fi
+
+        # Generate strong random values.
+        ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
+        AUTH_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
+
+        # Write the env file as the cortextos user.
+        printf 'ADMIN_USERNAME=admin\nADMIN_PASSWORD=%s\nAUTH_SECRET=%s\nAUTH_TRUST_HOST=true\nNEXTAUTH_URL=%s\nAUTH_URL=%s\n' \
+          "$ADMIN_PASSWORD" "$AUTH_SECRET" "$DASHBOARD_URL" "$DASHBOARD_URL" \
+          | sudo -u cortextos tee "$DASHBOARD_ENV" >/dev/null
+        chmod 600 "$DASHBOARD_ENV"
+        chown cortextos:cortextos "$DASHBOARD_ENV"
+
+        # Mirror both secrets to Key Vault for operator recovery.
+        az keyvault secret set --vault-name "$KV_NAME" \
+          --name dashboard-admin-password --value "$ADMIN_PASSWORD" --output none
+        az keyvault secret set --vault-name "$KV_NAME" \
+          --name dashboard-auth-secret --value "$AUTH_SECRET" --output none
+
+        # Sentinel — never re-provision on this disk.
+        touch "$SENTINEL"
+        chown cortextos:cortextos "$SENTINEL"
+        log "dashboard env provisioned; secrets mirrored to KV $KV_NAME"
+
+        # Clear local secret variables so they don't leak into later logs.
+        unset ADMIN_PASSWORD AUTH_SECRET
+      else
+        log "dashboard env already provisioned (sentinel present) — skipping"
+      fi
+
       # ── initialise the org skeleton on the data disk ──────────
       if [ ! -d "$DATA_MOUNT/orgs/$ORG" ]; then
         log "initialising org $ORG via cortextos init"
@@ -147,7 +196,10 @@ write_files:
 
       log "running cortextos install/ecosystem"
       sudo -u cortextos --preserve-env=HOME,CTX_INSTANCE_ID,CTX_FRAMEWORK_ROOT,CTX_PROJECT_ROOT,CTX_ORG bash -lc "cd /opt/cortextos && CTX_FRAMEWORK_ROOT=/opt/cortextos node dist/cli.js install --instance $INSTANCE || true"
-      sudo -u cortextos --preserve-env=HOME,CTX_INSTANCE_ID,CTX_FRAMEWORK_ROOT,CTX_PROJECT_ROOT,CTX_ORG bash -lc "cd /opt/cortextos && CTX_FRAMEWORK_ROOT=/opt/cortextos node dist/cli.js ecosystem --instance $INSTANCE --org $ORG --output /opt/cortextos/ecosystem.config.js"
+      # NODE_ENV=production is set here so src/cli/ecosystem.ts picks `next start`
+      # for the dashboard. Without it, the dashboard PM2 entry runs `next dev`,
+      # which lazy-compiles each route on first hit — 30+ second cold loads.
+      sudo -u cortextos --preserve-env=HOME,CTX_INSTANCE_ID,CTX_FRAMEWORK_ROOT,CTX_PROJECT_ROOT,CTX_ORG bash -lc "cd /opt/cortextos && CTX_FRAMEWORK_ROOT=/opt/cortextos NODE_ENV=production node dist/cli.js ecosystem --instance $INSTANCE --org $ORG --output /opt/cortextos/ecosystem.config.js"
 
       # ── cloudflared install + token fetch ──────────────────────
       if ! id cloudflared >/dev/null 2>&1; then
