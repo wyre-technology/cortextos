@@ -29,6 +29,11 @@ export function toolAccessRoutes(deps: ToolAccessRouteDeps) {
     );
 
     // PUT /api/orgs/:orgId/tool-access/:vendor/:role — set tool allowlist
+    // Admin-tier (was 'owner', flipped 2026-05-31 per parity with gateway #107):
+    // tool-allowlist writes are an org-config concern, not an ownership-tier
+    // concern. The sibling GET / discover handlers on this resource were already
+    // admin — there was never a coherent reason for read/write to differ. Reserve
+    // 'owner' for billing / subscription / ownership-transfer / org-deletion.
     app.put<{
       Params: { orgId: string; vendor: string; role: string };
       Body: { tools: string[] };
@@ -36,7 +41,7 @@ export function toolAccessRoutes(deps: ToolAccessRouteDeps) {
       '/api/orgs/:orgId/tool-access/:vendor/:role',
       async (request, reply) => {
         const { orgId, vendor: vendorSlug, role } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
 
         if (role !== 'admin' && role !== 'member') {
@@ -54,11 +59,12 @@ export function toolAccessRoutes(deps: ToolAccessRouteDeps) {
     );
 
     // DELETE /api/orgs/:orgId/tool-access/:vendor/:role — clear allowlist (revert to allow-all)
+    // Admin-tier — same rationale as the PUT above; admin owns tool-allowlist writes.
     app.delete<{ Params: { orgId: string; vendor: string; role: string } }>(
       '/api/orgs/:orgId/tool-access/:vendor/:role',
       async (request, reply) => {
         const { orgId, vendor: vendorSlug, role } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
 
         if (role !== 'admin' && role !== 'member') {
