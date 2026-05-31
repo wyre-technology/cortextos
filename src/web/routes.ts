@@ -28,6 +28,7 @@ import { renderTeamMembers, TEAM_MEMBERS_STYLES } from './templates/team-members
 import { renderTeamInvitations, TEAM_INVITATIONS_STYLES } from './templates/team-invitations.js';
 import { renderTeamConnections, TEAM_CONNECTIONS_STYLES } from './templates/team-connections.js';
 import { renderTeamToolAccess, TEAM_TOOL_ACCESS_STYLES } from './templates/team-tool-access.js';
+import { renderTeamScopeToolAccess, TEAM_SCOPE_TOOL_ACCESS_STYLES } from './templates/team-scope-tool-access.js';
 import { renderTeamServerAccess, TEAM_SERVER_ACCESS_STYLES } from './templates/team-server-access.js';
 import { renderTeamServiceClients, TEAM_SERVICE_CLIENTS_STYLES } from './templates/team-service-clients.js';
 import { renderTeamScim, TEAM_SCIM_STYLES } from './templates/team-scim.js';
@@ -1482,6 +1483,56 @@ export function webRoutes(deps: WebRouteDeps) {
         const html = renderLayout(
           { user, org, activePath: '/org/teams', title: `${team.name} - Connections`, pageStyles: TEAM_TEAM_CONNECTIONS_STYLES },
           renderTeamTeamConnections({ orgId: org.id, teamId, teamName: team.name, teamVendors }),
+        );
+        return reply.type('text/html').send(html);
+      },
+    );
+
+    // ---------- GET /org/teams/:teamId/tool-access/:vendor (WYREAI-63) ----------
+    // Team-scoped tool-access admin UI — parity port of gateway #200 frontend.
+    // Authz baseline = requireTeamAccess (admin/owner role at the request shell)
+    // mirrors the WYREAI-62 API admin-gate. The team-ownership check
+    // (team.orgId === org.id) defends against IDOR — a reseller-admin cannot
+    // load /tool-access for a team owned by a different org via URL guessing.
+    app.get<{ Params: { teamId: string; vendor: string } }>(
+      '/org/teams/:teamId/tool-access/:vendor',
+      async (request, reply) => {
+        const ctx = await requireTeamAccess(request, reply, orgService, billingGate);
+        if (!ctx) return;
+        const { user, org } = ctx;
+
+        const { teamId, vendor: vendorSlug } = request.params;
+        const team = await orgService.getTeam(teamId);
+        if (!team || team.orgId !== org.id) {
+          return reply.code(404).send('Team not found');
+        }
+        const vendorConfig = getVendor(vendorSlug);
+        if (!vendorConfig) {
+          return reply.code(404).send('Unknown vendor');
+        }
+
+        // The WYREAI-62 audit-extended read. null = inherit-org-defaults state.
+        const allowlist = await orgService.getTeamToolAllowlistWithAudit(
+          org.id,
+          teamId,
+          vendorSlug,
+        );
+
+        const html = renderLayout(
+          {
+            user,
+            org,
+            activePath: '/org/teams',
+            title: `${team.name} - ${vendorConfig.name} tool access`,
+            pageStyles: TEAM_SCOPE_TOOL_ACCESS_STYLES,
+          },
+          renderTeamScopeToolAccess({
+            org,
+            team,
+            vendorSlug,
+            vendorName: vendorConfig.name,
+            allowlist,
+          }),
         );
         return reply.type('text/html').send(html);
       },

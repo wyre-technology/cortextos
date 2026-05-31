@@ -31,11 +31,23 @@ function renderTeamCard(team: OrgTeamWithMembers, orgMembers: TeamTeamsData['org
     : orgVendors.map((slug) => {
         const vendor = VENDORS[slug];
         const label = vendor ? vendor.name : slug;
-        const checked = accessSet.has(slug) ? 'checked' : '';
-        return `<label class="vendor-check">
-          <input type="checkbox" ${checked} onchange="toggleTeamAccess('${escapeHtml(team.id)}', '${escapeHtml(slug)}', this.checked)" />
-          ${escapeHtml(label)}
-        </label>`;
+        const hasAccess = accessSet.has(slug);
+        const checked = hasAccess ? 'checked' : '';
+        // WYREAI-63: per-row link to the team-scoped tool-access page,
+        // shown only for vendors the team has server-access for (no point
+        // configuring tool-allowlist on a vendor the team can't reach).
+        // Rendered as a sibling to the label so clicking the link doesn't
+        // toggle the checkbox.
+        const toolsLink = hasAccess
+          ? `<a class="vendor-tools-link" href="/org/teams/${escapeHtml(team.id)}/tool-access/${escapeHtml(slug)}" title="Configure tool access for ${escapeHtml(label)}">Tools</a>`
+          : '';
+        return `<div class="vendor-check-row">
+          <label class="vendor-check">
+            <input type="checkbox" ${checked} onchange="toggleTeamAccess('${escapeHtml(team.id)}', '${escapeHtml(slug)}', this.checked)" />
+            ${escapeHtml(label)}
+          </label>
+          ${toolsLink}
+        </div>`;
       }).join('');
 
   return `
@@ -273,6 +285,15 @@ export const TEAM_TEAMS_STYLES = `
     flex-wrap: wrap;
     gap: 12px;
   }
+  .vendor-check-row {
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .vendor-tools-link {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: var(--bg-subtle); color: var(--text-secondary);
+    text-decoration: none; border: 1px solid var(--border-subtle);
+  }
+  .vendor-tools-link:hover { color: var(--text-primary); border-color: var(--border-primary); }
   .vendor-check {
     display: flex;
     align-items: center;
