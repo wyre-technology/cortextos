@@ -41,18 +41,15 @@ function mockData(
   dunning: DunningView,
   over: Partial<TeamBillingData> = {},
 ): TeamBillingData {
-  const plan = getPlan('pro')!;
+  const plan = getPlan('conduit')!;
   const seatBilling = makeSeatBilling(4, 0); // 4 humans, 0 agents
   return {
     org: mockOrg,
     plan,
     seatBilling,
     trial: null,
-    creditsUsed: 1200,
-    creditsAllocated: plan.creditAllocation * seatBilling.creditSeats,
     dunning,
     firstName: 'Aaron',
-    availableCreditPacks: [1000, 2500, 5000],
     ...over,
   };
 }
@@ -261,9 +258,9 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
     const html = renderTeamBilling(mockData({ state: 'none' }, {
       seatBilling: makeSeatBilling(5, 2),
     }));
-    expect(html).toContain('$600 base + 5 seats × $20 = $700/mo');
+    expect(html).toContain('$399 base + 5 seats × $39 = $594/mo');
     expect(html).toContain('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
-    expect(html).toContain('$700/mo'); // the prominent total
+    expect(html).toContain('$594/mo'); // the prominent total
   });
 
   it('shows the included-vs-billed split when agents exceed the inclusion', () => {
@@ -271,7 +268,7 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
       seatBilling: makeSeatBilling(5, 4),
     }));
     expect(html).toContain('9 seats — 5 members + 4 agents (2 included, 2 billed)');
-    expect(html).toContain('$740/mo');
+    expect(html).toContain('$672/mo');
   });
 
   it('drops the obsolete "Change plan" button (one paid plan, nothing to change to)', () => {
@@ -289,13 +286,13 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('on-trial: trial banner shown + the bill framed as post-trial', () => {
     const endsAt = new Date(Date.now() + 9 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: makeSeatBilling(1, 0), // $620/mo recurring total
+      seatBilling: makeSeatBilling(1, 0), // $438/mo recurring total
       trial: { endsAt },
     }));
     expect(html).toContain('trial-banner');
     expect(html).toContain('Free trial — 9 days left');
     // First-charge amount = the composed-bill recurring total, single-sourced.
-    expect(html).toContain('Your first charge is $620.00 on ');
+    expect(html).toContain('Your first charge is $438.00 on ');
     expect(html).toContain('Nothing is billed before then');
     expect(html).toContain('After your trial');
   });
@@ -303,11 +300,11 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('the trial first-charge amount equals the composed-bill total (single source)', () => {
     const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: makeSeatBilling(5, 4), // $740/mo
+      seatBilling: makeSeatBilling(5, 4), // $672/mo
       trial: { endsAt },
     }));
-    expect(html).toContain('Your first charge is $740.00 on ');
-    expect(html).toContain('$600 base + 7 seats × $20 = $740/mo'); // same number
+    expect(html).toContain('Your first charge is $672.00 on ');
+    expect(html).toContain('$399 base + 7 seats × $39 = $672/mo'); // same number
   });
 
   it('on-trial with 1 day left — singular copy', () => {

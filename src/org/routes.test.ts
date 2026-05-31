@@ -128,7 +128,6 @@ function createMockBillingGate(overrides: Partial<BillingGate> = {}): BillingGat
     canUseAuditLogExport: vi.fn().mockResolvedValue(false),
     canUseSso: vi.fn().mockResolvedValue(false),
     canUseServiceClients: vi.fn().mockResolvedValue(false),
-    getCreditAllocation: vi.fn().mockResolvedValue(0),
     ...overrides,
   };
 }
@@ -1715,7 +1714,12 @@ describe('orgRoutes', () => {
   // -------------------------------------------------------------------------
 
   describe('POST /api/orgs/:orgId/redeem-code', () => {
-    it('upgrades org to pro with valid code', async () => {
+    it('valid code now 409s — every org already resolves to the one plan (flat-pricing)', async () => {
+      // Post-flat there are no tiers and every org is created paid-with-trial,
+      // so isPaidPlan resolves any slug (incl. legacy 'free') to the one plan.
+      // The alpha-invite upgrade path is obsolete: a valid code on any org
+      // 409s rather than upgrading. The invalid-code (422) check still runs
+      // first, so this exercises the valid-code → already-on-plan branch.
       vi.stubEnv('ALPHA_INVITE_CODES', 'CODE1,CODE2,CODE3');
       authenticateAs();
       const orgService = createMockOrgService({
@@ -1731,9 +1735,9 @@ describe('orgRoutes', () => {
         payload: { code: 'CODE2' },
       });
 
-      expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ success: true, plan: 'pro' });
-      expect(orgService.updateOrgPlan).toHaveBeenCalledWith('org-1', 'pro');
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: 'Organization is already on the plan' });
+      expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
     });
 
     it('returns 422 for invalid code', async () => {
@@ -1770,12 +1774,12 @@ describe('orgRoutes', () => {
       expect(response.statusCode).toBe(400);
     });
 
-    it('returns 409 when org is already pro', async () => {
+    it('returns 409 when org already resolves to the plan', async () => {
       vi.stubEnv('ALPHA_INVITE_CODES', 'CODE1');
       authenticateAs();
       const orgService = createMockOrgService({
         getMembership: ownerMembership(),
-        getOrg: vi.fn().mockResolvedValue({ ...TEST_ORG, plan: 'pro' }),
+        getOrg: vi.fn().mockResolvedValue({ ...TEST_ORG, plan: 'conduit' }),
       });
       app = await buildApp(orgService);
 
@@ -1786,7 +1790,7 @@ describe('orgRoutes', () => {
       });
 
       expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ error: 'Organization is already on a paid plan' });
+      expect(response.json()).toEqual({ error: 'Organization is already on the plan' });
     });
 
     it('returns 403 for non-owner', async () => {

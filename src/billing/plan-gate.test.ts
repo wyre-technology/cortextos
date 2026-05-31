@@ -73,10 +73,14 @@ describe('plan-gate regression guard (sub-pattern #10)', () => {
     expect(offenders).toHaveLength(0);
   });
 
-  it('isPaidPlan returns true for paid tiers, false for free/unknown', () => {
+  it('isPaidPlan returns true for any resolvable slug, false only for absent input', () => {
+    // Flat-pricing: one plan, no free tier. Any resolvable slug — including a
+    // legacy 'free'/'pro'/'business' value on an un-migrated row — is "on the
+    // plan". Only genuinely-absent input (null/undefined/'') is not paid.
+    expect(isPaidPlan('conduit')).toBe(true);
     expect(isPaidPlan('pro')).toBe(true);
     expect(isPaidPlan('business')).toBe(true);
-    expect(isPaidPlan('free')).toBe(false);
+    expect(isPaidPlan('free')).toBe(true);
     expect(isPaidPlan(null)).toBe(false);
     expect(isPaidPlan(undefined)).toBe(false);
   });

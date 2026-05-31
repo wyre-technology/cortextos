@@ -1,158 +1,74 @@
 /**
- * Plan catalog — configurable plan definitions loaded from env or defaults.
+ * Plan catalog — the single flat plan.
  *
- * Plans are loaded from PLAN_CATALOG env var (JSON array) or fall back to
- * the default catalog. Layer 1 (LOCKED DOR 2026-05-20) collapses to a
- * single paid plan `conduit` — $600 base + $20/seat, 2500 credits/seat,
- * 2 agent seats included in base. Free / pro / business remain in the
- * default catalog through the migration window (WI-8, groups B–E); they
- * are vestigial post-migration. New orgs default to `conduit` with a
- * 14-day trial (see TRIAL_PERIOD_DAYS in prices.ts; subscription wiring
- * lives in checkout.ts).
+ * Per Aaron's 2026-05-26 FLAT-PRICING decision: no tiers, no credits, no
+ * call-gating, everything-included. There is exactly ONE plan, `conduit`
+ * ($399/org + $39/billable-seat, Shape-A agent inclusion — see prices.ts).
+ * The former free / pro / business tiers + their per-tier feature gates +
+ * the credit allocation are removed.
+ *
+ * The per-feature booleans below are ALL TRUE and the limits ALL UNLIMITED
+ * — kept as the "everything-included" surface that gate.ts reads, NOT as a
+ * tier lever. They no longer differentiate plans (there is only one); they
+ * exist so gate.ts's method signatures stay stable for their callers while
+ * always answering "yes, included". Rate-limiting is NOT here: it is a flat
+ * infra constant (ANTI_ABUSE_RATE_PER_HOUR in prices.ts), divorced from the
+ * plan object so it can never drift back into a pricing tier.
+ *
+ * getPlan resolves ANY slug to the flat plan — existing org rows carrying a
+ * legacy 'free'/'pro'/'business' value resolve cleanly even before the
+ * data migration rewrites them to 'conduit'.
  */
 
-import {
-  BASE_PRICE_CENTS,
-  CREDITS_PER_SEAT,
-  PER_SEAT_PRICE_CENTS,
-} from './prices.js';
-
-export type PlanSlug = 'free' | 'pro' | 'business' | 'conduit';
+export type PlanSlug = 'conduit';
 
 export interface PlanDefinition {
   slug: string;
   name: string;
-  vendorLimit: number;        // Infinity = unlimited
-  rateLimitPerHour: number;
-  teamFeatures: boolean;
-  logShipping: boolean;
-  promptCapture: boolean;
-  maxMembers: number;         // Infinity = unlimited
-  /**
-   * Monthly credit allocation. Interpreted as:
-   *   - free: flat allocation (creditAllocation total credits/month)
-   *   - pro/business: per-seat allocation (creditAllocation × member count)
-   * Pooled across all org members in either case.
-   */
-  creditAllocation: number;
-  // Business-tier features (mcp-gateway parity). All false on free/pro.
-  auditLogExport: boolean;
-  sso: boolean;
-  serviceClients: boolean;
+  vendorLimit: number;        // Infinity = unlimited (always, flat)
+  teamFeatures: boolean;      // always true (everything-included)
+  logShipping: boolean;       // always true
+  promptCapture: boolean;     // always true
+  maxMembers: number;         // Infinity = unlimited (always, flat)
+  auditLogExport: boolean;    // always true
+  sso: boolean;               // always true
+  serviceClients: boolean;    // always true
 }
-
-const DEFAULT_CATALOG: PlanDefinition[] = [
-  {
-    slug: 'free',
-    name: 'Free',
-    vendorLimit: 3,
-    rateLimitPerHour: 100,
-    teamFeatures: false,
-    logShipping: false,
-    promptCapture: false,
-    maxMembers: 1,
-    creditAllocation: 500,
-    auditLogExport: false,
-    sso: false,
-    serviceClients: false,
-  },
-  {
-    slug: 'pro',
-    name: 'Pro',
-    vendorLimit: Infinity,
-    rateLimitPerHour: 1000,
-    teamFeatures: true,
-    logShipping: true,
-    promptCapture: true,
-    maxMembers: Infinity,
-    creditAllocation: 1500,
-    auditLogExport: false,
-    sso: false,
-    serviceClients: false,
-  },
-  {
-    slug: 'business',
-    name: 'Business',
-    vendorLimit: Infinity,
-    rateLimitPerHour: 5000,
-    teamFeatures: true,
-    logShipping: true,
-    promptCapture: true,
-    maxMembers: Infinity,
-    creditAllocation: 4000,
-    auditLogExport: true,
-    sso: true,
-    serviceClients: true,
-  },
-  {
-    // Layer 1 paid plan. Per the LOCKED DOR, every Conduit org runs on
-    // this plan — $600 base + $20/billable-seat, 2 agent seats included.
-    // creditAllocation is retained as documentation of the per-seat rate;
-    // gate.getCreditAllocation reads CREDITS_PER_SEAT (prices.ts) so the
-    // margin lever lives in one constant, not in this catalog entry.
-    slug: 'conduit',
-    name: 'Conduit',
-    vendorLimit: Infinity,
-    rateLimitPerHour: 5000,
-    teamFeatures: true,
-    logShipping: true,
-    promptCapture: true,
-    maxMembers: Infinity,
-    creditAllocation: CREDITS_PER_SEAT,
-    auditLogExport: true,
-    sso: true,
-    serviceClients: true,
-  },
-];
 
 export const CONDUIT_PLAN_SLUG = 'conduit' as const;
-export const CONDUIT_BASE_PRICE_CENTS = BASE_PRICE_CENTS;
-export const CONDUIT_PER_SEAT_PRICE_CENTS = PER_SEAT_PRICE_CENTS;
 
-function parseCatalog(json: string): PlanDefinition[] {
-  const raw = JSON.parse(json) as Array<Record<string, unknown>>;
-  return raw.map((p) => ({
-    slug: String(p.slug),
-    name: String(p.name),
-    vendorLimit: p.vendorLimit === 'Infinity' ? Infinity : Number(p.vendorLimit),
-    rateLimitPerHour: Number(p.rateLimitPerHour),
-    teamFeatures: Boolean(p.teamFeatures),
-    logShipping: Boolean(p.logShipping),
-    promptCapture: Boolean(p.promptCapture),
-    maxMembers: p.maxMembers === 'Infinity' ? Infinity : Number(p.maxMembers),
-    creditAllocation: Number(p.creditAllocation ?? 0),
-    auditLogExport: Boolean(p.auditLogExport),
-    sso: Boolean(p.sso),
-    serviceClients: Boolean(p.serviceClients),
-  }));
-}
+/** The single flat plan — everything-included, no tier differentiation. */
+const FLAT_PLAN: PlanDefinition = {
+  slug: CONDUIT_PLAN_SLUG,
+  name: 'Conduit',
+  vendorLimit: Infinity,
+  teamFeatures: true,
+  logShipping: true,
+  promptCapture: true,
+  maxMembers: Infinity,
+  auditLogExport: true,
+  sso: true,
+  serviceClients: true,
+};
 
-function loadCatalog(): PlanDefinition[] {
-  const envJson = process.env.PLAN_CATALOG;
-  if (!envJson) return DEFAULT_CATALOG;
+export const planCatalog: PlanDefinition[] = [FLAT_PLAN];
 
-  try {
-    return parseCatalog(envJson);
-  } catch {
-    console.warn('WARNING: Invalid PLAN_CATALOG JSON — using defaults');
-    return DEFAULT_CATALOG;
-  }
-}
-
-export const planCatalog = loadCatalog();
-
-const planMap = new Map(planCatalog.map((p) => [p.slug, p]));
-
-export function getPlan(slug: string): PlanDefinition | undefined {
-  return planMap.get(slug);
+/**
+ * Resolve a plan slug. Flat-pricing has ONE plan, so any slug — including
+ * a legacy 'free'/'pro'/'business' value on an un-migrated org row — maps
+ * to the flat plan. Returns undefined only for the genuinely-empty input
+ * so existing `if (!plan)` guards keep their shape.
+ */
+export function getPlan(slug: string | null | undefined): PlanDefinition | undefined {
+  if (slug === null || slug === undefined || slug === '') return undefined;
+  return FLAT_PLAN;
 }
 
 /**
- * Default plan for newly-created orgs. Per DOR §9.1, every new org is
- * created as a `trialing` Stripe subscription against the conduit plan —
- * no more unpaid `free` default. checkout.ts owns the trial_period_days
- * wiring; this function names the plan that org-creation attaches.
+ * Default plan for newly-created orgs — the single flat plan. Every new
+ * org is created as a `trialing` Stripe subscription against it (no unpaid
+ * `free` default). checkout.ts owns the trial_period_days wiring.
  */
 export function getDefaultPlan(): PlanDefinition {
-  return planMap.get(CONDUIT_PLAN_SLUG) ?? planCatalog[0];
+  return FLAT_PLAN;
 }

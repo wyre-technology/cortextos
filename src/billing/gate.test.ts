@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DefaultBillingGate, isPaidPlan, isServiceActive } from './gate.js';
+import { ANTI_ABUSE_RATE_PER_HOUR } from './prices.js';
 import type { OrgService } from '../org/org-service.js';
 import type { Organization } from '../org/org-service.js';
 
@@ -12,7 +13,7 @@ function makeOrg(overrides: Partial<Organization> = {}): Organization {
     id: 'org-1',
     name: 'Test Org',
     ownerId: 'user-1',
-    plan: 'free',
+    plan: 'conduit',
     defaultServerAccess: 'none',
     promptCaptureEnabled: false,
     stripeCustomerId: null,
@@ -29,7 +30,7 @@ function makeOrg(overrides: Partial<Organization> = {}): Organization {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('DefaultBillingGate', () => {
+describe('DefaultBillingGate (flat-pricing — one plan)', () => {
   let gate: DefaultBillingGate;
   const mockOrgService = {
     getUserOrgs: vi.fn<[string], Organization[]>(),
@@ -45,176 +46,71 @@ describe('DefaultBillingGate', () => {
   });
 
   // -------------------------------------------------------------------------
-  // getUserPlan
+  // getUserPlan — collapses to the one plan regardless of stored slug
   // -------------------------------------------------------------------------
 
   describe('getUserPlan', () => {
-    it('returns "pro" when user belongs to a pro org', async () => {
-      mockOrgService.getUserOrgs.mockResolvedValue([
-        makeOrg({ id: 'org-1', plan: 'pro' }),
-      ]);
-
-      const plan = await gate.getUserPlan('user-1');
-
-      expect(plan).toBe('pro');
-      expect(mockOrgService.getUserOrgs).toHaveBeenCalledWith('user-1');
+    it('always returns "conduit" (no tier ranking across orgs)', async () => {
+      // Flat-pricing: there is nothing to rank. resolveUserPlan ignores the
+      // org set entirely; every user is on the one plan.
+      expect(await gate.getUserPlan('user-1')).toBe('conduit');
     });
 
-    it('returns "pro" when at least one org is pro among several', async () => {
-      mockOrgService.getUserOrgs.mockResolvedValue([
-        makeOrg({ id: 'org-1', plan: 'free' }),
-        makeOrg({ id: 'org-2', plan: 'pro' }),
-        makeOrg({ id: 'org-3', plan: 'free' }),
-      ]);
-
-      const plan = await gate.getUserPlan('user-1');
-
-      expect(plan).toBe('pro');
-    });
-
-    it('returns "free" when no orgs are pro', async () => {
-      mockOrgService.getUserOrgs.mockResolvedValue([
-        makeOrg({ id: 'org-1', plan: 'free' }),
-        makeOrg({ id: 'org-2', plan: 'free' }),
-      ]);
-
-      const plan = await gate.getUserPlan('user-1');
-
-      expect(plan).toBe('free');
-    });
-
-    it('returns "free" when user belongs to no orgs', async () => {
+    it('returns "conduit" even for a user with no orgs', async () => {
       mockOrgService.getUserOrgs.mockResolvedValue([]);
-
-      const plan = await gate.getUserPlan('user-1');
-
-      expect(plan).toBe('free');
+      expect(await gate.getUserPlan('user-1')).toBe('conduit');
     });
   });
 
   // -------------------------------------------------------------------------
-  // getConnectionLimit
+  // getConnectionLimit — unlimited, flat
   // -------------------------------------------------------------------------
 
   describe('getConnectionLimit', () => {
-    it('returns the default plan limit for users with no orgs (Layer 1: conduit)', async () => {
-      // Pre-Layer-1 default was free (limit 3). DOR §9.1 made conduit the
-      // default (every new org is conduit-with-trial), so the "no-orgs"
-      // fallback also picks up conduit. A user with truly zero orgs is an
-      // edge case — they have no auth context for real requests anyway.
-      mockOrgService.getUserOrgs.mockResolvedValue([]);
-
-      const limit = await gate.getConnectionLimit('user-1');
-
-      expect(limit).toBe(Infinity);
-    });
-
-    it('returns Infinity for pro plan users', async () => {
-      mockOrgService.getUserOrgs.mockResolvedValue([
-        makeOrg({ plan: 'pro' }),
-      ]);
-
-      const limit = await gate.getConnectionLimit('user-1');
-
-      expect(limit).toBe(Infinity);
+    it('returns Infinity (everything-included)', async () => {
+      expect(await gate.getConnectionLimit('user-1')).toBe(Infinity);
     });
   });
 
   // -------------------------------------------------------------------------
-  // getRateLimit
+  // getRateLimit — flat anti-abuse ceiling, divorced from the plan object
   // -------------------------------------------------------------------------
 
   describe('getRateLimit', () => {
-    it('returns the default plan rate limit for users with no orgs (Layer 1: conduit = 5000/hr)', async () => {
-      // Same Layer 1 default shift as getConnectionLimit above.
-      mockOrgService.getUserOrgs.mockResolvedValue([]);
-
-      const limit = await gate.getRateLimit('user-1');
-
-      expect(limit).toBe(5000);
-    });
-
-    it('returns 1000 for pro plan users', async () => {
-      mockOrgService.getUserOrgs.mockResolvedValue([
-        makeOrg({ plan: 'pro' }),
-      ]);
-
-      const limit = await gate.getRateLimit('user-1');
-
-      expect(limit).toBe(1000);
+    it('returns the flat anti-abuse ceiling for every user', async () => {
+      expect(await gate.getRateLimit('user-1')).toBe(ANTI_ABUSE_RATE_PER_HOUR);
     });
   });
 
   // -------------------------------------------------------------------------
-  // canUseTeamFeatures
+  // canUseTeamFeatures / canAddMember — always true (everything-included)
   // -------------------------------------------------------------------------
 
   describe('canUseTeamFeatures', () => {
-    it('returns true for a pro org', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
-
-      const result = await gate.canUseTeamFeatures('org-1');
-
-      expect(result).toBe(true);
-      expect(mockOrgService.getOrg).toHaveBeenCalledWith('org-1');
-    });
-
-    it('returns false for a free org', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'free' }));
-
-      const result = await gate.canUseTeamFeatures('org-1');
-
-      expect(result).toBe(false);
-    });
-
-    it('returns false when org does not exist', async () => {
-      mockOrgService.getOrg.mockResolvedValue(null);
-
-      const result = await gate.canUseTeamFeatures('nonexistent');
-
-      expect(result).toBe(false);
+    it('returns true (team features are included in the flat plan)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      expect(await gate.canUseTeamFeatures('org-1')).toBe(true);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // canAddMember (delegates to canUseTeamFeatures)
-  // -------------------------------------------------------------------------
 
   describe('canAddMember', () => {
-    it('returns true for a pro org', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'pro' }));
-
-      const result = await gate.canAddMember('org-1');
-
-      expect(result).toBe(true);
-    });
-
-    it('returns false for a free org', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'free' }));
-
-      const result = await gate.canAddMember('org-1');
-
-      expect(result).toBe(false);
+    it('returns true (unlimited members in the flat plan)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      expect(await gate.canAddMember('org-1')).toBe(true);
     });
   });
 
   // -------------------------------------------------------------------------
-  // getCreditAllocation
-  // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // canAccessPaidFeatures (Track A, mig 024) — composed gate
+  // canAccessPaidFeatures — composed paid-AND-service-active gate
   //
-  // Paired accept/reject tests for the dunning-aware composed gate.
-  // Each gate-call-site (web/routes.ts requireTeamAccess, dashboard/routes.ts,
-  // audit/routes.ts × 2) calls this method; testing it once at the helper
-  // level covers all 4 sites under the Bug B sweep shape — one composed
-  // predicate, paired accept/reject coverage.
+  // Post-flat, isPaidPlan is true for any resolvable slug, so the access
+  // decision flows entirely through the dunning-aware service check
+  // (subscriptions.status). Org-missing is the only "not paid" path.
   // -------------------------------------------------------------------------
 
   describe('canAccessPaidFeatures (dunning-aware composed gate)', () => {
-    it('returns true: paid plan + active subscription', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
+    it('returns true: active subscription', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
       mockOrgService.getSubscription.mockResolvedValue({
         status: 'active',
         first_failure_at: null,
@@ -223,8 +119,18 @@ describe('DefaultBillingGate', () => {
       expect(await gate.canAccessPaidFeatures('org-1')).toBe(true);
     });
 
-    it('returns true: paid plan + past_due INSIDE grace window', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
+    it('returns true: trialing subscription', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      mockOrgService.getSubscription.mockResolvedValue({
+        status: 'trialing',
+        first_failure_at: null,
+        recovered_at: null,
+      });
+      expect(await gate.canAccessPaidFeatures('org-1')).toBe(true);
+    });
+
+    it('returns true: past_due INSIDE grace window', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
       const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
       mockOrgService.getSubscription.mockResolvedValue({
         status: 'past_due',
@@ -234,8 +140,8 @@ describe('DefaultBillingGate', () => {
       expect(await gate.canAccessPaidFeatures('org-1')).toBe(true);
     });
 
-    it('returns false: paid plan + past_due PAST grace window', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
+    it('returns false: past_due PAST grace window', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
       const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
       mockOrgService.getSubscription.mockResolvedValue({
         status: 'past_due',
@@ -245,8 +151,8 @@ describe('DefaultBillingGate', () => {
       expect(await gate.canAccessPaidFeatures('org-1')).toBe(false);
     });
 
-    it('returns false: paid plan + canceled subscription (terminal)', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
+    it('returns false: canceled subscription (terminal)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
       mockOrgService.getSubscription.mockResolvedValue({
         status: 'canceled',
         first_failure_at: null,
@@ -255,138 +161,61 @@ describe('DefaultBillingGate', () => {
       expect(await gate.canAccessPaidFeatures('org-1')).toBe(false);
     });
 
-    it('returns false: free plan (early-exit on tier check, no sub fetch needed)', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'free' }));
-      expect(await gate.canAccessPaidFeatures('org-1')).toBe(false);
-      // getSubscription should not have been called — early exit on tier
-      expect(mockOrgService.getSubscription).not.toHaveBeenCalled();
-    });
-
-    it('returns true: paid plan + no subscription record (defensive — pre-checkout race)', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'pro' }));
+    it('returns true: no subscription record (defensive — pre-checkout / net-new race)', async () => {
+      // Post-flat every org is paid, so the no-sub branch is the defensive
+      // path for an org whose seed/checkout subscription row has not landed
+      // yet. isServiceActive returns true on null so a brand-new org is not
+      // falsely suspended.
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
       mockOrgService.getSubscription.mockResolvedValue(null);
       expect(await gate.canAccessPaidFeatures('org-1')).toBe(true);
     });
 
-    it('returns true: business plan + trialing subscription', async () => {
-      // business is also paid (PLAN_RANK >= pro); trialing is also active-ish
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ id: 'org-1', plan: 'business' }));
+    it('legacy "free" slug resolves to paid — service governed by subscription, not tier', async () => {
+      // An un-migrated org row still carrying plan='free' resolves to the
+      // flat plan (isPaidPlan true), so access flows through the dunning
+      // check rather than early-exiting on tier. With a canceled sub it is
+      // denied — the slug no longer short-circuits the decision.
+      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'free' }));
       mockOrgService.getSubscription.mockResolvedValue({
-        status: 'trialing',
+        status: 'canceled',
         first_failure_at: null,
         recovered_at: null,
       });
-      expect(await gate.canAccessPaidFeatures('org-1')).toBe(true);
+      expect(await gate.canAccessPaidFeatures('org-1')).toBe(false);
     });
 
-    it('returns false: org missing entirely', async () => {
+    it('returns false: org missing entirely (no resolvable plan)', async () => {
       mockOrgService.getOrg.mockResolvedValue(null);
       expect(await gate.canAccessPaidFeatures('org-missing')).toBe(false);
-    });
-  });
-
-  describe('getCreditAllocation', () => {
-    // Layer 1 LOCKED DOR §4: paid orgs use CREDITS_PER_SEAT × creditSeats
-    // where creditSeats = humans + agents. The arithmetic routes through
-    // SeatService.getSeatBilling so credits + bill total + seat composition
-    // single-source through one call. Free plan retains its flat catalog
-    // allocation until WI-8 migration retires it.
-
-    it('returns flat catalog allocation for legacy free orgs', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'free' }));
-      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
-
-      const result = await gate.getCreditAllocation('org-1');
-
-      // Free plan in default catalog has flat creditAllocation = 500;
-      // member count is intentionally ignored on the legacy free path.
-      expect(result).toBe(500);
-    });
-
-    it('conduit org: 2500 × creditSeats (humans + agents, included agents counted)', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
-      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }, { userId: 'c' }]);
-      mockOrgService.listServiceClients.mockResolvedValue([{ clientId: 'x' }, { clientId: 'y' }]);
-
-      const result = await gate.getCreditAllocation('org-1');
-
-      // creditSeats = 3 humans + 2 agents = 5. Allocation = 2500 × 5.
-      // Note: includedAgents (2 of 2) count toward the pool because the
-      // base fee funds their credit allocation — DOR §3 locked.
-      expect(result).toBe(12_500);
-    });
-
-    it('conduit org: agent #3 lifts pool by 2500 even though only 2 are billed', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
-      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }]);
-      mockOrgService.listServiceClients.mockResolvedValue([{ clientId: 'x' }, { clientId: 'y' }, { clientId: 'z' }]);
-
-      const result = await gate.getCreditAllocation('org-1');
-
-      // creditSeats = 1 + 3 = 4. Allocation = 2500 × 4 = 10000.
-      // billableSeats = 1 + max(0, 3−2) = 2 (humans+billedAgents); that
-      // drives Stripe but not credits. This row pins the divergence.
-      expect(result).toBe(10_000);
-    });
-
-    it('legacy pro/business orgs route through seat-service during migration window', async () => {
-      // During the WI-8 migration window, legacy paid orgs whose plan
-      // slug is still 'pro' or 'business' transitionally read 2500/seat —
-      // not their old plan.creditAllocation rate. Once migrated to conduit
-      // (WI-8) this distinction disappears entirely.
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'business' }));
-      mockOrgService.getMembers.mockResolvedValue([{ userId: 'a' }, { userId: 'b' }]);
-      mockOrgService.listServiceClients.mockResolvedValue([]);
-
-      const result = await gate.getCreditAllocation('org-1');
-
-      // creditSeats = 2 + 0 = 2. Allocation = 2500 × 2 = 5000.
-      expect(result).toBe(5_000);
-    });
-
-    it('empty conduit org (no members, no agents) → base only, no credits', async () => {
-      mockOrgService.getOrg.mockResolvedValue(makeOrg({ plan: 'conduit' }));
-      mockOrgService.getMembers.mockResolvedValue([]);
-      mockOrgService.listServiceClients.mockResolvedValue([]);
-
-      const result = await gate.getCreditAllocation('org-1');
-
-      // Degenerate but well-defined: 2500 × 0 = 0. The legacy
-      // "treat zero seats as 1" floor is gone — a real org always has
-      // at least one human (its owner) by construction.
-      expect(result).toBe(0);
+      // No subscription fetch — early exit on the unresolvable-plan check.
+      expect(mockOrgService.getSubscription).not.toHaveBeenCalled();
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// isPaidPlan — single source of truth for "team-features tier" gate
+// isPaidPlan — post-flat, true for any resolvable slug
+//
+// Flat-pricing has one plan and no free tier. Any org carrying a resolvable
+// plan slug — including a legacy 'free'/'pro'/'business' value on an
+// un-migrated row — is "on the plan". Only genuinely-absent input is not
+// paid. The service-delivery decision is the separate dunning question
+// (isServiceActive); canAccessPaidFeatures composes both.
 // ---------------------------------------------------------------------------
-//
-// Empirical origin (2026-05-11): requireTeamAccess used `plan !== "pro"`
-// while renderLayout used `plan === "pro" || plan === "business"`. The
-// strict-equality vs OR-set drift produced a business-plan-owner who saw
-// the sidebar team-nav but had every click 302'd back to /settings.
-//
-// These tests guard the invariant: any plan with PLAN_RANK >= pro returns
-// true; anything below or unknown returns false. Both call sites route
-// through this helper so future plan tiers (e.g. "enterprise") pick up
-// automatically without per-call-site edits.
 
 describe('isPaidPlan', () => {
-  it('returns false for free plan', () => {
-    expect(isPaidPlan('free')).toBe(false);
+  it('returns true for conduit', () => {
+    expect(isPaidPlan('conduit')).toBe(true);
   });
 
-  it('returns true for pro plan', () => {
+  it('returns true for legacy free/pro/business slugs (resolve to the flat plan)', () => {
+    expect(isPaidPlan('free')).toBe(true);
     expect(isPaidPlan('pro')).toBe(true);
-  });
-
-  it('returns true for business plan (the bug-fix evidence)', () => {
     expect(isPaidPlan('business')).toBe(true);
   });
 
-  it('returns false for undefined plan (handles no-org case)', () => {
+  it('returns false for undefined plan (no-org case)', () => {
     expect(isPaidPlan(undefined)).toBe(false);
   });
 
@@ -394,28 +223,15 @@ describe('isPaidPlan', () => {
     expect(isPaidPlan(null)).toBe(false);
   });
 
-  it('returns false for unknown plan slug (defensive, e.g. legacy "enterprise" not in PLAN_RANK)', () => {
-    // Cast forces an out-of-PLAN_RANK slug through the helper.
-    expect(isPaidPlan('legacy-unknown' as never)).toBe(false);
-  });
-
-  // Regression guard against the original drift: the SAME helper must
-  // return TRUE for every plan that renderLayout admits to the team-nav,
-  // AND for every plan that requireTeamAccess admits to /org/*.
-  // Listing them explicitly so a future "drop business from team-features"
-  // decision fails THIS test and forces an explicit review.
-  it('admits both pro and business — render/handler gate parity', () => {
-    expect(isPaidPlan('pro')).toBe(true);
-    expect(isPaidPlan('business')).toBe(true);
+  it('returns false for empty-string plan', () => {
+    expect(isPaidPlan('')).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// isServiceActive — dunning-aware gate (Track A, mig 024)
+// isServiceActive — dunning-aware gate (unchanged by flat-pricing)
 //
 // Paired accept/reject tests for each status branch + grace-window boundary.
-// Tests cover Ruby's checkpoint-3 5-state lifecycle mapped to the boolean
-// gate decision:
 //   payment-failing / past-due / final-warning → isServiceActive=true
 //   suspended → isServiceActive=false
 //   recovered → status flips back to active → isServiceActive=true
@@ -466,10 +282,10 @@ describe('isServiceActive (dunning-aware gate)', () => {
       ).toBe(true);
     });
 
-    it('returns true when subscription is null (free-tier orgs handled by isPaidPlan)', () => {
-      // isServiceActive doesn't enforce the paid-vs-free distinction; that's
-      // isPaidPlan's job. Returning true here prevents free-tier orgs from
-      // being falsely flagged as suspended.
+    it('returns true when subscription is null (net-new / pre-checkout — not suspended)', () => {
+      // isServiceActive doesn't enforce paid-vs-unresolvable; that's isPaidPlan's
+      // job. Returning true here prevents a brand-new org (whose seed row has
+      // not landed) from being falsely flagged as suspended.
       expect(isServiceActive(null, 7, NOW)).toBe(true);
     });
   });

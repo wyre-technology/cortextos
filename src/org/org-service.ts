@@ -1,6 +1,6 @@
 import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
-import { getDefaultPlan, type PlanSlug } from '../billing/plan-catalog.js';
+import { getDefaultPlan } from '../billing/plan-catalog.js';
 import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
 import type { SeatSyncer } from '../billing/seat-syncer.js';
 import { isAcceptInvitationError } from './invitation-service.js';
@@ -27,7 +27,14 @@ export interface Organization {
   id: string;
   name: string;
   ownerId: string;
-  plan: PlanSlug;
+  // Flat-pricing: the canonical value is 'conduit', but the column is a
+  // free-form text field that still carries legacy 'free'/'pro'/'business'
+  // values on un-migrated rows during the WI-8 migration window. Typed as
+  // `string` to reflect that reality — getPlan/isPaidPlan (billing/gate.ts)
+  // resolve ANY slug to the one plan, so reads are safe; writes use the
+  // 'conduit' literal. Narrowing this to 'conduit' would be untruthful about
+  // what the column can hold mid-migration.
+  plan: string;
   defaultServerAccess: 'none' | 'all';
   promptCaptureEnabled: boolean;
   stripeCustomerId: string | null;
@@ -523,7 +530,7 @@ export class OrgService {
       id: row.id,
       name: row.name,
       ownerId: row.owner_id,
-      plan: row.plan as PlanSlug,
+      plan: row.plan,
       defaultServerAccess: (row.default_server_access as 'none' | 'all') || 'none',
       promptCaptureEnabled: row.prompt_capture_enabled ?? false,
       stripeCustomerId: row.stripe_customer_id,
@@ -566,7 +573,7 @@ export class OrgService {
   async createOrg(
     name: string,
     ownerId: string,
-    plan?: PlanSlug,
+    plan?: string,
     options?: CreateOrgOptions,
     log?: FastifyBaseLogger,
   ): Promise<Organization> {
@@ -672,6 +679,32 @@ export class OrgService {
               stripe_subscription_id = ${stripeSubscriptionId},
               updated_at = NOW()
           WHERE id = ${orgId}
+        `;
+        // Shape-A′ fix #1 (ruby ruling 2026-05-26): SEED the subscriptions
+        // row at provisioning so the cancellation/dunning lifecycle handlers
+        // have a row to mutate. Net-new orgs otherwise have NO subscriptions
+        // row (the provisioner writes Stripe IDs to organizations only), so
+        // cancellation would be a no-op (UPDATE hits zero rows →
+        // isServiceActive(null)=true) AND the dunning grace UI would never
+        // fire. BEST-EFFORT LOCAL SEED — ON CONFLICT DO NOTHING: if a
+        // customer.subscription.created/updated webhook (Stripe-truth) raced
+        // ahead and wrote the row, its status wins; the seed yields.
+        // (Asymmetry-by-authority: Stripe-truth writers upsert-and-win; the
+        // local seed does-nothing. id = stripe_subscription_id; conflict
+        // target = UNIQUE(stripe_subscription_id).)
+        const periodEndIso = provisionResult.currentPeriodEnd
+          ? new Date(provisionResult.currentPeriodEnd * 1000).toISOString()
+          : null;
+        await this.sql`
+          INSERT INTO subscriptions (
+            id, org_id, stripe_customer_id, stripe_subscription_id,
+            plan, status, current_period_end, cancel_at_period_end
+          )
+          VALUES (
+            ${stripeSubscriptionId}, ${orgId}, ${stripeCustomerId}, ${stripeSubscriptionId},
+            'conduit', 'trialing', ${periodEndIso}, FALSE
+          )
+          ON CONFLICT (stripe_subscription_id) DO NOTHING
         `;
       }
     }
@@ -792,7 +825,7 @@ export class OrgService {
 
   async updateOrgPlan(
     orgId: string,
-    plan: PlanSlug,
+    plan: string,
     stripeCustomerId?: string,
     stripeSubscriptionId?: string,
   ): Promise<void> {

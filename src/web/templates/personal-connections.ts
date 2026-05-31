@@ -298,7 +298,7 @@ export const CONNECTIONS_PAGE_STYLES = `
 export function renderPersonalConnections(data: PersonalConnectionsData): { body: string; pageStyles: string } {
   const {
     connectedVendors, org, orgVendors, memberCount,
-    connectionLimit, upgraded, isOwner, stripeEnabled,
+    connectionLimit, upgraded, isOwner,
   } = data;
 
   const categories = getVendorsByCategory();
@@ -339,63 +339,10 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
         else alert('Failed to create team: ' + (await res.json()).error);
       }
     </script>`;
-  } else if (org.plan === 'free') {
-    const upgradeButton = stripeEnabled
-      ? `<button class="btn-upgrade" onclick="startCheckout('${escapeHtml(org.id)}')" style="white-space:nowrap">Upgrade to Pro</button>`
-      : '';
-    const checkoutScript = stripeEnabled ? `
-      async function startCheckout(orgId) {
-        const res = await fetch('/api/billing/checkout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ org_id: orgId }),
-        });
-        if (!res.ok) { alert('Could not start checkout: ' + (await res.json()).error); return; }
-        const { url } = await res.json();
-        window.location.href = url;
-      }` : '';
-    orgSection = `
-    <div class="org-section">
-      <div class="org-header">
-        <span class="org-name">${escapeHtml(org.name)}</span>
-        <span class="plan-badge free">Community</span>
-      </div>
-      <p class="org-meta">${memberCount} member${memberCount !== 1 ? 's' : ''}</p>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
-        ${upgradeButton}
-        <a href="#" onclick="toggleCodeForm(event)" style="font-size:13px;color:var(--text-muted)">Have an invite code?</a>
-      </div>
-      <form id="redeem-form" onsubmit="redeemCode(event, '${escapeHtml(org.id)}')"
-        style="display:none;gap:8px;margin-top:10px;max-width:360px">
-        <div style="display:flex;gap:8px">
-          <input type="text" name="invite_code" placeholder="Enter invite code" required
-            style="flex:1;padding:8px 12px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-sidebar);color:var(--text-primary);font-size:14px;font-family:inherit" />
-          <button type="submit" class="btn-upgrade" style="white-space:nowrap">Apply</button>
-        </div>
-      </form>
-    </div>
-    <script>
-      function toggleCodeForm(e) {
-        e.preventDefault();
-        const f = document.getElementById('redeem-form');
-        f.style.display = f.style.display === 'none' ? 'flex' : 'none';
-        if (f.style.display === 'flex') f.querySelector('input').focus();
-      }
-      async function redeemCode(e, orgId) {
-        e.preventDefault();
-        const code = document.querySelector('#redeem-form [name=invite_code]').value.trim();
-        if (!code) return;
-        const res = await fetch('/api/orgs/' + orgId + '/redeem-code', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
-        });
-        if (res.ok) window.location.reload();
-        else alert('Failed: ' + (await res.json()).error);
-      }
-      ${checkoutScript}
-    </script>`;
   } else {
+    // Flat-pricing: no free tier. Every org is on the single plan, so the
+    // former free-community section (upgrade-to-pro CTA + redeem-code) is
+    // gone — all orgs render the paid summary below.
     orgSection = `
     <div class="org-section">
       <div class="org-header">

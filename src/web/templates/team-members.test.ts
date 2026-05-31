@@ -12,9 +12,9 @@ function data(over: Partial<TeamMembersData> = {}): TeamMembersData {
 }
 
 describe('renderTeamMembers — §8 seat-cost note', () => {
-  it('states each member is a $20/mo seat', () => {
+  it('states each member is a $39/mo seat', () => {
     const html = renderTeamMembers(data());
-    expect(html).toContain('$20/mo seat');
+    expect(html).toContain('$39/mo seat');
     expect(html).toContain('prorates your next bill');
   });
 });

@@ -11,8 +11,8 @@ function data(over: Partial<TeamInvitationsData> = {}): TeamInvitationsData {
 }
 
 describe('renderTeamInvitations — §8 seat-cost note', () => {
-  it('states each joining colleague takes a $20/mo member seat', () => {
+  it('states each joining colleague takes a $39/mo member seat', () => {
     const html = renderTeamInvitations(data());
-    expect(html).toContain('$20/mo member seat');
+    expect(html).toContain('$39/mo member seat');
   });
 });

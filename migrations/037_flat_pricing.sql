@@ -1,0 +1,74 @@
+-- 037_flat_pricing.sql
+--
+-- Aaron's 2026-05-26 FLAT-PRICING decision: one plan ($399/org + $39/seat),
+-- no tiers, no customer credits, no call-gating. This migration is the
+-- data-side of the atomic flat-pricing change (the code side removes the
+-- tier/credit-billing model). Written ROBUST-TO-BOTH (boss directive) so it
+-- is safe regardless of the real-vs-seed free-org count — no count needed.
+--
+-- It does TWO things, both idempotent + non-destructive:
+--
+-- 1. COLLAPSE every org onto the single 'conduit' plan. Legacy
+--    free/pro/business values become 'conduit' uniformly. This is the
+--    no-disruption path for existing orgs: a previously-'free' org with real
+--    activity keeps working — post-collapse it is on the one plan, and
+--    service-delivery is governed by the subscriptions.status gate
+--    (isServiceActive), which returns true for an org with no subscription
+--    row (the defensive no-sub branch) exactly as a free org behaved before.
+--    So real free orgs are GRANDFATHERED-BY-CONSTRUCTION (no service
+--    disruption); inert seed/dummy free orgs are equally harmless. No org is
+--    deleted here — "clean obvious seed" is deferred to an explicit,
+--    separately-reviewed data cleanup (deletion is destructive; collapse is
+--    not, and achieves the no-disruption goal without it).
+--
+--    NOTE on grandfathering: an earlier draft set
+--    organizations.seat_billing_grandfathered_until as a "forward marker."
+--    Removed — that column is FUNCTIONALLY INERT (nothing reads it for
+--    access or billing-computation; ruby ruling 2026-05-26 Edge-4 confirmed
+--    only an empty banner placeholder references it). Setting an unread
+--    column is noise that misleads future readers into thinking it gates
+--    something. The collapse + the no-sub defensive branch already
+--    grandfather real free orgs by construction; if true grandfathering is
+--    ever needed it is a separate feature (build the column-reader + define
+--    its composition with the status gate then). So this migration does NOT
+--    touch that column.
+--
+-- 2. DROP the credit_blocks table — the customer credit-overage-purchase
+--    system is removed (no customer credits). All readers were removed in
+--    the same atomic change (credit-service block/balance/deduct methods +
+--    the admin block-balance panel + the webhook addBlock + the checkout
+--    credit-pack route are all gone — verified: zero credit_blocks readers
+--    remain in src). credit_ledger is KEPT: it is the per-call usage-LOG
+--    substrate the reseller-channel wholesale invoicing
+--    (reseller-invoice-service) + the admin credit-burn dashboard read.
+--    Customer-pricing-decision-does-not-touch-reseller-channel-billing.
+--
+-- Idempotent: plan-collapse is a bounded UPDATE; DROP TABLE IF EXISTS is
+-- safe to re-run.
+--
+-- ASSUMPTION SURFACED (analyst 5-area review 2026-05-28, pre-existing-paid
+-- backfill): post-flat, canAccessPaidFeatures = isPaidPlan(true) AND
+-- isServiceActive(subscriptions-row). Net-new orgs seed a trialing
+-- subscriptions row at createOrg (OrgService.createOrg). Pre-existing PAID
+-- orgs (pro/business with stripe_subscription_id) may NOT have a local
+-- subscriptions row — they get one when their next Stripe lifecycle event
+-- fires customer.subscription.updated/deleted, which the webhook handler
+-- now UPSERTs. Between now and that next event, isServiceActive's no-sub
+-- defensive branch returns true → service ACTIVE (safe default, same
+-- behavior as today). Monthly renewal triggers a subscription.updated
+-- within ≤30d so the gap window is short.
+--
+-- KNOWN GAP (narrow, follow-up candidate): invoice.payment_failed currently
+-- UPDATEs subscriptions (not UPSERT) — if a pre-existing paid org's payment
+-- fails BEFORE their next subscription.updated lands the row, first_failure_at
+-- never sets and dunning grace never starts. Eventual terminal cancel still
+-- denies service via the deleted-handler UPSERT, so service is correctly
+-- ended; only the dunning-grace window is skipped for those orgs. Mitigation:
+-- extend payment_failed to UPSERT too (small, ruby-domain). Tracking under
+-- the cancellation-domain follow-ups, not blocking this PR.
+
+UPDATE organizations
+   SET plan = 'conduit'
+ WHERE plan <> 'conduit';
+
+DROP TABLE IF EXISTS credit_blocks;

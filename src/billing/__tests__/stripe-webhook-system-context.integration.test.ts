@@ -13,7 +13,8 @@
  * so the getSql path is never exercised. This test does NOT mock orgService:
  * it boots the real webhook handler + a real OrgService against a real
  * Postgres, fires a real checkout.session.completed event, and asserts the
- * org's plan actually flips to 'pro' in the database.
+ * org's plan actually flips to 'conduit' in the database (post-flat-pricing
+ * the single-plan slug; pre-flat this was 'pro').
  *
  * Verified fail-on-regression: with the runAsSystem wrap removed from
  * stripe-webhook.ts the handler 500s and the org stays 'free' — this test
@@ -82,18 +83,15 @@ afterAll(async () => {
 
 async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify();
-  // creditService is unused on the subscription path this test exercises —
-  // a stub keeps the guard focused on the DB-context wiring.
-  const creditStub = { addBlock: async () => undefined } as unknown as Parameters<
-    typeof stripeWebhookRoutes
-  >[1];
-  await app.register(stripeWebhookRoutes(new OrgService(), creditStub, systemPool()));
+  // Flat-pricing: stripeWebhookRoutes takes (orgService, sql) — the
+  // CreditService param is gone with the customer-credit model.
+  await app.register(stripeWebhookRoutes(new OrgService(), systemPool()));
   await app.ready();
   return app;
 }
 
 describe('stripe webhook — system-path DB context', () => {
-  it('checkout.session.completed upgrades the org to pro — real getSql path', async () => {
+  it('checkout.session.completed marks the org conduit — real getSql path', async () => {
     // The regression: without the runAsSystem wrap, orgService.getOrg inside
     // the handler throws "getSql() called with no DB context", the handler
     // 500s, and org-1 stays on 'free'.
@@ -127,7 +125,7 @@ describe('stripe webhook — system-path DB context', () => {
       const rows = await admin<{ plan: string }[]>`
         SELECT plan FROM organizations WHERE id = 'org-1'
       `;
-      expect(rows[0].plan).toBe('pro');
+      expect(rows[0].plan).toBe('conduit');
     } finally {
       await app.close();
     }

@@ -8,10 +8,13 @@
 // surface (billing page, service-client create, member add) imports from
 // here so the copy cannot drift between surfaces.
 //
-// Price constants come from `seat-service.js` (BASE_PRICE_CENTS /
-// PER_SEAT_PRICE_CENTS — the named SoT per WI-1) rather than from the
-// view object, so the price source-of-truth lives in exactly one place
-// independent of any per-org snapshot.
+// Price constants come from `prices.js` (ORG_FEE_CENTS / PER_SEAT_PRICE_CENTS
+// — the named SoT) rather than from the view object, so the price source-of-
+// truth lives in exactly one place independent of any per-org snapshot.
+//
+// Flat-pricing (Aaron 2026-05-26): $399 org fee + $39/billable-seat, no
+// tiers, no credits. The Shape-A agent inclusion is kept (first 2 agent
+// seats free).
 //
 // Pure functions, no escaping — callers escapeHtml at the interpolation
 // site. No surface here renders a number that can disagree with the real
@@ -20,7 +23,7 @@
 // dollar figure that could disagree with Stripe's actual proration).
 
 import type { SeatBilling } from '../../billing/seat-service.js';
-import { BASE_PRICE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
+import { ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 
 /**
  * Terse money — whole-dollar cents → "$600", non-whole → "$6.50". For
@@ -53,27 +56,28 @@ function plural(n: number, noun: string): string {
 }
 
 /**
- * The composed bill, e.g. "$600 base + 5 seats × $20 = $700/mo".
+ * The composed bill, e.g. "$399 base + 5 seats × $39 = $594/mo".
  * `billableSeats` is the multiplied quantity; the total is read directly
  * off `sb.monthlyTotalCents` (the SoT field on the snapshot), never
  * recomputed here — so this line cannot disagree with the trial banner,
  * the invoice, or the Stripe subscription quantity.
  */
 export function composedBillLine(sb: SeatBilling): string {
-  return `${formatUsd(BASE_PRICE_CENTS)} base + ${plural(sb.billableSeats, 'seat')}`
+  return `${formatUsd(ORG_FEE_CENTS)} base + ${plural(sb.billableSeats, 'seat')}`
     + ` × ${formatUsd(PER_SEAT_PRICE_CENTS)} = ${formatUsd(sb.monthlyTotalCents)}/mo`;
 }
 
 /**
  * The inclusion-explicit seat line — the headline seat number (all
- * functional seats = creditSeats) composed from members + agents, with the
- * agent inclusion split made legible. Decision-of-record §8:
+ * functional seats = humans + agents) composed from members + agents, with
+ * the agent inclusion split made legible:
  *   "7 seats — 5 members + 2 agents (2 of 2 agent seats included)"
  *   "9 seats — 5 members + 4 agents (2 included, 2 billed)"
  */
 export function seatBreakdownLine(sb: SeatBilling): string {
   const { humans, agents } = sb.counts;
-  const head = `${plural(sb.creditSeats, 'seat')} — ${plural(humans, 'member')}`;
+  const totalSeats = humans + agents;
+  const head = `${plural(totalSeats, 'seat')} — ${plural(humans, 'member')}`;
   if (agents === 0) return head;
   const agentPart = `${plural(agents, 'agent')}`;
   const split = sb.billedAgents === 0
@@ -86,7 +90,7 @@ export function seatBreakdownLine(sb: SeatBilling): string {
 /**
  * The billing consequence of adding ONE more agent (service client), shown
  * at the create-confirm. Truthful per the inclusion: agent #1/#2 is $0,
- * agent #3+ adds a $20 line. During a trial the charge is framed as
+ * agent #3+ adds a $39 line. During a trial the charge is framed as
  * starting when the trial ends; proration is plain-language only.
  */
 export function agentSeatConsentCopy(
@@ -107,7 +111,7 @@ export function agentSeatConsentCopy(
 
 /**
  * The billing consequence of adding ONE more human member. A human seat is
- * always a $20 event (no inclusions). Trial-aware, plain-language proration.
+ * always a $39 event (no inclusions). Trial-aware, plain-language proration.
  */
 export function memberSeatConsentCopy(
   _sb: SeatBilling,

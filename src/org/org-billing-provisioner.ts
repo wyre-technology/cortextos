@@ -34,6 +34,17 @@ export interface OrgBillingProvisionInputs {
 export interface OrgBillingProvisionResult {
   stripeCustomerId: string;
   stripeSubscriptionId: string;
+  /**
+   * Unix-seconds end of the current (trial) period from the Stripe
+   * subscription (`current_period_end`; for a trialing sub this is
+   * trial_end). Null when Stripe did not return it. createOrg seeds it
+   * onto the subscriptions row (Shape-A′ fix #1, ruby ruling 2026-05-26):
+   * the row must EXIST at provisioning so the cancellation/dunning
+   * lifecycle handlers have a row to mutate — net-new orgs otherwise have
+   * no subscriptions row, making cancellation a no-op + dunning-grace
+   * never fire.
+   */
+  currentPeriodEnd: number | null;
 }
 
 /**
@@ -129,9 +140,14 @@ export function createConduitBillingProvisioner(
       seatPriceId: deps.seatPriceId,
       seatBilling,
     });
+    // current_period_end is unix-seconds on the Stripe sub; for a trialing
+    // sub it equals trial_end. Typed loosely on the Stripe object across API
+    // versions, so read defensively.
+    const sub = result.subscription as unknown as { current_period_end?: number | null };
     return {
       stripeCustomerId: result.customerId,
       stripeSubscriptionId: result.subscriptionId,
+      currentPeriodEnd: sub.current_period_end ?? null,
     };
   };
 }

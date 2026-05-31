@@ -13,22 +13,8 @@ import { isPaidPlan } from './gate.js';
  *   POST /api/billing/portal           — create a Stripe Customer Portal session
  */
 
-/**
- * One-off credit-pack sizes → their Stripe Price ID. A pack with no
- * configured price ID is unavailable (handled per-request). The webhook does
- * NOT need a reverse map — the selected pack's `credits` is carried in the
- * Checkout session metadata (see the checkout-credits route below).
- *
- * Exported so checkout.test.ts can derive its expected price ID from this
- * exact object — the test is the create/webhook drift-lock that replaces the
- * gateway's line-item reverse-map, and it only locks if it reads the real map
- * rather than a hardcoded mirror.
- */
-export const CREDIT_PACKS: Record<number, string> = {
-  1000: config.stripeCredits1000PriceId,
-  2500: config.stripeCredits2500PriceId,
-  5000: config.stripeCredits5000PriceId,
-};
+// Flat-pricing: credit packs removed (no customer credits). The former
+// CREDIT_PACKS map + the /api/billing/checkout-credits route are gone.
 
 export function billingRoutes(orgService: OrgService) {
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -143,63 +129,8 @@ export function billingRoutes(orgService: OrgService) {
       },
     );
 
-    // POST /api/billing/checkout-credits — one-off credit-pack purchase.
-    // mode:'payment' (not subscription). The org's credit block is added by
-    // the webhook on checkout.session.completed; see stripe-webhook.ts.
-    app.post<{ Body: { org_id: string; credits: number } }>(
-      '/api/billing/checkout-credits',
-      async (request, reply) => {
-        const user = requireAuth0(request, reply);
-        if (!user) return;
-
-        const { org_id: orgId, credits } = request.body;
-        if (!orgId) {
-          return reply.code(400).send({ error: 'org_id is required' });
-        }
-
-        // A bad pack size is a client error (400); a valid size with no
-        // configured Stripe price is an operator/config error (500).
-        if (![1000, 2500, 5000].includes(credits)) {
-          return reply.code(400).send({ error: 'credits must be 1000, 2500, or 5000' });
-        }
-        const priceId = CREDIT_PACKS[credits];
-        if (!priceId) {
-          return reply
-            .code(500)
-            .send({ error: `The ${credits}-credit pack is not configured` });
-        }
-
-        // Owner-only — billing is owner-gated, matching /checkout and /portal.
-        const membership = await orgService.getMembership(orgId, user.sub);
-        if (!membership || membership.role !== 'owner') {
-          return reply.code(403).send({ error: 'Only the org owner can manage billing' });
-        }
-
-        const org = await orgService.getOrg(orgId);
-        if (!org) {
-          return reply.code(404).send({ error: 'Organization not found' });
-        }
-
-        const sessionParams: Stripe.Checkout.SessionCreateParams = {
-          mode: 'payment',
-          line_items: [{ price: priceId, quantity: 1 }],
-          success_url: `${config.baseUrl}/org/billing?credits_added=${credits}`,
-          cancel_url: `${config.baseUrl}/org/billing`,
-          // PORT-AND-TIGHTEN vs mcp-gateway: `credits` is carried in metadata
-          // so the webhook reads it directly — no listLineItems call, no
-          // priceId reverse-map. Set here from the same CREDIT_PACKS map.
-          metadata: { org_id: orgId, credits: String(credits) },
-        };
-        if (org.stripeCustomerId) {
-          sessionParams.customer = org.stripeCustomerId;
-        } else {
-          sessionParams.customer_email = user.email || undefined;
-        }
-
-        const session = await stripe.checkout.sessions.create(sessionParams);
-        return reply.send({ url: session.url });
-      },
-    );
+    // Flat-pricing: the one-off credit-pack purchase route
+    // (POST /api/billing/checkout-credits) is removed — no customer credits.
 
     // POST /api/billing/portal — open Stripe Customer Portal
     app.post<{ Body: { org_id: string } }>(

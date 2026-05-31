@@ -1,7 +1,8 @@
 import type { OrgService } from '../org/org-service.js';
 import { config } from '../config.js';
 import { getPlan, getDefaultPlan, type PlanDefinition, type PlanSlug } from './plan-catalog.js';
-import { DefaultSeatService, type SeatService } from './seat-service.js';
+import { ANTI_ABUSE_RATE_PER_HOUR } from './prices.js';
+import type { SeatService } from './seat-service.js';
 
 // ---------------------------------------------------------------------------
 // BillingGate — plan checks for feature gating
@@ -29,43 +30,23 @@ export interface BillingGate {
   canUseAuditLogExport(orgId: string): Promise<boolean>;
   canUseSso(orgId: string): Promise<boolean>;
   canUseServiceClients(orgId: string): Promise<boolean>;
-  /**
-   * Monthly credit allocation for an org. Per Layer 1 LOCKED DOR §4 the
-   * allocation is `CREDITS_PER_SEAT × creditSeats` (humans + agents),
-   * routed through SeatService.getSeatBilling so the bill total, seat
-   * composition, and credit allocation all share one arithmetic path.
-   * Legacy free plan (transitional, pre-migration) returns its flat
-   * catalog allocation.
-   */
-  getCreditAllocation(orgId: string): Promise<number>;
 }
 
-// PLAN_RANK assigns numeric tiers used by isPaidPlan (rank >= pro = paid) and
-// by getUserPlan to pick the highest plan across a user's orgs. Conduit slots
-// at rank 3 — it's the Layer 1 paid plan and outranks legacy pro/business
-// during the migration window so a user holding both `business` and `conduit`
-// memberships resolves to `conduit`.
-const PLAN_RANK: Record<PlanSlug, number> = { free: 0, pro: 1, business: 2, conduit: 3 };
-
 /**
- * "Is this plan paid?" — single source of truth for the team-features
- * tier gate used by BOTH renderLayout (sidebar visibility) AND
- * requireTeamAccess (handler authorization). The two gates MUST use the
- * same predicate or the user sees clickable team-nav items that 302
- * back to /settings — a "phantom-clickable-dead-link" UX bug.
+ * "Is this org on the (single, flat) plan?" — kept as the predicate BOTH
+ * renderLayout (sidebar visibility) AND requireTeamAccess (handler
+ * authorization) call, so the two never disagree (the historical
+ * phantom-clickable-dead-link bug). Flat-pricing collapses this: there is
+ * one plan and no free tier, so any org carrying a resolvable plan slug is
+ * "on the plan". Whether service is DELIVERED right now is the separate
+ * dunning question (isServiceActive) — canAccessPaidFeatures composes both.
  *
- * Empirical origin: 2026-05-11 found business-plan-owner Aaron stuck
- * because requireTeamAccess used `plan !== "pro"` (strict equality)
- * while layout used `plan === "pro" || plan === "business"` (OR-set).
- * `business` rendered the nav but failed the gate. Fix: both call sites
- * route through isPaidPlan; future plan tiers above pro pick up
- * automatically.
+ * Any legacy 'free'/'pro'/'business' slug on an un-migrated row resolves to
+ * the flat plan via getPlan, so this returns true for them too; the
+ * robust free-org migration + dunning govern the actual service decision.
  */
-export function isPaidPlan(plan: PlanSlug | undefined | null): boolean {
-  if (!plan) return false;
-  const rank = PLAN_RANK[plan];
-  if (rank === undefined) return false;
-  return rank >= PLAN_RANK.pro;
+export function isPaidPlan(plan: PlanSlug | string | undefined | null): boolean {
+  return getPlan(plan) !== undefined;
 }
 
 /**
@@ -142,38 +123,25 @@ export function isServiceActive(
 }
 
 export class DefaultBillingGate implements BillingGate {
-  private seatService: SeatService;
+  // seatService is accepted for call-site compatibility (index.ts passes the
+  // shared instance) but the gate no longer needs it — credit allocation was
+  // its only consumer, removed with the credit model. Underscore-prefixed so
+  // an intentionally-unused constructor param does not trip noUnusedParameters.
+  constructor(private orgService: OrgService, _seatService?: SeatService) {}
 
-  constructor(private orgService: OrgService, seatService?: SeatService) {
-    this.seatService = seatService ?? new DefaultSeatService(orgService);
+  // Flat-pricing: one plan. Org/user plan resolution collapses to the flat
+  // plan regardless of the stored slug — no tier-ranking, no highest-across-
+  // orgs selection (there is nothing to rank).
+  private async resolveOrgPlan(_orgId: string): Promise<PlanDefinition> {
+    return getDefaultPlan();
   }
 
-  private async resolveOrgPlan(orgId: string): Promise<PlanDefinition> {
-    const org = await this.orgService.getOrg(orgId);
-    return getPlan(org?.plan ?? 'free') ?? getDefaultPlan();
+  private async resolveUserPlan(_userId: string): Promise<PlanDefinition> {
+    return getDefaultPlan();
   }
 
-  private async resolveUserPlan(userId: string): Promise<PlanDefinition> {
-    const orgs = await this.orgService.getUserOrgs(userId);
-    let best: PlanDefinition | undefined;
-    for (const org of orgs) {
-      const plan = getPlan(org.plan);
-      if (!plan) continue;
-      const rank = PLAN_RANK[plan.slug as PlanSlug] ?? 0;
-      const bestRank = best ? PLAN_RANK[best.slug as PlanSlug] ?? 0 : -1;
-      if (rank > bestRank) best = plan;
-    }
-    return best ?? getDefaultPlan();
-  }
-
-  async getUserPlan(userId: string): Promise<PlanSlug> {
-    const orgs = await this.orgService.getUserOrgs(userId);
-    let highest: PlanSlug = 'free';
-    for (const org of orgs) {
-      const slug = org.plan as PlanSlug;
-      if ((PLAN_RANK[slug] ?? 0) > PLAN_RANK[highest]) highest = slug;
-    }
-    return highest;
+  async getUserPlan(_userId: string): Promise<PlanSlug> {
+    return getDefaultPlan().slug as PlanSlug;
   }
 
   async canAccessPaidFeatures(orgId: string): Promise<boolean> {
@@ -206,9 +174,13 @@ export class DefaultBillingGate implements BillingGate {
     return plan.vendorLimit;
   }
 
-  async getRateLimit(userId: string): Promise<number> {
-    const plan = await this.resolveUserPlan(userId);
-    return plan.rateLimitPerHour;
+  async getRateLimit(_userId: string): Promise<number> {
+    // Flat anti-abuse ceiling — same for every user, NOT a pricing tier.
+    // The per-user-keyed Fastify rate-limit mechanism in the proxy routers
+    // is unchanged; only the max value is flattened off the plan onto a
+    // module constant (divorced-from-plan-object so it can never drift back
+    // into a tier gate).
+    return ANTI_ABUSE_RATE_PER_HOUR;
   }
 
   async canUsePromptCapture(orgId: string): Promise<boolean> {
@@ -234,16 +206,5 @@ export class DefaultBillingGate implements BillingGate {
   async canUseServiceClients(orgId: string): Promise<boolean> {
     const plan = await this.resolveOrgPlan(orgId);
     return plan.serviceClients;
-  }
-
-  async getCreditAllocation(orgId: string): Promise<number> {
-    const plan = await this.resolveOrgPlan(orgId);
-    // Legacy free plan retains its flat catalog allocation until WI-8
-    // migration retires it. Every paid plan — including conduit — reads
-    // off the SeatBilling snapshot, so credits, bill total, and seat
-    // composition single-source through one getSeatBilling trip.
-    if (plan.slug === 'free') return plan.creditAllocation;
-    const billing = await this.seatService.getSeatBilling(orgId);
-    return billing.monthlyCreditAllocation;
   }
 }

@@ -735,17 +735,6 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       expect(res.json().error).toMatch(/admin_email/);
     });
 
-    it('400s when plan is not in the allowed set', async () => {
-      authenticateAs();
-      app = await buildApp(makeMocks({ actorRole: 'reseller_admin' }));
-      const res = await app.inject({
-        method: 'POST',
-        url,
-        payload: { name: 'Northwind IT', plan: 'enterprise', admin_email: 'admin@northwind.test' },
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
     it('201s on happy path and parents the customer at :resellerId', async () => {
       authenticateAs();
       const createOrgImpl = vi.fn(async (name: string, ownerId: string, plan, opts) => ({
@@ -774,17 +763,21 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
         type: 'customer',
         parentOrgId: RESELLER_ID,
         ownerId: TEST_USER.sub,
-        plan: 'pro',
+        plan: 'conduit',
       });
       expect(createOrgImpl).toHaveBeenCalledWith(
         'Northwind IT',
         TEST_USER.sub,
-        'pro',
+        'conduit',
         { type: 'customer', parentOrgId: RESELLER_ID },
       );
     });
 
-    it('defaults plan to "free" when omitted', async () => {
+    it('always creates the customer on the single plan, ignoring any payload plan (flat-pricing)', async () => {
+      // Flat-pricing: the wizard no longer collects a plan and the route does
+      // not read one. Whatever a caller sends, the customer org is created on
+      // 'conduit' like every org — reseller wholesale billing is a separate
+      // model that does not key off org.plan.
       authenticateAs();
       const createOrgImpl = vi.fn(async (name: string, ownerId: string, plan, opts) => ({
         id: 'cust_new',
@@ -806,13 +799,14 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
       const res = await app.inject({
         method: 'POST',
         url,
-        payload: { name: 'Northwind IT', admin_email: 'admin@northwind.test' },
+        // A stray legacy plan in the payload must not change the outcome.
+        payload: { name: 'Northwind IT', plan: 'enterprise', admin_email: 'admin@northwind.test' },
       });
       expect(res.statusCode).toBe(201);
       expect(createOrgImpl).toHaveBeenCalledWith(
         'Northwind IT',
         TEST_USER.sub,
-        'free',
+        'conduit',
         { type: 'customer', parentOrgId: RESELLER_ID },
       );
     });

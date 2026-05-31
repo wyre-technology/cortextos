@@ -101,7 +101,7 @@ interface AuditEntryRow {
 }
 
 export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
-  const { orgService, billingGate, creditService, adminAuditService } = deps;
+  const { orgService, creditService, adminAuditService } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -325,7 +325,6 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       async (request, reply) => {
         if (!requireAdmin(request, reply)) return;
         const orgId = request.params.orgId;
-        const csrfToken = getOrSetCsrfToken(request, reply);
         // Admin views ANY org's detail — they are not a member of it, so the
         // reads must run system-path (BYPASSRLS). Every query below filters
         // by the :orgId / org.ownerId param explicitly, so BYPASSRLS returns
@@ -347,12 +346,12 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         // System-path: the admin is not a member of this org. Every query
         // here filters by orgId / org.ownerId explicitly, so BYPASSRLS still
         // returns only the target org's rows.
-        const [members, usage, balance, allocation, features, ownerRows, recentLogs, recentAudit] =
+        const [members, usage, features, ownerRows, recentLogs, recentAudit] =
           await runAsSystem(() => Promise.all([
             orgService.getMembersWithProfiles(orgId),
+            // usage-log count this month (analytics substrate, not a customer
+            // credit balance — flat-pricing removed credit allocation/blocks).
             creditService.getUsageThisMonth(orgId),
-            creditService.getBlockBalance(orgId),
-            billingGate.getCreditAllocation(orgId),
             // featureSummary not yet implemented in Conduit's BillingGate — derive
             // a minimal map from the FEATURES registry against org plan so the
             // panel renders without per-feature override resolution.
@@ -448,8 +447,6 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
 
         const enabledFeatures = Object.values(features).filter(Boolean).length;
         const totalFeatures = Object.keys(FEATURES).length;
-        const allocText = allocation === Infinity ? '∞' : allocation.toLocaleString();
-        const blocksText = balance > 0 ? ` + <strong>${balance.toLocaleString()}</strong> in blocks` : '';
 
         const body = `
           <div class="header">
@@ -478,15 +475,9 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
           </div>
 
           <div class="section">
-            <div class="section-title">Credits</div>
+            <div class="section-title">Usage this month</div>
             <div class="panel">
-              <p>This month: <strong>${usage.toLocaleString()}</strong> used / <strong>${allocText}</strong> allocation${blocksText}</p>
-              <form method="post" action="/admin/orgs/${org.id}/comp-credits" class="comp-form">
-                ${csrfHiddenInput(csrfToken)}
-                <input class="input" type="number" name="amount" min="1" max="100000" placeholder="amount" required />
-                <input class="input" type="text" name="reason" placeholder="reason (5–500 chars)" required minlength="5" maxlength="500" />
-                <button class="btn-primary" type="submit">Comp credits</button>
-              </form>
+              <p><strong>${usage.toLocaleString()}</strong> vendor tool calls (usage log). Flat-pricing: no credit allocation or balance — usage is unmetered for the customer; this count feeds reseller-wholesale invoicing + analytics.</p>
             </div>
           </div>
 
@@ -541,52 +532,9 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
       },
     );
 
-    // -----------------------------------------------------------------------
-    // POST /admin/orgs/:orgId/comp-credits — write action
-    // -----------------------------------------------------------------------
-    app.post<{
-      Params: { orgId: string };
-      Body: { amount: string | number; reason: string };
-    }>('/admin/orgs/:orgId/comp-credits', async (request, reply) => {
-      if (!requireAdminMutation(request, reply)) return;
-      const orgId = request.params.orgId;
-      const amountRaw = Number(request.body.amount);
-      const reason = (request.body.reason ?? '').trim();
-      const errors: string[] = [];
-      if (!Number.isInteger(amountRaw) || amountRaw <= 0 || amountRaw > 100_000) {
-        errors.push('amount must be a positive integer ≤ 100,000');
-      }
-      if (reason.length < 5 || reason.length > 500) {
-        errors.push('reason must be 5–500 chars');
-      }
-      // Admin acts on an org they are not a member of — system-path
-      // (BYPASSRLS). requireAdminMutation above is the gate; every call here
-      // is scoped to the :orgId param.
-      const org = await runAsSystem(() => orgService.getOrg(orgId));
-      if (!org) errors.push('org not found');
-
-      const back = (qs: string) => reply.redirect(`/admin/orgs/${orgId}?${qs}`);
-      if (errors.length) {
-        return back(`flash_err=${encodeURIComponent(errors.join('; '))}`);
-      }
-
-      const actorEmail = actorEmailFromRequest(request);
-      try {
-        await runAsSystem(async () => {
-          await creditService.grantComp(orgId, amountRaw, actorEmail, reason);
-          await adminAuditService.log({
-            orgId,
-            actorId: actorEmail,
-            eventType: 'admin_comp_credits',
-            metadata: { amount: amountRaw, reason },
-          });
-        });
-      } catch (err) {
-        request.log.error({ err, orgId }, 'comp-credits failed');
-        return back(`flash_err=${encodeURIComponent('Failed to grant credits, see logs')}`);
-      }
-      return back(`flash_ok=${encodeURIComponent(`Granted ${amountRaw.toLocaleString()} credits`)}`);
-    });
+    // comp-credits admin action removed with flat-pricing (no customer
+    // credit balance to comp; the credit_blocks table is dropped). Usage is
+    // unmetered for the customer — nothing to grant.
 
     // -----------------------------------------------------------------------
     // GET /admin/orgs/:orgId/delete — confirmation page (type-the-name)

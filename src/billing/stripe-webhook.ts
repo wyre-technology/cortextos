@@ -5,7 +5,6 @@ import type { OrgService } from '../org/org-service.js';
 import { sendLoopsEvent } from '../email/loops.js';
 import { notifyBillingAnomaly } from './sales-notifier.js';
 import { runAsSystem, type Sql } from '../db/context.js';
-import type { CreditService } from './credit-service.js';
 
 /**
  * Webhook handler for a Track C reseller-channel invoice payment success.
@@ -95,9 +94,13 @@ export async function handleResellerInvoicePaymentFailed(
  * Registers the Stripe webhook handler at POST /api/webhooks/stripe.
  *
  * Handles:
- *   - checkout.session.completed → upgrade org to pro
- *   - customer.subscription.updated → sync plan (canceled-only downgrade)
- *   - customer.subscription.deleted → downgrade to free
+ *   - checkout.session.completed → mark org subscription active (plan='conduit')
+ *   - customer.subscription.updated → MIRROR Stripe status onto subscriptions
+ *     row every transition; never flips the plan (no tiers post-flat). Also
+ *     covers .created paths — Stripe always fires .updated after .created.
+ *   - customer.subscription.deleted → UPSERT status='canceled' + clear the
+ *     dunning clock (first_failure_at/recovered_at). Service-denial flows
+ *     via the subscriptions.status gate, not a plan flip.
  *   - invoice.payment_failed → Track A: set first_failure_at + fire Loops
  *     dunning event. Track C: mark reseller_invoices past_due.
  *   - invoice.payment_succeeded → Track A: clear first_failure_at, set
@@ -113,13 +116,14 @@ export async function handleResellerInvoicePaymentFailed(
  *   - Derive-on-fly. Stripe is source of truth for subscription status.
  *   - One helper field (first_failure_at) anchors the grace window.
  *   - isServiceActive() in gate.ts uses (status, first_failure_at, grace)
- *     to decide whether a paid org currently gets service. Plan flips to
- *     'free' ONLY on canceled; past_due/unpaid keep plan='pro' so the
- *     grace-period UI surfaces correctly.
+ *     to decide whether a paid org currently gets service. Post-flat
+ *     (Shape-A′, 2026-05-26) the plan never flips — every org stays
+ *     'conduit'; service-denial flows entirely through subscriptions.status
+ *     + the dunning grace window. past_due/unpaid keep service live
+ *     inside the grace; canceled and post-grace past_due deny.
  */
 export function stripeWebhookRoutes(
   orgService: OrgService,
-  creditService: CreditService,
   sql: Sql,
 ) {
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -212,67 +216,107 @@ export function stripeWebhookRoutes(
               break;
             }
 
-            // One-off credit-pack purchase (mode:'payment') — add a credit
-            // block, do NOT touch the plan. `credits` is carried in the
-            // session metadata by the checkout-credits route (port-and-tighten
-            // vs mcp-gateway, which reverse-mapped a Stripe line-item price).
-            //
-            // Money-path guardrail: validate `credits` is a positive integer
-            // BEFORE addBlock. A missing/malformed value is logged as an error
-            // and skipped — never an addBlock of NaN/zero, never a throw that
-            // aborts the webhook mid-switch.
+            // Flat-pricing: one-off credit-pack purchases (mode:'payment')
+            // are removed (no customer credits). A payment-mode session is
+            // no longer expected here — log + skip rather than touch the plan.
             if (session.mode === 'payment') {
-              const rawCredits = session.metadata?.credits;
-              const credits = Number(rawCredits);
-              if (!rawCredits || !Number.isInteger(credits) || credits <= 0) {
-                app.log.error(
-                  { orgId, sessionId: session.id, rawCredits },
-                  'checkout.session.completed (payment): missing/invalid credits metadata — skipping addBlock',
-                );
-                break;
-              }
-              // addBlock is idempotent on stripe_payment_intent_id
-              // (ON CONFLICT DO NOTHING) — a redelivered webhook cannot
-              // double-credit.
-              await creditService.addBlock(
-                orgId,
-                credits,
-                (session.payment_intent as string | null) ?? null,
+              app.log.warn(
+                { orgId, sessionId: session.id },
+                'checkout.session.completed (payment) received post-flat-pricing — credit packs removed; ignoring',
               );
-              app.log.info({ orgId, credits }, 'Credit block added');
               break;
             }
 
+            // Subscription checkout completed → the org is on the single flat
+            // plan. (The subscriptions row is seeded at provisioning; this
+            // keeps organizations.plan canonical.)
             await orgService.updateOrgPlan(
               orgId,
-              'pro',
+              'conduit',
               session.customer as string,
               session.subscription as string,
             );
-            app.log.info({ orgId }, 'Organization upgraded to pro');
+            app.log.info({ orgId }, 'Organization subscription active (conduit)');
             break;
           }
 
+          // NOTE — no customer.subscription.created case is needed (warden
+          // 2026-05-29 cancellation-access-control review, defensive
+          // readability): Stripe ALWAYS fires customer.subscription.updated
+          // immediately after customer.subscription.created, so the UPSERT
+          // below lands the row on both same-id reactivation AND new-id
+          // resubscribe paths. The reader-side getSubscription orders
+          // (org_id, created_at DESC) LIMIT 1 → the newest row is
+          // authoritative regardless of how many lifetime rows an org
+          // accumulates. Adding a separate .created handler would duplicate
+          // the UPSERT and risk a write-order race; leaving it out is the
+          // load-bearing choice, not an omission.
           case 'customer.subscription.updated': {
             const subscription = event.data.object as Stripe.Subscription;
             const orgId = subscription.metadata?.org_id;
             if (!orgId) break;
 
-            // Plan-tier flip only on canonical terminal states. past_due /
-            // unpaid keep plan='pro' so the grace-period UI surfaces (the
-            // dunning state is derived from status+first_failure_at via
-            // isServiceActive, not from plan flips). Without this, the
-            // existing handler would suspend instantly on first failure,
-            // bypassing Ruby's 7-day grace.
-            const isTerminal = subscription.status === 'canceled' || subscription.status === 'incomplete_expired';
-            const plan = isTerminal ? 'free' : 'pro';
-            await orgService.updateOrgPlan(
-              orgId,
-              plan,
-              subscription.customer as string,
-              subscription.id,
-            );
-            app.log.info({ orgId, plan, status: subscription.status }, 'Subscription updated');
+            // Flat-pricing (Shape-A′, ruby ruling 2026-05-26): there are no
+            // tiers, so the plan never flips — every org stays 'conduit'.
+            // Service-denial flows ENTIRELY through the subscriptions.status
+            // gate (isServiceActive), NOT through the plan. So this handler
+            // MIRRORS Stripe's subscription.status onto the subscriptions row
+            // on EVERY transition (terminal AND non-terminal) — closing the
+            // re-subscribe-false-suspend edge (esp trial-re-subscribe, which
+            // produces no immediate invoice to self-heal).
+            //
+            // FIELD OWNERSHIP (dunning-clock-ownership rule): this status-
+            // mirror sets status + updated_at ONLY on non-terminal
+            // transitions — NEVER first_failure_at/recovered_at (those are
+            // owned by invoice.payment_failed [anchor] + payment_succeeded
+            // [clear+recover]). On TERMINAL (canceled/incomplete_expired) it
+            // additionally CLEARS first_failure_at + recovered_at (cancel ends
+            // the dunning cycle; prevents a spurious dunning-recovered email
+            // if the org re-subscribes later).
+            //
+            // UPSERT (Stripe-truth writer upsert-and-wins): ON CONFLICT
+            // (stripe_subscription_id) — covers the seed-vs-webhook race +
+            // migrated orgs uniformly. plan stays 'conduit' on the row.
+            const isTerminal =
+              subscription.status === 'canceled' || subscription.status === 'incomplete_expired';
+            const status = isTerminal ? 'canceled' : subscription.status;
+            const periodEnd =
+              (subscription as unknown as { current_period_end?: number | null })
+                .current_period_end;
+            const periodEndIso = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+            if (isTerminal) {
+              await sql`
+                INSERT INTO subscriptions (
+                  id, org_id, stripe_customer_id, stripe_subscription_id,
+                  plan, status, current_period_end, cancel_at_period_end,
+                  first_failure_at, recovered_at
+                )
+                VALUES (
+                  ${subscription.id}, ${orgId}, ${subscription.customer as string},
+                  ${subscription.id}, 'conduit', 'canceled', ${periodEndIso}, FALSE, NULL, NULL
+                )
+                ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                  status = 'canceled',
+                  first_failure_at = NULL,
+                  recovered_at = NULL,
+                  updated_at = NOW()
+              `;
+            } else {
+              await sql`
+                INSERT INTO subscriptions (
+                  id, org_id, stripe_customer_id, stripe_subscription_id,
+                  plan, status, current_period_end, cancel_at_period_end
+                )
+                VALUES (
+                  ${subscription.id}, ${orgId}, ${subscription.customer as string},
+                  ${subscription.id}, 'conduit', ${status}, ${periodEndIso}, FALSE
+                )
+                ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                  status = ${status},
+                  updated_at = NOW()
+              `;
+            }
+            app.log.info({ orgId, status }, 'Subscription status mirrored');
             break;
           }
 
@@ -281,8 +325,26 @@ export function stripeWebhookRoutes(
             const orgId = subscription.metadata?.org_id;
             if (!orgId) break;
 
-            await orgService.updateOrgPlan(orgId, 'free');
-            app.log.info({ orgId }, 'Organization downgraded to free');
+            // Flat-pricing (Shape-A′): cancellation denies service via the
+            // subscriptions.status gate, not a plan downgrade (no free tier).
+            // UPSERT status=canceled (Stripe-truth writer wins) + clear the
+            // dunning-clock fields (cancel ends the cycle).
+            await sql`
+              INSERT INTO subscriptions (
+                id, org_id, stripe_customer_id, stripe_subscription_id,
+                plan, status, cancel_at_period_end, first_failure_at, recovered_at
+              )
+              VALUES (
+                ${subscription.id}, ${orgId}, ${subscription.customer as string},
+                ${subscription.id}, 'conduit', 'canceled', FALSE, NULL, NULL
+              )
+              ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                status = 'canceled',
+                first_failure_at = NULL,
+                recovered_at = NULL,
+                updated_at = NOW()
+            `;
+            app.log.info({ orgId }, 'Subscription canceled (service denied via status gate)');
             break;
           }
 

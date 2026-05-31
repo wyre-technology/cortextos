@@ -25,9 +25,9 @@ export interface TrialingSubscriptionInputs {
   /** Stripe customer the subscription attaches to. Caller creates the
    *  customer first (with its own idempotency key — see createOrgCustomer). */
   customerId: string;
-  /** Stripe Price ID for the $600 flat base item. From config.stripeConduitBasePriceId. */
+  /** Stripe Price ID for the $399 flat base item. From config.stripeConduitBasePriceId. */
   basePriceId: string;
-  /** Stripe Price ID for the $20 per-unit seat item. From config.stripeConduitSeatPriceId. */
+  /** Stripe Price ID for the $39 per-unit seat item. From config.stripeConduitSeatPriceId. */
   seatPriceId: string;
   /** Seat-billing snapshot at the moment of subscription creation. The
    *  seat-item quantity is bound to billableSeats from this snapshot. */

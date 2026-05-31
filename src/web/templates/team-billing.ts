@@ -1,7 +1,7 @@
 import type { Organization } from '../../org/org-service.js';
 import type { PlanDefinition } from '../../billing/plan-catalog.js';
 import type { SeatBilling } from '../../billing/seat-service.js';
-import { BASE_PRICE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
+import { ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml } from '../helpers.js';
 import {
   composedBillLine,
@@ -19,12 +19,14 @@ import {
 } from '../icons.js';
 
 // Billing page (Layer 1 §8). The "Current plan" card shows the composed
-// bill — "$600 base + N seats × $20 = $X/mo" — and the inclusion-explicit
+// bill — "$399 base + N seats × $39 = $X/mo" — and the inclusion-explicit
 // seat line, both derived from the SeatBilling view object (the data layer
 // single-sources the seat math; this page only formats).
 //
-// `creditsUsed` is real (CreditService.getUsageThisMonth). Payment method,
-// upcoming invoice, and invoice history are NOT rendered on-page — they
+// Flat-pricing (Aaron 2026-05-26): no tiers, no credits, no usage-gating.
+// The former credit-usage bar + credit-pack purchase section are removed.
+// Payment method, upcoming invoice, and invoice history are NOT rendered
+// on-page — they
 // live in the customer's real Stripe billing portal, which the "Billing
 // details" block links out to (the portal shows the real two-item
 // invoice). No fabricated billing data is rendered here.
@@ -46,17 +48,10 @@ export interface TeamBillingData {
   seatBilling: SeatBilling;
   /** Non-null while the org is inside its 14-day trial. */
   trial: TrialState | null;
-  creditsUsed: number;
-  creditsAllocated: number;
   /** Always present, defaults to `{ state: 'none' }`. */
   dunning: DunningView;
   /** First name for personalised copy; null falls back to "there". */
   firstName: string | null;
-  /**
-   * One-off credit-pack sizes purchasable right now — only the packs with a
-   * configured Stripe price ID. Empty => the Buy-credits section is hidden.
-   */
-  availableCreditPacks: number[];
 }
 
 // =============================================================================
@@ -334,8 +329,7 @@ function formatDate(iso: string): string {
 }
 
 function renderPlanBadge(planSlug: string, planName: string): string {
-  // free/pro classes exist in shared styles.ts; business style is
-  // scoped here until shared styles get a .plan-badge.business token.
+  // Flat-pricing: one plan. The badge just names it (no tier styling).
   const label = escapeHtml(planName);
   return `<span class="plan-badge ${escapeHtml(planSlug)}">${label}</span>`;
 }
@@ -380,10 +374,10 @@ export function renderTrialBanner(trial: TrialState, seatBilling: SeatBilling): 
  * trial; otherwise it is the live monthly charge.
  */
 function renderPlanCard(data: TeamBillingData): string {
-  const { seatBilling, trial, creditsAllocated } = data;
+  const { seatBilling, trial } = data;
   const billLabel = trial ? 'After your trial' : 'Monthly bill';
   return `
-    <p class="section-desc">One plan, billed monthly — ${escapeHtml(formatUsd(BASE_PRICE_CENTS))} base plus ${escapeHtml(formatUsd(PER_SEAT_PRICE_CENTS))} per seat.</p>
+    <p class="section-desc">Everything included — ${escapeHtml(formatUsd(ORG_FEE_CENTS))} base plus ${escapeHtml(formatUsd(PER_SEAT_PRICE_CENTS))} per seat. No tiers, no usage limits.</p>
     <div class="plan-summary">
       <div class="plan-line">
         <span class="plan-line-label">${escapeHtml(billLabel)}</span>
@@ -396,93 +390,12 @@ function renderPlanCard(data: TeamBillingData): string {
         <span class="plan-line-label">Seats</span>
         <span>${escapeHtml(seatBreakdownLine(seatBilling))}</span>
       </div>
-      <div class="plan-line">
-        <span class="plan-line-label">Credits</span>
-        <span>${creditsAllocated.toLocaleString()} / month</span>
-      </div>
     </div>
     <p class="invoice-reconcile-note">
-      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(BASE_PRICE_CENTS))}
+      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(ORG_FEE_CENTS))}
       base and the per-seat charge — and reconciles exactly with the breakdown above.
       The full invoice is in your Stripe billing portal below.
     </p>`;
-}
-
-function renderCredits(used: number, allocated: number): string {
-  const pct = allocated > 0 ? Math.min(100, Math.round((used / allocated) * 100)) : 0;
-  return `
-    <div class="usage-bar-track" aria-label="Credit usage">
-      <div class="usage-bar-fill" style="width:${pct}%"></div>
-    </div>
-    <div class="usage-numbers">
-      <strong>${used.toLocaleString()}</strong> of ${allocated.toLocaleString()} credits used this month
-    </div>
-  `;
-}
-
-/**
- * One-off credit-pack purchase cards (GAP-5). Each card POSTs the pack size
- * to /api/billing/checkout-credits and redirects to the returned Stripe
- * Checkout URL. Only packs with a configured price ID are passed in.
- */
-function renderCreditPacks(orgId: string, packs: number[]): string {
-  if (packs.length === 0) return '';
-  const cards = packs
-    .map(
-      (n) => `
-      <button type="button" class="credit-pack-card" data-credits="${n}">
-        <span class="credit-pack-amount">${n.toLocaleString()}</span>
-        <span class="credit-pack-label">credits</span>
-      </button>`,
-    )
-    .join('');
-  return `
-    <section class="billing-card">
-      <h2 class="section-title">Buy credits</h2>
-      <p class="section-desc">
-        One-off credit packs carry over and are used after your monthly plan
-        allocation runs out.
-      </p>
-      <div class="credit-pack-grid">${cards}</div>
-      <div class="credit-pack-status" id="creditPackStatus" role="status"></div>
-    </section>
-    <script>
-      (function () {
-        var orgId = ${JSON.stringify(orgId)};
-        var status = document.getElementById('creditPackStatus');
-        var cards = document.querySelectorAll('.credit-pack-card');
-        function lock(on) {
-          cards.forEach(function (c) {
-            c.disabled = on;
-            c.style.opacity = on ? '0.6' : '';
-          });
-        }
-        cards.forEach(function (card) {
-          card.addEventListener('click', async function () {
-            var credits = parseInt(card.getAttribute('data-credits') || '0', 10);
-            lock(true);
-            status.textContent = 'Opening checkout…';
-            try {
-              var res = await fetch('/api/billing/checkout-credits', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ org_id: orgId, credits: credits }),
-              });
-              var data = await res.json().catch(function () { return {}; });
-              if (res.ok && data.url) {
-                window.location.href = data.url;
-                return;
-              }
-              status.textContent = data.error || 'Could not start checkout.';
-            } catch (e) {
-              status.textContent = 'Could not start checkout.';
-            }
-            lock(false);
-          });
-        });
-      })();
-    </script>
-  `;
 }
 
 /**
@@ -569,7 +482,7 @@ function renderBillingDetails(org: Organization): string {
  *     body-end (empty string when not applicable).
  */
 export function renderTeamBilling(data: TeamBillingData): string {
-  const { org, plan, trial, creditsUsed, creditsAllocated, dunning, firstName, availableCreditPacks } = data;
+  const { org, plan, trial, dunning, firstName } = data;
   const orgName = escapeHtml(org.name);
 
   const banner = renderDunningBanner(dunning, firstName);
@@ -599,13 +512,6 @@ export function renderTeamBilling(data: TeamBillingData): string {
         <h2 class="section-title">Current plan</h2>
         ${renderPlanCard(data)}
       </section>
-
-      <section class="billing-card">
-        <h2 class="section-title">Usage this month</h2>
-        ${renderCredits(creditsUsed, creditsAllocated)}
-      </section>
-
-      ${renderCreditPacks(org.id, availableCreditPacks)}
     </div>
 
     ${renderBillingDetails(org)}

@@ -188,11 +188,14 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
         const org = await orgService.getOrg(orgId);
         if (isPaidPlan(org?.plan)) {
-          return reply.code(409).send({ error: 'Organization is already on a paid plan' });
+          return reply.code(409).send({ error: 'Organization is already on the plan' });
         }
 
-        await orgService.updateOrgPlan(orgId, 'pro');
-        return reply.send({ success: true, plan: 'pro' });
+        // Flat-pricing: one plan. (Post-flat every org resolves to the
+        // single 'conduit' plan via getPlan, so isPaidPlan is effectively
+        // always true and this endpoint 409s — retained for parity.)
+        await orgService.updateOrgPlan(orgId, 'conduit');
+        return reply.send({ success: true, plan: 'conduit' });
       },
     );
 

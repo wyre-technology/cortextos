@@ -186,9 +186,9 @@ describe('buildResellerTree', () => {
 
     expect(root.kind).toBe('reseller');
     expect(root.id).toBe(org.id);
-    expect(root.meta).toBe('2 customers · 8 users · Business');
+    expect(root.meta).toBe('2 customers · 8 users · Conduit');
     expect(root.children).toHaveLength(2);
-    expect(root.children[0]).toMatchObject({ id: 'c1', name: 'Acme Co', kind: 'customer', meta: '12 users · Business', children: [] });
+    expect(root.children[0]).toMatchObject({ id: 'c1', name: 'Acme Co', kind: 'customer', meta: '12 users · Conduit', children: [] });
     // depth-2 cap: customers never carry their own children
     expect(root.children.every((c) => c.children.length === 0)).toBe(true);
   });
@@ -196,17 +196,21 @@ describe('buildResellerTree', () => {
   it('renders a childless reseller node for a reseller with no customers (empty state)', () => {
     const root = buildResellerTree(org, 3, []);
     expect(root.children).toHaveLength(0);
-    expect(root.meta).toBe('0 customers · 3 users · Business');
+    expect(root.meta).toBe('0 customers · 3 users · Conduit');
     // the template surfaces the empty-state copy when children are absent
     expect(renderResellerHierarchy({ org, root })).toContain('No customers under this reseller yet.');
   });
 
-  it('singularizes customer/user labels and falls back to the slug for an unknown plan', () => {
+  it('singularizes customer/user labels; any resolvable slug renders as the one plan (flat-pricing)', () => {
+    // Post-flat: getPlan resolves any non-empty slug (including a legacy
+    // 'enterprise-x' that no longer maps to a tier) to the one plan, so the
+    // fallback-to-slug branch in planLabel is structurally unreachable. Kept
+    // in the impl as defensive code for genuinely-empty input.
     const root = buildResellerTree(org, 1, [
       { org: customerOrg('c1', 'Solo Inc', 'enterprise-x'), userCount: 1 },
     ]);
-    expect(root.meta).toBe('1 customer · 1 user · Business');
-    expect(root.children[0].meta).toBe('1 user · enterprise-x');
+    expect(root.meta).toBe('1 customer · 1 user · Conduit');
+    expect(root.children[0].meta).toBe('1 user · Conduit');
   });
 
   it('only ever renders real customer names — no mock literals leak through', () => {

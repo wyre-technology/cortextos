@@ -10,9 +10,9 @@ function data(over: Partial<TeamDomainsData> = {}): TeamDomainsData {
 }
 
 describe('renderTeamDomains — §8 auto-join seat-cost note', () => {
-  it('warns that auto-join takes a $20/mo member seat without a per-person confirm', () => {
+  it('warns that auto-join takes a $39/mo member seat without a per-person confirm', () => {
     const html = renderTeamDomains(data());
-    expect(html).toContain('$20/mo member');
+    expect(html).toContain('$39/mo member');
     expect(html).toContain('auto-join');
     expect(html).toContain('without a');
   });

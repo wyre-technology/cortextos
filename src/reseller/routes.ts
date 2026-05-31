@@ -18,7 +18,6 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { config } from '../config.js';
 import type { ResellerService } from './reseller-service.js';
 import { OrgHierarchyError, type OrgService } from '../org/org-service.js';
-import type { PlanSlug } from '../billing/plan-catalog.js';
 import { sendInvitationEmail } from '../email/transactional.js';
 import {
   ResellerMemberError,
@@ -126,19 +125,8 @@ function parseCreateMemberBody(body: unknown): CreateMemberBody | { error: strin
   return { userId, role };
 }
 
-// Plan tiers accepted by the customer-create endpoint. Mirrors PLAN_RANK in
-// src/billing/gate.ts — customers can be provisioned on any plan; the wizard
-// surfaces Free/Pro/Business, which map 1:1 here.
-const CUSTOMER_PLAN_SLUGS = ['free', 'pro', 'business'] as const;
-
-function isCustomerPlanSlug(value: unknown): value is PlanSlug {
-  return typeof value === 'string'
-    && (CUSTOMER_PLAN_SLUGS as readonly string[]).includes(value);
-}
-
 interface CreateCustomerBody {
   name: string;
-  plan: PlanSlug;
   /**
    * Email of the customer-org's eventual owner. The wizard collects this
    * at step 2; on customer-create we mint an owner-invite addressed to
@@ -157,13 +145,9 @@ function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: s
   if (name.length > 200) {
     return { error: 'name must be 200 characters or fewer' };
   }
-  // plan is optional; default 'free' so the wizard's Free-tier path works
-  // without sending the field.
-  const planRaw = body.plan;
-  if (planRaw !== undefined && !isCustomerPlanSlug(planRaw)) {
-    return { error: `plan must be one of: ${CUSTOMER_PLAN_SLUGS.join(', ')}` };
-  }
-  const plan: PlanSlug = isCustomerPlanSlug(planRaw) ? planRaw : 'free';
+  // Flat-pricing: no tiers. The wizard no longer collects a plan; the
+  // customer org is created on the single plan like every org (reseller
+  // wholesale billing is a separate model and does not key off org.plan).
 
   // Layer 1: admin_email is required — the wizard step-2 helper copy
   // ("An invite is sent on create; the owner sets their own password via
@@ -182,7 +166,7 @@ function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: s
     return { error: 'admin_email must look like an email address' };
   }
 
-  return { name: name.trim(), plan, adminEmail: adminEmailRaw.trim() };
+  return { name: name.trim(), adminEmail: adminEmailRaw.trim() };
 }
 
 /**
@@ -507,7 +491,7 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           const customer = await orgService.createOrg(
             parsed.name,
             ctx.user.sub,
-            parsed.plan,
+            'conduit',
             { type: 'customer', parentOrgId: ctx.resellerId },
           );
 

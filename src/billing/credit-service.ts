@@ -1,17 +1,22 @@
 import { getSql, type Sql } from '../db/context.js';
-import type { BillingGate } from './gate.js';
 
 // ---------------------------------------------------------------------------
-// CreditService — tracks and queries per-org credit consumption
+// CreditService — per-org per-call USAGE-LOG recording + query.
 // ---------------------------------------------------------------------------
 //
-// Credits represent successful vendor tool calls (tools/call returning 200
-// from a real vendor container). They are NOT counted for: tools/list,
-// failed calls, or _gateway/_unified internal operations.
+// Flat-pricing (Aaron 2026-05-26) removed the CUSTOMER credit-BILLING layer
+// (allocation, purchased blocks, balance, the customer credit display). What
+// remains here is the raw usage-LOG: one credit_ledger row per successful
+// vendor tool call. That log is the metering SUBSTRATE the reseller-channel
+// wholesale invoicing (reseller-invoice-service CreditLedgerUsageSource) and
+// the admin credit-burn dashboard read — so it stays. This is the same
+// distinction as request_log: usage-recording is kept; the customer billing
+// model on top of it is gone.
 //
-// Schema lives in migrations/017_mcp_gateway_parity.sql:
-//   credit_ledger  — one row per successful vendor tool call
-//   credit_blocks  — purchased overage blocks (FIFO depletion)
+// credit_ledger: one row per successful vendor tool call (NOT counted for
+// tools/list, failed calls, or _gateway/_unified internal operations).
+// Schema in migrations/017_mcp_gateway_parity.sql. The credit_blocks table
+// (customer overage purchases) is dropped by the flat-pricing migration.
 
 export class CreditService {
   /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
@@ -19,17 +24,15 @@ export class CreditService {
     return getSql();
   }
 
-  constructor(
-    private billingGate: BillingGate,
-  ) {}
-
   // -------------------------------------------------------------------------
   // Usage recording
   // -------------------------------------------------------------------------
 
   /**
-   * Record one credit used by an org member calling a vendor tool.
+   * Record one usage-log row for an org member calling a vendor tool.
    * Fire-and-forget safe — callers should `.catch()` to avoid blocking.
+   * The row feeds reseller-wholesale invoicing + admin usage analytics;
+   * it no longer drives any customer-facing credit balance or gate.
    */
   async recordUsage(orgId: string, userId: string, vendorSlug: string): Promise<void> {
     await this.sql`
@@ -43,8 +46,9 @@ export class CreditService {
   // -------------------------------------------------------------------------
 
   /**
-   * Sum credits used by the org since the start of the current calendar month
-   * (UTC midnight on the 1st).
+   * Sum usage-log rows for the org since the start of the current calendar
+   * month (UTC midnight on the 1st). Read by reseller-wholesale invoicing
+   * and admin analytics — not a customer credit balance.
    */
   async getUsageThisMonth(orgId: string): Promise<number> {
     const periodStart = currentMonthStart();
@@ -56,139 +60,6 @@ export class CreditService {
     `;
     return parseInt(rows[0]?.total ?? '0', 10);
   }
-
-  // -------------------------------------------------------------------------
-  // Block balance
-  // -------------------------------------------------------------------------
-
-  /**
-   * Sum remaining credits across all purchased overage blocks for this org.
-   */
-  async getBlockBalance(orgId: string): Promise<number> {
-    const rows = await this.sql<{ total: string }[]>`
-      SELECT COALESCE(SUM(remaining), 0)::text AS total
-      FROM credit_blocks
-      WHERE org_id = ${orgId}
-        AND remaining > 0
-    `;
-    return parseInt(rows[0]?.total ?? '0', 10);
-  }
-
-  // -------------------------------------------------------------------------
-  // Allocation + availability
-  // -------------------------------------------------------------------------
-
-  /**
-   * Total credits available this month: plan allocation + purchased blocks.
-   */
-  async getTotalAvailable(orgId: string): Promise<number> {
-    // Sequential, NOT Promise.all: each call issues a DB query. Today's
-    // callers reach this via runAsSystem (system pool), where concurrency is
-    // safe — but a Promise.all of service-method calls stalls the request's
-    // reserved-tx connection (the /v1/mcp tools/call hang class), so if this
-    // is ever wired onto a request path (e.g. the /org/billing credits
-    // surface, F3 / task_1779216873009) the Promise.all form would be a
-    // latent hang. Sequential awaits are correct on both pools.
-    const allocated = await this.billingGate.getCreditAllocation(orgId);
-    const blocks = await this.getBlockBalance(orgId);
-    return allocated + blocks;
-  }
-
-  /**
-   * Whether the org has any credits left (plan or blocks).
-   */
-  async hasCreditsRemaining(orgId: string): Promise<boolean> {
-    // Sequential, NOT Promise.all — see getTotalAvailable for the rationale
-    // (reserved-tx-safe regardless of which pool the caller runs on).
-    const used = await this.getUsageThisMonth(orgId);
-    const total = await this.getTotalAvailable(orgId);
-    return used < total;
-  }
-
-  // -------------------------------------------------------------------------
-  // Block addition (purchases)
-  // -------------------------------------------------------------------------
-
-  async addBlock(orgId: string, credits: number, stripePaymentIntentId: string | null): Promise<void> {
-    // The unique index on stripe_payment_intent_id (migration 017) is PARTIAL
-    // — `WHERE stripe_payment_intent_id IS NOT NULL`. Postgres only infers a
-    // partial index as the ON CONFLICT arbiter when the statement REPEATS that
-    // predicate; a bare `ON CONFLICT (col)` finds no matching non-partial
-    // index and raises "no unique or exclusion constraint matching the ON
-    // CONFLICT specification". Repeating the predicate is what makes this
-    // INSERT genuinely idempotent — without it the first credit-pack purchase
-    // throws rather than no-ops on a redelivered Stripe webhook.
-    await this.sql`
-      INSERT INTO credit_blocks (org_id, credits, remaining, stripe_payment_intent_id)
-      VALUES (${orgId}, ${credits}, ${credits}, ${stripePaymentIntentId})
-      ON CONFLICT (stripe_payment_intent_id)
-        WHERE stripe_payment_intent_id IS NOT NULL
-        DO NOTHING
-    `;
-  }
-
-  /**
-   * Grant comp credits to an org without going through Stripe. Provenance
-   * (admin email + reason) is captured so audits can answer "who comped what
-   * and why." The credits go into the same FIFO bucket as paid blocks.
-   */
-  async grantComp(
-    orgId: string,
-    credits: number,
-    grantedBy: string,
-    reason: string,
-  ): Promise<void> {
-    await this.sql`
-      INSERT INTO credit_blocks (org_id, credits, remaining, granted_by, reason)
-      VALUES (${orgId}, ${credits}, ${credits}, ${grantedBy}, ${reason})
-    `;
-  }
-
-  // -------------------------------------------------------------------------
-  // Block depletion (FIFO)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Deduct `amount` credits from the oldest non-empty block(s) for this org.
-   * Stops when fully deducted or no blocks remain. Returns credits actually
-   * deducted (may be less than `amount` if blocks run out).
-   */
-  async deductFromBlock(orgId: string, amount: number): Promise<number> {
-    if (amount <= 0) return 0;
-    return this.sql.begin(async (txSql) => {
-      const sql = txSql as unknown as Sql;
-      const blocks = await sql<{ id: string; remaining: string }[]>`
-        SELECT id, remaining::text
-        FROM credit_blocks
-        WHERE org_id = ${orgId} AND remaining > 0
-        ORDER BY purchased_at ASC
-        FOR UPDATE SKIP LOCKED
-      `;
-      let toDeduct = amount;
-      let totalDeducted = 0;
-      for (const block of blocks) {
-        if (toDeduct <= 0) break;
-        const avail = parseInt(block.remaining, 10);
-        const take = Math.min(avail, toDeduct);
-        await sql`UPDATE credit_blocks SET remaining = remaining - ${take} WHERE id = ${block.id}`;
-        toDeduct -= take;
-        totalDeducted += take;
-      }
-      return totalDeducted;
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Period helpers (for the API response)
-  // -------------------------------------------------------------------------
-
-  getPeriodStart(): Date {
-    return currentMonthStart();
-  }
-
-  getPeriodEnd(): Date {
-    return currentMonthEnd();
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +69,4 @@ export class CreditService {
 function currentMonthStart(): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-}
-
-function currentMonthEnd(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, -1));
 }

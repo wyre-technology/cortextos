@@ -569,10 +569,10 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
 
   let teamNav = '';
   if (org && isPro) {
-    const planLabel = org.plan === 'business' ? 'BUSINESS' : 'PRO';
-    const planTone = org.plan === 'business'
-      ? 'background:rgba(237,233,71,0.12);color:var(--highlight)'
-      : 'background:rgba(0,201,219,0.15);color:var(--accent-text)';
+    // Flat-pricing: one plan, no tier badge. The sidebar shows the single
+    // "CONDUIT" plan label (or the reseller badge for reseller orgs).
+    const planLabel = 'CONDUIT';
+    const planTone = 'background:rgba(0,201,219,0.15);color:var(--accent-text)';
     const planBadge = `<span style="font-size:10px;font-weight:600;${planTone};padding:1px 5px;border-radius:3px;margin-left:6px">${planLabel}</span>`;
     const resellerBadge = isReseller
       ? `<span style="font-size:10px;font-weight:600;background:rgba(0,201,219,0.15);color:var(--accent-text);padding:1px 5px;border-radius:3px;margin-left:6px">RESELLER</span>`

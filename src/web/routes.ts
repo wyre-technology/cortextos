@@ -218,7 +218,7 @@ async function requireCustomerOwnership(
  * connection flow, settings page, and team management pages.
  */
 export function webRoutes(deps: WebRouteDeps) {
-  const { credentialService, orgService, billingGate, creditService, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
+  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
 
   const sweepInterval = setInterval(() => {
     // The interval tick has NO request context — sweepExpired()'s getSql()
@@ -617,9 +617,6 @@ export function webRoutes(deps: WebRouteDeps) {
       const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
       const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
-      // 2500 credits/seat × all functional seats (humans + agents, including
-      // the 2 base-included agents). Locked at decision-of-record §4.
-      const creditsAllocated = plan.creditAllocation * seatBilling.creditSeats;
       // Trial state — SWAP-IN: the real trial read (Hank's §9.1 onboarding
       // field) is not wired yet, so no org renders as trialing for now.
       const trial = null;
@@ -636,23 +633,14 @@ export function webRoutes(deps: WebRouteDeps) {
         plan,
         seatBilling,
         trial,
-        creditsUsed: await creditService.getUsageThisMonth(org.id),
-        creditsAllocated,
         // Payment method, upcoming invoice, and invoice history are not
         // rendered on-page — they are shown in the customer's real Stripe
         // billing portal (the "Billing details" block links out to it). An
         // org with no Stripe customer gets the honest managed-directly state.
-        // No fabricated billing data reaches this page.
+        // No fabricated billing data reaches this page. Flat-pricing: no
+        // credits — the former credit-usage + credit-pack surfaces are gone.
         dunning,
         firstName: (user.name || '').split(/\s+/)[0] || null,
-        // Only offer packs that have a configured Stripe price ID — the
-        // checkout-credits route 500s on an unconfigured pack, so do not
-        // surface it as a button.
-        availableCreditPacks: [
-          config.stripeCredits1000PriceId ? 1000 : 0,
-          config.stripeCredits2500PriceId ? 2500 : 0,
-          config.stripeCredits5000PriceId ? 5000 : 0,
-        ].filter((n) => n > 0),
       };
 
       const pageScripts = data.dunning.state === 'recovered' ? DUNNING_TOAST_SCRIPT : undefined;

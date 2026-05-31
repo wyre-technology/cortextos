@@ -23,7 +23,7 @@ export function renderTeamServiceClients(data: TeamServiceClientsData): string {
   const { orgId, baseUrl, serviceClients, seatBilling, trialing } = data;
 
   // The billing consequence of creating one more agent seat — truthful per
-  // the 2-included-agent inclusion (agent #1/#2 is $0, #3+ adds a $20 line).
+  // the 2-included-agent inclusion (agent #1/#2 is $0, #3+ adds a $39 line).
   const agentConsent = agentSeatConsentCopy(seatBilling, { trialing });
 
   const clientsTable = serviceClients.length > 0 ? `

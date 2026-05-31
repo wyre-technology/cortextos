@@ -75,34 +75,29 @@ function createStubSql(): postgres.Sql {
   return vi.fn().mockResolvedValue([]) as unknown as postgres.Sql;
 }
 
-/** Mock CreditService — only addBlock is reached by the webhook handler. */
-function createMockCreditService() {
-  return { addBlock: vi.fn().mockResolvedValue(undefined) } as unknown as import(
-    './credit-service.js'
-  ).CreditService;
+/**
+ * Joins the SQL template-string fragments of every call a stub `sql` mock
+ * received, so a test can assert WHICH columns a status-mirror UPSERT
+ * touched. Used for the dunning-clock-ownership checks: a non-terminal
+ * status mirror must NOT write first_failure_at/recovered_at; only a
+ * terminal-cancel clears them.
+ */
+function sqlText(sql: postgres.Sql): string {
+  const mock = sql as unknown as { mock: { calls: unknown[][] } };
+  return mock.mock.calls
+    .map((c) => (Array.isArray(c[0]) ? (c[0] as string[]).join(' ? ') : ''))
+    .join('\n---\n');
 }
 
-async function buildApp(orgService: OrgService): Promise<FastifyInstance> {
+// Flat-pricing: stripeWebhookRoutes takes (orgService, sql) — the CreditService
+// param is gone with the customer-credit model.
+async function buildApp(orgService: OrgService, sql: postgres.Sql = createStubSql()): Promise<FastifyInstance> {
   vi.resetModules();
   stubStripeEnv();
 
   const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
   const app = Fastify({ logger: false });
-  await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
-  return app;
-}
-
-/** buildApp variant that takes an explicit creditService so a test can
- *  assert on its addBlock mock. */
-async function buildAppWithCredit(
-  orgService: OrgService,
-  creditService: ReturnType<typeof createMockCreditService>,
-): Promise<FastifyInstance> {
-  vi.resetModules();
-  stubStripeEnv();
-  const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
-  const app = Fastify({ logger: false });
-  await app.register(stripeWebhookRoutes(orgService, creditService, createStubSql()));
+  await app.register(stripeWebhookRoutes(orgService, sql));
   return app;
 }
 
@@ -130,7 +125,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
+    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -152,7 +147,7 @@ describe('stripeWebhookRoutes', () => {
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const orgService = createMockOrgService();
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), createStubSql()));
+    await app.register(stripeWebhookRoutes(orgService, createStubSql()));
 
     const response = await app.inject({
       method: 'POST',
@@ -215,12 +210,12 @@ describe('stripeWebhookRoutes', () => {
   // checkout.session.completed -> upgrade to pro
   // -------------------------------------------------------------------------
 
-  it('upgrades org to pro on checkout.session.completed', async () => {
+  it('marks org conduit on checkout.session.completed', async () => {
     const orgService = createMockOrgService();
     (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 'org_abc',
       name: 'Test Org',
-      plan: 'free',
+      plan: 'conduit',
       stripeCustomerId: null,
     });
 
@@ -253,7 +248,7 @@ describe('stripeWebhookRoutes', () => {
     expect(response.json()).toEqual({ received: true });
     expect(orgService.updateOrgPlan).toHaveBeenCalledWith(
       'org_abc',
-      'pro',
+      'conduit',
       'cus_test_customer',
       'sub_test_subscription',
     );
@@ -261,33 +256,35 @@ describe('stripeWebhookRoutes', () => {
   });
 
   // -------------------------------------------------------------------------
-  // checkout.session.completed (mode: payment) -> add a credit block (GAP-5)
+  // checkout.session.completed (mode: payment) -> ignored (credit packs removed)
   // -------------------------------------------------------------------------
 
-  it('adds a credit block on a mode:payment checkout.session.completed', async () => {
+  it('ignores a mode:payment checkout.session.completed (credit packs removed) — 200, no plan touch', async () => {
+    // Flat-pricing: one-off credit-pack purchases are gone, so a payment-mode
+    // session is no longer expected. The handler logs + skips it rather than
+    // touching the plan; it must still 200-ack so Stripe does not retry.
     const orgService = createMockOrgService();
     (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 'org_abc',
       name: 'Test Org',
-      plan: 'free',
+      plan: 'conduit',
       stripeCustomerId: null,
     });
-    const creditService = createMockCreditService();
 
     mockConstructEvent.mockReturnValue({
-      id: 'evt_credits',
+      id: 'evt_payment_mode',
       type: 'checkout.session.completed',
       data: {
         object: {
-          id: 'cs_credits',
+          id: 'cs_payment',
           mode: 'payment',
           payment_intent: 'pi_abc',
-          metadata: { org_id: 'org_abc', credits: '2500' },
+          metadata: { org_id: 'org_abc' },
         },
       },
     });
 
-    const app = await buildAppWithCredit(orgService, creditService);
+    const app = await buildApp(orgService);
     const response = await app.inject({
       method: 'POST',
       url: '/api/webhooks/stripe',
@@ -296,52 +293,8 @@ describe('stripeWebhookRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    // credits parsed from metadata; idempotency key is the payment_intent.
-    expect(creditService.addBlock).toHaveBeenCalledWith('org_abc', 2500, 'pi_abc');
-    // A credit-pack purchase must NOT touch the plan.
     expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
     await app.close();
-  });
-
-  it('skips addBlock when a mode:payment session has missing/invalid credits metadata', async () => {
-    // Money-path guardrail: a malformed credits value must not addBlock a
-    // NaN/zero and must not throw mid-webhook — log + skip, still 200.
-    const orgService = createMockOrgService();
-    (orgService.getOrg as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: 'org_abc',
-      name: 'Test Org',
-      plan: 'free',
-      stripeCustomerId: null,
-    });
-    const creditService = createMockCreditService();
-
-    for (const badCredits of [undefined, 'abc', '0', '-100', '12.5']) {
-      mockConstructEvent.mockReturnValue({
-        id: 'evt_bad_credits',
-        type: 'checkout.session.completed',
-        data: {
-          object: {
-            id: 'cs_bad',
-            mode: 'payment',
-            payment_intent: 'pi_bad',
-            metadata:
-              badCredits === undefined
-                ? { org_id: 'org_abc' }
-                : { org_id: 'org_abc', credits: badCredits },
-          },
-        },
-      });
-      const app = await buildAppWithCredit(orgService, creditService);
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/webhooks/stripe',
-        headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
-        payload: Buffer.from('{}'),
-      });
-      expect(response.statusCode).toBe(200);
-      await app.close();
-    }
-    expect(creditService.addBlock).not.toHaveBeenCalled();
   });
 
   it('skips upgrade when checkout.session.completed org is not found', async () => {
@@ -474,8 +427,14 @@ describe('stripeWebhookRoutes', () => {
   // customer.subscription.updated -> sync plan
   // -------------------------------------------------------------------------
 
-  it('syncs plan to pro when subscription status is active', async () => {
+  it('mirrors active status onto the subscriptions row (no plan flip, clock untouched)', async () => {
+    // Flat-pricing (Shape-A′): there are no tiers, so the plan never flips —
+    // the org stays 'conduit'. customer.subscription.updated MIRRORS Stripe's
+    // status onto the subscriptions row; service-denial flows through the
+    // subscriptions.status gate (isServiceActive), not the plan. So
+    // updateOrgPlan is never called here; the status mirror is an sql UPSERT.
     const orgService = createMockOrgService();
+    const sql = createStubSql();
 
     mockConstructEvent.mockReturnValue({
       id: 'evt_sub_updated',
@@ -490,7 +449,7 @@ describe('stripeWebhookRoutes', () => {
       },
     });
 
-    const app = await buildApp(orgService);
+    const app = await buildApp(orgService, sql);
 
     const response = await app.inject({
       method: 'POST',
@@ -503,22 +462,23 @@ describe('stripeWebhookRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(orgService.updateOrgPlan).toHaveBeenCalledWith(
-      'org_xyz',
-      'pro',
-      'cus_test_customer',
-      'sub_test_id',
-    );
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    expect(sql).toHaveBeenCalled();
+    // dunning-clock ownership: a non-terminal status mirror must NOT touch
+    // first_failure_at / recovered_at — those belong to payment_failed /
+    // payment_succeeded + the terminal-cancel path only.
+    expect(sqlText(sql)).not.toContain('first_failure_at');
+    expect(sqlText(sql)).not.toContain('recovered_at');
     await app.close();
   });
 
-  it('KEEPS plan=pro on past_due status (dunning grace, mig 024)', async () => {
-    // Behavior change from prior version: past_due used to flip plan to free,
-    // which bypassed Ruby's 7-day-grace dunning lifecycle. Now plan stays
-    // 'pro' for past_due and unpaid; isServiceActive in gate.ts uses
-    // (status, first_failure_at, grace) to decide whether to admit the
-    // paid-gate at request time.
+  it('mirrors past_due status, keeping plan conduit and the dunning clock untouched', async () => {
+    // past_due is NON-terminal: the org stays 'conduit' and the status mirror
+    // records past_due without writing the dunning-clock fields. isServiceActive
+    // in gate.ts uses (status, first_failure_at, grace) — set by the dunning
+    // handlers — to decide whether to admit the paid-gate at request time.
     const orgService = createMockOrgService();
+    const sql = createStubSql();
 
     mockConstructEvent.mockReturnValue({
       id: 'evt_sub_past_due',
@@ -533,7 +493,7 @@ describe('stripeWebhookRoutes', () => {
       },
     });
 
-    const app = await buildApp(orgService);
+    const app = await buildApp(orgService, sql);
 
     const response = await app.inject({
       method: 'POST',
@@ -546,20 +506,57 @@ describe('stripeWebhookRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(orgService.updateOrgPlan).toHaveBeenCalledWith(
-      'org_xyz',
-      'pro',
-      'cus_test_customer',
-      'sub_test_id',
-    );
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    expect(sql).toHaveBeenCalled();
+    expect(sqlText(sql)).not.toContain('first_failure_at');
+    expect(sqlText(sql)).not.toContain('recovered_at');
     await app.close();
   });
 
-  it('flips plan=free on canceled status (terminal)', async () => {
-    // Only canonical terminal states downgrade the plan-tier. Stripe's
-    // canceled + incomplete_expired are the truly-over signals; past_due
-    // and unpaid keep plan='pro' under the dunning grace.
+  it('ruby note-1: past_due with no pre-existing subscriptions row still UPSERTs defensively', async () => {
+    // Net-new / pre-seed defensive case (ruby 2026-05-26): a status transition
+    // can arrive before the seed/checkout subscriptions row exists. The mirror
+    // is an INSERT ... ON CONFLICT, so the INSERT path lands the row rather
+    // than no-op'ing on a missing row. With a stub sql we assert the UPSERT
+    // ran and the handler 200-acked (no throw on the missing-row path).
     const orgService = createMockOrgService();
+    const sql = createStubSql(); // zero existing rows
+
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_sub_past_due_norow',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_netnew',
+          customer: 'cus_netnew',
+          status: 'past_due',
+          metadata: { org_id: 'org_netnew' },
+        },
+      },
+    });
+
+    const app = await buildApp(orgService, sql);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 'valid_sig' },
+      payload: Buffer.from('{}'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(sql).toHaveBeenCalled();
+    expect(sqlText(sql)).toContain('INSERT INTO subscriptions');
+    await app.close();
+  });
+
+  it('mirrors canceled status terminally — clears the dunning clock, no plan flip', async () => {
+    // canceled + incomplete_expired are Stripe-terminal. The mirror upserts
+    // status='canceled' AND clears first_failure_at / recovered_at (the cycle
+    // is over — only the terminal-cancel path owns clearing the clock). The
+    // plan still does NOT flip (no free tier); service is denied via status.
+    const orgService = createMockOrgService();
+    const sql = createStubSql();
 
     mockConstructEvent.mockReturnValue({
       id: 'evt_sub_canceled',
@@ -574,7 +571,7 @@ describe('stripeWebhookRoutes', () => {
       },
     });
 
-    const app = await buildApp(orgService);
+    const app = await buildApp(orgService, sql);
 
     const response = await app.inject({
       method: 'POST',
@@ -587,21 +584,21 @@ describe('stripeWebhookRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(orgService.updateOrgPlan).toHaveBeenCalledWith(
-      'org_xyz',
-      'free',
-      'cus_test_customer',
-      'sub_test_id',
-    );
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    expect(sql).toHaveBeenCalled();
+    // Terminal-cancel owns clearing the clock — these fields ARE in the mirror.
+    expect(sqlText(sql)).toContain('first_failure_at');
+    expect(sqlText(sql)).toContain('recovered_at');
     await app.close();
   });
 
   // -------------------------------------------------------------------------
-  // customer.subscription.deleted -> downgrade to free
+  // customer.subscription.deleted -> deny service via status gate (no plan flip)
   // -------------------------------------------------------------------------
 
-  it('downgrades org to free on customer.subscription.deleted', async () => {
+  it('upserts status=canceled on customer.subscription.deleted (service denied via status gate)', async () => {
     const orgService = createMockOrgService();
+    const sql = createStubSql();
 
     mockConstructEvent.mockReturnValue({
       id: 'evt_sub_deleted',
@@ -615,7 +612,7 @@ describe('stripeWebhookRoutes', () => {
       },
     });
 
-    const app = await buildApp(orgService);
+    const app = await buildApp(orgService, sql);
 
     const response = await app.inject({
       method: 'POST',
@@ -629,7 +626,11 @@ describe('stripeWebhookRoutes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ received: true });
-    expect(orgService.updateOrgPlan).toHaveBeenCalledWith('org_deleted', 'free');
+    // No plan flip (no free tier); service-denial is via the status gate.
+    expect(orgService.updateOrgPlan).not.toHaveBeenCalled();
+    expect(sql).toHaveBeenCalled();
+    expect(sqlText(sql)).toContain('first_failure_at');
+    expect(sqlText(sql)).toContain('recovered_at');
     await app.close();
   });
 
@@ -726,7 +727,7 @@ describe('stripeWebhookRoutes', () => {
     stubStripeEnv();
     const { stripeWebhookRoutes } = await import('./stripe-webhook.js');
     const app = Fastify({ logger: false });
-    await app.register(stripeWebhookRoutes(orgService, createMockCreditService(), sql));
+    await app.register(stripeWebhookRoutes(orgService, sql));
     return app;
   }
 

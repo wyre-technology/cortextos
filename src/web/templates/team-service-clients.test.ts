@@ -23,10 +23,10 @@ describe('renderTeamServiceClients — §8 at-creation cost copy', () => {
     expect(html).toContain('included in your plan, $0');
   });
 
-  it('agent beyond the inclusion → "$20/mo" copy with plain proration', () => {
+  it('agent beyond the inclusion → "$39/mo" copy with plain proration', () => {
     // 2 agents now → the next agent is #3, the first billed one.
     const html = renderTeamServiceClients(data({ seatBilling: makeSeatBilling(5, 2) }));
-    expect(html).toContain('$20/mo');
+    expect(html).toContain('$39/mo');
     expect(html).toContain('prorated for the remainder of this cycle');
   });
 

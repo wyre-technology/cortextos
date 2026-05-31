@@ -5,8 +5,11 @@
  * Per LOCKED DOR (2026-05-20) + PR-A spec (2026-05-22):
  *
  *   billableSeats     = humans + max(0, agents − INCLUDED_AGENT_SEATS)
- *   creditSeats       = humans + agents
- *   monthlyTotalCents = BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats
+ *   monthlyTotalCents = ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats
+ *
+ * Flat-pricing (Aaron 2026-05-26): no tiers, no credits, no call-gating.
+ * The credit pool / monthlyCreditAllocation is removed; the Shape-A agent
+ * inclusion (first INCLUDED_AGENT_SEATS agents free) is kept.
  *
  * TRIAL-END CHARGE CONTRACT (ruby 2026-05-22, amplified by boss):
  *   getSeatBilling is a deterministic function of {humans, agents}. At
@@ -21,8 +24,7 @@
 
 import type { OrgService } from '../org/org-service.js';
 import {
-  BASE_PRICE_CENTS,
-  CREDITS_PER_SEAT,
+  ORG_FEE_CENTS,
   INCLUDED_AGENT_SEATS,
   PER_SEAT_PRICE_CENTS,
 } from './prices.js';
@@ -36,18 +38,14 @@ export interface SeatCounts {
 
 export interface SeatBilling {
   readonly counts: SeatCounts;
-  /** humans + agents — drives the credit pool (every seat allocated, included counted). */
-  readonly creditSeats: number;
   /** humans + max(0, agents − INCLUDED_AGENT_SEATS) — Stripe per-unit quantity. */
   readonly billableSeats: number;
   /** Of agents present, how many fall inside the inclusion (0..INCLUDED_AGENT_SEATS). */
   readonly includedAgents: number;
   /** Of agents present, how many are billed (agents − includedAgents). */
   readonly billedAgents: number;
-  /** BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats. */
+  /** ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats. */
   readonly monthlyTotalCents: number;
-  /** CREDITS_PER_SEAT × creditSeats — the pooled monthly allocation. */
-  readonly monthlyCreditAllocation: number;
 }
 
 export interface SeatService {
@@ -62,7 +60,7 @@ export interface SeatService {
    * Composed billing snapshot for an org. Deterministic function of
    * {humans, agents} at the moment of evaluation. ALL consumers
    * (billing banner, Stripe subscription-create, Stripe subscription-update,
-   * invoice-preview, BillingGate.getCreditAllocation) call this — no
+   * invoice-preview) call this — no
    * parallel arithmetic. Trial-end charge contract enforced by construction:
    * Stripe webhook and trial-banner both receive the same snapshot at
    * trial_end timestamp.
@@ -87,22 +85,18 @@ export function computeSeatBilling(counts: SeatCounts): SeatBilling {
   const humans = Math.max(0, counts.humans | 0);
   const agents = Math.max(0, counts.agents | 0);
 
-  const creditSeats = humans + agents;
   const includedAgents = Math.min(agents, INCLUDED_AGENT_SEATS);
   const billedAgents = agents - includedAgents;
   const billableSeats = humans + billedAgents;
 
-  const monthlyTotalCents = BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS * billableSeats;
-  const monthlyCreditAllocation = CREDITS_PER_SEAT * creditSeats;
+  const monthlyTotalCents = ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS * billableSeats;
 
   return Object.freeze({
     counts: Object.freeze({ humans, agents }),
-    creditSeats,
     billableSeats,
     includedAgents,
     billedAgents,
     monthlyTotalCents,
-    monthlyCreditAllocation,
   });
 }
 
@@ -113,7 +107,7 @@ export class DefaultSeatService implements SeatService {
     // Sequential awaits — NOT Promise.all — per the #196/#199/#201
     // reserved-tx hang class: Promise.all of service-method calls on a
     // request-path-reserved-tx connection can stall. getSeatBilling is on
-    // the hot path of gate.getCreditAllocation, every seat-mutation via
+    // the hot path of every seat-mutation via
     // seat-syncer, and standalone-org creation via the billing provisioner
     // — all request-path. The conservative serialization costs one extra
     // round-trip on a single connection (negligible) and refuses the hang

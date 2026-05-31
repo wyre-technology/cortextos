@@ -270,7 +270,7 @@ const domainService = new OrgDomainService();
 const credentialService = new CredentialService();
 const tokenStore = new TokenStore();
 const billingGate = new DefaultBillingGate(orgService, seatService);
-const creditService = new CreditService(billingGate);
+const creditService = new CreditService();
 const vendorOAuthStates = new VendorOAuthStateStore(Buffer.from(config.masterKey, 'hex'));
 const auditService = new AuditService();
 const adminAuditService = new AdminAuditService();
@@ -418,7 +418,7 @@ await app.register(landingRoutes());
 // MUST be registered before @fastify/static because it needs its own
 // content type parser for raw body verification.
 if (config.features.billing) {
-  await app.register(stripeWebhookRoutes(orgService, creditService, systemPool()));
+  await app.register(stripeWebhookRoutes(orgService, systemPool()));
 }
 
 // Static files — serves the built docs site from public/ when present.
@@ -557,8 +557,11 @@ app.post<{
     return reply.code(404).send({ error: 'Organization not found' });
   }
 
-  await orgService.updateOrgPlan(orgId, plan as 'free' | 'pro' | 'business');
-  return reply.send({ orgId, plan });
+  // Flat-pricing: one plan. Any requested value normalizes to 'conduit'
+  // (the admin endpoint is retained for parity but there are no tiers to
+  // set). The response echoes the canonical plan, not the requested value.
+  await orgService.updateOrgPlan(orgId, 'conduit');
+  return reply.send({ orgId, plan: 'conduit' });
 });
 
 // CLI REST endpoint (tool calls as plain JSON, not MCP JSON-RPC)

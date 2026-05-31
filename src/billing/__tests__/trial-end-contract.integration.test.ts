@@ -3,7 +3,7 @@
  *
  * Locked contract (ruby spec 2026-05-22, ratified 2026-05-22):
  *   At trial_end the first Stripe charge MUST equal
- *     BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats-at-trial-end
+ *     ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats-at-trial-end
  *   with NO partial-period proration. billing_cycle_anchor = trial_end.
  *
  * This test is layer 4 of the four-layer defense:
@@ -29,7 +29,7 @@ import {
   subscriptionIdempotencyKey,
 } from '../subscription-factory.js';
 import {
-  BASE_PRICE_CENTS,
+  ORG_FEE_CENTS,
   CURRENCY,
   PER_SEAT_PRICE_CENTS,
   TRIAL_PERIOD_DAYS,
@@ -65,7 +65,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
 
     const basePrice = await stripe.prices.create({
       product: productId,
-      unit_amount: BASE_PRICE_CENTS,
+      unit_amount: ORG_FEE_CENTS,
       currency: CURRENCY,
       recurring: { interval: 'month' },
       nickname: 'Conduit Subscription (ephemeral)',
@@ -192,7 +192,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
     return sorted[0];
   }
 
-  it('1 human, 0 agents (billableSeats=1) → first charge = $620.00, no proration line', async () => {
+  it('1 human, 0 agents (billableSeats=1) → first charge = $438.00, no proration line', async () => {
     const orgId = `org_test1_${Date.now()}`;
     const { subscription, clock, trialEndUnix } = await provisionTrialingSub({
       orgId,
@@ -203,7 +203,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
     await advanceClock(clock.id, trialEndUnix + 60);
 
     const invoice = await firstRealInvoice(subscription.id);
-    expect(invoice.total).toBe(BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS * 1); // 62000
+    expect(invoice.total).toBe(ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS * 1); // 43800
 
     // No proration lines — Stripe marks them on invoice.lines.data[].proration.
     // Stripe v22+: proration flag is on line.parent.subscription_item_details.proration.
@@ -215,7 +215,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
     expect(prorationLines).toHaveLength(0);
   }, 120_000);
 
-  it('5 humans, 4 agents (billableSeats=7) → first charge = $740.00, no proration line', async () => {
+  it('5 humans, 4 agents (billableSeats=7) → first charge = $672.00, no proration line', async () => {
     const orgId = `org_test2_${Date.now()}`;
     const { subscription, clock, trialEndUnix } = await provisionTrialingSub({
       orgId,
@@ -226,7 +226,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
     await advanceClock(clock.id, trialEndUnix + 60);
 
     const invoice = await firstRealInvoice(subscription.id);
-    expect(invoice.total).toBe(BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS * 7); // 74000
+    expect(invoice.total).toBe(ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS * 7); // 67200
 
     // Stripe v22+: proration flag is on line.parent.subscription_item_details.proration.
     // A proration line appears whenever Stripe issued a partial-period charge — under
@@ -265,7 +265,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
     await advanceClock(clock.id, trialEndUnix + 60);
 
     const invoice = await firstRealInvoice(subscription.id);
-    expect(invoice.total).toBe(BASE_PRICE_CENTS + PER_SEAT_PRICE_CENTS * 3); // 66000
+    expect(invoice.total).toBe(ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS * 3); // 51600
 
     // Stripe v22+: proration flag is on line.parent.subscription_item_details.proration.
     // A proration line appears whenever Stripe issued a partial-period charge — under
