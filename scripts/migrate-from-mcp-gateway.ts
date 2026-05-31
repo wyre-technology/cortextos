@@ -639,6 +639,116 @@ async function migrateSubscriptions(src: Sql, dst: Sql): Promise<TableResult> {
   return { read: rows.length, inserted, skipped: rows.length - inserted };
 }
 
+/**
+ * Aaron's 2026-05-29 free-org cutover policy: existing 'free'-plan orgs in
+ * mcpgw get a 14-day decide-or-revert window post-cutover. For each such
+ * org we seed a LOCAL subscriptions row (NOT a Stripe subscription) with
+ * status='trialing', cancel_at_period_end=TRUE, current_period_end=NOW()+14d.
+ *
+ * The gate's isServiceActive cutover-grace branch reads
+ * (status active/trialing) + cancel_at_period_end + past current_period_end
+ * at request time → denies service when the period elapses. Construction:
+ * the flip is by-time-elapsed; NO cron, NO scheduled write. If the owner
+ * hits Checkout in the 14-day window, a real Stripe subscription supersedes
+ * via subscription.updated UPSERT, and getSubscription's
+ * ORDER BY created_at DESC LIMIT 1 makes the real row authoritative.
+ *
+ * No data is deleted. No Stripe trial extended. NO Stripe customer minted.
+ * The placeholder stripe_subscription_id ('grace:<orgId>') keeps the row
+ * out of the webhook's ON CONFLICT (stripe_subscription_id) write path
+ * (a real Stripe sub-id will never collide with the 'grace:' prefix).
+ *
+ * Idempotent — re-runnable; the ON CONFLICT (id) clause makes a re-seed a
+ * no-op. Safe-by-construction for the dry-run path; safe-by-source-select
+ * when mcpgw has no organizations table (safeSelect returns []).
+ *
+ * Run AFTER migrateOrganizations so the dst.organizations rows exist;
+ * run BEFORE migrateSubscriptions so any real Stripe sub already in mcpgw
+ * lands AFTER (and thus wins under newest-row-authoritative). The "any
+ * Stripe sub in mcpgw is newer" condition is vacuously true because the
+ * grace row is timestamped at cutover time, and a real sub copied from
+ * mcpgw carries its original (earlier) created_at — wait, that's the
+ * inverse of what we want.
+ *
+ * Resolution: seed grace rows AFTER migrateSubscriptions so the grace row's
+ * created_at is later than any real sub's. If an org has a real sub already
+ * (rare for current 'free'-plan orgs; impossible by definition for true free
+ * orgs but defensive against migration-source drift), the grace row's
+ * newer timestamp makes IT authoritative until a real checkout supersedes.
+ * Since 'free' orgs by definition have no Stripe subscription, this edge
+ * case is empty in practice — but the ordering is the safe choice
+ * regardless.
+ *
+ * LOAD-BEARING ASSUMPTION (analyst 2026-05-31 PR #291 5-area):
+ * subscriptions.created_at is INSERT-TIME-IMMUTABLE. The newest-row-
+ * authoritative semantic (getSubscription's ORDER BY created_at DESC LIMIT 1
+ * + the conversion-supersede path) relies on no code path mutating
+ * created_at after insert. Grounded against the current code: every
+ * UPDATE/UPSERT in src/billing/stripe-webhook.ts + src/org/org-service.ts +
+ * scripts/ touches status/updated_at/first_failure_at/recovered_at — none
+ * mutate created_at. The DDL (migrations/017_mcp_gateway_parity.sql) sets
+ * created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() — a Postgres default fires
+ * only on insert. If a future writer adds a created_at = ... SET clause,
+ * this seed's ordering invariant breaks; a regression-guard test against
+ * the SQL pattern (same shape as the dunning-clock-ownership sqlText
+ * assertions in src/billing/stripe-webhook.test.ts) would close the rot
+ * vector by construction.
+ */
+const FREE_ORG_CUTOVER_GRACE_DAYS = 14;
+
+async function seedFreeOrgGraceSubscriptions(
+  src: Sql,
+  dst: Sql,
+): Promise<TableResult> {
+  const rows = await safeSelect(src, 'organizations', () => src<{ id: string }[]>`
+    SELECT id FROM organizations WHERE plan = 'free'
+  `);
+  if (DRY_RUN) return { read: rows.length, inserted: 0, skipped: 0 };
+  if (rows.length === 0) return { read: 0, inserted: 0, skipped: 0 };
+  let inserted = 0;
+  await dst.begin(async (tx) => {
+    for (const r of rows) {
+      // The same `grace:${orgId}` placeholder fills BOTH stripe_customer_id
+      // and stripe_subscription_id — the subscriptions DDL declares both
+      // columns NOT NULL (migrations/017_mcp_gateway_parity.sql:53-54), so
+      // NULL would violate the constraint at runtime. UNIQUE is only on
+      // stripe_subscription_id, so reusing the same string in the customer
+      // column is safe; the `grace:` prefix keeps both values out of Stripe's
+      // `cus_*` and `sub_*` id space, so no collision with real Stripe-side
+      // records. Caught by ruby on the #291 review when the mock-SQL
+      // substrate in vitest didn't surface the NOT NULL violation a real
+      // Postgres would have rejected on first insert.
+      //
+      // NOT EXISTS guard (warden 2026-05-31 PR #291 latent-secondary close):
+      // skip seeding when the destination already has ANY subscriptions row
+      // for this org. Defends against the assumed source-side invariant
+      // 'free orgs have no Stripe sub' by making the invariant
+      // SQL-enforced-per-row rather than documentation-assumed. Idempotent
+      // against any prior real Stripe sub regardless of its
+      // stripe_subscription_id shape — the guard is at the org_id level.
+      const placeholder = `grace:${r.id}`;
+      const res = await tx`
+        INSERT INTO subscriptions (
+          id, org_id, stripe_customer_id, stripe_subscription_id,
+          plan, status, current_period_end, cancel_at_period_end,
+          first_failure_at, recovered_at
+        )
+        SELECT
+          ${placeholder}, ${r.id}, ${placeholder}, ${placeholder},
+          'conduit', 'trialing',
+          NOW() + (${FREE_ORG_CUTOVER_GRACE_DAYS} || ' days')::interval,
+          TRUE, NULL, NULL
+        WHERE NOT EXISTS (
+          SELECT 1 FROM subscriptions WHERE org_id = ${r.id}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted += res.count;
+    }
+  });
+  return { read: rows.length, inserted, skipped: rows.length - inserted };
+}
+
 async function migrateDeletedOrgs(src: Sql, dst: Sql): Promise<TableResult> {
   const rows = await safeSelect(src, 'deleted_orgs', () => src<any[]>`SELECT * FROM deleted_orgs`);
   if (DRY_RUN) return { read: rows.length, inserted: 0, skipped: 0 };
@@ -894,6 +1004,12 @@ async function main(): Promise<void> {
     { name: 'request_log',                 fn: () => migrateRequestLog(src, dst) },
     { name: 'log_shipping_destinations',   fn: () => migrateLogShippingDestinations(src, dst) },
     { name: 'subscriptions',               fn: () => migrateSubscriptions(src, dst) },
+    // Free-org cutover-grace seeding (Aaron 2026-05-29): seed AFTER real
+    // subscriptions migrate so the grace row's created_at is newer than any
+    // real Stripe sub copied over — newest-row-authoritative makes the
+    // grace row the active row for orgs without a real sub. See the
+    // seedFreeOrgGraceSubscriptions docstring for the full rationale.
+    { name: 'free_org_grace_subscriptions', fn: () => seedFreeOrgGraceSubscriptions(src, dst) },
     { name: 'deleted_orgs',                fn: () => migrateDeletedOrgs(src, dst) },
     { name: 'entity_mappings',             fn: () => migrateEntityMappings(src, dst) },
     { name: 'credit_ledger',               fn: () => migrateCreditLedger(src, dst) },

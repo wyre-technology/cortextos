@@ -80,6 +80,44 @@ export function isPaidPlan(plan: PlanSlug | string | undefined | null): boolean 
 export interface SubscriptionLike {
   status: string;
   first_failure_at: Date | string | null;
+  /**
+   * Period end of the current billing cycle (or, for a cutover-grace row, the
+   * T+14d natural-flip moment). Read together with `cancel_at_period_end` to
+   * deny service after the period elapses without a paid Stripe subscription
+   * superseding the row — see the cutover-grace branch in isServiceActive.
+   * Optional so existing callers that only carry (status, first_failure_at)
+   * keep working unchanged.
+   */
+  current_period_end?: Date | string | null;
+  /**
+   * "End service when the period ends" flag. TRUE on cutover-seeded local
+   * grace rows for the existing-free-org population (Aaron's 2026-05-29
+   * 14-day decide-or-revert policy) AND on Stripe subscriptions the user
+   * has chosen to cancel-at-period-end. Combined with `current_period_end`,
+   * lets isServiceActive flip service off by-time-elapsed, no cron needed.
+   * Optional for the same back-compat reason as `current_period_end`.
+   */
+  cancel_at_period_end?: boolean | null;
+}
+
+/**
+ * Internal helper — does the cutover-grace / cancel-at-period-end flip
+ * deny service yet? Returns true (deny) when the row asks to end at period
+ * end AND the period has elapsed. The state is read at request time so the
+ * flip happens by-time-elapsed with no cron or status-write needed
+ * (boss/Aaron-approved Shape-A″ for the free-org cutover policy).
+ */
+function isPastCancelAtPeriodEnd(
+  subscription: SubscriptionLike,
+  now: Date,
+): boolean {
+  if (!subscription.cancel_at_period_end) return false;
+  if (!subscription.current_period_end) return false;
+  const periodEndMs =
+    typeof subscription.current_period_end === 'string'
+      ? Date.parse(subscription.current_period_end)
+      : subscription.current_period_end.getTime();
+  return now.getTime() >= periodEndMs;
 }
 
 export function isServiceActive(
@@ -94,7 +132,14 @@ export function isServiceActive(
   if (!subscription) return true;
 
   const status = subscription.status;
-  if (status === 'active' || status === 'trialing') return true;
+  if (status === 'active' || status === 'trialing') {
+    // Cutover-grace / cancel-at-period-end branch (Aaron 2026-05-29 free-org
+    // policy + Stripe scheduled-cancel parity): an otherwise-active row with
+    // cancel_at_period_end=TRUE and a past current_period_end denies service.
+    // Read-time evaluation means the T+14d flip happens by-time-elapsed; no
+    // cron is needed to mutate the row.
+    return !isPastCancelAtPeriodEnd(subscription, now);
+  }
 
   // Terminal states — service is over regardless of grace.
   if (status === 'canceled' || status === 'incomplete_expired') return false;
@@ -156,12 +201,42 @@ export class DefaultBillingGate implements BillingGate {
     return isServiceActive(subscription, config.dunningGraceDays);
   }
 
-  async canUseTeamFeatures(orgId: string): Promise<boolean> {
+  /**
+   * Single-source feature-gate helper: every "can use feature X" gate
+   * composes the dunning-aware paid-and-service-active check with the
+   * plan-level feature flag. Closes the warden 2026-05-31 PR #291 finding —
+   * pre-this-PR, canUseX returned plan-level booleans WITHOUT consulting
+   * isServiceActive, so a grace-elapsed org (or a Stripe-cancelled one
+   * pre-#275 — same vector via past-grace past_due, smaller class) could
+   * still pass the per-feature gates while being denied paid-feature access.
+   * Post-#275 the bypass class is the dunning-grace subset; post-#291 the
+   * cutover-grace + cancel-at-period-end class joins it (larger population).
+   * Composition-at-root is the construction-side fix (architecture-of-record
+   * at gate.ts) — every canUseX inherits the dunning + cutover semantics
+   * automatically; new gates added in the future inherit by-construction.
+   */
+  private async checkFeature(
+    orgId: string,
+    featureKey: keyof Pick<
+      PlanDefinition,
+      'teamFeatures' | 'logShipping' | 'promptCapture' | 'auditLogExport' | 'sso' | 'serviceClients'
+    >,
+  ): Promise<boolean> {
+    if (!(await this.canAccessPaidFeatures(orgId))) return false;
     const plan = await this.resolveOrgPlan(orgId);
-    return plan.teamFeatures;
+    return plan[featureKey];
+  }
+
+  async canUseTeamFeatures(orgId: string): Promise<boolean> {
+    return this.checkFeature(orgId, 'teamFeatures');
   }
 
   async canAddMember(orgId: string): Promise<boolean> {
+    // canAddMember has the same paid-and-service-active prerequisite as the
+    // other feature gates (same composition discipline) plus a member-count
+    // cap unique to itself. The cap is structural (Infinity in the flat plan,
+    // so always-true post-flat), kept for non-flat future plans.
+    if (!(await this.canAccessPaidFeatures(orgId))) return false;
     const plan = await this.resolveOrgPlan(orgId);
     if (!plan.teamFeatures) return false;
     if (plan.maxMembers === Infinity) return true;
@@ -184,27 +259,22 @@ export class DefaultBillingGate implements BillingGate {
   }
 
   async canUsePromptCapture(orgId: string): Promise<boolean> {
-    const plan = await this.resolveOrgPlan(orgId);
-    return plan.promptCapture;
+    return this.checkFeature(orgId, 'promptCapture');
   }
 
   async canUseLogShipping(orgId: string): Promise<boolean> {
-    const plan = await this.resolveOrgPlan(orgId);
-    return plan.logShipping;
+    return this.checkFeature(orgId, 'logShipping');
   }
 
   async canUseAuditLogExport(orgId: string): Promise<boolean> {
-    const plan = await this.resolveOrgPlan(orgId);
-    return plan.auditLogExport;
+    return this.checkFeature(orgId, 'auditLogExport');
   }
 
   async canUseSso(orgId: string): Promise<boolean> {
-    const plan = await this.resolveOrgPlan(orgId);
-    return plan.sso;
+    return this.checkFeature(orgId, 'sso');
   }
 
   async canUseServiceClients(orgId: string): Promise<boolean> {
-    const plan = await this.resolveOrgPlan(orgId);
-    return plan.serviceClients;
+    return this.checkFeature(orgId, 'serviceClients');
   }
 }

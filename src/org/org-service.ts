@@ -849,9 +849,29 @@ export class OrgService {
    * service-active gate alongside isPaidPlan. Returns only the fields the
    * gate-composition logic needs (status, first_failure_at, recovered_at).
    */
-  async getSubscription(orgId: string): Promise<{ status: string; first_failure_at: Date | null; recovered_at: Date | null } | null> {
-    const rows = await this.sql<{ status: string; first_failure_at: Date | null; recovered_at: Date | null }[]>`
-      SELECT status, first_failure_at, recovered_at
+  async getSubscription(orgId: string): Promise<{
+    status: string;
+    first_failure_at: Date | null;
+    recovered_at: Date | null;
+    /** Period end of the current billing cycle (or the cutover-grace T+14d
+     *  natural-flip moment for a free-org grace row). Combined with
+     *  cancel_at_period_end, lets isServiceActive flip service off by
+     *  time-elapsed at request-time — no cron / no status-write needed. */
+    current_period_end: Date | null;
+    /** "End service when the period ends" flag. TRUE on cutover-seeded local
+     *  grace rows (Aaron's 2026-05-29 free-org 14-day decide-or-revert policy)
+     *  AND on Stripe subscriptions the user chose to cancel-at-period-end. */
+    cancel_at_period_end: boolean | null;
+  } | null> {
+    const rows = await this.sql<{
+      status: string;
+      first_failure_at: Date | null;
+      recovered_at: Date | null;
+      current_period_end: Date | null;
+      cancel_at_period_end: boolean | null;
+    }[]>`
+      SELECT status, first_failure_at, recovered_at,
+             current_period_end, cancel_at_period_end
         FROM subscriptions
        WHERE org_id = ${orgId}
        ORDER BY created_at DESC

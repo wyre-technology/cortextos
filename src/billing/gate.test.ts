@@ -83,21 +83,100 @@ describe('DefaultBillingGate (flat-pricing — one plan)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // canUseTeamFeatures / canAddMember — always true (everything-included)
+  // canUseX / canAddMember — composed via canAccessPaidFeatures
+  //
+  // Every per-feature gate composes the dunning-aware paid-and-service-active
+  // check at the gate.ts root (private checkFeature helper). A grace-elapsed
+  // org (cutover-grace branch) or a Stripe-canceled org BOTH deny across
+  // EVERY canUseX, by construction. Closes warden 2026-05-31 PR #291
+  // composition-gap finding.
   // -------------------------------------------------------------------------
 
   describe('canUseTeamFeatures', () => {
-    it('returns true (team features are included in the flat plan)', async () => {
+    it('returns true (team features included; subscription active by default mock)', async () => {
       mockOrgService.getOrg.mockResolvedValue(makeOrg());
       expect(await gate.canUseTeamFeatures('org-1')).toBe(true);
+    });
+
+    it('returns false when canAccessPaidFeatures denies (canceled subscription)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      mockOrgService.getSubscription.mockResolvedValue({
+        status: 'canceled',
+        first_failure_at: null,
+        recovered_at: null,
+      });
+      expect(await gate.canUseTeamFeatures('org-1')).toBe(false);
+    });
+
+    it('returns false on cutover-grace elapsed (trialing + cancel_at_period_end + past period_end)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      mockOrgService.getSubscription.mockResolvedValue({
+        status: 'trialing',
+        first_failure_at: null,
+        recovered_at: null,
+        cancel_at_period_end: true,
+        current_period_end: new Date(Date.now() - 1 * 60 * 60 * 1000), // T−1h
+      });
+      expect(await gate.canUseTeamFeatures('org-1')).toBe(false);
     });
   });
 
   describe('canAddMember', () => {
-    it('returns true (unlimited members in the flat plan)', async () => {
+    it('returns true (unlimited members + subscription active by default mock)', async () => {
       mockOrgService.getOrg.mockResolvedValue(makeOrg());
       expect(await gate.canAddMember('org-1')).toBe(true);
     });
+
+    it('returns false when canAccessPaidFeatures denies (canceled subscription)', async () => {
+      mockOrgService.getOrg.mockResolvedValue(makeOrg());
+      mockOrgService.getSubscription.mockResolvedValue({
+        status: 'canceled',
+        first_failure_at: null,
+        recovered_at: null,
+      });
+      expect(await gate.canAddMember('org-1')).toBe(false);
+    });
+  });
+
+  describe('per-feature gates compose canAccessPaidFeatures uniformly', () => {
+    // One table-driven assertion that each canUseX gate respects the
+    // dunning-aware service check. Closes the warden composition-gap finding
+    // at the gate-fleet level — every gate inherits the composition
+    // by-construction (private checkFeature helper); a future-added gate
+    // that DOESN'T compose would fail this contract.
+    type FeatureGate = (g: DefaultBillingGate, orgId: string) => Promise<boolean>;
+    const gates: Array<{ name: string; fn: FeatureGate }> = [
+      { name: 'canUseTeamFeatures',   fn: (g, o) => g.canUseTeamFeatures(o) },
+      { name: 'canUsePromptCapture',  fn: (g, o) => g.canUsePromptCapture(o) },
+      { name: 'canUseLogShipping',    fn: (g, o) => g.canUseLogShipping(o) },
+      { name: 'canUseAuditLogExport', fn: (g, o) => g.canUseAuditLogExport(o) },
+      { name: 'canUseSso',            fn: (g, o) => g.canUseSso(o) },
+      { name: 'canUseServiceClients', fn: (g, o) => g.canUseServiceClients(o) },
+    ];
+
+    for (const g of gates) {
+      it(`${g.name} denies when subscription is canceled (composition holds)`, async () => {
+        mockOrgService.getOrg.mockResolvedValue(makeOrg());
+        mockOrgService.getSubscription.mockResolvedValue({
+          status: 'canceled',
+          first_failure_at: null,
+          recovered_at: null,
+        });
+        expect(await g.fn(gate, 'org-1')).toBe(false);
+      });
+
+      it(`${g.name} denies when cutover-grace has elapsed (composition holds)`, async () => {
+        mockOrgService.getOrg.mockResolvedValue(makeOrg());
+        mockOrgService.getSubscription.mockResolvedValue({
+          status: 'trialing',
+          first_failure_at: null,
+          recovered_at: null,
+          cancel_at_period_end: true,
+          current_period_end: new Date(Date.now() - 1 * 60 * 60 * 1000),
+        });
+        expect(await g.fn(gate, 'org-1')).toBe(false);
+      });
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -349,5 +428,180 @@ describe('isServiceActive (dunning-aware gate)', () => {
         isServiceActive({ status: 'past_due', first_failure_at: failedAt }, 0, NOW),
       ).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isServiceActive — cutover-grace / cancel-at-period-end branch
+//
+// Aaron's 2026-05-29 free-org cutover policy: existing 'free'-plan mcpgw orgs
+// get a 14-day decide-or-revert window post-cutover. The cutover script seeds
+// a local subscriptions row with status='trialing', cancel_at_period_end=TRUE,
+// current_period_end=cutover+14d. The gate decides at request-time:
+// (status active/trialing) + cancel_at_period_end + past current_period_end
+// → service DENIED. The flip is by-time-elapsed; no cron / no status-write.
+//
+// Asymmetric-pair shape (ruby's pin): a flagged row with a future period_end
+// is ACTIVE (left assertion); the SAME flagged row with a past period_end is
+// DENIED (right assertion). The unflagged row stays ACTIVE in both — the
+// flag-off axis is independent. Three rot vectors closed by construction:
+// (a) future devs flipping the deny on without the flag, (b) future devs
+// removing the flag-check, (c) future devs forgetting the past-vs-future
+// boundary direction.
+// ---------------------------------------------------------------------------
+
+describe('isServiceActive — cutover-grace / cancel-at-period-end branch', () => {
+  const NOW = new Date('2026-06-15T12:00:00Z');
+  const FUTURE = new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000); // T+3d
+  const PAST = new Date(NOW.getTime() - 1 * 60 * 60 * 1000);        // T−1h
+
+  it('admits: trialing + cancel_at_period_end=TRUE + period_end IN FUTURE (grace not yet elapsed)', () => {
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: FUTURE,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('denies: trialing + cancel_at_period_end=TRUE + period_end IN PAST (grace elapsed)', () => {
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: PAST,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('denies: active + cancel_at_period_end=TRUE + period_end IN PAST (Stripe scheduled-cancel parity)', () => {
+    expect(
+      isServiceActive(
+        {
+          status: 'active',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: PAST,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('admits: trialing + cancel_at_period_end=FALSE + period_end IN PAST (flag off — regular trial)', () => {
+    // A regular Stripe trial whose end has been reached: Stripe flips status
+    // to active or past_due via webhook. Until that webhook lands the gate
+    // should NOT deny solely on a past period_end — only the flag-on path
+    // denies. The cancel_at_period_end-OFF axis is the third rot vector.
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: false,
+          current_period_end: PAST,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('admits: trialing + cancel_at_period_end=NULL + period_end IN PAST (null flag treated as off)', () => {
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: null,
+          current_period_end: PAST,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('admits: trialing + cancel_at_period_end=TRUE + period_end NULL (no defined end → conservative)', () => {
+    // Defensive: a flag-on row without a defined period_end has no boundary
+    // to evaluate against. Don't deny on insufficient data — denying would
+    // suspend service for a row whose end-time is genuinely unknown.
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: null,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts ISO-string current_period_end (DB return shape)', () => {
+    const pastIso = PAST.toISOString();
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: pastIso,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('back-compat: rows without the new fields keep the legacy behavior (active/trialing → true)', () => {
+    // Existing callers that only pass (status, first_failure_at) keep
+    // working unchanged — the optional fields default to undefined and
+    // isPastCancelAtPeriodEnd short-circuits on missing cancel_at_period_end.
+    expect(
+      isServiceActive(
+        { status: 'trialing', first_failure_at: null },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+    expect(
+      isServiceActive(
+        { status: 'active', first_failure_at: null },
+        7,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('boundary: at exactly current_period_end → DENIED (boundary inclusive on the deny side)', () => {
+    // Matches the existing past_due grace-end behavior — exact boundary
+    // hits the deny branch, not the admit branch. Asymmetric on purpose.
+    expect(
+      isServiceActive(
+        {
+          status: 'trialing',
+          first_failure_at: null,
+          cancel_at_period_end: true,
+          current_period_end: NOW,
+        },
+        7,
+        NOW,
+      ),
+    ).toBe(false);
   });
 });
