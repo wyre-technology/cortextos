@@ -72,6 +72,7 @@ import { LogScaleAdapter } from './log-shipping/adapters/logscale.js';
 import { logShippingRoutes } from './log-shipping/routes.js';
 import { profileRoutes } from './profile/routes.js';
 import { VendorMonitor } from './monitoring/vendor-monitor.js';
+import { DripScheduler } from './email/drip-scheduler.js';
 import { DashboardService } from './dashboard/dashboard-service.js';
 import { dashboardRoutes } from './dashboard/routes.js';
 import { ResellerService } from './reseller/reseller-service.js';
@@ -292,6 +293,7 @@ const logShippingAdapters = new Map<string, import('./log-shipping/adapters/type
 ]);
 const logShipper = new LogShipper(logShippingService, logShippingAdapters, app.log);
 const vendorMonitor = new VendorMonitor(app.log);
+const dripScheduler = new DripScheduler(app.log);
 
 // ---------------------------------------------------------------------------
 // Boot-time DB initialisation — system-path (BYPASSRLS)
@@ -362,6 +364,13 @@ await runAsSystem(async () => {
 
 logShipper.start();
 vendorMonitor.start();
+// Drip-scheduler (WYREAI-96 boot wire-in, completes E3 axis from WYREAI-76).
+// .start() establishes runAsSystem internally (PR #303 in-iteration lift),
+// honors DRIP_SCHEDULER_DISABLED kill-switch + DRIP_MAX_PER_TICK rate-cap,
+// and is a no-op tick when neither RESEND_API_KEY nor GRAPH_* config is set
+// (per-tick transport-configured guard). interval.unref() means it does not
+// block process exit. .stop() is called from the shutdown hook below.
+dripScheduler.start();
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -634,6 +643,7 @@ const shutdown = async () => {
   app.log.info('Shutting down...');
   logShipper.stop();
   vendorMonitor.stop();
+  dripScheduler.stop();
   await app.close();
   await closePools();
   process.exit(0);
