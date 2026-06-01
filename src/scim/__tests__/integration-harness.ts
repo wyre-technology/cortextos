@@ -165,6 +165,7 @@ const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
   { file: '035_vendor_registry.sql', reason: 'Vendor-registry Phase 1: vendor_enablement RLS policy references conduit_is_member_of_org from mig 018 which SCIM already skips. SCIM tests do not exercise the vendor registry or its RLS. Same class as 025/027/031/033.' },
   { file: '036_org_memory_schema.sql', reason: 'Phase-3 org-memory schema floor; orgmem_entities/edges/facts RLS uses (app.org_id, app.subtenant_id) GUC pattern + pgvector. SCIM tests do not exercise org-memory.' },
   { file: '037_flat_pricing.sql', reason: 'Flat-pricing data side: collapses organizations.plan to conduit (organizations IS bootstrapped) + DROP TABLE IF EXISTS credit_blocks. credit_blocks is the customer credit-overage table — not in the SCIM bootstrap (SCIM tests exercise neither customer credits nor billing). The plan-collapse UPDATE is harmless on the SCIM org rows; the DROP is what trips the skip path. credit_ledger is KEPT and untouched.' },
+  { file: '038_request_log_retention.sql', reason: 'Compliance D2 retention sweep: CREATE INDEX + SECURITY DEFINER function + pg_cron schedule on request_log; request_log is not in the SCIM bootstrap — same class as 007/014/018/020/022/030/033. SCIM tests do not exercise MCP request-log retention or its pg_cron schedule.' },
 ];
 
 const SKIP_LOG_PREFIX = 'HARNESS_SKIP';
