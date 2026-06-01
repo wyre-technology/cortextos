@@ -91,6 +91,19 @@ export const config = {
   azureClientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? process.env.MICROSOFT_CLIENT_SECRET ?? '',
   azureCallbackUrl: process.env.AZURE_AD_CALLBACK_URL ?? '',
 
+  // Microsoft Graph email transport (WYREAI-93, drip-founder-welcome step).
+  // Client-credentials OAuth flow — distinct from Azure AD user-login above.
+  // GRAPH_* env vars are intentionally separate from AZURE_AD_* so the
+  // founder-welcome mailbox can be a different tenant/app from the user-login
+  // app. founderWelcomeFrom MUST be a real mailbox in the tenant (the Graph
+  // sendMail API impersonates this address). Empty values keep sendEmailViaGraph
+  // throwing — the scheduler's transport-configured check (WYREAI-94) gates
+  // the per-step transport before reaching the throw.
+  graphTenantId: process.env.GRAPH_TENANT_ID ?? '',
+  graphClientId: process.env.GRAPH_CLIENT_ID ?? '',
+  graphClientSecret: process.env.GRAPH_CLIENT_SECRET ?? '',
+  founderWelcomeFrom: process.env.FOUNDER_WELCOME_FROM ?? '',
+
   // Stripe billing
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
