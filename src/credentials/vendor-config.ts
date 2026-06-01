@@ -41,6 +41,13 @@ export interface OAuthVendorConfig {
   clientSecretEnv: string;
   extraTokenParams?: Record<string, string>;
   extraFields?: string[];
+  /**
+   * Expected `iss` value on the OAuth callback for RFC 9207 issuer
+   * identification (mix-up attack defense). Opt-in: when undefined,
+   * callback issuer validation is skipped. When set, the callback handler
+   * fails closed on missing or mismatched `iss`. See WYREAI-75 PR B.
+   */
+  issuer?: string;
 }
 
 export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace';

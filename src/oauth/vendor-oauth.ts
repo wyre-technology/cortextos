@@ -251,6 +251,36 @@ export function buildCredentialData(
 }
 
 /**
+ * Validate the `iss` query parameter on an OAuth callback against the
+ * expected issuer (RFC 9207 — OAuth 2.0 Authorization Server Issuer
+ * Identification). Returns null on success, or a string error reason.
+ *
+ * - If `expectedIssuer` is undefined, validation is skipped (returns null;
+ *   opt-in per vendor via OAuthVendorConfig.issuer).
+ * - If `expectedIssuer` is set and `actualIss` is missing → 'missing_iss'.
+ * - If both are set and they don't match → 'iss_mismatch'.
+ * - If both match → null.
+ *
+ * Mitigates the OAuth mix-up attack class: an attacker controls a callback
+ * URL that points to a different authorization server than the one the
+ * client thinks it negotiated with; without iss-validation the client
+ * accepts the wrong AS's response and may forward attacker-controlled
+ * tokens to the wrong vendor.
+ *
+ * Ported from mcp-gateway/src/oauth/vendor-oauth.ts:validateCallbackIssuer
+ * (WYREAI-75 PR B). Wired into src/web/routes.ts /connect/oauth/callback.
+ */
+export function validateCallbackIssuer(
+  expectedIssuer: string | undefined,
+  actualIss: string | undefined,
+): null | 'missing_iss' | 'iss_mismatch' {
+  if (!expectedIssuer) return null;
+  if (!actualIss) return 'missing_iss';
+  if (actualIss !== expectedIssuer) return 'iss_mismatch';
+  return null;
+}
+
+/**
  * Check whether stored OAuth credentials have an expired access token.
  * Returns true if the token is expired or will expire within 60 seconds.
  */

@@ -18,6 +18,7 @@ import {
   buildCredentialData,
   fetchXeroTenantId,
   extractTenantIdFromIdToken,
+  validateCallbackIssuer,
 } from '../oauth/vendor-oauth.js';
 import { nanoid } from 'nanoid';
 import { renderLayout } from './layout.js';
@@ -319,9 +320,9 @@ export function webRoutes(deps: WebRouteDeps) {
 
     // ---------- GET /connect/oauth/callback ----------
     app.get<{
-      Querystring: { code?: string; state?: string; error?: string; realmId?: string };
+      Querystring: { code?: string; state?: string; error?: string; realmId?: string; iss?: string };
     }>('/connect/oauth/callback', async (request, reply) => {
-      const { code, state, error: oauthError, realmId } = request.query;
+      const { code, state, error: oauthError, realmId, iss } = request.query;
 
       if (oauthError || !code || !state) {
         app.log.warn({ oauthError, state }, 'OAuth callback error or missing params');
@@ -337,6 +338,28 @@ export function webRoutes(deps: WebRouteDeps) {
       const vendor = getVendor(pending.vendorSlug);
       if (!vendor?.oauthConfig) {
         return reply.code(400).send('Invalid vendor for OAuth callback');
+      }
+
+      // RFC 9207 — OAuth 2.0 Authorization Server Issuer Identification.
+      // Opt-in via OAuthVendorConfig.issuer; when set, fail closed on missing
+      // or mismatched `iss` to mitigate the OAuth mix-up attack class. The
+      // state token was already consumed above (single-use), so this
+      // post-consume validation is correct — a replay attempt fails at the
+      // state-consume step before reaching here. WYREAI-75 PR B.
+      const issError = validateCallbackIssuer(vendor.oauthConfig.issuer, iss);
+      if (issError === 'missing_iss') {
+        app.log.warn(
+          { vendor: pending.vendorSlug, expectedIssuer: vendor.oauthConfig.issuer },
+          'OAuth callback missing iss parameter (RFC 9207)',
+        );
+        return reply.code(400).send('Missing iss parameter on OAuth callback');
+      }
+      if (issError === 'iss_mismatch') {
+        app.log.warn(
+          { vendor: pending.vendorSlug, expectedIssuer: vendor.oauthConfig.issuer, actualIss: iss },
+          'OAuth callback iss mismatch (RFC 9207)',
+        );
+        return reply.code(400).send('OAuth issuer mismatch');
       }
 
       try {
