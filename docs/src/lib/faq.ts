@@ -76,6 +76,28 @@ export const FAQ_DATA: Record<string, readonly FaqEntry[]> = {
       a: "Either your organization hasn't connected any vendors yet, or your role's tool allowlist restricts them. Your MSP admin controls which vendors and tools your role can reach.",
     },
   ],
+  'guides/connecting-copilot-studio': [
+    {
+      q: 'Can I use OAuth 2.1 + PKCE like Claude does?',
+      a: "Not through Power Platform's Generic OAuth 2.0 today. Copilot Studio's custom-connector framework does not send PKCE, so Conduit's authorization endpoint rejects the request. The service-client (API Key) path is the supported route.",
+    },
+    {
+      q: 'Why is the auth a "Bearer token" pasted into an API Key field?',
+      a: "Power Platform's API Key auth type lets the connector author choose any header. We use `Authorization: Bearer <token>` so the gateway treats it as a standard MCP bearer. Functionally it is an OAuth 2.0 client-credentials access token — the connector framework just doesn't refresh it automatically.",
+    },
+    {
+      q: 'Do I need a separate service client per agent?',
+      a: 'No. One service client can back as many connectors as you want — including per-vendor connectors. Choose per-agent or per-vendor scoping based on how you want to revoke independently.',
+    },
+    {
+      q: "Can end users see other end users' tool calls?",
+      a: "No. Each invocation runs under the service-client identity on Conduit's side, but Power Platform records the end user who initiated the invocation. Conduit's audit log shows the service-client subject; Copilot Studio's audit log shows the end user. The two together are the audit trail.",
+    },
+    {
+      q: 'Will this work for an agent published to Teams / a website?',
+      a: 'Yes — once the connector is wired and tested in the maker portal, publishing the agent to any Copilot Studio channel carries the connector with it. Each end user completes the one-time per-end-user consent the first time they invoke a gateway tool.',
+    },
+  ],
 };
 
 /**

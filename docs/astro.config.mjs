@@ -37,6 +37,7 @@ export default defineConfig({
             { label: 'MSP Onboarding', slug: 'guides/msp-onboarding' },
             { label: 'Onboarding a Customer', slug: 'guides/customer-provisioning' },
             { label: 'Connecting an AI Client', slug: 'guides/connecting-a-client' },
+            { label: 'Connecting Microsoft Copilot Studio', slug: 'guides/connecting-copilot-studio' },
             { label: 'Vendor Connections', slug: 'guides/vendor-connections' },
             { label: 'White-label Setup', slug: 'guides/white-label-setup' },
             { label: 'Billing & Plans', slug: 'guides/billing' },

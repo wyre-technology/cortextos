@@ -18,6 +18,7 @@ const docsRoot = join(here, '..', 'content', 'docs');
 const MDX_FOR_SLUG: Record<string, string> = {
   'getting-started': join(docsRoot, 'getting-started.mdx'),
   'guides/connecting-a-client': join(docsRoot, 'guides', 'connecting-a-client.mdx'),
+  'guides/connecting-copilot-studio': join(docsRoot, 'guides', 'connecting-copilot-studio.mdx'),
 };
 
 describe('FAQ schema-matches-visible drift-catch', () => {

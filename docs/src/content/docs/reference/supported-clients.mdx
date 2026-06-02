@@ -24,6 +24,7 @@ Both methods use the same Conduit endpoint (`/v1/mcp`) and the same OAuth 2.1 si
 |--------|-------------------|--------|
 | **Claude Code** | Native remote (`claude mcp add --transport http`) | **Documented** — see the connect guide |
 | **Claude Desktop** | `mcp-remote` bridge | **Documented** — see the connect guide |
+| **Microsoft Copilot Studio** | Power Platform custom connector + service-client (API key) auth | **Documented** — see [Connecting Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/) |
 | **Cline** (VS Code) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
 | **Continue** (VS Code / JetBrains) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
 | **Cursor** | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
@@ -44,9 +45,12 @@ This matrix reflects MCP-protocol compatibility, not per-client certification. B
 - **At the auth layer** — connection is standard OAuth 2.1 + PKCE (the MCP authorization spec), not a Claude-specific flow.
 - **What this is not** — Conduit is not a workflow-automation or chaining tool. It is the connection-and-access layer: it gives your AI assistant secure, permissioned access to the MSP tools you already run, and visibility into how they're used. The AI does the thinking; Conduit does the connecting.
 
-## Clients that don't speak MCP
+## Clients that don't speak MCP natively
 
-Some AI platforms do tool-calling but don't speak MCP natively (for example, an app built directly on a provider's function-calling API). Support for those is a roadmap item — an additive per-provider adapter layer — and is demand-driven rather than shipped today. If you have a specific non-MCP provider need, raise it with your WYRE contact.
+Some AI platforms do tool-calling but don't implement the MCP client spec or its OAuth 2.1 + PKCE auth flow. Conduit reaches these through alternative paths:
+
+- **Microsoft Copilot Studio** connects through a Power Platform custom connector marked as `x-ms-agentic-protocol: mcp-streamable-1.0`, authenticated with a Conduit **service client** (machine-to-machine bearer token) instead of OAuth 2.1. The unified `/v1/mcp` endpoint and the per-vendor `/v1/<vendor>/mcp` endpoints both work as connector targets. End-to-end walkthrough: [Connecting Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/).
+- **Apps built directly on a provider's function-calling API** (without an MCP client layer) are not supported out-of-the-box. A per-provider adapter layer is on the roadmap; raise specific needs with your WYRE contact.
 
 ## Related
 
