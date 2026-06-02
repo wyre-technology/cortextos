@@ -231,6 +231,26 @@ write_files:
       chown root:cloudflared /etc/cloudflared.env
       chmod 640 /etc/cloudflared.env
 
+      # ── Slack bot token (SP3a) ─────────────────────────────────
+      # Optional — SP3a is opt-in; agents without slack.json don't care.
+      # We always try the fetch; absent secret is non-fatal.
+      log "fetching slack-bot-token from KV"
+      SLACK_BOT_TOKEN=$(az keyvault secret show --vault-name "${key_vault_name}" \
+        --name slack-bot-token --query value -o tsv 2>/dev/null || true)
+      if [ -n "$SLACK_BOT_TOKEN" ]; then
+        # Append to /etc/cortextos.env iff not already present (idempotent).
+        if ! grep -q '^SLACK_BOT_TOKEN=' /etc/cortextos.env 2>/dev/null; then
+          echo "SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN" >> /etc/cortextos.env
+        else
+          sed -i "s|^SLACK_BOT_TOKEN=.*|SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN|" /etc/cortextos.env
+        fi
+        chmod 600 /etc/cortextos.env
+        log "SLACK_BOT_TOKEN written to /etc/cortextos.env"
+      else
+        log "slack-bot-token not found in KV — SP3a inactive (this is fine)"
+      fi
+      unset SLACK_BOT_TOKEN
+
       # ── sentinel ───────────────────────────────────────────────
       touch "$DATA_MOUNT/.bootstrap-done"
       chown cortextos:cortextos "$DATA_MOUNT/.bootstrap-done"
