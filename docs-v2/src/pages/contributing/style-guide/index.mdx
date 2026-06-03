@@ -1,0 +1,154 @@
+---
+layout: '@/layouts/templates/WorkflowTextTemplate.astro'
+title: Style Guide
+eyebrow: Contributing
+description: Voice, terminology, and formatting rules for Conduit documentation.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/contributing/style-guide.mdx on Epic 5 Phase E. */}
+
+This guide locks the voice, terminology, and formatting that every Conduit
+doc follows. It is the source of truth; a linter will enforce the
+terminology table below once wired up.
+
+## Voice and tone
+
+- **Second person, present tense.** Write to the reader: "you add a
+  customer", not "the user will add a customer" or "we add a customer".
+- **Active, concrete verbs.** "Conduit signs the request" beats "the
+  request is signed".
+- **Short sentences.** If a sentence runs past two commas, split it.
+- **No filler.** Do not use `simply`, `just`, `easy`, `obviously`, or
+  `of course`. They lie to readers who are stuck.
+- **Length over cleverness.** If a step needs five sentences, write
+  five sentences. Do not compress at the cost of clarity.
+- **Define acronyms on first use** per page (for example,
+  `Managed Service Provider (MSP)`), then use the short form.
+
+## Terminology
+
+These terms are locked. Do not substitute synonyms even when they read
+more naturally — consistency across 28 docs matters more than local
+prose.
+
+| Concept | Use | Do not use |
+|---|---|---|
+| The company reselling Conduit | **MSP** | reseller, partner, channel |
+| The MSP's business entity | **MSP organization** (or "MSP org") | tenant, account |
+| The MSP's end customer | **customer** | client, end-user, tenant |
+| An authenticated individual | **user** | member (except scoped to a team), principal |
+| Group within a customer org | **team** | group, project |
+| A vendor MCP integration | **vendor integration** | connector, plugin, adapter |
+| Credential a customer provides | **connection** | credential, integration, link |
+| The Wyre-hosted product | **Conduit** | the gateway, Wyre gateway |
+| The upstream open-source product | **mcp-gateway** | upstream, core |
+| A third-party MCP server (ConnectWise, Mosyle, etc.) | **vendor** | provider, supplier |
+
+Notes:
+
+- "Partner" is reserved for Wyre go-to-market partners who do **not**
+  resell Conduit. If you mean the reselling party, write **MSP**.
+- "Tenant" is reserved for multi-tenancy internals (database row
+  scoping, isolation boundaries). Never use it in user-facing copy.
+- "Plugin" refers only to the `mcp-gateway` plugin concept documented
+  upstream. For a vendor MCP server, write **vendor integration**.
+- "Gateway" is acceptable only when describing the generic MCP protocol
+  layer, not the Conduit product.
+
+## Formatting
+
+### Headings
+
+- One `H1` per page, supplied by front-matter `title`. Do not add a
+  second `#` heading in the body.
+- Use sentence case: "Add a customer", not "Add A Customer".
+- Skip no levels (`H2` → `H3`, never `H2` → `H4`).
+
+### Code blocks
+
+- Always tag the language: ` ```bash `, ` ```ts `, ` ```json `,
+  ` ```yaml `. Untagged blocks break syntax highlighting.
+- Prefer copy-pasteable commands. Use `$` only when mixing command
+  and output; otherwise omit it.
+- Use `<placeholders-in-angle-brackets>` for values the reader
+  substitutes.
+- Keep lines under 100 characters so they do not horizontal-scroll on
+  narrow viewports.
+
+```bash
+conduit customer add --msp <msp-slug> --name "Acme Corp"
+```
+
+### Callouts
+
+Starlight's `asides` render as callouts. Use them sparingly — every
+callout is a tax on the reader's attention.
+
+```mdx
+:::note
+Informational aside. Safe to skip on a first read.
+:::
+
+:::tip
+Optional shortcut or best practice.
+:::
+
+:::caution
+Reader can break something if they ignore this.
+:::
+
+:::danger
+Irreversible or destructive. Data loss, credential leak, etc.
+:::
+```
+
+Pick the weakest callout that fits. Promote to `caution` or `danger`
+only when the consequence is real.
+
+### Lists
+
+- Use `-` for unordered lists (consistent with the rest of the repo).
+- Use numbered lists **only** when order matters (a procedure).
+- End every bullet with a period if any bullet is a full sentence;
+  otherwise omit periods consistently.
+
+### Links
+
+- **Internal links** use absolute paths that include the `/docs` base
+  prefix, with a trailing slash: `/docs/guides/msp-onboarding/`. The
+  site is served under `/docs` (`base: '/docs'` in `astro.config.mjs`),
+  and Astro does **not** prepend the base to Markdown links — a bare
+  `/guides/...` link renders without the prefix and 404s. Do not link
+  to `.md` or `.mdx` files.
+- **External links** use full URLs with `https://`. Prefer the
+  canonical source (vendor docs, RFC, GitHub) over a blog mirror.
+- **Link text** must describe the destination. Never write "click
+  [here](...)" or "see [this page](...)".
+- When referencing an upstream mcp-gateway doc, link to the GitHub
+  permalink at the pinned SHA recorded in the page's `upstream_sha`
+  front-matter, not to `main`.
+
+### Front-matter
+
+Every page has at minimum:
+
+```yaml
+---
+title: Page title in sentence case
+description: One-sentence summary used in search and social cards.
+---
+```
+
+Forked upstream pages add:
+
+```yaml
+upstream: mcp-gateway/docs/<file>.md
+upstream_sha: <git sha at fork time>
+```
+
+### Images
+
+- Store under `docs/src/assets/` and reference with Astro's asset
+  import pattern.
+- Always include descriptive `alt` text. Screenshots of UI elements
+  must describe the action, not the pixels ("Customer detail page
+  with the Add connection button highlighted").
