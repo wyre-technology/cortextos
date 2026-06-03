@@ -33,7 +33,16 @@ export type AdminEventType =
   | 'log_shipping_destination_deleted'
   | 'scim_connection_created'
   | 'scim_connection_revoked'
-  | 'admin_comp_credits';
+  | 'admin_comp_credits'
+  // WYREAI-98 AI MSA consent recording — org_consent_accepted is the
+  // org-scoped binding event (first-accept or re-accept after a material
+  // change); user_consent_acknowledged is the per-user informational layer
+  // logged alongside the binding org-record. Metadata carries the
+  // document_url + document_version (SHA256) + document_size_bytes for the
+  // audit reader; pearl-side ConsentService.recordOrgConsent + recordUserAcknowledgment
+  // both fire one log entry per binding/acknowledgment event.
+  | 'org_consent_accepted'
+  | 'user_consent_acknowledged';
 
 export interface AdminAuditEntry {
   id: string;

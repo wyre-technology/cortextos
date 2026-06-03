@@ -20,6 +20,7 @@ import {
   renderSignupPage,
 } from './routes.js';
 import { enterTestContext } from '../db/context.js';
+import { ConsentService } from '../consent/consent-service.js';
 
 // ---------------------------------------------------------------------------
 // postgres.js tagged-template mock — captures INSERTed intent rows.
@@ -31,6 +32,12 @@ interface MockIntent {
   funnel: string;
   ip: string | null;
   userAgent: string | null;
+  // WYREAI-98 consent capture columns
+  consentAccepted: boolean;
+  consentDocumentUrl: string | null;
+  consentDocumentVersion: string | null;
+  consentDocumentSizeBytes: number | null;
+  consentAcceptedAt: string | null;
 }
 
 function createMockSql(): { sql: postgres.Sql; intents: MockIntent[]; insertShouldFail: { value: boolean } } {
@@ -42,8 +49,26 @@ function createMockSql(): { sql: postgres.Sql; intents: MockIntent[]; insertShou
     if (query.includes('CREATE TABLE')) return Promise.resolve([]);
     if (query.includes('INSERT INTO signup_intents')) {
       if (insertShouldFail.value) return Promise.reject(new Error('insert failed'));
-      const [id, email, funnel, ip, userAgent] = values as [string, string, string, string | null, string | null];
-      intents.push({ id, email, funnel, ip, userAgent });
+      // Post-WYREAI-98 the INSERT has 10 values (id, email, funnel, ip,
+      // userAgent, consent_accepted, consent_document_url,
+      // consent_document_version, consent_document_size_bytes,
+      // consent_accepted_at) — destructure all + push extended shape.
+      const [
+        id, email, funnel, ip, userAgent,
+        consentAccepted, consentDocumentUrl, consentDocumentVersion,
+        consentDocumentSizeBytes, consentAcceptedAt,
+      ] = values as [
+        string, string, string, string | null, string | null,
+        boolean, string | null, string | null, number | null, string | null,
+      ];
+      intents.push({
+        id, email, funnel, ip, userAgent,
+        consentAccepted: consentAccepted === true,
+        consentDocumentUrl: consentDocumentUrl ?? null,
+        consentDocumentVersion: consentDocumentVersion ?? null,
+        consentDocumentSizeBytes: consentDocumentSizeBytes ?? null,
+        consentAcceptedAt: consentAcceptedAt ?? null,
+      });
       return Promise.resolve([]);
     }
     return Promise.resolve([]);
@@ -52,16 +77,47 @@ function createMockSql(): { sql: postgres.Sql; intents: MockIntent[]; insertShou
   return { sql, intents, insertShouldFail };
 }
 
+/**
+ * Stub ConsentService that returns a deterministic fingerprint without
+ * hitting the network. Tests that need to assert fetch-failure-503 use
+ * `makeFailingConsentService` instead.
+ */
+function makeStubConsentService(opts: { version?: string; sizeBytes?: number } = {}): ConsentService {
+  const fingerprint = {
+    version: opts.version ?? 'a'.repeat(64),
+    sizeBytes: opts.sizeBytes ?? 12345,
+  };
+  // Pass-through fetch stub; ConsentService's real fetchDocumentFingerprint
+  // isn't exercised — we override the public method directly so the test
+  // doesn't depend on the fetch-shape internals.
+  const svc = new ConsentService();
+  svc.fetchDocumentFingerprint = async () => fingerprint;
+  return svc;
+}
+
+function makeFailingConsentService(): ConsentService {
+  const svc = new ConsentService();
+  svc.fetchDocumentFingerprint = async () => {
+    throw new Error('upstream MSA unavailable');
+  };
+  return svc;
+}
+
 // ---------------------------------------------------------------------------
 // Fastify harness
 // ---------------------------------------------------------------------------
 
-async function makeApp(overrides?: { limiter?: InMemoryRateLimiter }) {
+async function makeApp(overrides?: { limiter?: InMemoryRateLimiter; consentService?: ConsentService }) {
   const mock = createMockSql();
   const app = Fastify();
   await app.register(formbody);
   enterTestContext(mock.sql);
-  await app.register(signupRoutes({ limiter: overrides?.limiter }));
+  await app.register(signupRoutes({
+    limiter: overrides?.limiter,
+    // Default to a stub that returns deterministic fingerprint so tests
+    // don't make real network calls to the canonical MSA URL.
+    consentService: overrides?.consentService ?? makeStubConsentService(),
+  }));
   await app.ready();
   return { app, mock };
 }
@@ -185,7 +241,7 @@ describe('POST /signup', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/signup',
-      payload: 'email=user%40example.com',
+      payload: 'email=user%40example.com&accept_msa=1',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
     });
 
@@ -230,7 +286,7 @@ describe('POST /signup', () => {
       const ok = await app.inject({
         method: 'POST',
         url: '/signup',
-        payload: `email=u${i}%40example.com`,
+        payload: `email=u${i}%40example.com&accept_msa=1`,
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
       });
       expect(ok.statusCode).toBe(302);
@@ -238,7 +294,7 @@ describe('POST /signup', () => {
     const blocked = await app.inject({
       method: 'POST',
       url: '/signup',
-      payload: 'email=late%40example.com',
+      payload: 'email=late%40example.com&accept_msa=1',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
     });
     expect(blocked.statusCode).toBe(429);
@@ -251,10 +307,123 @@ describe('POST /signup', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/signup',
-      payload: 'email=u%40example.com',
+      payload: 'email=u%40example.com&accept_msa=1',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
     });
     expect(res.statusCode).toBe(500);
     expect(res.body).toContain('Something went wrong');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WYREAI-98 — MSA consent capture at /signup
+// ---------------------------------------------------------------------------
+
+describe('POST /signup — WYREAI-98 MSA consent', () => {
+  it('rejects when accept_msa is absent (STRICT default — risk-asymmetric resolution)', async () => {
+    const { app, mock } = await makeApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/signup',
+      payload: 'email=user%40example.com', // no accept_msa
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain('accept the WYRE AI');
+    // No signup_intent persisted when consent gate fails
+    expect(mock.intents).toHaveLength(0);
+  });
+
+  it('rejects when accept_msa has unexpected value (only "1" counts as accepted)', async () => {
+    const { app, mock } = await makeApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/signup',
+      payload: 'email=user%40example.com&accept_msa=maybe',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mock.intents).toHaveLength(0);
+  });
+
+  it('persists SHA256 + size + accepted_at on happy path', async () => {
+    // Stub returns deterministic fingerprint — assertion proves the
+    // captured-at-click-time SHA flows into the signup_intent row that
+    // the downstream callback will read to write org_consents.
+    const KNOWN_SHA = 'c'.repeat(64);
+    const KNOWN_SIZE = 99_999;
+    const { app, mock } = await makeApp({
+      consentService: makeStubConsentService({ version: KNOWN_SHA, sizeBytes: KNOWN_SIZE }),
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/signup',
+      payload: 'email=user%40example.com&accept_msa=1',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(res.statusCode).toBe(302);
+    expect(mock.intents).toHaveLength(1);
+    const intent = mock.intents[0];
+    expect(intent.consentAccepted).toBe(true);
+    expect(intent.consentDocumentUrl).toBe('https://docs.ourterms.live/WYRE/AI-Attachment.pdf');
+    expect(intent.consentDocumentVersion).toBe(KNOWN_SHA);
+    expect(intent.consentDocumentSizeBytes).toBe(KNOWN_SIZE);
+    expect(intent.consentAcceptedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO-8601 stamp
+  });
+
+  it('returns 503 when ConsentService.fetchDocumentFingerprint throws (upstream MSA unavailable)', async () => {
+    // Critical guard: a failed fetch must NOT proceed — we refuse to
+    // record a consent against bytes we couldn't fetch (would otherwise
+    // hash the error page OR record zero bytes, both of which falsely
+    // bind users). The user can retry once upstream is back.
+    const { app, mock } = await makeApp({ consentService: makeFailingConsentService() });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/signup',
+      payload: 'email=user%40example.com&accept_msa=1',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toContain('temporarily unavailable');
+    // No signup_intent persisted when fingerprint capture fails
+    expect(mock.intents).toHaveLength(0);
+  });
+
+  it('preserves consentChecked sticky state on email-validation error re-render', async () => {
+    const { app } = await makeApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/signup',
+      payload: 'email=not-an-email&accept_msa=1',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(res.statusCode).toBe(400);
+    // Re-render keeps the checkbox checked so user doesn't re-tick after fixing email.
+    expect(res.body).toMatch(/<input[^>]*name="accept_msa"[^>]*checked/);
+  });
+
+  it('renderSignupPage includes the consent checkbox + MSA URL in the form', () => {
+    const html = renderSignupPage();
+    expect(html).toContain('name="accept_msa"');
+    expect(html).toContain('required');
+    expect(html).toContain('https://docs.ourterms.live/WYRE/AI-Attachment.pdf');
+    expect(html).toContain('Master Service Agreement');
+  });
+
+  it('renderSignupPage respects consentChecked option (sticky form state)', () => {
+    const unchecked = renderSignupPage();
+    const checked = renderSignupPage({ consentChecked: true });
+    expect(unchecked).not.toMatch(/<input[^>]*name="accept_msa"[^>]*checked/);
+    expect(checked).toMatch(/<input[^>]*name="accept_msa"[^>]*checked/);
+  });
+
+  it('renderSignupPage escapes a custom consentDocumentUrl to prevent href XSS', () => {
+    // Defensive: the consentDocumentUrl is injected for future
+    // org-customizable scope; if it ever flows from an org-controlled
+    // value, attacker-controlled HTML in the URL must NOT break the
+    // anchor. escapeHtml at the render-site closes the rot vector.
+    const html = renderSignupPage({ consentDocumentUrl: 'javascript:alert(1)"><script>' });
+    expect(html).not.toContain('"><script>');
+    expect(html).toContain('javascript:alert(1)&quot;&gt;&lt;script&gt;');
   });
 });

@@ -42,6 +42,11 @@ import { config } from '../config.js';
 import { PAGE_STYLES } from '../web/styles.js';
 import { escapeHtml } from '../web/helpers.js';
 import { getSql } from '../db/context.js';
+import {
+  AI_MSA_DOCUMENT_URL,
+  ConsentService,
+  type DocumentFingerprint,
+} from '../consent/consent-service.js';
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -111,11 +116,24 @@ export class InMemoryRateLimiter {
 interface RenderSignupPageOptions {
   error?: string;
   email?: string;
+  /** Pre-checked state of the MSA consent box on re-render (sticky form
+   *  state after a validation error). Defaults to false on first render. */
+  consentChecked?: boolean;
+  /** Canonical PDF URL surfaced as the link target on the consent checkbox
+   *  label. Defaults to the AI_MSA_DOCUMENT_URL constant. Injected for
+   *  test-overridability + future scope where the URL becomes
+   *  org-customizable. */
+  consentDocumentUrl?: string;
 }
 
 export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
   const brandName = escapeHtml(brand.name);
   const emailValue = opts.email ? escapeHtml(opts.email) : '';
+  const consentChecked = opts.consentChecked === true;
+  // Default to the AI_MSA constant; injected override for tests + future
+  // org-customizable URL scope. Always escapeHtml — the URL ends up in an
+  // anchor href, so an attacker-controlled override would otherwise XSS.
+  const consentDocumentUrl = escapeHtml(opts.consentDocumentUrl ?? AI_MSA_DOCUMENT_URL);
   const errorBlock = opts.error
     ? `<div class="error-box" role="alert">${escapeHtml(opts.error)}</div>`
     : '';
@@ -202,6 +220,12 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
           <label for="email">Work email</label>
           <input type="email" id="email" name="email" value="${emailValue}" placeholder="you@yourmsp.com" required autocomplete="email" />
         </div>
+        <div class="form-row consent-row">
+          <label class="consent-label">
+            <input type="checkbox" id="accept_msa" name="accept_msa" value="1"${consentChecked ? ' checked' : ''} required />
+            <span>I accept the WYRE AI <a href="${consentDocumentUrl}" target="_blank" rel="noopener noreferrer">Master Service Agreement</a>.</span>
+          </label>
+        </div>
         <button type="submit" class="btn-primary">Continue</button>
       </form>
       <p class="footnote">We will send you to sign in or create an account on our identity provider.</p>
@@ -240,10 +264,20 @@ function buildAuthorizeUrl(params: {
 export interface SignupRoutesDeps {
   /** Override for tests. */
   limiter?: InMemoryRateLimiter;
+  /**
+   * ConsentService injection — WYREAI-98 AI MSA consent at signup. The
+   * POST /signup handler calls `consentService.fetchDocumentFingerprint`
+   * to capture the SHA256 of the canonical PDF at click-time (so the
+   * binding-record promoted by the downstream callback consumer carries
+   * EXACTLY the bytes the user saw). Optional + default-instantiated so
+   * existing tests that don't care about consent keep working unchanged.
+   */
+  consentService?: ConsentService;
 }
 
 export function signupRoutes(deps: SignupRoutesDeps) {
   const limiter = deps.limiter ?? new InMemoryRateLimiter();
+  const consentService = deps.consentService ?? new ConsentService();
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Pre-auth signup intents. One row per submitted email + state pair.
@@ -266,10 +300,10 @@ export function signupRoutes(deps: SignupRoutesDeps) {
       return reply.type('text/html').send(renderSignupPage());
     });
 
-    // POST /signup — validate + rate-limit + persist + redirect to Auth0
-    app.post<{ Body: { email?: string } }>(
+    // POST /signup — validate + rate-limit + capture MSA consent + persist + redirect to Auth0
+    app.post<{ Body: { email?: string; accept_msa?: string } }>(
       '/signup',
-      async (request: FastifyRequest<{ Body: { email?: string } }>, reply: FastifyReply) => {
+      async (request: FastifyRequest<{ Body: { email?: string; accept_msa?: string } }>, reply: FastifyReply) => {
         const ip = request.ip || 'unknown';
         const limit = limiter.check(ip);
         if (!limit.allowed) {
@@ -285,10 +319,31 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             renderSignupPage({
               error: result.reason,
               email: typeof request.body?.email === 'string' ? request.body.email : undefined,
+              // Preserve checkbox state across email-error re-renders so the
+              // user doesn't have to re-check it. The HTML form posts the
+              // checkbox as 'accept_msa=1' when checked; absent otherwise.
+              consentChecked: request.body?.accept_msa === '1',
             }),
           );
         }
         const email = result.email;
+
+        // MSA consent gate (WYREAI-98). The HTML form sets accept_msa='1'
+        // when the checkbox is checked, absent otherwise. STRICTEST-LEGAL
+        // default per the boss-banked risk-asymmetric resolution shape:
+        // reversible-failure (user re-submits with checkbox) vs
+        // irreversible-failure (user proceeds without binding consent).
+        // The [POLICY-DECISION] in WYREAI-98 + WYREAI-113 may relax this
+        // later; the default is STRICT.
+        if (request.body?.accept_msa !== '1') {
+          return reply.code(400).type('text/html').send(
+            renderSignupPage({
+              error: 'Please accept the WYRE AI Master Service Agreement to continue.',
+              email,
+              consentChecked: false,
+            }),
+          );
+        }
 
         if (!config.auth0Domain || !config.auth0ClientId) {
           app.log.error('Signup attempted but Auth0 is not configured (AUTH0_DOMAIN / AUTH0_CLIENT_ID)');
@@ -296,26 +351,62 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             renderSignupPage({
               error: 'Signup is temporarily unavailable. Please try again shortly.',
               email,
+              consentChecked: true,
+            }),
+          );
+        }
+
+        // CRYPTOGRAPHIC LAYER: SHA256-at-click-time of the canonical MSA.
+        // Throws on network failure / non-OK HTTP / empty body — we
+        // refuse to record a consent against bytes we couldn't actually
+        // fetch (would otherwise SHA the error page or store zero-byte
+        // hash, both of which falsely bind users). Surface as
+        // 503-temporarily-unavailable; user can retry once upstream is back.
+        let fingerprint: DocumentFingerprint;
+        try {
+          fingerprint = await consentService.fetchDocumentFingerprint(AI_MSA_DOCUMENT_URL);
+        } catch (err) {
+          app.log.error({ err, url: AI_MSA_DOCUMENT_URL }, 'Failed to fetch MSA for consent capture');
+          return reply.code(503).type('text/html').send(
+            renderSignupPage({
+              error: 'MSA is temporarily unavailable. Please try again in a moment.',
+              email,
+              consentChecked: true,
             }),
           );
         }
 
         const intentId = nanoid();
+        const acceptedAt = new Date().toISOString();
         try {
           await getSql()`
-            INSERT INTO signup_intents (id, email, funnel, ip, user_agent)
+            INSERT INTO signup_intents (
+              id, email, funnel, ip, user_agent,
+              consent_accepted, consent_document_url,
+              consent_document_version, consent_document_size_bytes,
+              consent_accepted_at
+            )
             VALUES (
               ${intentId},
               ${email},
               ${'reseller'},
               ${ip},
-              ${request.headers['user-agent'] ?? null}
+              ${request.headers['user-agent'] ?? null},
+              ${true},
+              ${AI_MSA_DOCUMENT_URL},
+              ${fingerprint.version},
+              ${fingerprint.sizeBytes},
+              ${acceptedAt}
             )
           `;
         } catch (err) {
           app.log.error({ err }, 'Failed to persist signup intent');
           return reply.code(500).type('text/html').send(
-            renderSignupPage({ error: 'Something went wrong. Please try again.', email }),
+            renderSignupPage({
+              error: 'Something went wrong. Please try again.',
+              email,
+              consentChecked: true,
+            }),
           );
         }
 
