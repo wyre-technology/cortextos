@@ -1,0 +1,97 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: On-Prem Gateway — Reference
+description: Full env-var contract, capability format, log levels, and operational reference for the WYRE on-prem-gateway customer-deploy bundle.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/onprem/reference.mdx on Epic 5 Phase D. */}
+
+This reference covers every env var the on-prem-gateway accepts, the canonical compose shape, and operational details. For first-deploy see the [Quickstart](/docs/guides/onprem/quickstart); for failure-mode→fix mapping see [Troubleshooting](/docs/guides/onprem/troubleshooting).
+
+## Required env vars
+
+The on-prem-gateway boot sequence **refuses to start** if any of these is unset. Each error message names the var + WHY required + WHERE to get the value + docs anchor.
+
+<a id="relay-url"></a>
+### `RELAY_URL`
+
+The WYRE relay endpoint your on-prem-gateway dials.
+
+- **Production:** `wss://relay.wyre.ai`
+- **Staging:** `wss://relay.staging.wyre.ai`
+- **MUST be `wss://`** — the gateway's `assertSecureRelayUrl` boot guard rejects any other scheme (no plain non-TLS `ws`, no `http://`, no `https://`).
+
+<a id="enrollment-token"></a>
+### `ENROLLMENT_TOKEN`
+
+Your WYRE-issued short-TTL JWT (default 5 minutes from issuance). Bound to:
+
+- Your subtenant org (subtenant tunnel for org A cannot enroll as org B).
+- A specific capability set (must match your `CAPABILITIES` env).
+
+**How to get one:** your WYRE ops contact mints via `POST /admin/onprem/enrollment-token` (admin-only). When the customer portal UI ships post-launch, you'll mint via the portal instead.
+
+:::note[mTLS supersedes this at M2]
+mTLS per-tunnel identity at M2 Gate A supersedes this JWT shape entirely. Do not rely on extending the TTL to compensate for env-var refresh friction — the proper fix is mTLS at M2, not longer-lived bearer tokens.
+:::
+
+<a id="capabilities"></a>
+### `CAPABILITIES`
+
+Comma-separated MCP capability slugs your tunnel exposes.
+
+**Critical: byte-for-byte match** with what your enrollment token grants:
+
+- Case-sensitive — `Echo` does NOT match `echo`.
+- Whitespace is trimmed per entry, then empty entries filtered.
+- No fuzzy or prefix matching.
+
+M2 launch ships with `echo` as the only capability. Real per-vendor MCP capabilities (Datto, Autotask, AD, SQL, etc.) land post-launch with M2's real-MCP-server work.
+
+Example:
+```
+CAPABILITIES=echo,datto-rmm,autotask
+```
+
+## Optional env vars
+
+| Var | Default | Notes |
+|---|---|---|
+| `LOG_LEVEL` | `info` | Set to `debug` for first-deploy troubleshooting. |
+| `HEARTBEAT_INTERVAL_MS` | `30000` | Rarely needs override. |
+
+## Canonical compose shape
+
+```yaml
+services:
+  onprem-gateway:
+    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:<release-digest>
+    restart: unless-stopped
+    env_file:
+      - .env
+    # NO `ports:` clause — assertNoInbound enforces zero LAN-listening.
+```
+
+The image MUST be referenced by `@sha256:<digest>`, not by `:latest` or a tag. The digest is published per release in the GitHub release notes + cosign signature.
+
+## Boot sequence — six guards, fail-loud
+
+The container runs through six guards in order; ANY guard failure → boot aborts loud → exit code 1 (no partial init, no silent fallback):
+
+1. **`requireCustomerEnvVars`** — RELAY_URL + ENROLLMENT_TOKEN + CAPABILITIES all set + non-empty.
+2. **`structurallyValidateEnrollmentToken`** — JWT shape + exp-not-expired + iss/aud-match (UX fail-fast; not the security gate).
+3. **`assertSecureRelayUrl`** — RELAY_URL is `wss://`.
+4. **`assertNoInbound`** — no LAN listener bound (the gateway is outbound-only).
+5. **`TunnelClient` construction** — with validated config.
+6. **`client.start()`** — dial the relay, register, hold the live tunnel.
+
+If any guard fails, the error message names the specific failure + a docs anchor in [Troubleshooting](/docs/guides/onprem/troubleshooting).
+
+## Observability
+
+- **Live logs:** `docker compose logs -f onprem-gateway`
+- **Ready signal:** the line `on-prem-gateway ready: dialing <RELAY_URL> with capabilities=[...]` confirms boot + dial succeeded.
+- **Heartbeat:** the gateway sends a keepalive every `HEARTBEAT_INTERVAL_MS` (default 30s); the relay marks the tunnel offline if silent for 3 missed heartbeats.
+
+## Graceful shutdown
+
+`docker compose down` sends SIGTERM; the gateway calls `client.stop()` which drains pending requests + closes the WSS cleanly. The relay marks the tunnel offline via the socket-close event.
