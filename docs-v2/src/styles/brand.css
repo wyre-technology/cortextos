@@ -1,0 +1,59 @@
+/* Conduit brand tokens — extracted from global.css per WYREAI-105 scope.
+ *
+ * Why a separate file: brand updates (a new accent, a font swap, a color
+ * regulator's note about contrast) should be a single-file edit. Mixing
+ * brand tokens into the same file as Tailwind plumbing and component
+ * utilities makes those edits scarier than they need to be.
+ *
+ * Mirror order:
+ *   1. WYRE brand-team updates land in the gateway docs (source-of-truth:
+ *      wyre-technology/msp-claude-plugins/docs/src/styles/global.css).
+ *   2. Mirror the relevant lines here.
+ *   3. Bump the comment block below with the date + commit SHA of the
+ *      gateway change for traceability.
+ *
+ * Last mirror: 2026-06-03 — matches msp-claude-plugins main HEAD.
+ */
+
+@layer base {
+  :root {
+    --background: #fafafa;
+    --text: #171717;
+    --accent: #00C9DB;
+    --accent-hover: #00b5c6;
+    --highlight: #EDE947;
+    --success: #16a34a;
+    --border: #e5e5e5;
+    --muted: #737373;
+  }
+
+  .dark {
+    --background: #0a0a0a;
+    --text: #ededed;
+    --border: #262626;
+    --muted: #a3a3a3;
+  }
+
+  /* Font stack per WYRE brand discipline:
+   * - Oswald for headings (display)
+   * - Nunito Sans for body (long-form readability)
+   * - IBM Plex Mono for code (clear at small sizes)
+   * Fonts are loaded via Google Fonts in BaseLayout/DocsLayout <head>.
+   */
+  html {
+    font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Oswald', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-[var(--background)] text-[var(--text)] antialiased;
+  }
+
+  code, pre {
+    font-family: 'IBM Plex Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  }
+}
