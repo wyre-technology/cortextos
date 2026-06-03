@@ -1,0 +1,157 @@
+---
+layout: '@/layouts/templates/ReferenceTemplate.astro'
+title: Subtenant model
+description: How Conduit models reseller → customer → sub-customer hierarchies, transitive admin, vendor-credential sharing, and reseller-scoped pricing.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/reference/subtenants.mdx on Epic 5 Phase C. Starlight slug-FaqSchema (if any) stripped — FAQ prose still renders. */}
+
+Conduit is multi-tenant in two distinct senses. **Org-level isolation** keeps one organization's data separate from another (covered in [Security § Multi-Tenant Isolation](/docs/reference/security/#multi-tenant-isolation)). **The subtenant model** describes how organizations can be arranged in a parent-child hierarchy — typically a reseller MSP at the top, customer organizations underneath, and (optionally) sub-customer organizations underneath those.
+
+This page covers the subtenant hierarchy itself: who can see and administer what, how vendor credentials flow downstream, and how reseller-level billing is scoped.
+
+---
+
+## The hierarchy
+
+Conduit organizations form a tree, bounded at **depth 3**:
+
+```
+Reseller (depth 0, e.g. an MSP)
+└── Customer (depth 1, the MSP's end-customer org)
+    └── Sub-customer (depth 2, e.g. a customer's separately-billable subsidiary)
+```
+
+A worked example:
+
+```
+WYRE (reseller)
+└── Acme Manufacturing (customer)
+    └── Acme Internal IT (sub-customer)
+```
+
+Depth is enforced by the `enforce_org_hierarchy` Postgres trigger (migration `021_relax_org_hierarchy_to_bounded_depth.sql`). Attempting to create a fourth-tier child raises an error at the database layer.
+
+The parent-child relationship lives on `organizations.parent_org_id` (self-referencing foreign key, added in migration `002_reseller_tenancy_expand.sql`). A `NULL` parent indicates a top-level org — typically a reseller, occasionally a standalone customer that does not sit under one.
+
+---
+
+## Two role spaces
+
+Conduit has **two disjoint role systems** that often confuse first-time integrators:
+
+### Org-member roles
+
+These are the standard tenant roles that exist on every organization:
+
+- `owner` — full administrative authority over the org
+- `admin` — manage members, credentials, and tool allowlists
+- `member` — use vendor tools according to the allowlist
+
+Org-member roles are defined per-org. A user can hold an `owner` role on Org A and a `member` role on Org B.
+
+### Reseller-scope roles
+
+These are an additional, **separate** role space that applies only to reseller organizations:
+
+- `reseller_owner` — top-level authority over the reseller's customer estate
+- `reseller_admin` — administer customers and their sub-customers (transitively)
+- `reseller_billing_viewer` — read-only access to billing data across the reseller's estate
+- `reseller_support_agent` — temporary act-as access, granted via support grants (see below)
+
+Reseller roles are defined in migration `003_reseller_members.sql` and surface in the codebase as the `ResellerRole` type in [`src/org/reseller-member-service.ts`](https://github.com/wyre-technology/conduit/blob/main/src/org/reseller-member-service.ts). They are **disjoint** from org-member roles — being a `reseller_admin` on the WYRE reseller does *not* automatically make you an `admin` on Acme Manufacturing's org. What it does give you is **transitive administrative authority** down through the hierarchy, described below.
+
+---
+
+## Transitive admin
+
+A reseller administrator needs to operate on customers and (often) on those customers' sub-customers. Conduit expresses this through a recursive **ancestor lookup**:
+
+For any target org, the function `conduit_is_reseller_admin_of_ancestor(user_id, target_org_id)` walks the `parent_org_id` chain bounded at depth 3 and returns `true` if the calling user is a `reseller_owner` or `reseller_admin` of any ancestor reseller in the chain.
+
+Worked through the WYRE example above:
+
+| Calling user | Target org | Result | Why |
+|--------------|-----------|--------|-----|
+| reseller_admin on WYRE | WYRE | true | self |
+| reseller_admin on WYRE | Acme Manufacturing | true | Acme's parent (WYRE) is a reseller this user administers |
+| reseller_admin on WYRE | Acme Internal IT | true | walks parent chain → Acme → WYRE |
+| customer admin on Acme | Acme Internal IT | true via customer-admin RLS | direct parent admin (separate code path) |
+| customer admin on Acme | WYRE | false | customer admin does not reach upstream |
+| reseller_admin on a different reseller | Acme Manufacturing | false | wrong ancestor chain |
+
+The implementation is a `SECURITY DEFINER` Postgres helper (migration `023_reseller_admin_of_ancestor_helper.sql`). The depth bound is intentionally locked to mirror migration 021's `MAX_ORG_DEPTH` — if the hierarchy ever expands, both the trigger and this helper must move in lock-step. Migration 023 includes an apply-time invariant check that enforces this.
+
+A simpler, single-level helper exists for cases that only need direct-parent checks: `conduit_is_reseller_admin_of_parent` (migration `018_rls_security_definer_helpers.sql`). Use the recursive `_of_ancestor` form when the call site needs to reach sub-customers.
+
+---
+
+## Vendor-credential sharing
+
+A reseller can share vendor credentials downstream to one or more customers, so an MSP doesn't have to re-collect credentials for tools its end-customers will use through the reseller's contract. This is modelled as a **reseller-shared vendor grant** (migration `004_reseller_shared_vendor_grants.sql`).
+
+When Conduit resolves a credential for a tool call, the [credential resolution hierarchy](/docs/reference/security/#credential-resolution-hierarchy) is:
+
+1. Personal credential (the user's own)
+2. Team credential (single matching team)
+3. Organization credential — first the customer org's own credential, then a reseller-shared grant pointing at the reseller's credential
+
+When step 3(b) is used — the call resolves through a reseller-shared grant rather than the customer's own credential — Conduit records this in the audit log so the resolution path is observable.
+
+Two operational notes:
+
+- **Sub-customers do not inherit their parent customer's credentials automatically.** Each org's resolution looks at its own credentials first, then walks up to a reseller-shared grant if one is configured for that vendor and that customer. There is no implicit walk through intermediate customer orgs.
+- **Reseller support agents** (`reseller_support_agent` role) can act on behalf of customers via short-lived grants defined in migration `005_reseller_support_grants.sql`. These grants are time-bounded and audit-logged separately.
+
+---
+
+## Reseller-scoped pricing
+
+A reseller can configure markup pricing for each of its customers (and, where applicable, their sub-customers) in `reseller_pricing_config` (migrations `025_reseller_pricing_config.sql` and `026_reseller_pricing_config_dp_e_and_created_by_strip.sql`).
+
+Two pricing modes are supported:
+
+- **Percentage markup** — a basis-points rate applied on top of the underlying base price. For example, `500` basis points = 5%.
+- **Absolute per-seat** — a fixed dollar amount per seat per billing period.
+
+Granularity is **flat at the org level**: a single configuration per `(reseller, subtenant)` pair, no per-vendor override in v1.
+
+### Subtenant visibility
+
+Pricing config is **opaque to the subtenant** by design. A customer organization can `SELECT` its own active pricing configuration — what it is being charged — but cannot inspect the underlying WYRE base rate or the markup-versus-base split. RLS policies on `reseller_pricing_config` enforce this.
+
+### Audit-of-truth via supersession
+
+`reseller_pricing_config` is **append-only**: there are no `UPDATE` or `DELETE` policies. A pricing change is a new row with a later `effective_at` timestamp. Reading "current" config means `ORDER BY effective_at DESC LIMIT 1` per `(reseller_org_id, subtenant_org_id)`.
+
+The supersession history is itself the audit-of-truth — change provenance is preserved natively, no separate audit table is needed for the change-history slice.
+
+---
+
+## Cleanup and severance
+
+When a customer organization is removed from a parent reseller, the structural relationship is severed cleanly:
+
+- The customer's `parent_org_id` becomes `NULL` (or is reassigned, in a re-parenting case). Note that `parent_org_id` uses `ON DELETE RESTRICT` (migration `002`), so deleting a reseller while it still has live customers fails loudly rather than silently cascading.
+- `conduit_is_reseller_admin_of_ancestor` no longer returns `true` for the reseller's admins against the now-detached customer.
+- Reseller-scoped pricing config is no longer effective; subsequent billing for that customer would need a new pricing model (typically standalone or under a different reseller).
+- Sub-customers of the detached customer remain attached to it (the chain-break happens at the reseller↔customer edge, not below).
+
+**Reseller-shared vendor grants do not auto-disable on severance.** The grant row carries `enabled = TRUE` independently of the customer's current `parent_org_id`. As part of the detachment workflow, the reseller-admin must explicitly disable (`enabled = FALSE`) or delete the relevant grant rows. Otherwise the now-detached customer can continue resolving credentials through the orphaned grant. This is by design — the operator-initiated severance step controls grant state, not the structural detachment.
+
+There is no automatic data deletion when a customer leaves — that is a separate operator-initiated step.
+
+---
+
+## Quick reference
+
+| Concept | Where in the code |
+|---------|-------------------|
+| Hierarchy bound (depth-3) | migration `021_relax_org_hierarchy_to_bounded_depth.sql` |
+| `parent_org_id` self-FK | migration `002_reseller_tenancy_expand.sql` |
+| Reseller roles + service | migration `003_reseller_members.sql`, [`src/org/reseller-member-service.ts`](https://github.com/wyre-technology/conduit/blob/main/src/org/reseller-member-service.ts) |
+| Transitive admin (recursive helper) | migration `023_reseller_admin_of_ancestor_helper.sql` |
+| Direct-parent admin helper | migration `018_rls_security_definer_helpers.sql` |
+| Reseller-shared vendor grants | migration `004_reseller_shared_vendor_grants.sql` |
+| Reseller support grants | migration `005_reseller_support_grants.sql` |
+| Reseller pricing config | migrations `025_reseller_pricing_config.sql`, `026_reseller_pricing_config_dp_e_and_created_by_strip.sql` |
+| Customer sub-org invitations | migration `010_customer_sub_orgs.sql` |
