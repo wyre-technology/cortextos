@@ -1,0 +1,28 @@
+---
+// Placeholder doc-style page so the Sidebar + DocsLayout render somewhere
+// during local dev / CI build validation. Lives at /docs/docs-preview/.
+// noindex; will be deleted at Epic 10 cutover when real content lands.
+import DocsLayout from '@/layouts/DocsLayout.astro';
+---
+<DocsLayout title="Docs preview — Conduit Docs" noindex={true}>
+  <div class="prose">
+    <h1>Docs preview</h1>
+    <p>
+      Sidebar IA scaffold for the Path B docs migration. The sidebar on the
+      left shows the conduit information architecture in its 5 top-level
+      branches: Getting Started, Subtenant Model, On-Prem Gateway,
+      Connecting AI Clients, and Reference.
+    </p>
+    <p>
+      Items marked with a <code>#</code> href are placeholders for pages
+      that land in later epics (content migration). The 2-level recursive
+      nesting, collapse/expand toggles, and active-route highlighting all
+      function against whatever real pages do exist.
+    </p>
+    <p>
+      This page itself will be removed at the Epic 10 cutover; it exists
+      only so the DocsLayout chrome is renderable during the interim
+      parallel-build period.
+    </p>
+  </div>
+</DocsLayout>
