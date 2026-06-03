@@ -1,47 +1,17 @@
-/* Brand-parity with gateway docs (source-of-design-truth:
-   wyre-technology/msp-claude-plugins/docs/src/styles/global.css).
-   Mirror changes from the gateway repo here. */
+/* Conduit docs-v2 global stylesheet.
+ *
+ * brand.css is loaded first so the @layer base brand tokens (CSS vars
+ * + font stack) are established before component utilities reference
+ * them via [var(--...)]. Component utilities here mirror the gateway
+ * docs (source-of-truth:
+ *   wyre-technology/msp-claude-plugins/docs/src/styles/global.css).
+ */
+
+@import './brand.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@layer base {
-  :root {
-    --background: #fafafa;
-    --text: #171717;
-    --accent: #00C9DB;
-    --accent-hover: #00b5c6;
-    --highlight: #EDE947;
-    --success: #16a34a;
-    --border: #e5e5e5;
-    --muted: #737373;
-  }
-
-  .dark {
-    --background: #0a0a0a;
-    --text: #ededed;
-    --border: #262626;
-    --muted: #a3a3a3;
-  }
-
-  html {
-    font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    scroll-behavior: smooth;
-  }
-
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Oswald', system-ui, sans-serif;
-  }
-
-  body {
-    @apply bg-[var(--background)] text-[var(--text)] antialiased;
-  }
-
-  code, pre {
-    font-family: 'IBM Plex Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
-  }
-}
 
 @layer components {
   .container {
@@ -75,5 +45,21 @@
 
   .sidebar-link-active {
     @apply bg-cyan-50 dark:bg-cyan-900/20 text-accent font-medium;
+  }
+
+  .prose {
+    @apply max-w-none;
+  }
+  .prose h1 { @apply text-3xl font-bold mb-6 mt-8; }
+  .prose h2 { @apply text-2xl font-semibold mb-4 mt-8; }
+  .prose h3 { @apply text-xl font-semibold mb-3 mt-6; }
+  .prose p  { @apply mb-4 leading-relaxed; }
+  .prose ul, .prose ol { @apply mb-4 pl-6; }
+  .prose li { @apply mb-2; }
+  .prose code:not(pre code) {
+    @apply bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm;
+  }
+  .prose a {
+    @apply text-accent underline;
   }
 }
