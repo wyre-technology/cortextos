@@ -1,0 +1,238 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: MSP Onboarding
+description: End-to-end flow for onboarding a Managed Service Provider onto Conduit — discovery, build-out, go-live, and ongoing support.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/msp-onboarding.mdx
+   on the Epic 5 Path-A migration. */}
+
+This guide describes the end-to-end flow for onboarding a new Managed Service Provider (MSP) onto Conduit. It is written for the person standing up the MSP tenant — whether that is the MSP owner self-serving or a WYRE operator running a managed onboarding.
+
+Most build-out steps can be done through the dashboard (paths below) or the API. The dashboard is the recommended path for first-time onboarding; the API endpoints are noted for teams automating provisioning. For exact API request/response shapes, see the [API reference](/docs/reference/api/).
+
+---
+
+## Phase 1: Discovery
+
+### Identify the vendor stack
+
+Conduit is vendor-agnostic — the vendors configured for a deployment depend entirely on what the MSP uses. During discovery, inventory the MSP's tool stack and decide which vendor integrations to enable.
+
+Common vendor categories:
+
+| Category | Examples |
+|----------|----------|
+| RMM | Datto RMM, Syncro, Atera, SuperOps, ConnectWise Automate, NinjaOne |
+| PSA | Autotask, HaloPSA, ConnectWise PSA |
+| Documentation | IT Glue, Hudu, Liongard |
+| Security | RocketCyber, SentinelOne, Huntress, Blumira, runZero |
+| Email Security | Avanan, Proofpoint, KnowBe4 |
+| Network | Domotz |
+| Sales | SalesBuildr, PandaDoc, Pax8 |
+| Accounting | Xero, QuickBooks Online |
+| CRM | HubSpot |
+| Productivity | Microsoft 365 |
+| Marketplace | Sherweb |
+
+The table lists examples — the vendors available in a given deployment are configured during onboarding. See [Vendor Connections](/docs/guides/vendor-connections/) for how to add vendor integrations.
+
+### Gather requirements
+
+- **Team size** — how many technicians will use Conduit?
+- **Role structure** — who needs access to which vendors?
+- **Credential model** — shared org-level API keys, or per-team / per-user keys?
+- **Compliance needs** — do they require audit log export or SIEM integration?
+- **MCP client preference** — Claude Desktop, Claude Code, or custom automation via service clients?
+
+---
+
+## Phase 2: Build-Out
+
+### 1. Create the organization
+
+The MSP owner creates an org from the dashboard, or via the API:
+
+```
+POST /api/orgs
+{
+  "name": "Acme MSP",
+  "invite_code": "<alpha-invite-code>"    // optional — activates the subscription
+}
+```
+
+An alpha invite code activates the subscription immediately. Without one, the owner starts a free 14-day trial of the full platform from the billing page; the trial converts to a paid subscription when a payment method is added through Stripe Checkout, or closes automatically at the end of the 14 days if no action is taken.
+
+### 2. Activate your subscription
+
+If not using an invite code, the owner can start the trial or add payment from the billing page at **`/org/billing`**, or redeem a code later:
+
+```
+POST /api/orgs/:orgId/redeem-code
+{ "code": "<code>" }
+```
+
+The subscription includes the full platform — every feature, no gates:
+
+- Unlimited vendor connections
+- Standard rate limits per vendor
+- Full team features (members, roles, invitations)
+- Role-based access (per-vendor, per-role tool scoping)
+- A clear record of every tool call, with CSV export
+- Log shipping to SIEM (Loki, Graylog, LogScale)
+- Prompt capture
+- SSO and service clients (M2M)
+
+See the [Billing & Plans guide](/docs/guides/billing/) for the
+flat pricing detail.
+
+### 3. Connect vendor credentials
+
+For each vendor the MSP uses, configure credentials at the org level from the connections page at **`/org/connections`**:
+
+- **API-key vendors** (most vendors) — click **Connect** next to the vendor and enter the required API keys/secrets.
+- **OAuth vendors** (Xero, QuickBooks Online, HubSpot, Microsoft 365) — click **Connect** and complete the OAuth flow. Conduit handles token exchange and stores refresh tokens for automatic renewal.
+
+Credentials can also be stored via the API:
+
+```
+POST /api/orgs/:orgId/credentials/:vendor
+{ "apiKey": "...", "apiSecret": "..." }
+```
+
+See the [Security guide](/docs/reference/security/#credential-security) for how credentials are encrypted and resolved.
+
+### 4. Configure server access
+
+New members receive vendor access based on the org's `defaultServerAccess` setting (`all` or `none`). A deny-by-default posture (`none`, then explicit grants) is recommended. Manage per-member vendor access from **`/org/server-access`**, or via the API:
+
+```
+PUT /api/orgs/:orgId/members/:userId/server-access
+{ "vendors": ["datto-rmm", "itglue", "autotask"] }
+```
+
+### 5. Set up teams (optional)
+
+For MSPs with distinct groups (e.g. "Tier 1 Support", "Security Team", "Accounting"), manage teams from **`/org/teams`**:
+
+```
+POST /api/orgs/:orgId/teams
+{ "name": "Tier 1 Support" }
+```
+
+Teams can carry their own vendor credentials (separate API keys) and their own vendor access grants.
+
+### 6. Configure tool allowlists (optional)
+
+Restrict which tools a role can access per vendor, from **`/org/tool-access`**:
+
+```
+PUT /api/orgs/:orgId/tool-access/:vendor/:role
+{ "tools": ["datto_list_devices", "datto_list_sites", "datto_list_alerts"] }
+```
+
+Owners always have full access. Setting no allowlist means all tools are available for that role.
+
+### 7. Invite team members
+
+Generate invitation links from **`/org/invitations`**:
+
+```
+POST /api/orgs/:orgId/invitations
+```
+
+This returns an invitation URL. Share it with team members — when they visit the link and sign in, they join the org as a `member`. Admins can promote members from **`/org/members`**:
+
+```
+PATCH /api/orgs/:orgId/members/:userId/role
+{ "role": "admin" }
+```
+
+### 8. Create service clients (optional)
+
+For machine-to-machine automation (AI agents, scripts, integrations), create service clients from **`/org/service-clients`**:
+
+```
+POST /api/orgs/:orgId/service-clients
+{ "name": "Nightly Ticket Sync", "expires_in_days": 90 }
+```
+
+This returns a `client_id` and `client_secret` (shown once). The service client authenticates via the `client_credentials` grant and receives a JWT scoped to the org.
+
+### 9. Configure log shipping (optional)
+
+For compliance or monitoring, ship audit logs to an external SIEM from **`/org/log-shipping`**. Supported platforms: Loki, Graylog, LogScale.
+
+---
+
+## Phase 3: Go-Live Checklist
+
+- [ ] Organization created and subscription active (or in trial)
+- [ ] All required vendor credentials connected and validated
+- [ ] Server access grants configured for each member
+- [ ] Tool allowlists set for restricted roles (if needed)
+- [ ] Team members invited and accepted
+- [ ] An MCP client (Claude Desktop or Claude Code) configured with the Conduit server URL
+- [ ] Service clients created for any automation workflows
+- [ ] Audit log verified — make a test tool call and check **`/org/audit`**
+- [ ] Log shipping tested (if configured)
+- [ ] MSP owner has verified access to the billing portal at **`/org/billing`**
+
+### Client configuration
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "conduit": {
+      "url": "https://conduit.wyre.ai/v1/mcp"
+    }
+  }
+}
+```
+
+**Claude Code**:
+
+```
+claude mcp add conduit https://conduit.wyre.ai/v1/mcp
+```
+
+On first use, the OAuth flow opens a browser for authentication. After sign-in and credential connection, the JWT is cached and refreshed automatically. See the [Security guide](/docs/reference/security/#authentication) for details on the OAuth 2.1 + PKCE flow.
+
+---
+
+## Phase 4: Ongoing Support
+
+### Monitoring
+
+- **Audit log** — `/org/audit` (dashboard) or `GET /api/audit` with filters for user, vendor, and date range
+- **Admin audit** — `GET /api/audit/admin` for administrative action history
+
+### Common operations
+
+| Task | Where |
+|------|-------|
+| Add a team member | `/org/invitations` |
+| Remove a member | `/org/members` |
+| Rotate vendor credentials | `/org/connections` (overwrites the existing credential) |
+| Change a member's role | `/org/members` |
+| Export the audit log | `/org/audit` → Export CSV |
+| Manage billing | `/org/billing` |
+
+### Credential rotation
+
+When rotating vendor API keys, update the credential at the appropriate scope:
+
+- **Org-level** — `/org/connections`
+- **Team-level** — the team's connections, under `/org/teams`
+- **Personal** — `/settings/profile` (the individual user reconnects)
+
+Conduit encrypts the new credential and begins using it immediately. The old credential is overwritten.
+
+---
+
+## Onboarding customers under the MSP
+
+The steps above stand up the MSP's own organization. Onboarding the MSP's *customers* as sub-organizations — and the reseller hierarchy that governs them — is covered separately:
+
+- [Subtenant Model](/docs/reference/subtenants/) — how the reseller → customer → sub-customer hierarchy works

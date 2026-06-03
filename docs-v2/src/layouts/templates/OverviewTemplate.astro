@@ -1,0 +1,17 @@
+---
+// OverviewTemplate — for index-style pages that introduce a section
+// (e.g. /docs/guides/, /docs/reference/). Wider prose, no eyebrow tag
+// (these are "you're here" not "this is part of a series").
+import Base from './_TemplateBase.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+  noindex?: boolean;
+}
+const { title, description, canonical, noindex } = Astro.props;
+---
+<Base title={title} description={description} canonical={canonical} noindex={noindex} contentClass="prose max-w-4xl">
+  <slot />
+</Base>

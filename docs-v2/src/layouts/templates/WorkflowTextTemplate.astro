@@ -1,0 +1,20 @@
+---
+// WorkflowTextTemplate — for short text snippets and ops-templates
+// (templates/oauth-consent.md, templates/security-notice.md,
+// operations/upstream-sync.md, contributing/style-guide.mdx).
+// Narrower prose for legibility; "Template" or "Workflow" eyebrow
+// caller-specified to disambiguate.
+import Base from './_TemplateBase.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  eyebrow?: string;
+  canonical?: string;
+  noindex?: boolean;
+}
+const { title, description, eyebrow = 'Template', canonical, noindex } = Astro.props;
+---
+<Base title={title} description={description} eyebrow={eyebrow} canonical={canonical} noindex={noindex} contentClass="prose max-w-2xl">
+  <slot />
+</Base>

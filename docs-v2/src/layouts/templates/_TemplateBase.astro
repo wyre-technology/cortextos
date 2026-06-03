@@ -1,0 +1,40 @@
+---
+// Shared base for the 4 page-shape templates. Wraps DocsLayout with a
+// titled prose article. Per-template differentiation (eyebrow tag,
+// breadcrumb, width, etc.) layers on top of this in the 4 sibling
+// templates — kept here to keep them DRY and to make brand-mirror
+// updates to the prose chrome a single-file edit.
+//
+// Not exported for direct page use; pages import one of:
+//   OverviewTemplate / GuideTemplate / ReferenceTemplate / WorkflowTextTemplate
+
+import DocsLayout from '@/layouts/DocsLayout.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  eyebrow?: string;
+  canonical?: string;
+  noindex?: boolean;
+  contentClass?: string;
+}
+
+const {
+  title,
+  description,
+  eyebrow,
+  canonical,
+  noindex = false,
+  contentClass = 'prose max-w-3xl',
+} = Astro.props;
+---
+<DocsLayout title={`${title} — Conduit Docs`} description={description} canonical={canonical} noindex={noindex}>
+  <article class={contentClass}>
+    {eyebrow && (
+      <p class="text-xs font-semibold uppercase tracking-wider text-accent mb-2">{eyebrow}</p>
+    )}
+    <h1 class="!mt-0">{title}</h1>
+    {description && <p class="text-lg text-[var(--muted)] !mt-0 mb-8">{description}</p>}
+    <slot />
+  </article>
+</DocsLayout>

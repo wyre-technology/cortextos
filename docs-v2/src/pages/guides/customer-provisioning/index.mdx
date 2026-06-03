@@ -1,0 +1,129 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Onboarding a customer
+description: How an MSP onboards a new customer organization in Conduit — the wizard, what happens after, and the surfaces an MSP admin uses to manage the customer day-to-day.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/customer-provisioning.mdx
+   on the Epic 5 Path-A migration. The two-axis manifest below is the
+   #224 resolution dispatch — DO NOT remove. It documents which sections
+   are pricing-axis-bound (flat-pricing post-#275/#291) vs wiring-pattern-axis
+   (pending Aaron's launch-scope decision). The :::caution[Pending] block is
+   the explicit slot for the wiring-pattern launch-scope answer. */}
+
+Conduit is built for **MSPs serving their own customers**. Each customer the MSP onboards is a separate organization underneath the MSP — fully isolated from every other customer, with its own users, vendor connections, and audit log, but administered by the MSP.
+
+This guide walks through the customer-onboarding flow: how to create a customer, what happens immediately after, and where you go to manage the customer once it's live.
+
+For the underlying model — the reseller → customer → sub-customer hierarchy, transitive admin, and credential sharing — see the [Subtenant Model](/docs/reference/subtenants/).
+
+---
+
+{/*
+  Two-axis resolution structure (authored 2026-05-31 on PR #224 resolution dispatch):
+   (A) Pricing axis — bound directly to the locked flat-pricing model post-#275/#291
+       (no tier choice on customer-create; the wizard no longer collects a plan).
+   (B) Wiring-pattern axis — marked inline-pending Aaron's launch-scope answer
+       (BYOC-only vs Shared vs Self-hosted at launch); the architectural description
+       of the patterns stays, the at-launch availability assertion is the pending
+       slot. When Aaron answers, only the :::caution[Pending] blocks below need a
+       follow-up commit; the (A) substance stays put.
+  See PR #224 description for the per-section axis manifest.
+*/}
+
+## Before you start
+
+You need:
+
+- **An MSP organization in Conduit** that you administer with an `owner` or `admin` role.
+- **The customer's name** and the email address of their **owner** (the person who will administer the customer organization once it's set up).
+
+## Create the customer
+
+From your reseller dashboard:
+
+1. Open **Customers** (`/org/customers`) and click **+ Add Customer**. This opens the New Customer wizard.
+2. **Step 1 — Customer:** enter the customer's organization name. The URL slug is generated from the name automatically; adjust it if you'd like something different. The slug becomes the customer's MCP endpoint URL: `conduit.wyre.ai/v1/mcp/<your-slug>/<customer-slug>`.
+3. **Step 2 — Admin:** enter the email of the person who will own the customer organization. They'll receive an invitation by email and set their own password via the link.
+4. **Step 3 — Review:** by default the customer inherits your white-label branding (name, logo, colors, email sender). Toggle inheritance off and pick an accent if they need their own. Confirm the summary and click **Create customer**.
+
+Conduit creates the customer organization, sets you as the interim owner until the invitee accepts, and sends the owner invitation.
+
+## What happens immediately after
+
+- The customer organization is created underneath your reseller.
+- The owner you specified receives an email with an invitation link. When they accept, they become the owner of the customer organization; you remain a reseller admin who can administer it transitively (see [Subtenant Model § Transitive admin](/docs/reference/subtenants/#transitive-admin)).
+- The customer's MCP endpoint URL is live but, until a vendor is onboarded, no tools are exposed yet.
+
+## Adding vendors for the customer
+
+To make any vendor tools actually available to the customer's users, an MSP admin opens the customer's detail page and runs the **Onboard MCP** wizard for each vendor. From `/org/customers/<id>`, click **+ Onboard MCP**.
+
+The wizard walks you through four steps:
+
+1. **Catalog** — pick a vendor from the catalog.
+2. **Wire Up** — choose how the customer's users will reach the vendor's API. There are three patterns:
+   - **Bring Your Own Credentials (BYOC)** — each user supplies their own API key. The vendor's audit log shows real names, and per-user revocation is clean. Best for compliance-sensitive customers and vendors that bill per seat.
+   - **Shared credentials** — you supply one set of credentials, all users go through it. Fastest setup; the vendor sees one identity for every user's actions.
+   - **Self-hosted (on-prem gateway)** — the customer runs the vendor's MCP server on their own infrastructure, reached through a small WYRE on-prem gateway container. Credentials never leave their network. Best for strict data-residency requirements. See the [on-prem gateway quickstart](/docs/guides/onprem/quickstart) for the deploy steps.
+3. **Config** — for BYOC, pick which of the customer's users get a seat. Each seated user will receive a setup email asking them to add their own API key. For Shared, you enter the credentials once.
+4. **Allowlist** — choose which of the vendor's tools the customer's users are allowed to invoke. Off by default; check the boxes to grant. Allowlists can be scoped per department (or per role group).
+
+Finishing the wizard creates an audit-log entry and provisions the chosen wiring pattern for the customer.
+
+> ⚠️ **Pending: launch wiring-pattern decision.** Which wiring patterns are **available at launch** is pending Aaron's launch-scope decision (BYOC-only vs. Shared vs. Self-hosted at launch). Patterns flagged in this guide describe the architectural reality of the wizard; the at-launch availability subset will be filled in here once that decision lands. Until then, do not assume a specific at-launch availability from this guide.
+
+## Managing the customer
+
+The customer's detail page at `/org/customers/<id>` has seven tabs for ongoing administration:
+
+| Tab | What it covers |
+|-----|----------------|
+| **MCPs** | The vendor integrations onboarded for this customer, with per-vendor status. |
+| **Users** | The customer's users — invite, change role, remove. Roles are `owner` / `admin` / `member`. |
+| **Usage** | Live tool-call volume, top vendors, error rate, per-vendor breakdown for this customer. |
+| **Tool Access** | Per-vendor, per-department tool allowlists. Same model as Step 4 of Onboard-MCP. |
+| **Audit Log** | Tool calls and administrative actions for this customer. |
+| **Billing** | The customer's subscription state, rate, and invoices. |
+| **Settings** | Customer identity, suspension, and lifecycle controls. |
+
+For the role model itself — what `owner`, `admin`, and `member` can do — see the [Permissions reference](/docs/reference/permissions/).
+
+## Bulk provisioning via API
+
+Customer creation goes through the reseller API. To onboard customers at scale, script against:
+
+```bash
+curl -X POST https://<your-conduit-host>/admin/reseller/<your-reseller-id>/customers \
+  -H "Cookie: conduit_session=<session>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "adminEmail": "owner@acme.example"
+  }'
+```
+
+The endpoint creates the customer org and mints an owner-invite addressed to `adminEmail`. It returns the new customer's `id` (and `invitation_id`), which you can use to open the customer's detail page or run the Onboard-MCP wizard against it. The body takes no `plan` field — under flat pricing the wizard no longer collects a plan (every customer org is created on the single plan).
+
+## Suspending or deleting a customer
+
+Customer lifecycle controls (suspend, delete) live on the customer's **Settings** tab. The suspend action invalidates the customer's user sessions and gates incoming tool calls; the data is preserved so you can re-enable. Delete is irreversible — connections, users, and settings are purged, while audit history is retained for compliance.
+
+> **Note:** Customer-lifecycle persistence is in the launch window — until it lands, the controls are visible but disabled. If you need to suspend or remove a customer before that, contact your WYRE ops contact.
+
+## Verification checklist
+
+Before handing the customer off to steady-state:
+
+- [ ] Customer created and the org's subscription is in the expected state (trial or active).
+- [ ] Owner has accepted the invite and signed in.
+- [ ] At least one vendor onboarded via the Onboard-MCP wizard.
+- [ ] At least one successful tool call visible on the customer's Audit Log tab.
+- [ ] Tool allowlists match the customer's access policy.
+
+## Related
+
+- [Subtenant Model](/docs/reference/subtenants/) — the reseller → customer hierarchy and transitive admin.
+- [Permissions reference](/docs/reference/permissions/) — the role model.
+- [Vendor connections](/docs/guides/vendor-connections/) — vendor catalog and credential-scoping detail.
+- [On-prem gateway quickstart](/docs/guides/onprem/quickstart) — the self-hosted wiring pattern, end to end.
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — what the customer's users do to connect Claude to Conduit.
