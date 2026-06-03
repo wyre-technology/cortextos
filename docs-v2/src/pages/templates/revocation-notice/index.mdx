@@ -1,0 +1,77 @@
+---
+layout: '@/layouts/templates/WorkflowTextTemplate.astro'
+title: Revocation notice template
+eyebrow: Template
+description: Email sent to a customer contact when an MSP revokes a user, connection, or the customer itself from Conduit.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/templates/revocation-notice.md on Epic 5 Phase E. */}
+
+Fork this template to set the tone of revocation notifications. Tokens
+are interpolated at send time; see
+[white-label setup](/docs/guides/white-label-setup/) for the full token
+list.
+
+The same template is used for user removal, connection revocation, and
+customer deactivation. Conditional blocks (`{{#if ...}}`) render only
+when the relevant context exists.
+
+## Subject
+
+```
+Access change for {{customer.name}} on Conduit
+```
+
+## Body
+
+```markdown
+Hi {{user.name}},
+
+{{msp.name}} has made an access change on Conduit that affects
+{{customer.name}}.
+
+### What changed
+
+{{#if revocation.userRemoved}}
+- **User access removed:** {{revocation.targetEmail}} can no longer
+  sign in or call vendor tools under {{customer.name}}.
+{{/if}}
+
+{{#if revocation.connectionRevoked}}
+- **Vendor connection revoked:** the {{revocation.vendorName}}
+  connection at scope `{{revocation.scope}}` has been removed. Calls
+  to {{revocation.vendorName}} now fall back to any higher-scope
+  connection, or fail if none exists.
+{{/if}}
+
+{{#if revocation.customerDisabled}}
+- **Customer disabled:** all users under {{customer.name}} have been
+  signed out and cannot call vendor tools until the customer is
+  re-enabled.
+{{/if}}
+
+**Effective:** {{now}}
+**Performed by:** {{revocation.performedBy}}
+
+### What you should do
+
+- If you did not expect this change, contact {{msp.name}} immediately
+  at {{msp.supportEmail}}.
+- If the change is expected, no action is required. The audit log
+  under {{customer.name}} has the full record.
+
+### Audit trail
+
+Every revocation is recorded immutably in the Conduit audit log.
+{{customer.name}} administrators can export the log at any time.
+```
+
+## Notes for template authors
+
+- The "effective" timestamp must be the server time the revocation
+  committed, not the send time — template senders should pass this
+  explicitly.
+- Do not omit the "contact support immediately if unexpected" line.
+  Revocation notices are a phishing-adjacent surface and users need a
+  clear out-of-band escalation path.
+- For customer deactivation (as opposed to deletion), avoid the word
+  "deleted" — data is retained and re-activation is possible.
