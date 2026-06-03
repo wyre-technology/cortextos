@@ -1,0 +1,61 @@
+---
+layout: '@/layouts/templates/ReferenceTemplate.astro'
+title: Supported clients
+description: Which AI clients work with Conduit. Conduit speaks the standard Model Context Protocol, so any MCP-capable client connects — Claude Desktop, Claude Code, Cline, Continue, Cursor, and more.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/reference/supported-clients.mdx on Epic 5 Phase C. Starlight slug-FaqSchema (if any) stripped — FAQ prose still renders. */}
+
+Conduit is **provider-neutral by design.** It speaks the standard **Model Context Protocol (MCP)** end to end — it does not translate tools into any one AI vendor's format. That means Conduit is the connection fabric for *any* MCP-capable AI assistant: it gives your AI the **access and visibility** it needs into your MSP tools, without locking you to a single AI vendor.
+
+Claude Desktop and Claude Code are the clients we document end-to-end today, but they are examples — not a requirement. Any client that implements the MCP client spec connects the same way.
+
+---
+
+## How any MCP client connects
+
+There are exactly two connection methods, and every MCP-capable client uses one of them:
+
+1. **Native remote MCP** — for clients that connect to a remote MCP server by URL directly (e.g. Claude Code's `claude mcp add --transport http`).
+2. **The `mcp-remote` bridge** — for clients that only connect to local (stdio) MCP servers; a small community tool bridges them to Conduit's remote endpoint.
+
+Both methods use the same Conduit endpoint (`/v1/mcp`) and the same OAuth 2.1 sign-in. See [Connecting an AI client](/docs/guides/connecting-a-client/) for the step-by-step.
+
+## Client matrix
+
+| Client | Connection method | Status |
+|--------|-------------------|--------|
+| **Claude Code** | Native remote (`claude mcp add --transport http`) | **Documented** — see the connect guide |
+| **Claude Desktop** | `mcp-remote` bridge | **Documented** — see the connect guide |
+| **Microsoft Copilot Studio** | Power Platform custom connector + service-client (API key) auth | **Documented** — see [Connecting Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/) |
+| **Cline** (VS Code) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Continue** (VS Code / JetBrains) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Cursor** | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
+| **Any MCP-spec client** | Native remote or `mcp-remote` | Compatible by protocol |
+
+**What the statuses mean:**
+
+- **Documented** — Conduit has a written, worked connection path for this client (the [connect guide](/docs/guides/connecting-a-client/)).
+- **MCP-spec compatible** — the client implements the MCP client spec, so it connects through the same standard methods and OAuth flow. Conduit doesn't special-case any client; if it speaks MCP, it works. Formal per-client connection walkthroughs for these are being added.
+
+:::note
+This matrix reflects MCP-protocol compatibility, not per-client certification. Because Conduit is MCP-native, support is a property of the protocol, not a per-vendor integration — a new MCP-capable client works on day one without any change to Conduit.
+:::
+
+## What "provider-neutral" means here
+
+- **At the protocol layer** — Conduit passes through each vendor's own MCP tool schemas (JSON-Schema `inputSchema`); it never reshapes them into a specific AI vendor's tool-calling format. Any MCP client reads them natively.
+- **At the auth layer** — connection is standard OAuth 2.1 + PKCE (the MCP authorization spec), not a Claude-specific flow.
+- **What this is not** — Conduit is not a workflow-automation or chaining tool. It is the connection-and-access layer: it gives your AI assistant secure, permissioned access to the MSP tools you already run, and visibility into how they're used. The AI does the thinking; Conduit does the connecting.
+
+## Clients that don't speak MCP natively
+
+Some AI platforms do tool-calling but don't implement the MCP client spec or its OAuth 2.1 + PKCE auth flow. Conduit reaches these through alternative paths:
+
+- **Microsoft Copilot Studio** connects through a Power Platform custom connector marked as `x-ms-agentic-protocol: mcp-streamable-1.0`, authenticated with a Conduit **service client** (machine-to-machine bearer token) instead of OAuth 2.1. The unified `/v1/mcp` endpoint and the per-vendor `/v1/<vendor>/mcp` endpoints both work as connector targets. End-to-end walkthrough: [Connecting Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/).
+- **Apps built directly on a provider's function-calling API** (without an MCP client layer) are not supported out-of-the-box. A per-provider adapter layer is on the roadmap; raise specific needs with your WYRE contact.
+
+## Related
+
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — the step-by-step connect path.
+- [Architecture](/docs/reference/architecture/) — why the gateway is MCP-native and provider-neutral.
+- [Security](/docs/reference/security/) — the OAuth 2.1 + PKCE client-authentication model.

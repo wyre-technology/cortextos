@@ -1,0 +1,120 @@
+---
+layout: '@/layouts/templates/ReferenceTemplate.astro'
+title: Agents
+description: What Conduit agents are, how they differ from raw tool calls, and how to pick the right one for an MSP workflow.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/reference/agents-concepts.mdx on Epic 5 Phase C. Starlight slug-FaqSchema (if any) stripped — FAQ prose still renders. */}
+
+Conduit ships with a library of pre-built **agents** — named,
+opinionated Claude configurations that encode a specific MSP workflow.
+Agents appear in Claude Desktop's prompt picker once your MSP org is
+connected. This page explains the concept; the implementation details
+live in the internal agents reference.
+
+## What an agent is
+
+An agent is a named prompt plus a structured output contract plus a
+curated set of vendor tool calls. When your technician runs an agent,
+Claude already knows:
+
+- **Which tools to call.** The agent names the vendor integrations
+  relevant to the workflow and the order to query them in.
+- **How to interpret the data.** Each agent carries vendor-specific
+  domain knowledge — for example, the ticket-dispatcher agent
+  knows that Autotask Priority 4 means *Critical* and Priority 1
+  means *Low*.
+- **What to produce.** Every agent declares a specific output format
+  (a dispatch report, a QBR package, a security scorecard) rather
+  than leaving the shape of the answer to the model.
+
+The difference between "ask Claude about backups" and running the
+`backup-health-monitor` agent is the difference between a freestyle
+session and a production report.
+
+## When to use an agent vs. a plain chat
+
+Use an agent when:
+
+- The workflow is repeated regularly (daily triage, weekly reporting,
+  monthly audits).
+- The output has a known structure and consumers downstream (a
+  client, a PSA ticket, an audit package).
+- Multiple connected vendors must be queried in a specific sequence
+  to get a coherent picture.
+
+Stick with a plain chat when:
+
+- The question is exploratory ("what's going on with this one
+  ticket?").
+- The tools involved are a subset of any one agent's scope.
+- You need latitude to pivot mid-conversation.
+
+## Agent categories
+
+Conduit's agent library is organized by the vendor category the agent
+primarily serves, plus a **portfolio** category for agents that span
+multiple vendors.
+
+| Category | Purpose | Example agents |
+|---|---|---|
+| RMM | Fleet health, patch compliance, backup audits | `rmm-health-auditor`, `backup-health-monitor`, `patch-compliance-reporter` |
+| PSA | Ticket dispatch, SLA tracking, contract renewal | `ticket-dispatcher`, `contract-renewal-tracker`, `service-desk-ops` |
+| Documentation | Audit completeness, detect stale runbooks, find orphaned assets | `documentation-auditor`, `runbook-freshness-auditor`, `asset-documentation-linker` |
+| Security | SOC triage, endpoint hardening, threat correlation | `soc-alert-investigator`, `threat-correlation-analyst`, `endpoint-hardening-auditor` |
+| Email security | Threat investigation, policy audits, user risk reports | `email-threat-investigator`, `vap-reporter`, `tenant-policy-auditor` |
+| Incident management | On-call audits, incident command support | `incident-commander`, `on-call-scheduler`, `post-mortem-writer` |
+| CRM / Sales | Pipeline review, quote assembly, margin analysis | `pipeline-health-reporter`, `quote-builder`, `margin-analyzer` |
+| Marketplace | License optimization, renewal calendar | `license-optimizer`, `renewal-calendar`, `license-manager` |
+| Accounting | Billing reconciliation, cash flow analysis | `billing-reconciler`, `cash-flow-analyzer`, `profitability-reporter` |
+| Productivity | Identity audits, license optimization | `identity-auditor`, `license-auditor` |
+| Portfolio | Span multiple vendors; highest-value workflows | `client-360-briefer`, `qbr-prep-agent`, `renewal-risk-analyzer`, `security-posture-scorer` |
+
+For the full per-agent catalog with trigger phrases, example queries,
+and output structure, see the internal implementation reference.
+
+## Portfolio agents
+
+Portfolio agents are the differentiator — they produce outputs no
+single-vendor agent can because they cross-reference three or more
+connected systems. Typical portfolio workflows include:
+
+- **Pre-call briefs** — aggregate PSA, RMM, security, and CRM context
+  for a single customer in one query.
+- **QBR preparation** — assemble a full quarterly review package from
+  PSA, RMM, security, training, and billing data.
+- **Renewal risk** — score every customer's churn risk from SLA
+  performance, engagement, commercial signals, and unresolved
+  technical debt.
+- **Security posture** — a vCISO-style composite score across
+  identity, endpoint, email, training, and documentation signals.
+- **Incident war room** — a live situation report that pulls from
+  every relevant system the moment a P1 is declared.
+
+If you run portfolio agents frequently, connect more vendors. Their
+output quality is directly proportional to how many relevant systems
+are wired up.
+
+## How agents resolve permissions
+
+Agents run in the same permission context as the user triggering
+them. An agent cannot see vendors the user does not have access to,
+and every tool call the agent makes is audit-logged under the user's
+identity. If an agent requests a tool the user's role allowlist
+forbids, Claude sees the denial and adapts its plan.
+
+See the [permissions reference](/docs/reference/permissions/) for the full
+role matrix and tool allowlist model.
+
+## Writing your own agent
+
+MSPs can extend the agent library with custom agents that encode
+workflows specific to their operations. Custom-agent authoring is
+covered in the implementation docs — start with the naming conventions
+and prompt-structure checklist there.
+
+## Related
+
+- [Permissions reference](/docs/reference/permissions/) — how agent
+  authorization resolves.
+- [API reference](/docs/reference/api/) — every agent is also addressable
+  by prompt ID through the MCP prompt listing endpoint.

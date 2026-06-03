@@ -1,0 +1,69 @@
+---
+layout: '@/layouts/templates/ReferenceTemplate.astro'
+title: Vendor Health
+description: How Conduit reports the health of the vendor MCP servers an organization has connected — the four health states and how to read them.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/reference/vendor-health.mdx on Epic 5 Phase C. Starlight slug-FaqSchema (if any) stripped — FAQ prose still renders. */}
+
+Conduit continuously monitors the vendor MCP server containers behind each integration and exposes their health to the organizations that use them. **Vendor Health** lets a customer see, at a glance, whether the vendors their AI agents depend on are up.
+
+For the credential side of vendor connections, see [Vendor Connections](/docs/guides/vendor-connections/).
+
+---
+
+## What it tells you
+
+For each vendor an organization has connected, Vendor Health reports a current **status**, the last time it was checked, the observed latency, and — when something is wrong — an error detail. It answers one question quickly: *"is the tool my agent is about to call actually reachable right now?"*
+
+The view is **org-scoped** — an organization sees only the vendors it has connected, never the global vendor list and never another tenant's vendors.
+
+## The four health states
+
+| Status | Meaning | What it means for tool calls |
+|--------|---------|------------------------------|
+| **healthy** | The vendor container is responding and latency is within the normal threshold. | Tool calls should succeed normally. |
+| **degraded** | The container is responding, but latency is over the threshold, or it has had 1–2 consecutive probe failures (below the hard `down` threshold). | Tool calls may still work but could be slow or intermittently fail. Treat as a warning. |
+| **down** | The container has failed 3 or more consecutive health probes. | Tool calls to this vendor are expected to fail until it recovers. |
+| **unknown** | The vendor has not been probed yet, or no state is available (e.g. shortly after a gateway restart). | No health signal yet — not an error, just no data. |
+
+`degraded` is the amber middle ground: it exists so a slow-but-up vendor is visibly distinct from both fully-healthy and fully-down.
+
+## How it is measured
+
+A background monitor polls each vendor container on a fixed interval (default **60 seconds**) and caches the result. The health view **reads that cache** — it does not live-probe vendors when you open the page. This keeps the view fast and avoids a burst of probes every time someone looks.
+
+Because the data is cached, each vendor entry includes a **`lastChecked`** timestamp. If `lastChecked` is more than a couple of minutes old, the monitor itself may be behind — the timestamp is how you tell a fresh `healthy` from a stale one.
+
+## Accessing vendor health
+
+- **Dashboard** — the vendor health view is part of the connections surface in the Conduit dashboard.
+- **API** — `GET /api/orgs/:orgId/vendor-health` (Auth0 session, member+). Returns the org's connected vendors with the per-vendor object below. See the [API reference](/docs/reference/api/#get-apiorgsorgidvendor-health).
+
+Each vendor entry has this shape:
+
+```json
+{
+  "vendorSlug": "datto-rmm",
+  "displayName": "Datto RMM",
+  "status": "healthy",
+  "lastChecked": "2026-05-17T13:00:00.000Z",
+  "latencyMs": 142,
+  "version": "1.4.0",
+  "errorDetail": null
+}
+```
+
+`errorDetail` is populated only when `status` is `degraded` or `down`.
+
+## What vendor health does *not* cover
+
+- **History / uptime trends.** Vendor Health is **current-state only** — there is no per-vendor uptime percentage, sparkline, or incident history. It answers "is this vendor up *now*", not "what was its uptime last week".
+- **The gateway's own health.** Vendor Health is about the vendor containers Conduit proxies to, not Conduit itself. Conduit's own liveness is the unauthenticated `GET /health` endpoint.
+- **A vendor's upstream API.** A `healthy` status means the vendor's MCP *container* is responding to Conduit. If the vendor's own upstream API is having problems, that surfaces as tool-call errors, not as a `down` health state. See [Vendor Connections § Troubleshooting](/docs/guides/vendor-connections/#troubleshooting-connection-failures).
+
+## Related: the global health endpoints
+
+Two health endpoints exist alongside the tenant-scoped view:
+
+- `GET /health` — unauthenticated **liveness** for the Conduit gateway. Used by uptime monitors. It reports only that the process is up.
+- `GET /health/vendors` — the **global** vendor health across all tenants. This endpoint is **admin-gated** (WYRE-internal) — it is not the tenant surface. Organizations use the org-scoped `vendor-health` endpoint above.
