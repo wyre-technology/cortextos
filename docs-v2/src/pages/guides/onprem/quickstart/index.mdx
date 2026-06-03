@@ -1,0 +1,88 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: On-Prem Gateway — Quickstart
+description: Deploy the WYRE on-prem-gateway in 3 steps. Expose your on-prem MCP capabilities through Conduit without opening any inbound port.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/onprem/quickstart.mdx on Epic 5 Phase D. */}
+
+You can have your on-prem MCP capabilities reachable through Conduit in under 5 minutes. The on-prem-gateway runs as a single Docker container on your infrastructure, dials the WYRE relay over WSS (outbound only — no inbound ports), and exposes whatever MCP capabilities your enrollment token granted.
+
+:::tip[For a security review first]
+If you are reviewing this before deploying (compliance / procurement gate), start with the [Architecture Context](/docs/guides/onprem/architecture). The quickstart below is for MSP ops doing first deploy.
+:::
+
+## Prerequisites
+
+- Docker + Docker Compose installed on your on-prem host.
+- A **WYRE-issued enrollment token** — short-TTL JWT (default 5 minutes from issuance). Your WYRE ops contact mints it via the admin API; the customer portal UI is post-launch follow-up.
+
+## 3-step deploy
+
+### 1. Create the compose file
+
+Save this as `docker-compose.yml`. The image is pinned to a specific `@sha256:...` digest — the supply-chain verification gate. Do **not** change it to `:latest`. The current digest is always published in the [latest GitHub release notes](https://github.com/wyre-technology/conduit/releases/latest); the value below is the latest at time of writing.
+
+```yaml
+services:
+  onprem-gateway:
+    image: ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:ee80a6305df168e53a6e7c41b949bdacada021dd29a11b73c53c625e5e1e84d4
+    restart: unless-stopped
+    env_file:
+      - .env
+    # NO `ports:` clause — the gateway is outbound-only (assertNoInbound enforces zero LAN-listening).
+```
+
+### 2. Configure your env file
+
+Create a `.env` file next to the compose file with your three required vars:
+
+```
+RELAY_URL=wss://relay.wyre.ai
+ENROLLMENT_TOKEN=<paste-the-JWT-your-WYRE-ops-contact-gave-you>
+CAPABILITIES=echo
+```
+
+Then make sure it is gitignored so the token never lands in source control:
+
+```bash
+echo ".env" >> .gitignore   # CRITICAL — do not commit your enrollment token
+```
+
+:::caution[Customer-side secret handling]
+- Do **not** commit `.env` to source control (gitignore it).
+- Do **not** `echo $ENROLLMENT_TOKEN` — shell history is its own leak vector.
+- The token is a bearer credential only until the WSS session takes over (live socket = identity post-enrollment).
+:::
+
+### 3. Bring it up
+
+```bash
+docker compose up -d
+docker compose logs -f onprem-gateway
+```
+
+You should see:
+
+```
+on-prem-gateway ready: dialing wss://relay.wyre.ai with capabilities=[echo]
+```
+
+That's it. The tunnel is live; your capabilities are now reachable from `/v1/mcp` against `<your-vendor-slug>__<tool-name>` for any authenticated client whose org has access.
+
+## Verifying the image (optional but recommended)
+
+The on-prem-gateway image is signed via **cosign keyless GHA OIDC**. To verify the image you pulled matches what WYRE published:
+
+```bash
+cosign verify ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:<digest> \
+  --certificate-identity-regexp 'https://github.com/wyre-technology/conduit/.github/workflows/release-onprem-gateway.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A successful verify confirms the image was built by WYRE's published release workflow. See [Architecture Context — Image Verification](/docs/guides/onprem/architecture#image-verification) for what this proves.
+
+## Next steps
+
+- **Full env-var contract:** [Reference](/docs/guides/onprem/reference)
+- **Something not working:** [Troubleshooting](/docs/guides/onprem/troubleshooting) — error messages are listed verbatim as section headings so you can search-key directly.
+- **Security review / compliance audit:** [Architecture Context](/docs/guides/onprem/architecture)

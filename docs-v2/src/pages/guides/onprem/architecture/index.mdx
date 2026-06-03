@@ -1,0 +1,144 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: On-Prem Gateway — Architecture Context
+description: Architecture, data-flow, security-spine, and credential-isolation guarantees for the WYRE on-prem-gateway. Written for security and compliance review before deployment.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/onprem/architecture.mdx on Epic 5 Phase D. */}
+
+This doc is for the **security / compliance review** that gates many MSP deployments. If you're doing first-deploy, you want the [Quickstart](/docs/guides/onprem/quickstart). This page exists because procurement / CISO reviews need to understand what the on-prem-gateway *is* before approving deploy.
+
+## What this thing does
+
+The on-prem-gateway is a single Docker container an MSP deploys on their own infrastructure that:
+
+1. **Dials WYRE's relay** (outbound `wss://`) — never accepts inbound connections.
+2. **Authenticates as the MSP's subtenant** via a short-TTL signed JWT (per-tunnel identity bound in the token).
+3. **Routes incoming MCP requests** from authorized Conduit clients to the MSP's on-prem MCP capabilities (e.g. on-prem AD, SQL, Datto-RMM, ERP).
+4. **Returns responses back through the same WSS** to the calling client.
+
+## Data flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│   YOUR ON-PREM NETWORK                                          │
+│                                                                 │
+│   ┌──────────────────────┐         ┌──────────────────────┐    │
+│   │ on-prem-gateway      │ ──────► │ Your local MCP       │    │
+│   │ container            │  local  │ server (e.g. SQL,    │    │
+│   │ (no inbound port)    │         │ AD, Datto)           │    │
+│   └──────────┬───────────┘         └──────────────────────┘    │
+│              │                                                  │
+│              │  wss://  (outbound only)                         │
+└──────────────┼──────────────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│   WYRE CLOUD                                                     │
+│                                                                  │
+│   ┌────────────────┐    ┌──────────────┐    ┌────────────────┐  │
+│   │ Relay          │ ◄─ │ Conduit      │ ◄─ │ Authenticated  │  │
+│   │ (terminates    │    │ gateway      │    │ /v1/mcp client │  │
+│   │ WSS, holds     │    │ (RLS, audit, │    │                │  │
+│   │ sockets)       │    │ allowlists)  │    │                │  │
+│   └────────────────┘    └──────────────┘    └────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Security spine — six load-bearing properties
+
+These are the load-bearing invariants the on-prem-gateway depends on. Each is enforced *in code at boot*, not by-convention.
+
+### 1. No inbound listener (assertNoInbound)
+
+The container binds **zero** LAN-listening sockets. Refuses to boot if any unaccounted listener is detected. The WSS dial-out is the only ingress; this eliminates the "we opened a new attack surface on the customer network" failure class structurally.
+
+### 2. Must-use-wss (assertSecureRelayUrl)
+
+The `RELAY_URL` env var MUST be `wss://`. Plain non-TLS `ws`, `http://`, `https://` are all rejected at boot. No silent fallback to a non-TLS WS connection.
+
+### 3. Per-tunnel identity bound in signed JWT
+
+The enrollment token's `subtenant` claim is what the relay authenticates against. A tunnel for subtenant A cannot enroll as subtenant B — the binding is in the signed claims, not on the wire. The relay's signature verification (`jose.jwtVerify`) is the security gate; the gateway's structural-validate is UX fail-fast only.
+
+### 4. Capability subset enforced at both ends
+
+The capabilities the gateway claims at register-time MUST be a subset of what the enrollment token granted. The relay rejects over-claims. At send-time, the relay also refuses to dispatch requests for capabilities outside the registered set. Two enforcement points; defense-in-depth.
+
+### 5. Frame parser strict by design
+
+The wire frames between gateway and relay are validated strictly at the parser; unparseable input drops the socket. Trust-boundary discipline at the protocol layer.
+
+### 6. Short-TTL bearer + mTLS supersession at M2
+
+The enrollment token is short-TTL (default 5 min). After the WSS session is up, the live socket IS the identity; leaking the token after enrollment does not compromise the session. M2 Gate A supersedes JWT-via-env entirely with mTLS per-tunnel identity.
+
+## What data flows where
+
+| Direction | Data | Notes |
+|---|---|---|
+| MSP → WYRE (WSS outbound) | Enrollment token (one-shot at register) | Short-TTL; bound to subtenant. |
+| MSP → WYRE (WSS outbound) | MCP response payloads | Whatever your on-prem MCP server returns. |
+| WYRE → MSP (WSS outbound, frame-routed) | MCP request payloads from authorized clients | `tools/call` for capabilities your tunnel registered. |
+| MSP ← Local network | MCP request → local MCP server → response | The on-prem-gateway is a router; it does NOT cache or persist payloads. |
+
+**The on-prem-gateway does NOT store payloads.** It's a stateless router: request frame in → call local MCP server → response frame out. No payload data persists in the container.
+
+## Credential isolation
+
+For M2 launch (echo-only capability), no real customer credentials flow through the on-prem-gateway. The container's only credential is the enrollment token (env var, short-TTL, bound to subtenant).
+
+For M2 post-launch (real per-vendor MCP servers), per-vendor credentials live on the **MSP's side** — the on-prem-gateway connects to local MCP servers that hold their own creds; the gateway never sees vendor credentials in plaintext. The flow is:
+
+```
+Client → Conduit (auth + RLS) → relay → on-prem-gateway → local MCP server (uses local creds)
+```
+
+WYRE never sees the MSP's vendor credentials.
+
+## Image verification
+
+The container image is signed via **cosign keyless GHA OIDC** (sigstore Fulcio). The release workflow signs each release by digest; the customer-facing compose file pins by digest (NOT `:latest`).
+
+Verify command (also in [Quickstart](/docs/guides/onprem/quickstart#verifying-the-image-optional-but-recommended)):
+
+```bash
+cosign verify ghcr.io/wyre-technology/conduit-onprem-gateway@sha256:<digest> \
+  --certificate-identity-regexp 'https://github.com/wyre-technology/conduit/.github/workflows/release-onprem-gateway.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A successful verify confirms the image was built by the canonical WYRE release workflow + the digest matches what we published. A failed verify means **do NOT deploy** — the image is not from WYRE's published pipeline.
+
+Three layers of supply-chain verification:
+
+1. **Build provenance attestation** (free via GitHub Actions Docker build).
+2. **Cosign keyless signature** by digest (verify command above).
+3. **Customer-side digest pinning** in compose (`@sha256:...`, never `:latest`).
+
+## Audit logging
+
+The on-prem-gateway path is audited on the WYRE side:
+
+- **`request_log`** (customer-visible Audit Log tab): collapsed status (a `404` for both "no tunnel" and "capability not granted" — preserves no-topology-leak for the customer).
+- **`admin_audit_log`** (operator-only, NEVER customer-visible): precise relay-return-reason (`capability_not_granted` vs `tunnel_offline` vs `tunnel_timeout` etc).
+
+The split is deliberate: customers cannot enumerate "which capabilities does subtenant X expose" via error codes; WYRE operators see the precise reason for debugging.
+
+## Deferred — what the M2 launch does NOT cover
+
+These are scoped as follow-up work post-launch:
+
+- **M2 Gate A — mTLS supersedes JWT.** Per-tunnel certificate identity replaces the env-var-delivered JWT entirely. Pre-M2-real-MCP requirement.
+- **M2 Gate B — closed-command-set live ruling.** The relay's closed-command-set posture against a real MCP-server threat model. Pre-M2-real-MCP requirement.
+- **Real per-vendor MCP server integrations** (Datto, Autotask, AD, SQL, etc.) — per-vendor work post-launch.
+- **Customer portal UI for enrollment-token minting** — currently mints via admin API endpoint (your WYRE ops contact uses curl); UI is post-launch.
+
+## Questions for a security review
+
+If your security review needs more detail, contact WYRE engineering with:
+
+- Specific threat-model questions (what's WYRE's threat model for the relay infrastructure).
+- Specific compliance frameworks (SOC 2, ISO 27001, etc.) — we can provide attestations on the WYRE-managed half.
+- Penetration-test reports — available under NDA.
+
+The on-prem-gateway source is open in [conduit](https://github.com/wyre-technology/conduit) under `src/onprem/`; everything documented here is verifiable from source.
