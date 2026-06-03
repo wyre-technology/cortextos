@@ -1,20 +1,162 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
+import FAQSchema from '@/components/schema/FAQSchema.astro';
+
+const baseUrl = import.meta.env.BASE_URL;
+
+// Conduit-adapted FAQ. Targets the MSP evaluator, not the OSS-plugin
+// consumer (which is the gateway audience). Answers are kept short
+// enough to be useful as featured snippets AND to render legibly inline.
+const faqs = [
+  {
+    question: 'What is Conduit?',
+    answer:
+      "Conduit is a white-label MCP gateway for MSPs. You stand up a branded, multi-tenant control plane that lets each customer's AI agents reach the vendor MCP servers — RMM, PSA, documentation, security, billing — those customers already rely on, with per-customer permissions and an audit trail.",
+  },
+  {
+    question: 'Who is Conduit for?',
+    answer:
+      'Managed Service Providers and IT consultancies that want to offer their customers AI capabilities without giving up the trusted-intermediary position. If your customers already trust you with their stack, Conduit lets you extend that trust to their AI agents — branded as you, controlled by you.',
+  },
+  {
+    question: 'How is Conduit different from running an MCP server yourself?',
+    answer:
+      "A self-hosted MCP server connects one client to one vendor. Conduit is a multi-tenant gateway: one deployment serves many customers, each with their own isolated credentials, permissions, and audit log. It also brokers across many vendor MCP servers so a customer's agent sees one endpoint, not N.",
+  },
+  {
+    question: 'Which vendor MCP servers does Conduit support?',
+    answer:
+      "Conduit is designed around the open Model Context Protocol, so any MCP-compliant server can be reached through it. Out of the box the WYRE MCP catalog includes the most common MSP-stack vendors across PSA, RMM, documentation, security, and accounting; coverage is expanding.",
+  },
+  {
+    question: 'Does Conduit replace my PSA or RMM?',
+    answer:
+      "No. Conduit doesn't replace tools — it gives your customers' AI agents a permissioned way to talk to the tools you've already chosen. Your PSA stays your PSA, your RMM stays your RMM. Conduit is the auditable seam between them and AI.",
+  },
+  {
+    question: 'How does Conduit handle customer data?',
+    answer:
+      'Each customer gets isolated credentials, scope-restricted tokens, and an audit log of every tool call the AI made on their behalf. Authentication is OAuth 2.1 with PKCE. You decide which tools each customer can reach, and you can revoke any binding at any time.',
+  },
+  {
+    question: 'Is Conduit open standards?',
+    answer:
+      'Yes. Conduit speaks the Model Context Protocol — an open standard adopted across the AI ecosystem. Customers are not locked into a proprietary AI client; any MCP-compliant AI assistant can connect through their conduit endpoint.',
+  },
+];
 ---
 
-<BaseLayout title="Conduit Docs" noindex={true}>
-  <section class="container py-16">
-    <h1 class="text-4xl mb-4">Conduit Docs — v2 scaffold</h1>
-    <p class="text-[var(--muted)] max-w-2xl mb-6">
-      This is the parallel-build scaffold for the Path B migration off Starlight.
-      The header above and footer below are ported from the gateway docs
-      (<a href="https://mcp.wyretechnology.com" class="text-accent underline">mcp.wyretechnology.com</a>)
-      for brand parity. Content migration begins with later epics.
-    </p>
-    <p class="text-[var(--muted)] text-sm">
-      Tracker: <a href="https://linear.app/wyre-ai/issue/WYREAI-101/" class="text-accent underline">WYREAI-101</a>
-      &nbsp;·&nbsp;
-      Epic 1: <a href="https://linear.app/wyre-ai/issue/WYREAI-102/" class="text-accent underline">WYREAI-102</a>
-    </p>
+<BaseLayout
+  title="Conduit — white-label MCP gateway for MSPs"
+  description="Give your MSP customers a branded AI gateway to the vendor MCP servers their agents already need. Per-customer isolation, permissioned tool calls, full audit trail. Built on the open Model Context Protocol."
+>
+  <FAQSchema faqs={faqs} />
+
+  <!-- Hero -->
+  <section class="relative py-20 lg:py-32 bg-gradient-to-b from-cyan-50 to-transparent dark:from-cyan-950/20">
+    <div class="container text-center">
+      <p class="text-sm font-semibold uppercase tracking-wider text-accent mb-3">
+        White-label MCP gateway
+      </p>
+      <h1 class="text-4xl lg:text-6xl font-bold mb-6 tracking-tight">
+        Give your customers a branded gateway<br class="hidden md:inline" /> to every AI tool they need.
+      </h1>
+      <p class="text-xl lg:text-2xl text-[var(--muted)] max-w-3xl mx-auto mb-10">
+        Conduit is the MSP-grade gateway between your customers' AI agents and the vendor tools — PSA, RMM, documentation, security — those customers already rely on. Multi-tenant, permissioned, auditable, on your brand.
+      </p>
+      <div class="flex flex-wrap justify-center gap-3">
+        <a href={`${baseUrl}getting-started/`} class="btn btn-primary">Get started</a>
+        <a href="mailto:hello@wyre.ai?subject=Conduit%20for%20our%20MSP" class="btn btn-secondary">Talk to us</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- What customers get -->
+  <section class="py-20">
+    <div class="container">
+      <div class="max-w-3xl mx-auto text-center mb-12">
+        <h2 class="text-3xl font-bold mb-4">What your customers get</h2>
+        <p class="text-[var(--muted)] text-lg">
+          One branded endpoint per customer, with the AI-facing controls you'd expect from a tool you put your name on.
+        </p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div class="text-center">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10 text-accent mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Branded as you</h3>
+          <p class="text-sm text-[var(--muted)]">
+            Your name on the endpoint, your colors in the consent flow, your support contact in the audit emails.
+          </p>
+        </div>
+
+        <div class="text-center">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10 text-accent mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Per-customer isolation</h3>
+          <p class="text-sm text-[var(--muted)]">
+            Each customer's credentials, tokens, and audit log are walled off. One customer cannot see another's data — or even know they exist.
+          </p>
+        </div>
+
+        <div class="text-center">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10 text-accent mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Permissioned tool calls</h3>
+          <p class="text-sm text-[var(--muted)]">
+            You decide which tools each customer's AI can reach. Read-only by default; write scopes opt-in per customer per tool.
+          </p>
+        </div>
+
+        <div class="text-center">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10 text-accent mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2a4 4 0 014-4h4M5 7h14M5 7a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M9 17H5a2 2 0 00-2 2v1a2 2 0 002 2h14a2 2 0 002-2v-1a2 2 0 00-2-2h-4"/></svg>
+          </div>
+          <h3 class="font-semibold mb-2">Open standard</h3>
+          <p class="text-sm text-[var(--muted)]">
+            Built on the Model Context Protocol. Your customers' AI is theirs — any MCP-speaking assistant works against their endpoint.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="py-20 bg-neutral-50 dark:bg-neutral-900/50">
+    <div class="container">
+      <div class="max-w-3xl mx-auto">
+        <h2 class="text-3xl font-bold mb-4 text-center">Frequently asked questions</h2>
+        <p class="text-[var(--muted)] text-center mb-10">
+          The short answers. Deeper guides live in the <a href={`${baseUrl}getting-started/`} class="text-accent underline">documentation</a>.
+        </p>
+        <dl class="space-y-6">
+          {faqs.map((faq) => (
+            <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-6">
+              <dt class="font-semibold mb-2">{faq.question}</dt>
+              <dd class="text-[var(--muted)]">{faq.answer}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="py-20">
+    <div class="container">
+      <div class="max-w-3xl mx-auto text-center border border-[var(--border)] rounded-xl p-10 bg-gradient-to-b from-cyan-50/40 to-transparent dark:from-cyan-950/10">
+        <h2 class="text-2xl font-bold mb-4">Ready to give your customers a branded AI gateway?</h2>
+        <p class="text-[var(--muted)] mb-8 max-w-xl mx-auto">
+          Start with the getting-started guide, or talk to us about a deployment shaped to your MSP.
+        </p>
+        <div class="flex flex-wrap justify-center gap-3">
+          <a href={`${baseUrl}getting-started/`} class="btn btn-primary">Get started</a>
+          <a href="mailto:hello@wyre.ai?subject=Conduit%20for%20our%20MSP" class="btn btn-secondary">Talk to us</a>
+        </div>
+      </div>
+    </div>
   </section>
 </BaseLayout>

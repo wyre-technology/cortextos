@@ -1,0 +1,30 @@
+---
+// Source-of-design-truth (verbatim port):
+// wyre-technology/msp-claude-plugins/docs/src/components/schema/FAQSchema.astro
+// Mirror future updates to the gateway component here.
+
+interface FAQ {
+  question: string;
+  answer: string;
+}
+
+interface Props {
+  faqs: FAQ[];
+}
+
+const { faqs } = Astro.props;
+
+const schema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((faq) => ({
+    '@type': 'Question',
+    name: faq.question,
+    acceptedAnswer: {
+      '@type': 'Answer',
+      text: faq.answer,
+    },
+  })),
+};
+---
+<script type="application/ld+json" set:html={JSON.stringify(schema)} />
