@@ -1,0 +1,55 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Monitoring Your Tenant
+description: The three surfaces Conduit gives an organization to monitor its own usage — the usage dashboard, vendor health, and the audit log.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/monitoring.mdx on Epic 5 Phase B. */}
+
+Conduit gives every organization three surfaces for keeping an eye on its own tenant: a **usage dashboard**, a **vendor health** view, and an **audit log**. Each answers a different question. This guide explains what each one is for and points to the deeper reference.
+
+Everything here is **org-scoped** — an organization only ever sees its own data. Platform-wide observability across all tenants is a WYRE-internal surface and is not part of the customer product.
+
+---
+
+## Usage dashboard
+
+**Answers:** *"How much are my AI agents using Conduit, and on what?"*
+
+The usage dashboard (**`/org/dashboard`** in the Conduit web app) aggregates tool-call activity for your organization over a date range:
+
+- **Totals** — total tool calls, unique users, average response time.
+- **Breakdowns** — calls by vendor, by user, by day, and by source (MCP vs. CLI wrapper).
+- **Per-vendor detail** — for each vendor, its call volume, unique users, average latency, and top 5 tools.
+- **Estimated savings** — an estimate of the tokens and cost saved by routing calls through the [CLI wrapper](/docs/reference/cli/) instead of raw MCP. These figures are a heuristic estimate, not a metered measurement.
+
+**Access:** the dashboard requires a **paid plan** (Pro or Business) and an **admin** or **owner** role. The underlying endpoints are documented under [API § Usage Dashboard](/docs/reference/api/#usage-dashboard).
+
+## Vendor health
+
+**Answers:** *"Are the vendor tools my agents depend on actually up right now?"*
+
+The vendor health view reports the current status of each vendor MCP server your organization has connected — `healthy`, `degraded`, `down`, or `unknown` — along with last-checked time and latency.
+
+It is **current-state only**: there is no uptime history or sparkline. For the four health states, how they are measured, and what a `down` vendor means for tool calls, see the [Vendor Health reference](/docs/reference/vendor-health/).
+
+## Audit log
+
+**Answers:** *"Which tools were used, by whom, and when?"*
+
+The audit log (**`/org/audit`**) records metadata for every MCP tool call — user, vendor, tool, status, latency, timestamp. A separate **admin audit log** records administrative actions (member changes, credential updates, allowlist edits).
+
+Two things to know before you rely on it:
+
+- **It is metadata only.** Conduit never logs prompts, tool arguments, or tool results. See [Prompt Capture & Privacy](/docs/reference/prompt-capture/) for the exact privacy boundary.
+- **Access is gated** by plan (paid), role (`admin`/`owner`), and org scope. CSV export is a Business-tier feature. Entries are auto-purged after 90 days — for longer retention, configure [log shipping](/docs/guides/msp-onboarding/) to a SIEM.
+
+The audit log API is documented under [API § Audit](/docs/reference/api/#audit).
+
+## Which surface for which question
+
+| Question | Surface |
+|----------|---------|
+| How much usage, and on what? | Usage dashboard |
+| Is a vendor up right now? | Vendor health |
+| Who used which tool, when? | Audit log |
+| Is Conduit itself up? | The unauthenticated `GET /health` liveness endpoint — see [Vendor Health § Related](/docs/reference/vendor-health/). |

@@ -1,0 +1,59 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: White-label setup
+description: How Conduit's white-label branding is configured today — deployment-level environment variables that theme the customer-facing surfaces.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/white-label-setup.mdx on Epic 5 Phase B. */}
+
+Conduit can be presented under a custom brand: the name, logo, colors, and fonts customers see on the landing, sign-in, and consent surfaces are configurable.
+
+This guide describes how white-label branding works **today**. It is honest about the current shape of the feature: branding is configured at the **deployment level**, by whoever operates the Conduit deployment — there is not yet a self-service branding UI or API.
+
+:::note[Current state]
+Per-organization, self-service white-label — each MSP or customer setting its own brand from the dashboard — is designed (the `brand_profiles` data model exists, migration `008`) but **not yet wired up**. Until it ships, use the deployment-level configuration below. This page will be updated when self-service branding lands.
+:::
+
+---
+
+## What branding controls
+
+The brand themes Conduit's customer-facing surfaces — the landing page, the Auth0 sign-in and consent screens, and the vendor-connection pages. It sets the product name, tagline, logo, color palette, fonts, and corner radius shown there.
+
+## Deployment-level brand
+
+The brand is set with environment variables on the Conduit deployment. Each variable has a default; unset variables fall back to the Wyre defaults.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `BRAND_NAME` | Product / company name shown in the UI | `Wyre Technology` |
+| `BRAND_TAGLINE` | Short tagline in meta descriptions | `Customer MCP Gateway` |
+| `BRAND_LOGO_URL` | URL to the logo image | Wyre logo |
+| `BRAND_SUPPORT_URL` | Support / help URL | *(empty)* |
+| `BRAND_DOCS_URL` | Documentation URL | `/` |
+| `BRAND_ISSUES_URL` | URL for filing bug reports | Wyre repo issues |
+| `BRAND_PRIMARY_COLOR` | Primary accent color (hex) | `#EDE947` |
+| `BRAND_ACCENT_COLOR` | Secondary accent color (hex) | `#00C9DB` |
+| `BRAND_HEADING_FONT` | Heading font family (Google Fonts) | `Oswald` |
+| `BRAND_BODY_FONT` | Body font family (Google Fonts) | `Nunito Sans` |
+| `BRAND_BORDER_RADIUS` | Global border-radius | `2px` |
+| `BRAND_DOMAIN` | Public domain | derived from `BASE_URL` |
+
+Set these in the deployment's environment and restart the gateway; the new brand applies on the next page render.
+
+## Per-customer brand variants
+
+A single deployment can also serve more than one brand. Conduit keeps a registry of customer brand variants keyed by URL path prefix (`src/brand/customers.ts`) — each entry produces a fully branded landing and sign-in experience at `/<key>`. This registry is a code-level configuration maintained by the deployment operator; it is the mechanism behind multi-brand deployments today, not a self-service feature.
+
+## Message templates
+
+Conduit's docs include four customer-facing message templates you can adapt as reference copy for your own onboarding and notification emails:
+
+- [Onboarding email](/docs/templates/onboarding-email/)
+- [OAuth consent](/docs/templates/oauth-consent/)
+- [Revocation notice](/docs/templates/revocation-notice/)
+- [Security notice](/docs/templates/security-notice/)
+
+## Related
+
+- [Getting Started](/docs/getting-started/) — where branding fits in the onboarding flow.
+- [Architecture](/docs/reference/architecture/) — how the deployment is configured.

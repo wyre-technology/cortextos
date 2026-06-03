@@ -1,0 +1,171 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Connecting Microsoft Copilot Studio
+description: How to connect a Microsoft Copilot Studio agent to your Conduit gateway through a Power Platform custom connector. Uses the gateway's service-client (M2M) auth path instead of the standard OAuth flow used by MCP-native clients.
+---
+{/* Content ported verbatim from conduit/docs/src/content/docs/guides/connecting-copilot-studio.mdx on Epic 5 Phase B. The Starlight FaqSchema (slug-based data-file lookup) was stripped; FAQ prose still renders as H3s for readers. Re-adding FAQPage JSON-LD via the docs-v2 FAQSchema component (inline faqs= array) is a deferred follow-up — non-blocking for the migration. */}
+
+
+Microsoft Copilot Studio supports MCP servers, but it does not connect to them the same way an MCP-native client (Claude Desktop, Claude Code, Cursor, etc.) does. Copilot Studio reaches a remote MCP server through a **Power Platform custom connector**, and Power Platform's "Generic OAuth 2.0" connector type does not implement MCP's OAuth 2.1 + PKCE flow. That means the standard sign-in path documented in [Connecting an AI client](/docs/guides/connecting-a-client/) doesn't apply here.
+
+Instead, Copilot Studio connects to Conduit using a **service client** — a long-lived machine-to-machine credential issued by your organization. This guide walks the end-to-end setup.
+
+You do not install Conduit. You configure a Power Platform custom connector that points at your organization's Conduit endpoint, attach it to a Copilot Studio agent, and authorize a connection once per end user.
+
+## Before you start
+
+You need:
+
+- **A Conduit account on the Business plan.** Service clients are a Business-tier feature. Your MSP can confirm your plan.
+- **Org-admin role on Conduit.** Required to mint a service client.
+- **A Microsoft Power Platform environment** with maker rights, and access to Copilot Studio (`copilotstudio.microsoft.com`) in that environment.
+- **Your Conduit MCP endpoint URL** — `https://<your-conduit-host>/v1/mcp`. Your MSP provides the host. The `/v1/mcp` endpoint is the unified endpoint: it exposes every vendor your organization has connected, behind one URL.
+
+## Step 1 — Mint a service client on Conduit
+
+Sign in to your Conduit dashboard and open **Org settings → Service clients**. Click **Create**, give the client a recognizable name (for example, `Copilot Studio Test`), and click **Create**.
+
+The dashboard shows the **client ID** (`svc_…`) and the **client secret** exactly once. Copy both immediately — the secret is hashed at rest and cannot be retrieved later. If you lose it, revoke the client and mint a new one.
+
+:::caution
+Treat the service client secret like a password. Anyone holding it can call your organization's tools as that client. Revoke from the same screen at any time.
+:::
+
+## Step 2 — Build the Power Apps custom connector
+
+Open **`make.powerapps.com`** in the target environment → **Custom connectors** → **+ New custom connector** → **Create from blank**. Name it `WYRE MCP Gateway` (or your branded equivalent).
+
+On the **General** tab:
+
+- **Scheme:** HTTPS
+- **Host:** `<your-conduit-host>` (e.g. `mcp.wyre.ai`)
+- **Base URL:** `/`
+
+On the **Definition** tab, add a single **POST** operation:
+
+- **Summary / operation ID:** `InvokeMCP`
+- **URL:** `/v1/mcp`
+- Add the Microsoft MCP extension to the operation: switch to the **Swagger editor** toggle and set `x-ms-agentic-protocol: mcp-streamable-1.0` on the operation. This tells Copilot Studio to treat the endpoint as an MCP server (negotiate `initialize` / `tools/list` / `tools/call` dynamically).
+
+On the **Security** tab:
+
+| Field | Value |
+|---|---|
+| Authentication type | **API Key** |
+| Parameter label | `Bearer token` |
+| Parameter name | `Authorization` |
+| Parameter location | **Header** |
+
+Click **Create connector** at the top right.
+
+:::note
+Power Platform's "Generic OAuth 2.0" identity provider is hardcoded to authorization-code flow and does not send PKCE, so connecting through OAuth fails Conduit's PKCE requirement. The API Key path above sidesteps that and uses the service-client bearer directly.
+:::
+
+## Step 3 — Mint a bearer token and create a connection
+
+The custom connector needs a bearer token to put in the `Authorization` header. Conduit's token endpoint issues one via `client_credentials` against your service client.
+
+From any terminal:
+
+```bash
+curl -sS -X POST https://<your-conduit-host>/oauth/token \
+  -u '<service-client-id>:<service-client-secret>' \
+  -d 'grant_type=client_credentials'
+```
+
+The response is JSON containing an `access_token`. Tokens are valid for **one hour**; you'll mint a fresh one when it expires.
+
+Back in `make.powerapps.com`:
+
+1. Open the connector you just created → **Test** tab → **+ New connection**.
+2. In the **Bearer token** field, paste **`Bearer <access_token>`** — including the literal word `Bearer` and the space.
+3. Click **Create**. The connection status flips to **Connected**.
+
+Smoke-test the connection from the **Test** tab → operation `InvokeMCP` → request body:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+```
+
+Click **Test operation**. A successful response is HTTP 200 with a JSON body containing a `result.tools` array — your organization's connected vendor tools.
+
+## Step 4 — Add the connector to a Copilot Studio agent
+
+Open **`copilotstudio.microsoft.com`** in the same environment, open (or create) your agent, and on the **Overview** tab scroll to **Tools** → **+ Add a tool**.
+
+In the picker, search for your connector name (e.g. `WYRE MCP Gateway`). Select the action, confirm the connection, and click **Add**. The tool appears under the agent's Tools section labeled **Model Context Protocol**.
+
+### Per-end-user consent (first invocation)
+
+The first time an end user asks the agent to use a gateway tool, Copilot Studio will reply with **"Let's get you connected first"** and a link to the connection manager. The user clicks the link, selects the existing Connection, and submits. This is a one-time consent step per end user, separate from the maker-side connection you created in Step 3.
+
+After consent, retry the request. The agent picks the right MCP tool, the gateway proxies it to the vendor, and the response comes back inline.
+
+## Important limits and considerations
+
+### Copilot Studio caps tools at 70 per MCP server, per agent
+
+When Copilot Studio calls `tools/list` against an MCP server, it applies a hard cap of **70 tools per server, per agent**. If your gateway surfaces more than 70 tools (the unified `/v1/mcp` endpoint exposes every connected vendor's tools), only the first 70 are visible to the agent's tool-selection pass. Copilot Studio surfaces this in the trace panel as `reasonCode: "LimitTools"`.
+
+If you need access to more tools from one agent, the cleanest pattern is **per-vendor connectors** pointing at the gateway's per-vendor endpoint:
+
+```
+/v1/<vendor>/mcp
+```
+
+For example, point one connector at `/v1/autotask/mcp` and another at `/v1/halopsa/mcp`. Each vendor MCP surface is comfortably under 70 tools, and Copilot Studio sees both connectors as separate MCP servers with separate 70-tool budgets. Alternatively, shard responsibilities across multiple agents.
+
+### Tokens expire every hour
+
+Service-client bearer tokens are valid for **3600 seconds**. Power Platform stores the token verbatim in the connection record and does not automatically refresh it. When the token expires, every invocation through that connection returns HTTP 401 until the connection is updated with a fresh bearer.
+
+For **testing** this is fine — mint a new token with the same `curl` and update the connection. For **production**, plan one of:
+
+- A scheduled job that mints a token and updates the Power Platform connection (via the Dataverse API) before each expiry.
+- A separate token-broker service that issues longer-lived tokens, fronted by your own auth layer.
+- Working with WYRE to enable a future confidential-client OAuth path in the gateway that Power Platform's generic OAuth 2.0 can drive natively.
+
+### The service-client secret is per-organization
+
+A service client is scoped to the org that created it. Tokens minted with it carry that org's identity (`sub: svc:<org-id>:<client-id>`) and surface only that org's connected vendors. You cannot share one service client across organizations.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Connection creation fails with **400 invalid_client** | Wrong client ID or secret. Re-paste from the dashboard; if lost, revoke and mint again. |
+| `tools/list` returns **401 Unauthorized** | The bearer token expired (>1h since mint). Re-run the `curl`, update the connection with the new `Bearer <token>`. |
+| Agent says **"Let's get you connected first"** every turn | Per-end-user consent wasn't completed. Open the linked connection manager, pick the connection, submit. |
+| Agent only sees a subset of expected tools | The 70-tool cap is in effect. Switch to per-vendor connectors at `/v1/<vendor>/mcp`. |
+| Connector creation rejects the OpenAPI | Make sure the operation has `x-ms-agentic-protocol: mcp-streamable-1.0` (Swagger editor toggle) and the spec is **Swagger 2.0**, not OpenAPI 3. |
+| Tool call returns a permissions error from a vendor | The service client inherits the org's vendor configuration. Confirm the vendor is connected on Conduit and reachable from the gateway. |
+
+## Frequently asked questions
+
+### Can I use OAuth 2.1 + PKCE like Claude does?
+
+Not through Power Platform's Generic OAuth 2.0 today. Copilot Studio's custom-connector framework does not send PKCE, so Conduit's authorization endpoint rejects the request. The service-client (API Key) path is the supported route.
+
+### Why is the auth a "Bearer token" pasted into an API Key field?
+
+Power Platform's API Key auth type lets the connector author choose any header. We use `Authorization: Bearer <token>` so the gateway treats it as a standard MCP bearer. Functionally it is an OAuth 2.0 client-credentials access token — the connector framework just doesn't refresh it automatically.
+
+### Do I need a separate service client per agent?
+
+No. One service client can back as many connectors as you want — including per-vendor connectors. Choose per-agent or per-vendor scoping based on how you want to revoke independently.
+
+### Can end users see other end users' tool calls?
+
+No. Each invocation runs under the service-client identity on Conduit's side, but Power Platform records the end user who initiated the invocation. Conduit's audit log shows the service-client subject; Copilot Studio's audit log shows the end user. The two together are the audit trail.
+
+### Will this work for an agent published to Teams / a website?
+
+Yes — once the connector is wired and tested in the maker portal, publishing the agent to any Copilot Studio channel carries the connector with it. Each end user completes the one-time per-end-user consent the first time they invoke a gateway tool.
+
+## Related
+
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — the OAuth path for MCP-native clients (Claude Desktop, Claude Code, Cursor, etc.).
+- [Supported clients](/docs/reference/supported-clients/) — the full client compatibility matrix.
+- [Architecture](/docs/reference/architecture/) — why Conduit is MCP-native and how non-MCP clients are bridged.
+- [Security](/docs/reference/security/) — auth model details, including the service-client primitive.
