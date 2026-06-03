@@ -19,14 +19,27 @@
 
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
-import { auth0Plugin } from './auth0.js';
+import { auth0Plugin, type Auth0PluginDeps } from './auth0.js';
 import { azureAdPlugin } from './azure-ad.js';
 import { adminConsentPlugin } from './admin-consent.js';
 import { decodeSessionCookie } from '../lib/session-cookie.js';
 
 const SESSION_COOKIE = 'gateway_session';
 
-export async function registerAuthPlugin(app: FastifyInstance): Promise<void> {
+/**
+ * Deps threaded to the Auth0 plugin for WYREAI-113 Funnel A signup-completion.
+ * BOTH-OR-NEITHER per the auth0 plugin discipline: when either dep on
+ * Auth0PluginDeps is undefined, the callback handler skips the funnel-
+ * completion block and falls through to legacy login.
+ */
+export interface RegisterAuthDeps {
+  auth0?: Auth0PluginDeps;
+}
+
+export async function registerAuthPlugin(
+  app: FastifyInstance,
+  deps: RegisterAuthDeps = {},
+): Promise<void> {
   const hasAuth0Creds = !!(config.auth0Domain && config.auth0ClientId && config.auth0ClientSecret);
   const hasAzureCreds = !!(config.azureClientId && config.azureClientSecret);
 
@@ -47,7 +60,7 @@ export async function registerAuthPlugin(app: FastifyInstance): Promise<void> {
   }
 
   if (enableAuth0) {
-    await app.register(auth0Plugin());
+    await app.register(auth0Plugin(deps.auth0 ?? {}));
   } else {
     // Auth0 isn't registered, so the rest of the gateway needs the
     // decorator + hook to read sessions. Mirrors the Auth0 plugin's logic.

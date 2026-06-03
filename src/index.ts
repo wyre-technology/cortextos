@@ -31,6 +31,7 @@ import { DefaultSeatService } from './billing/seat-service.js';
 import { createConduitSeatSyncer } from './billing/seat-syncer.js';
 import { AuditService } from './audit/audit-service.js';
 import { AdminAuditService } from './audit/admin-audit-service.js';
+import { ConsentService } from './consent/consent-service.js';
 import { oauthRoutes, completeAuthorization } from './oauth/authorization-server.js';
 import { proxyRoutes } from './proxy/router.js';
 import { cliRoutes } from './proxy/cli-router.js';
@@ -275,6 +276,11 @@ const creditService = new CreditService();
 const vendorOAuthStates = new VendorOAuthStateStore(Buffer.from(config.masterKey, 'hex'));
 const auditService = new AuditService();
 const adminAuditService = new AdminAuditService();
+// WYREAI-113 Funnel A signup completion: ConsentService instantiated with
+// adminAuditService injected so org_consent_accepted + user_consent_acknowledged
+// events fire on the binding writes per pearl's PR #306 design (audit-trail
+// side-effect kept atomic with the row insert at the service layer).
+const consentService = new ConsentService({ adminAuditService });
 const toolCache = new ToolCache();
 const dashboardService = new DashboardService();
 
@@ -329,7 +335,9 @@ await runAsSystem(async () => {
   // performs its own CREATE TABLE. Must be registered before the request-
   // context plugin so `request.auth0User` is populated when the request-
   // context onRequest hook reads it.
-  await registerAuthPlugin(app);
+  await registerAuthPlugin(app, {
+    auth0: { orgService, consentService },
+  });
 
   // Request-context plugin — opens a request-path RLS transaction per
   // non-exempt HTTP request. Registered immediately after auth so its

@@ -15,10 +15,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { nanoid } from 'nanoid';
 import * as oidc from 'openid-client';
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { systemPool } from '../db/context.js';
+import { systemPool, runAsSystem } from '../db/context.js';
 import { brand } from '../brand/index.js';
 import { config } from '../config.js';
 import { getRequestBaseUrl } from '../http/base-url.js';
@@ -28,6 +29,24 @@ import { bindShadowUserOnLogin } from '../scim/shadow-binding.js';
 import { findAdoptableUserId } from './adopt-by-email.js';
 import { enrollNewUserInLoops } from '../email/loops.js';
 import { sendWelcomeEmail } from '../email/transactional.js';
+import type { OrgService } from '../org/org-service.js';
+import type { ConsentService } from '../consent/consent-service.js';
+import { CONSENT_TYPE_AI_MSA } from '../consent/consent-service.js';
+
+/**
+ * WYREAI-113 Funnel A signup-completion deps. When both are provided, the
+ * /auth/callback handler completes signup by creating the reseller org +
+ * binding the AI MSA consent from the upstream signup_intents row.
+ *
+ * BOTH-OR-NEITHER discipline: both deps required to enable Funnel A
+ * completion. When either is undefined (e.g. local-dev without consent
+ * boot), the callback skips the WYREAI-113 block and falls through to
+ * the legacy login path (pearl C edge handling).
+ */
+export interface Auth0PluginDeps {
+  orgService?: OrgService;
+  consentService?: ConsentService;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,7 +89,8 @@ declare module 'fastify' {
 // Plugin factory
 // ---------------------------------------------------------------------------
 
-export function auth0Plugin() {
+export function auth0Plugin(deps: Auth0PluginDeps = {}) {
+  const { orgService, consentService } = deps;
   return fp(async function plugin(app: FastifyInstance): Promise<void> {
     // Skip registration if Auth0 is not configured
     if (!config.auth0Domain || !config.auth0ClientId || !config.auth0ClientSecret) {
@@ -375,6 +395,193 @@ export function auth0Plugin() {
         enrollNewUserInLoops(app.log, email, name);
         sendWelcomeEmail(app.log, { to: email, name });
       }
+
+      // ---------------------------------------------------------------
+      // WYREAI-113 — Funnel A signup completion (collapse with WYREAI-112
+      // per OPTION-X routing 2026-06-02). When a matching signup_intent
+      // exists for THIS verified Auth0 email and consent was accepted at
+      // /signup time, complete the funnel by:
+      //   1. Creating the reseller org (OrgService.createOrg, existing service)
+      //   2. Binding the AI MSA consent (ConsentService.recordOrgConsent —
+      //      SHA + size carried verbatim from signup_intents; not re-fetched.
+      //      Reference-implementation: PR #306 paired-canary + SHA-at-click
+      //      cryptographic-evidence pin — cited not re-derived.)
+      //   3. Recording the user-acknowledgment (ConsentService.recordUserAcknowledgment)
+      //   4. Promoting onboarding_progress (per (user, org, funnel))
+      //   5. Marking signup_intents.consumed_at = NOW() for ALL unconsumed
+      //      rows matching this email (pearl D bulk-discharge: orphan-rot
+      //      closed by-construction).
+      //
+      // SECURITY GUARDS (warden 5-lens, addressed at source):
+      //  (a) Replay rejection — SELECT WHERE consumed_at IS NULL means a
+      //      second callback finds zero rows and falls through to legacy
+      //      login. (Auth0 OAuth `state` parameter already DELETE-RETURNING
+      //      consumed at the top of this handler — separate replay-guard.)
+      //  (b) Atomicity — OrgService.createOrg is non-atomic with the
+      //      Stripe provisioner per existing precedent (line ~770). For
+      //      consistency we keep createOrg outside the transaction; the
+      //      consent + acknowledgment + onboarding + signup_intents UPDATE
+      //      wrap in a single getSql().begin() AFTER the org is created.
+      //      If that tx fails: org exists without consent → user routes to
+      //      consent-prompt on first dashboard access (graceful-degraded-
+      //      state as explicit-design-intent vs hidden-recovery-path
+      //      boss-banked 2026-06-03).
+      //  (c) System-context — entire wire-in runs inside runAsSystem since
+      //      /auth/callback executes pre-session-establishment (no request
+      //      RLS context yet). Sibling to drip-scheduler #303 thin-wrap
+      //      pattern + cleanupExpired at authorization-server.ts canonical
+      //      (canonical-pattern-as-source-of-truth within-codebase variant).
+      //  (d) Trust-transit — SHA + size flow VERBATIM from signup_intents
+      //      to org_consents. The canonical bytes the user accepted at
+      //      /signup are what get recorded as the binding evidence; no
+      //      re-fetch race (pearl's design intent, PR #306 explicit).
+      //  (e) Materialization order — user (already upserted above) → org
+      //      (createOrg) → org_consents (recordOrgConsent) → user_consent_
+      //      acknowledgments (recordUserAcknowledgment, FKs consent_id) →
+      //      onboarding_progress (FKs org_id) → signup_intents UPDATE.
+      //      FK chain holds at every step.
+      //
+      // BOTH-OR-NEITHER deps: if either orgService or consentService is
+      // undefined (e.g. local-dev boot without consent stack), skip this
+      // block entirely → legacy login path (pearl C edge handling).
+      // ---------------------------------------------------------------
+      if (orgService && consentService && emailVerified && email) {
+        // Lookup the newest unconsumed signup_intent matching THIS verified
+        // Auth0 email + reseller funnel. LOWER() for case-insensitive match
+        // (signup_intents.email is stored as-typed; Auth0 email may differ
+        // in case).
+        const intentRows = await systemPool()<{
+          id: string;
+          consent_accepted: boolean;
+          consent_document_url: string | null;
+          consent_document_version: string | null;
+          consent_document_size_bytes: string | null;
+        }[]>`
+          SELECT id, consent_accepted, consent_document_url,
+                 consent_document_version, consent_document_size_bytes
+            FROM signup_intents
+           WHERE LOWER(email) = LOWER(${email})
+             AND consumed_at IS NULL
+             AND funnel = 'reseller'
+           ORDER BY created_at DESC
+           LIMIT 1
+        `;
+
+        if (intentRows.length > 0) {
+          const intent = intentRows[0];
+
+          if (
+            intent.consent_accepted &&
+            intent.consent_document_url &&
+            intent.consent_document_version &&
+            intent.consent_document_size_bytes !== null
+          ) {
+            // STRICT path (pearl B default): consent recorded at /signup,
+            // complete the funnel.
+            try {
+              // Derive an org name from user-name / email-local-part until
+              // the post-creation onboarding step asks for a workspace name.
+              const trimmedName = (name ?? '').trim();
+              const localPart = email.split('@')[0] ?? '';
+              const orgName = trimmedName || localPart || 'My Organization';
+
+              const acceptedIp = request.ip ?? null;
+              const userAgent = (request.headers['user-agent'] as string | undefined) ?? null;
+              const documentUrl = intent.consent_document_url;
+              const documentVersion = intent.consent_document_version;
+              const documentSizeBytes = Number(intent.consent_document_size_bytes);
+
+              const newOrg = await runAsSystem(() =>
+                orgService.createOrg(
+                  orgName,
+                  sub,
+                  'conduit',
+                  { type: 'reseller', parentOrgId: null, ownerEmail: email },
+                  app.log,
+                ),
+              );
+
+              // Post-org-creation atomic block: consent + ack + onboarding +
+              // signup_intents UPDATE in a single transaction so a partial
+              // failure here is recoverable (org survives; downstream
+              // re-runs at first dashboard access per graceful-degraded
+              // state design).
+              await runAsSystem(async () => {
+                const consent = await consentService.recordOrgConsent({
+                  orgId: newOrg.id,
+                  consentType: CONSENT_TYPE_AI_MSA,
+                  documentUrl,
+                  documentVersion,
+                  documentSizeBytes,
+                  acceptedByUserId: sub,
+                  acceptedIp,
+                  userAgent,
+                });
+                await consentService.recordUserAcknowledgment({
+                  userId: sub,
+                  orgId: newOrg.id,
+                  consentId: consent.id,
+                  acknowledgedIp: acceptedIp,
+                  userAgent,
+                });
+                await systemPool()`
+                  INSERT INTO onboarding_progress (id, user_id, org_id, funnel, step)
+                  VALUES (${nanoid()}, ${sub}, ${newOrg.id}, 'reseller', 'org_created')
+                  ON CONFLICT (user_id, org_id, funnel) DO NOTHING
+                `;
+                // Pearl D bulk-discharge: mark ALL unconsumed signup_intents
+                // for this email as consumed (closes the orphan-rot vector
+                // by-construction; sibling to NOT EXISTS-guard family).
+                await systemPool()`
+                  UPDATE signup_intents
+                     SET consumed_at = NOW()
+                   WHERE LOWER(email) = LOWER(${email})
+                     AND consumed_at IS NULL
+                     AND funnel = 'reseller'
+                `;
+              });
+
+              request.log.info(
+                { userId: sub, orgId: newOrg.id, intentId: intent.id, email },
+                'WYREAI-113 Funnel A: created reseller org + bound AI MSA consent',
+              );
+            } catch (funnelErr) {
+              request.log.error(
+                { err: funnelErr, sub, email, intentId: intent.id },
+                'WYREAI-113 Funnel A completion failed',
+              );
+              return reply.code(500).send(
+                'Failed to complete signup. Please contact support.',
+              );
+            }
+          } else {
+            // STRICT (i) default per pearl B [POLICY-DECISION] (Aaron-pending,
+            // strictest-legal default until counsel rules): signup_intent
+            // exists but consent_accepted=false. Mark consumed + reject.
+            request.log.warn(
+              { intentId: intent.id, email },
+              'WYREAI-113 Funnel A: signup_intent has consent_accepted=false — rejecting',
+            );
+            await runAsSystem(async () => {
+              await systemPool()`
+                UPDATE signup_intents
+                   SET consumed_at = NOW()
+                 WHERE LOWER(email) = LOWER(${email})
+                   AND consumed_at IS NULL
+                   AND funnel = 'reseller'
+              `;
+            });
+            return reply.code(400).type('text/html').send(
+              'MSA acceptance is required to complete signup. Please <a href="/signup">try again</a>.',
+            );
+          }
+        }
+        // else: no signup_intent for this email → legacy login path
+        // (pearl C edge handling). Fall through to session-cookie + redirect.
+      }
+      // ---------------------------------------------------------------
+      // End WYREAI-113 Funnel A block
+      // ---------------------------------------------------------------
 
       // Set the gateway session cookie
       const user: Auth0User = { sub, email, name, emailVerified };
