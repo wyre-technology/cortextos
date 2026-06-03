@@ -1,0 +1,194 @@
+---
+// Source-of-design-truth (port + adapted):
+// wyre-technology/msp-claude-plugins/docs/src/components/Sidebar.astro
+//
+// Adapted: stripped the gateway's `plugins`/`mcp-servers`/`prompts` data
+// dependencies (no analog in conduit — conduit is one product, not a
+// plugin catalog). The recursive 2-level structure, collapse/expand
+// toggle, active-route highlighting, and Tailwind utility class names
+// are preserved verbatim so future brand updates in the gateway
+// Sidebar.astro mirror cleanly to here.
+//
+// IA additions over the gateway: conduit-unique top-level branches for
+// "Subtenant Model" and "On-Prem Gateway" sit alongside Getting Started
+// per WYREAI-104 scope. Pages marked (coming soon) have href="#" until
+// the content migration epics land their real routes.
+
+const baseUrl = import.meta.env.BASE_URL;
+const currentPath = Astro.url.pathname;
+
+interface SidebarItem {
+  label: string;
+  href?: string;
+  children?: SidebarItem[];
+}
+
+const sidebarItems: SidebarItem[] = [
+  {
+    label: 'Getting Started',
+    children: [
+      { label: 'Introduction', href: `${baseUrl}getting-started/` },
+      { label: 'Quick Start', href: `${baseUrl}getting-started/quick-start/` },
+      { label: 'Installation', href: `${baseUrl}getting-started/installation/` },
+      { label: 'Architecture', href: `${baseUrl}getting-started/architecture/` },
+      { label: 'Security Model', href: `${baseUrl}getting-started/security/` },
+    ],
+  },
+  {
+    label: 'Subtenant Model',
+    children: [
+      {
+        label: 'Concepts',
+        children: [
+          { label: 'How customers are isolated', href: '#' },
+          { label: 'Branding per customer', href: '#' },
+          { label: 'Permission model', href: '#' },
+        ],
+      },
+      {
+        label: 'Operations',
+        children: [
+          { label: 'Customer provisioning', href: '#' },
+          { label: 'Customer offboarding', href: '#' },
+          { label: 'Per-customer audit log', href: '#' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'On-Prem Gateway',
+    children: [
+      {
+        label: 'Concepts',
+        children: [
+          { label: 'When to choose on-prem', href: '#' },
+          { label: 'Network topology', href: '#' },
+          { label: 'Update model', href: '#' },
+        ],
+      },
+      {
+        label: 'Setup',
+        children: [
+          { label: 'Requirements', href: '#' },
+          { label: 'Install', href: '#' },
+          { label: 'First customer binding', href: '#' },
+        ],
+      },
+      {
+        label: 'Operations',
+        children: [
+          { label: 'Monitoring', href: '#' },
+          { label: 'Backup & recovery', href: '#' },
+          { label: 'Upgrade procedure', href: '#' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'Connecting AI Clients',
+    children: [
+      { label: 'Claude Desktop', href: '#' },
+      { label: 'Claude Code', href: '#' },
+      { label: 'ChatGPT', href: '#' },
+      { label: 'Microsoft Copilot Studio', href: '#' },
+      { label: 'Custom MCP clients', href: '#' },
+    ],
+  },
+  {
+    label: 'Reference',
+    children: [
+      { label: 'Configuration', href: '#' },
+      { label: 'API reference', href: '#' },
+      { label: 'Troubleshooting', href: '#' },
+    ],
+  },
+];
+
+function isActive(href?: string): boolean {
+  if (!href || href === '#') return false;
+  return currentPath === href || currentPath === href.slice(0, -1);
+}
+
+function hasActiveChild(item: SidebarItem): boolean {
+  if (item.children) {
+    return item.children.some((child) => isActive(child.href) || hasActiveChild(child));
+  }
+  return false;
+}
+---
+
+<aside class="w-64 shrink-0 hidden lg:block">
+  <nav class="sticky top-20 max-h-[calc(100vh-5rem)] overflow-y-auto py-6 pr-4" aria-label="Documentation">
+    {sidebarItems.map((section) => (
+      <div class="mb-2">
+        <button
+          class="sidebar-toggle w-full flex items-center justify-between font-semibold text-sm uppercase tracking-wider text-[var(--muted)] hover:text-[var(--text)] mb-1 px-3 py-1.5 rounded-lg transition-colors"
+          data-expanded={hasActiveChild(section) ? 'true' : 'false'}
+        >
+          <span>{section.label}</span>
+          <svg class="sidebar-chevron w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <ul class="sidebar-content space-y-1" data-expanded={hasActiveChild(section) ? 'true' : 'false'}>
+          {section.children?.map((item) => (
+            item.children ? (
+              <li class="mt-1 first:mt-0">
+                <button
+                  class="sidebar-toggle w-full flex items-center justify-between text-xs font-medium uppercase tracking-wider text-[var(--muted)] hover:text-[var(--text)] px-3 py-1 rounded transition-colors"
+                  data-expanded={hasActiveChild(item) ? 'true' : 'false'}
+                >
+                  <span>{item.label}</span>
+                  <svg class="sidebar-chevron w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                <ul class="sidebar-content space-y-0.5" data-expanded={hasActiveChild(item) ? 'true' : 'false'}>
+                  {item.children.map((child) => (
+                    <li>
+                      <a
+                        href={child.href}
+                        class={`${isActive(child.href) ? 'sidebar-link-active sidebar-link' : 'sidebar-link'} pl-5 text-sm`}
+                      >
+                        {child.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ) : (
+              <li>
+                <a
+                  href={item.href}
+                  class={isActive(item.href) ? 'sidebar-link-active sidebar-link' : 'sidebar-link'}
+                >
+                  {item.label}
+                </a>
+              </li>
+            )
+          ))}
+        </ul>
+      </div>
+    ))}
+  </nav>
+</aside>
+
+<style>
+  .sidebar-content[data-expanded='false'] { display: none; }
+  .sidebar-content[data-expanded='true'] { display: block; }
+  .sidebar-toggle[data-expanded='false'] .sidebar-chevron { transform: rotate(-90deg); }
+  .sidebar-toggle[data-expanded='true'] .sidebar-chevron { transform: rotate(0deg); }
+</style>
+
+<script>
+  document.querySelectorAll('.sidebar-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const expanded = btn.getAttribute('data-expanded') === 'true';
+      btn.setAttribute('data-expanded', String(!expanded));
+      const content = btn.nextElementSibling;
+      if (content?.classList.contains('sidebar-content')) {
+        content.setAttribute('data-expanded', String(!expanded));
+      }
+    });
+  });
+</script>
