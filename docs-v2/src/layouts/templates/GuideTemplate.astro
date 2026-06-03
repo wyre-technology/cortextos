@@ -1,0 +1,17 @@
+---
+// GuideTemplate — for step-by-step / how-to / playbook pages
+// (getting-started, msp-onboarding, customer-provisioning).
+// Standard prose width, "Guide" eyebrow tag to set reader expectations.
+import Base from './_TemplateBase.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+  noindex?: boolean;
+}
+const { title, description, canonical, noindex } = Astro.props;
+---
+<Base title={title} description={description} eyebrow="Guide" canonical={canonical} noindex={noindex}>
+  <slot />
+</Base>

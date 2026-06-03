@@ -1,0 +1,17 @@
+---
+// ReferenceTemplate — for lookup-style pages (api, permissions,
+// subtenants, configuration). Reference eyebrow + same prose width
+// as guides; tables and code-density-friendly.
+import Base from './_TemplateBase.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+  noindex?: boolean;
+}
+const { title, description, canonical, noindex } = Astro.props;
+---
+<Base title={title} description={description} eyebrow="Reference" canonical={canonical} noindex={noindex}>
+  <slot />
+</Base>
