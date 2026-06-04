@@ -79,7 +79,7 @@ import {
   type CustomerTabId,
   type CustomerTabData,
 } from './templates/reseller-customer-tabs.js';
-import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData } from './templates/team-billing.js';
+import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData, type TrialState } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { computeSeatBilling } from '../billing/seat-service.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -213,6 +213,32 @@ async function requireCustomerOwnership(
     return null;
   }
   return customer;
+}
+
+/**
+ * Map a `subscriptions` row to the trial-banner view-state for /org/billing.
+ *
+ * Trial banner fires iff the row exists, `status === 'trialing'`, AND there
+ * is a non-null `current_period_end` (the Stripe `trial_end` for trialing
+ * subs — without it we cannot compute the days-left countdown OR the
+ * "first charge on <date>" line, so we MUST not render the banner).
+ *
+ * Single-source-pin: the same row backs `deriveDunningView` + the
+ * `isServiceActive` gate; routing the trial-banner read through the same
+ * row guarantees the banner cannot disagree with what Stripe will charge.
+ *
+ * Exported so the conditional has a falsifiable unit-test surface — see
+ * src/web/routes.test.ts. Replaces the previous `const trial = null;`
+ * dead-code that hard-suppressed the banner for every request (ruby HIGH
+ * launch-blocker audit 2026-06-04).
+ */
+export function deriveTrialFromSubscription(
+  subscription: { status: string; current_period_end: Date | null } | null,
+): TrialState | null {
+  if (subscription?.status === 'trialing' && subscription.current_period_end) {
+    return { endsAt: subscription.current_period_end.toISOString() };
+  }
+  return null;
 }
 
 /**
@@ -641,9 +667,14 @@ export function webRoutes(deps: WebRouteDeps) {
       const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
       const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
-      // Trial state — SWAP-IN: the real trial read (Hank's §9.1 onboarding
-      // field) is not wired yet, so no org renders as trialing for now.
-      const trial = null;
+      // Trial state — derived from the subscriptions row (post-#275). When
+      // the row is `status='trialing'` with a non-null `current_period_end`
+      // (the Stripe `trial_end` for trialing subs), surface the trial banner
+      // + "After your trial" bill label. Single-source-pin: the same row
+      // backs `dunning` below + `isServiceActive` upstream, so the trial
+      // banner cannot disagree with what Stripe will charge.
+      const subscription = await orgService.getSubscription(org.id);
+      const trial = deriveTrialFromSubscription(subscription);
 
       const dunning = await deriveDunningView(org.id, {
         orgService,
@@ -1406,6 +1437,12 @@ export function webRoutes(deps: WebRouteDeps) {
       const members = await orgService.getMembers(org.id);
       const serviceClients = await orgService.listServiceClients(org.id);
       const seatBilling = computeSeatBilling({ humans: members.length, agents: serviceClients.length });
+      // Trial state — derived from the same subscriptions row backing
+      // /org/billing's trial banner. The service-clients page uses the
+      // boolean to swap the at-creation cost copy ("During trial …" vs
+      // "$X/mo per agent"); same single-source-pin as the billing banner.
+      const trialing =
+        deriveTrialFromSubscription(await orgService.getSubscription(org.id)) !== null;
 
       const html = renderLayout(
         { user, org, activePath: '/org/service-clients', title: `${org.name} - Service Clients`, pageStyles: TEAM_SERVICE_CLIENTS_STYLES },
@@ -1421,8 +1458,7 @@ export function webRoutes(deps: WebRouteDeps) {
             createdAt: c.createdAt,
           })),
           seatBilling,
-          // SWAP-IN: real trial read (Hank's §9.1 field) not wired yet.
-          trialing: false,
+          trialing,
         }),
       );
       return reply.type('text/html').send(html);
