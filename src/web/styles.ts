@@ -22,11 +22,30 @@ export const THEME_VARS = `
     --border-tertiary: #262626;
     --border-subtle: #1e1e1e;
     --border-hover: #555;
-    --accent: #00C9DB;
-    --accent-hover: #00b5c6;
-    --accent-light: #33d4e2;
-    --accent-text: #00C9DB;
-    --highlight: #EDE947;
+    /* Brand-token migration 2026-06-03 (Aaron-resolved canonical):
+     * Brand-Kit-PDF tokens replace the legacy implementation.
+     * SEMANTIC SPLIT: --accent now means LIME (CTAs/buttons/interactive bg
+     * fills, per Brand-Kit "Buttons, CTAs, and interactive elements"); cyan
+     * stays for text/links via --accent-text. Existing consumers of --accent
+     * that meant "the bright CTA color" remap cleanly; consumers that mixed
+     * semantics (using --accent for both bg and text) need PR-review eyeball
+     * — small set expected.
+     * Cross-repo lockstep: wyre-ai-site src/styles/brand.css lands the
+     * matching half same-day.
+     * Remap-not-rename: var-names preserved; only color values shift.
+     * Slight semantic residue (--accent now lime not cyan) accepted vs
+     * blast-radius of a rename across every consumer.
+     */
+    --accent: #97D700;
+    --accent-hover: #82b800;
+    --accent-light: #b8e633;
+    --accent-text: #68D2DF;
+    --highlight: #97D700;
+    /* NEW token: brand-cyan as a stable name for the cyan that stays for
+     * non-link emphasis (eyebrows, brand marks). Today equal to
+     * --accent-text; exists as a refactor-anchor for any code that
+     * currently inlines the legacy #00C9DB and wants a canonical home. */
+    --brand-cyan: #68D2DF;
     --success: #22c55e;
     --success-text: #4ade80;
     --error: #ef4444;
@@ -70,11 +89,15 @@ export const THEME_VARS = `
     --border-tertiary: #e5e5e5;
     --border-subtle: #f0f0f0;
     --border-hover: #bbb;
-    --accent: #00a8b8;
-    --accent-hover: #009aa8;
-    --accent-light: #00b5c6;
-    --accent-text: #00899a;
-    --highlight: #d4cc00;
+    /* Light mode: same semantic split as dark mode. Lime CTA fill with
+     * sufficient contrast on light bg; cyan text-emphasis darker for
+     * AA contrast against light backgrounds. */
+    --accent: #82b800;
+    --accent-hover: #6b9a00;
+    --accent-light: #a3d426;
+    --accent-text: #3a9aaa;
+    --highlight: #82b800;
+    --brand-cyan: #3a9aaa;
     --success-text: #16a34a;
     --error-text: #dc2626;
     --warning-text: #d97706;
