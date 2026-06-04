@@ -42,7 +42,15 @@ export type AdminEventType =
   // audit reader; pearl-side ConsentService.recordOrgConsent + recordUserAcknowledgment
   // both fire one log entry per binding/acknowledgment event.
   | 'org_consent_accepted'
-  | 'user_consent_acknowledged';
+  | 'user_consent_acknowledged'
+  // WYREAI-118 + 119 (E1 admin create-org launch-blocker). Fires when the
+  // admin creates an org via POST /admin/orgs with stub-owner placeholder
+  // + owner_swap_to_invited invitation. Metadata carries: name, org_type,
+  // plan, invited_owner_email, stub_owner_user_id. Pairs with the
+  // existing 'invitation_accepted' event at the swap-completion moment
+  // (when the invited user accepts and the NARROWED-DELETE atomic-swap
+  // replaces the stub).
+  | 'org_created_by_admin';
 
 export interface AdminAuditEntry {
   id: string;

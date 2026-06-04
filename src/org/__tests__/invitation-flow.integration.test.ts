@@ -74,7 +74,19 @@ async function bootstrap(): Promise<void> {
       -- (migration 034). Inlined here because this integration test stands
       -- up its own minimal schema rather than running migrations end-to-end.
       intended_role   TEXT CHECK (intended_role IS NULL OR intended_role IN ('owner', 'admin', 'member')),
-      recipient_email TEXT
+      recipient_email TEXT,
+      -- Migration 041 (WYREAI-118 + 119 admin create-org flow): inlined
+      -- here for the same reason as the columns above (test stands up
+      -- its own minimal schema, not migrations). CHECK constraints
+      -- mirror mig 041's discriminator + consistency-pair.
+      invite_type       TEXT NOT NULL DEFAULT 'member_join'
+                          CHECK (invite_type IN ('member_join', 'owner_swap_to_invited')),
+      swap_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT org_invitations_swap_consistency_check CHECK (
+        (invite_type = 'owner_swap_to_invited' AND swap_from_user_id IS NOT NULL)
+        OR
+        (invite_type <> 'owner_swap_to_invited' AND swap_from_user_id IS NULL)
+      )
     )
   `;
 }

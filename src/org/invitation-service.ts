@@ -20,7 +20,17 @@ interface InvitationRow {
   created_at: string;
   intended_role: string | null;
   recipient_email: string | null;
+  // Migration 041 (WYREAI-118 + WYREAI-119, admin create-org flow):
+  // discriminator + interim-owner reference for the owner-swap path.
+  invite_type: string;
+  swap_from_user_id: string | null;
 }
+
+/** Discriminator: legacy 'member_join' invites vs admin create-org's
+ *  'owner_swap_to_invited' which atomic-swaps the placeholder stub-owner
+ *  for the invited user with a NARROWED DELETE (vs the customer-create
+ *  blanket-DELETE warned about at acceptInvitation:333-340). */
+export type InvitationType = 'member_join' | 'owner_swap_to_invited';
 
 interface MemberRow {
   id: string;
@@ -91,6 +101,8 @@ function toInvitation(row: InvitationRow): OrgInvitation {
     createdAt: row.created_at,
     intendedRole: row.intended_role as OrgRole | null,
     recipientEmail: row.recipient_email,
+    inviteType: row.invite_type as InvitationType,
+    swapFromUserId: row.swap_from_user_id,
   };
 }
 
@@ -157,6 +169,21 @@ export class InvitationService {
        * any authenticated user (the (α) model).
        */
       recipientEmail?: string;
+      /**
+       * Invitation-type discriminator (migration 041, WYREAI-118 + 119).
+       * Default 'member_join' (legacy behavior). 'owner_swap_to_invited'
+       * triggers the NARROWED-DELETE atomic-swap on accept — required for
+       * the admin create-org-with-stub-owner → invitation-transfer flow.
+       * Requires `swapFromUserId` when set.
+       *
+       * The CHECK constraint at mig 041 enforces invite_type ∈ allowed-set
+       * + swap_from_user_id consistency. Setting inviteType='owner_swap_
+       * to_invited' WITHOUT swapFromUserId is rejected at DB layer.
+       */
+      inviteType?: InvitationType;
+      /** Interim stub-owner to swap from on accept. Required when
+       *  inviteType='owner_swap_to_invited' (DB CHECK enforces). */
+      swapFromUserId?: string;
     },
   ): Promise<CreatedInvitation> {
     // Owner-mint authz guard (lifted to API boundary per task_1779464309991).
@@ -185,6 +212,26 @@ export class InvitationService {
     const recipientEmail = options?.recipientEmail
       ? normalizeEmail(options.recipientEmail)
       : null;
+    const inviteType: InvitationType = options?.inviteType ?? 'member_join';
+    const swapFromUserId = options?.swapFromUserId ?? null;
+    // Application-layer pre-DB validation mirrors the mig 041 CHECK
+    // constraint so a violation surfaces as a clear typed error rather
+    // than a raw 23514 from Postgres. The DB CHECK is the load-bearing
+    // canonical; this guard is the cheap-detector paired-canary at the
+    // service boundary (sibling family to pearl's mig 040 paired-canary).
+    if (inviteType === 'owner_swap_to_invited' && !swapFromUserId) {
+      throw new Error(
+        "createInvitation: inviteType='owner_swap_to_invited' requires swapFromUserId " +
+          '(the interim stub-owner user_id to atomic-swap from on accept). ' +
+          'See migration 041_invitation_owner_swap.sql CHECK constraint.',
+      );
+    }
+    if (inviteType !== 'owner_swap_to_invited' && swapFromUserId) {
+      throw new Error(
+        'createInvitation: swapFromUserId only valid when ' +
+          "inviteType='owner_swap_to_invited'. Set inviteType or omit swapFromUserId.",
+      );
+    }
 
     // Contract phase (migration 015): only the hash persists. The plaintext
     // token is handed back to the caller exactly once for the invite URL.
@@ -198,9 +245,11 @@ export class InvitationService {
     // invitation = (α) member-shape behavior on accept.
     const rows = await this.sql<InvitationRow[]>`
       INSERT INTO org_invitations
-        (id, org_id, invited_by, token_hash, expires_at, max_uses, use_count, intended_role, recipient_email)
+        (id, org_id, invited_by, token_hash, expires_at, max_uses, use_count,
+         intended_role, recipient_email, invite_type, swap_from_user_id)
       VALUES
-        (${id}, ${orgId}, ${invitedBy}, ${tokenHash}, ${expiresAt}, ${maxUses}, ${0}, ${intendedRole}, ${recipientEmail})
+        (${id}, ${orgId}, ${invitedBy}, ${tokenHash}, ${expiresAt}, ${maxUses}, ${0},
+         ${intendedRole}, ${recipientEmail}, ${inviteType}, ${swapFromUserId})
       RETURNING *
     `;
 
@@ -306,6 +355,77 @@ export class InvitationService {
     // ROLE BRANCH — owner-invite atomic-swap vs member-invite INSERT
     // ─────────────────────────────────────────────────────────────────────
     if (invitation.intendedRole === 'owner') {
+      // ─────────────────────────────────────────────────────────────────
+      // OWNER-INVITE PATH FORK — discriminator: invitation.inviteType
+      // ─────────────────────────────────────────────────────────────────
+      // 'member_join' (legacy, customer-create reseller-channel transition):
+      //   - Customer-only structural assertion (existing).
+      //   - Blanket-DELETE-all-other-owners (existing, narrowly scoped to
+      //     first-owner-claim where only one prior interim-owner exists).
+      //
+      // 'owner_swap_to_invited' (WYREAI-118 + 119 admin create-org flow):
+      //   - NO customer-only assertion (admin can create reseller/standalone
+      //     orgs too; the structural-assertion was scope-correct for the
+      //     customer-create path but doesn't extend).
+      //   - NARROWED-DELETE on swap_from_user_id (the specific stub-owner
+      //     recorded at create-time) per the warden warning in this very
+      //     method's prior version (msg 1779450054436): "for any future
+      //     owner-transfer use case, the DELETE predicate must filter on
+      //     the specific interim-owner user_id (or otherwise narrow) — NOT
+      //     blanket-delete-all-others, or legitimate co-owners get silently
+      //     wiped."
+      //   - The schema-side CHECK at mig 041 enforces swap_from_user_id IS
+      //     NOT NULL when invite_type='owner_swap_to_invited' (paired-canary
+      //     with this branch — DB-side discriminator-consistency + service-
+      //     side narrowed-DELETE compose at-construction).
+      // ─────────────────────────────────────────────────────────────────
+      if (invitation.inviteType === 'owner_swap_to_invited') {
+        if (!invitation.swapFromUserId) {
+          // Belt-and-suspenders — mig 041 CHECK already enforces this at
+          // INSERT time. Service-side guard mirrors the canonical for the
+          // case where a row predates mig 041 (none exist; this is the
+          // backward-walk guard against a future schema rollback).
+          throw new Error(
+            'acceptInvitation: invite_type=owner_swap_to_invited row missing ' +
+              'swap_from_user_id. DB CHECK violation — see mig 041.',
+          );
+        }
+        let memberRows: MemberRow[] = [];
+        const fromUserId = invitation.swapFromUserId;
+        await this.sql.begin(async (tx) => {
+          const inserted = await tx<MemberRow[]>`
+            INSERT INTO org_members (id, org_id, user_id, role, joined_at)
+            VALUES (${nanoid()}, ${invitation.orgId}, ${userId}, 'owner', NOW())
+            ON CONFLICT (org_id, user_id) DO UPDATE
+              SET role = 'owner', joined_at = COALESCE(org_members.joined_at, NOW())
+            RETURNING *
+          `;
+          memberRows = inserted;
+          // NARROWED DELETE — only the specific stub-owner recorded at
+          // create-time, NOT all-other-owners. Closes the warden warning
+          // surface (co-owners preserved if any exist; the admin-create
+          // flow today never produces co-owners but the discipline holds
+          // by-construction for future contributors).
+          await tx`
+            DELETE FROM org_members
+            WHERE org_id = ${invitation.orgId}
+              AND role = 'owner'
+              AND user_id = ${fromUserId}
+              AND user_id != ${userId}
+          `;
+        });
+
+        if (memberRows[0] && log) {
+          void notifyNewSignup(this.sql, { userId, orgId: invitation.orgId, isOwner: true }, log);
+        }
+        return memberRows[0] ? toMember(memberRows[0]) : null;
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      // LEGACY 'member_join' OWNER-INVITE PATH — customer-create flow.
+      // (Untouched from pre-WYREAI-119. Customer-only assertion + blanket-
+      // DELETE-all-other-owners.)
+      // ─────────────────────────────────────────────────────────────────
       // STRUCTURAL ASSERTION — owner-invite is reseller-channel-only by
       // design (ruby billing-sanity flag msg 1779449975616). Customer orgs
       // are billed via reseller path with no direct Stripe sub; firing the
@@ -338,6 +458,14 @@ export class InvitationService {
       // otherwise narrow) — NOT blanket-delete-all-others, or legitimate
       // co-owners get silently wiped. Future contributors copy-pasting
       // this pattern into an owner-transfer flow must read this warning.
+      //
+      // ↑↑↑ WARDEN-WARNING-HONORED: the 'owner_swap_to_invited' branch
+      // above is the response to this very warning — it implements the
+      // narrowed DELETE that the warning predicted future contributors
+      // would need. The warning IS the architecture-of-record telling
+      // future implementers what NOT to do; this implementation cites
+      // the warning by line as the canonical-pattern-as-source-of-truth
+      // it descends from.
       //
       // Single tx refuses the half-state "two owners simultaneously" race
       // (concurrent tx waits on row-lock or sees committed state).

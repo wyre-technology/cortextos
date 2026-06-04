@@ -7,6 +7,7 @@ import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { renderAdminPage } from './layout.js';
 import { FEATURES, PLAN_RANK, type FeatureKey, type Plan } from '../billing/features.js';
 import { getSql, runAsSystem } from '../db/context.js';
+import { config as configForRoutes } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -614,6 +615,145 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         );
       },
     );
+
+    // -----------------------------------------------------------------------
+    // POST /admin/orgs — admin create org with stub-owner + invitation transfer
+    // (WYREAI-118 + WYREAI-119, E1 PR-1 backend collapse under WYREAI-117
+    // admin create-org launch-blocker).
+    //
+    // Flow:
+    //   1. Admin POSTs name + owner_email + org_type. Gated on
+    //      requireAdminMutation (admin role + CSRF).
+    //   2. Org is created with the ADMIN as a placeholder stub-owner
+    //      (NOT the invited user — admin-creating an org for an
+    //      unverified email cannot directly bind ownership). The admin's
+    //      sub is recorded as swap_from_user_id on the invitation.
+    //   3. An invitation of type='owner_swap_to_invited' is created with
+    //      intendedRole='owner', recipientEmail=owner_email,
+    //      swapFromUserId=admin.sub. The plain token is embedded in the
+    //      invite URL surfaced to the admin via flash.
+    //   4. When the invited user accepts (with email-match check), the
+    //      NARROWED-DELETE atomic-swap replaces the admin-stub owner
+    //      with the invited user. See invitation-service.ts acceptInvitation
+    //      and the warden warning cited there.
+    //
+    // SECURITY DISCIPLINE: invitation-flow IS the ownership-grant path,
+    // not direct owner-binding at admin-create. Admin retains owner
+    // membership ONLY until invited user accepts; admin's email-match
+    // mismatch would prevent admin themselves from accepting (intended
+    // behavior — admin must hand off via the invite URL).
+    // -----------------------------------------------------------------------
+    app.post<{
+      Body: {
+        name?: string;
+        owner_email?: string;
+        plan?: string;
+        org_type?: string;
+      };
+    }>('/admin/orgs', async (request, reply) => {
+      if (!requireAdminMutation(request, reply)) return;
+
+      const adminSub = request.auth0User?.sub;
+      if (!adminSub) {
+        // requireAdminMutation already gates this; defense-in-depth.
+        return reply.redirect(
+          `/admin/orgs?flash_err=${encodeURIComponent('Admin session not found')}`,
+        );
+      }
+
+      const name = (request.body.name ?? '').trim();
+      const ownerEmail = (request.body.owner_email ?? '').trim();
+      const plan = (request.body.plan ?? 'conduit').trim() || 'conduit';
+      const orgType = (request.body.org_type ?? 'reseller').trim();
+
+      const errs: string[] = [];
+      if (!name) errs.push('name is required');
+      if (!ownerEmail || !ownerEmail.includes('@') || ownerEmail.length > 320) {
+        errs.push('owner_email must look like an email address');
+      }
+      // Allowlist of admin-creatable org types. Customer orgs are reseller-
+      // driven (created via POST /admin/reseller/:resellerId/customers, not
+      // here); admin-create allows reseller + standalone only. Mirrors
+      // OrgService.createOrg's hierarchy-validation at the route boundary.
+      if (orgType !== 'reseller' && orgType !== 'standalone') {
+        errs.push("org_type must be 'reseller' or 'standalone'");
+      }
+      if (errs.length > 0) {
+        return reply.redirect(
+          `/admin/orgs?flash_err=${encodeURIComponent(errs.join('; '))}`,
+        );
+      }
+
+      const actorEmail = actorEmailFromRequest(request);
+      let newOrgId: string;
+      let inviteUrl: string;
+      try {
+        // 1. Create org with admin as placeholder stub-owner.
+        const newOrg = await runAsSystem(() =>
+          orgService.createOrg(
+            name,
+            adminSub,
+            plan,
+            {
+              type: orgType as 'reseller' | 'standalone',
+              parentOrgId: null,
+            },
+            request.log,
+          ),
+        );
+        newOrgId = newOrg.id;
+
+        // 2. Create owner-swap invitation. createInvitation runs the
+        // owner-mint authz guard — admin IS the current owner of the
+        // just-created org, so the guard passes. The invitation carries
+        // inviteType='owner_swap_to_invited' + swapFromUserId=admin.sub
+        // so acceptInvitation uses the NARROWED-DELETE branch.
+        const { plainToken } = await runAsSystem(() =>
+          orgService.createInvitation(newOrg.id, adminSub, {
+            intendedRole: 'owner',
+            recipientEmail: ownerEmail,
+            inviteType: 'owner_swap_to_invited',
+            swapFromUserId: adminSub,
+          }),
+        );
+        inviteUrl = `${configForRoutes.baseUrl}/invite/${plainToken}`;
+
+        // 3. Audit
+        await runAsSystem(() =>
+          adminAuditService.log({
+            orgId: newOrg.id,
+            actorId: actorEmail,
+            eventType: 'org_created_by_admin',
+            metadata: {
+              name,
+              org_type: orgType,
+              plan,
+              invited_owner_email: ownerEmail,
+              stub_owner_user_id: adminSub,
+            },
+          }),
+        );
+        request.log.info(
+          { orgId: newOrg.id, actorEmail, ownerEmail, orgType, plan },
+          'admin created org with owner-swap invitation',
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        request.log.error({ err, name, ownerEmail, orgType }, 'admin org-create failed');
+        return reply.redirect(
+          `/admin/orgs?flash_err=${encodeURIComponent(`Create failed: ${msg}`)}`,
+        );
+      }
+
+      // 4. Redirect to org detail with invite URL in flash. Plain token
+      //    appears once; admin can copy the URL from the flash to hand
+      //    off out-of-band (email/Slack/etc).
+      return reply.redirect(
+        `/admin/orgs/${newOrgId}?flash_ok=${encodeURIComponent(
+          `Created org "${name}". Invitation URL (give to ${ownerEmail}): ${inviteUrl}`,
+        )}`,
+      );
+    });
 
     // -----------------------------------------------------------------------
     // POST /admin/orgs/:orgId/delete — execute hard delete

@@ -127,6 +127,23 @@ export interface OrgInvitation {
    * same shape to member-invites. From migration 034.
    */
   recipientEmail: string | null;
+  /**
+   * Invitation-type discriminator (migration 041, WYREAI-118 + 119 admin
+   * create-org flow). 'member_join' is the legacy default and covers every
+   * pre-mig-041 row + every default-shape invite (member-invites + the
+   * customer-create owner-invite using the blanket-DELETE atomic-swap).
+   * 'owner_swap_to_invited' is the admin create-org-with-stub-owner flow:
+   * uses the NARROWED-DELETE atomic-swap that filters on swapFromUserId
+   * only (vs blanket all-other-owners), per the warden warning at
+   * invitation-service.ts acceptInvitation (carried-forward at impl-time).
+   */
+  inviteType: 'member_join' | 'owner_swap_to_invited';
+  /**
+   * Interim stub-owner user_id to swap from on accept. NOT NULL when
+   * inviteType='owner_swap_to_invited' (DB CHECK at mig 041 enforces),
+   * NULL otherwise. The NARROWED-DELETE predicate uses this directly.
+   */
+  swapFromUserId: string | null;
 }
 
 /**
@@ -1024,6 +1041,11 @@ export class OrgService {
       expiresInHours?: number;
       intendedRole?: OrgRole;
       recipientEmail?: string;
+      /** WYREAI-118+119 admin create-org-with-stub-owner flow. See
+       *  InvitationService.createInvitation for the full docblock + the
+       *  consistency-pair contract (inviteType ↔ swapFromUserId). */
+      inviteType?: 'member_join' | 'owner_swap_to_invited';
+      swapFromUserId?: string;
     },
   ) {
     return this.invitationService.createInvitation(orgId, invitedBy, options);
