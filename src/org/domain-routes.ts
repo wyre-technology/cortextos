@@ -35,10 +35,24 @@ import { getSql, runAsSystem } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import type { FastifyReply } from 'fastify';
 import { notifyNewSignup } from '../billing/sales-notifier.js';
+import {
+  classifyProvider,
+  buildDcApplyUrl,
+  getProviderName,
+  DC_SUPPORTED_SLUGS,
+  type NsResolver,
+} from './dc-providers.js';
+import { config } from '../config.js';
 
 interface DomainRouteDeps {
   orgService: OrgService;
   domainService: OrgDomainService;
+  /**
+   * Optional NS resolver injection (WYREAI-134) — tests inject a stub that
+   * returns deterministic NS records; production uses node:dns/promises
+   * resolveNs by default (resolved inside classifyProvider).
+   */
+  nsResolver?: NsResolver;
 }
 
 function handleDomainError(reply: FastifyReply, err: unknown): FastifyReply {
@@ -55,7 +69,7 @@ function handleDomainError(reply: FastifyReply, err: unknown): FastifyReply {
 }
 
 export function domainRoutes(deps: DomainRouteDeps) {
-  const { orgService, domainService } = deps;
+  const { orgService, domainService, nsResolver } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -116,6 +130,126 @@ export function domainRoutes(deps: DomainRouteDeps) {
           return reply.send(record);
         } catch (err) {
           return handleDomainError(reply, err);
+        }
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // Domain Connect (DC) integration — WYREAI-134 + WYREAI-135
+    //
+    // Two endpoints layered ON TOP of the existing manual TXT-record flow:
+    //   - GET .../ns-detect: frontend asks "is this domain DC-eligible?"
+    //     and gets back a provider slug ('cloudflare' | 'godaddy' | 'vercel'
+    //     | 'unsupported'). When supported, frontend shows a one-click DC
+    //     button alongside the manual TXT block; when unsupported, frontend
+    //     shows only the manual block.
+    //   - GET .../dc-callback: user returns from the DC provider after
+    //     applying the template. We invoke the same verify() as the manual
+    //     "Verify" button (DNS-TXT resolution against existing
+    //     organization_domains.verification_token), then redirect with a
+    //     flash message. The DNS-TXT check is the load-bearing primitive —
+    //     DC just automates the record-placement step that the manual user
+    //     would otherwise do by hand. Both paths converge on verify().
+    //
+    // Manual fallback discipline preserved: any DC-unsupported domain
+    // (long-tail 31.6% per 2026-06-03 cohort research) shows ONLY the
+    // existing TXT-record block + Verify button. No coverage regression.
+    //
+    // Out-of-band gating: DC apply URLs only succeed if our template
+    // (providerId='conduit.wyre.ai', serviceId='domain-verify') has been
+    // onboarded with the DNS provider — tracked separately at WYREAI-137.
+    // This engineering surface is complete + safe to merge before any DNS
+    // provider finishes onboarding; until they do, the DC button just sends
+    // users to a "template not found" response from the DNS provider, which
+    // is recoverable (user falls back to the manual block).
+    // -----------------------------------------------------------------------
+
+    // GET /api/orgs/:orgId/domains/:id/ns-detect
+    app.get<{ Params: { orgId: string; id: string } }>(
+      '/api/orgs/:orgId/domains/:id/ns-detect',
+      async (request, reply) => {
+        const { orgId, id } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        if (!user) return;
+        const record = await domainService.getById(id, orgId);
+        if (!record) return reply.code(404).send({ error: 'Domain claim not found' });
+
+        const provider = await classifyProvider(record.domain, nsResolver);
+
+        if (provider === 'unsupported') {
+          return reply.send({
+            provider,
+            domain: record.domain,
+            dcButton: null,
+          });
+        }
+
+        // Apply-URL constructed eagerly so the frontend doesn't need its own
+        // copy of the per-provider host registry. The callback URL points
+        // back at the dc-callback route below, which closes the loop by
+        // running the existing verify() on user-return.
+        const callbackUrl = `${config.baseUrl}/api/orgs/${orgId}/domains/${id}/dc-callback`;
+        const applyUrl = buildDcApplyUrl({
+          provider,
+          domain: record.domain,
+          verificationToken: record.verificationToken,
+          callbackUrl,
+        });
+
+        return reply.send({
+          provider,
+          domain: record.domain,
+          dcButton: applyUrl
+            ? {
+                label: `Add to ${getProviderName(provider)}`,
+                applyUrl,
+                supportedSlugs: DC_SUPPORTED_SLUGS,
+              }
+            : null,
+        });
+      },
+    );
+
+    // GET /api/orgs/:orgId/domains/:id/dc-callback
+    app.get<{
+      Params: { orgId: string; id: string };
+      Querystring: { error?: string };
+    }>(
+      '/api/orgs/:orgId/domains/:id/dc-callback',
+      async (request, reply) => {
+        const { orgId, id } = request.params;
+        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        if (!user) return;
+
+        // Settings page where the user lands with success/failure flash.
+        // Conduit's settings/domain UI is at /settings/domains (the
+        // team-domains template page). Failure paths fall through to the
+        // manual flow without prejudice — the user clicks Verify again
+        // after their record propagates.
+        const okFlash = `flash_ok=${encodeURIComponent(`Domain ${request.params.id} verified via Domain Connect`)}`;
+        const errFlash = (msg: string) =>
+          `flash_err=${encodeURIComponent(`Domain Connect callback: ${msg}`)}`;
+
+        // DC providers can return ?error=<code> on user-cancel or apply-
+        // failure per the spec. Surface as flash and skip the verify call.
+        if (request.query.error) {
+          return reply.redirect(
+            `/settings/domains?${errFlash(request.query.error)}`,
+            302,
+          );
+        }
+
+        // Run the same verify() the manual "Verify" button uses. DC has
+        // (presumably) just added the TXT record on the user's behalf; the
+        // DNS-TXT resolution check confirms it. If propagation hasn't
+        // landed yet, the verify call fails with VERIFICATION_TOKEN_MISSING
+        // and the user retries manually after a minute.
+        try {
+          await domainService.verify(id, orgId, user.sub);
+          return reply.redirect(`/settings/domains?${okFlash}`, 302);
+        } catch (err) {
+          const msg = err instanceof OrgDomainError ? err.message : 'verification failed';
+          return reply.redirect(`/settings/domains?${errFlash(msg)}`, 302);
         }
       },
     );
