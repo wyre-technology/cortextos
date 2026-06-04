@@ -617,6 +617,91 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     );
 
     // -----------------------------------------------------------------------
+    // GET /admin/orgs/create — admin create-org form (WYREAI-120 UI canary,
+    // closes E1 launch-blocker WYREAI-117).
+    //
+    // Renders the form that POSTs to /admin/orgs (WYREAI-118+119 backend).
+    // Form fields mirror the POST handler's expected body shape: name,
+    // owner_email, org_type, plan. CSRF token included; client-side
+    // hint copy explains the stub-owner→invitation-transfer flow so the
+    // admin understands their email won't be the final owner.
+    //
+    // Path choice: /admin/orgs/create — /admin/orgs/new is taken by the
+    // recent-signups dashboard (per round-2 grounding catch 2026-06-02).
+    // Path-naming sub-pin: 'admin/X/new' is conventionally
+    // recently-created-X listing in conduit's admin URLs;
+    // 'admin/X/create' is the create-form page. Distinction preserved.
+    // -----------------------------------------------------------------------
+    app.get<{ Querystring: { flash_err?: string } }>(
+      '/admin/orgs/create',
+      async (request, reply) => {
+        if (!requireAdmin(request, reply)) return;
+        const csrfToken = getOrSetCsrfToken(request, reply);
+        const flashErr = (request.query.flash_err ?? '').trim();
+        const errBlock = flashErr
+          ? `<div class="flash flash-err">${escapeHtml(flashErr)}</div>`
+          : '';
+        const body = `
+          <div class="header">
+            <div>
+              <h1>Create org</h1>
+              <div class="subtitle">Admin-creates an org with a placeholder stub-owner, then sends an invitation to the intended owner. The invited user receives ownership atomically when they accept (NARROWED DELETE swap from admin-stub → invited user per the invitation-driven ownership-transfer flow).</div>
+            </div>
+          </div>
+          ${errBlock}
+          <div class="section">
+            <form method="post" action="/admin/orgs">
+              ${csrfHiddenInput(csrfToken)}
+              <p>
+                <label>
+                  Org name<br/>
+                  <input class="input" type="text" name="name" required autocomplete="off" maxlength="200" style="min-width:420px" />
+                </label>
+              </p>
+              <p>
+                <label>
+                  Owner email (recipient of the invitation)<br/>
+                  <input class="input" type="email" name="owner_email" required autocomplete="off" maxlength="320" style="min-width:420px" />
+                </label>
+              </p>
+              <p>
+                <label>
+                  Org type<br/>
+                  <select class="input" name="org_type" required>
+                    <option value="reseller">reseller (default — MSP customer)</option>
+                    <option value="standalone">standalone (direct customer)</option>
+                  </select>
+                </label>
+                <span class="muted">Customer orgs are reseller-driven; admin-create allows reseller + standalone only.</span>
+              </p>
+              <p>
+                <label>
+                  Plan<br/>
+                  <input class="input" type="text" name="plan" value="conduit" maxlength="100" style="min-width:200px" />
+                </label>
+              </p>
+              <p>
+                <button type="submit" class="btn-primary">Create org + send invitation</button>
+                &nbsp;
+                <a href="/admin/orgs" class="btn-secondary">Cancel</a>
+              </p>
+              <p class="muted" style="margin-top:24px;font-size:13px">
+                <strong>What happens:</strong> Conduit creates the org with you (the admin) as the placeholder stub-owner.
+                A 7-day invitation is generated and surfaced as a flash on the next page — copy the URL and send to
+                the intended owner out-of-band (email, Slack, etc.). When they accept the invitation (after signing in
+                with the email above), ownership atomically transfers from you to them. Until accepted, you remain owner;
+                you can re-issue the invitation if needed.
+              </p>
+            </form>
+          </div>
+        `;
+        return reply.type('text/html').send(
+          renderAdminPage({ title: 'Create org', activePath: '/admin/orgs', body }),
+        );
+      },
+    );
+
+    // -----------------------------------------------------------------------
     // POST /admin/orgs — admin create org with stub-owner + invitation transfer
     // (WYREAI-118 + WYREAI-119, E1 PR-1 backend collapse under WYREAI-117
     // admin create-org launch-blocker).
