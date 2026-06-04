@@ -104,11 +104,14 @@ const TERMS_CONTENT = `
 <p>For full details, see our <a href="/privacy">Privacy Policy</a>.</p>
 
 <h2>7. Service Availability</h2>
-<p>We make reasonable efforts to keep MCP Gateway available and reliable. During this early access period, we do not offer a formal SLA. The service may experience downtime for maintenance, updates, or unforeseen issues.</p>
+<p>We make commercially reasonable efforts to maintain monthly availability of MCP Gateway at or above 99.5%. Availability is measured at the gateway's externally-facing endpoints over a calendar-month window. The 99.5% number is grounded in a measured baseline window and is subject to honest caveats — see the published <a href="/sla">Service Level Agreement</a> for the basis of the commitment, the §4 caveats, and the response-time matrix for support requests.</p>
+<p>The service may experience scheduled or unscheduled downtime for maintenance, updates, or unforeseen issues; events excluded from the availability calculation are documented in the SLA.</p>
 <p>We reserve the right to modify, suspend, or discontinue any part of the service. If we discontinue the service entirely, we will provide at least 30 days' notice and help you export or delete your stored credentials.</p>
 
 <h2>8. Pricing and Billing</h2>
-<p>MCP Gateway is currently free during early access. When paid plans are introduced, we will notify existing users at least 30 days in advance. You will not be charged without explicit consent.</p>
+<p>MCP Gateway is offered on a flat monthly subscription. The published rate is <strong>$399 per organization per month</strong> as a base fee, plus <strong>$39 per billable seat per month</strong>. Billable seats include every human team member and any service-client (agent) seat beyond the first two included with the base fee. Pricing is the same for every organization — no separate tiers or usage credits.</p>
+<p>New organizations may start with a <strong>14-day free trial</strong> of the full platform. The trial converts to a paid subscription when a payment method is added through our payment processor, or closes automatically at the end of the trial period if no payment method is on file.</p>
+<p>Subscriptions are invoiced monthly in advance. We will notify existing customers at least 30 days in advance of any material change to the published rate, and you will not be charged at a new rate without explicit consent. The full AI Services governance (acceptance, data rights, termination, and renewal) is published as the <a href="/msa">AI Services Service Attachment</a> and applies to your use of any AI-related capabilities of MCP Gateway.</p>
 
 <h2>9. Limitation of Liability</h2>
 <p>To the maximum extent permitted by law, WYRE Technology shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of MCP Gateway.</p>
