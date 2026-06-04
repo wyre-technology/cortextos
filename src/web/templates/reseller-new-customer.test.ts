@@ -26,11 +26,9 @@ function data(step: NewCustomerStep, over: Partial<NewCustomerData['draft']> = {
   return {
     org,
     step,
-    planTiers: ['Free', 'Pro', 'Business'],
     draft: {
       name: 'Northwind IT Group',
       subdomain: 'northwind-it-group',
-      plan: 'Pro',
       adminEmail: 'admin@northwind.example',
       inheritBranding: true,
       accent: '#00C9DB',
@@ -83,18 +81,26 @@ describe('renderNewCustomer — chrome', () => {
 });
 
 describe('renderNewCustomer — step 1 customer', () => {
-  it('renders name, subdomain, and plan-tier fields', () => {
+  it('renders name + subdomain fields (no plan-tier — flat-pricing)', () => {
     const { body } = renderNewCustomer(data(1));
     expect(body).toContain('Northwind IT Group');
     expect(body).toContain('northwind-it-group');
     expect(body).toContain('id="ncName"');
     expect(body).toContain('id="ncSlug"');
   });
-  it('renders every plan tier with the draft plan selected', () => {
-    const { body } = renderNewCustomer(data(1));
-    expect(body).toContain('Free');
-    expect(body).toContain('Business');
-    expect(body).toMatch(/<option selected>Pro<\/option>/);
+  // Regression — ruby HIGH audit 2026-06-04: step 1 used to render a
+  // `<select name="plan">` with ['Free','Pro','Business'] options that all
+  // collapsed to the single conduit plan server-side (Tier-3 active-deception
+  // on the MSP-facing surface). Lock the absence: no plan SELECT, no
+  // planTiers data, no name="plan" input anywhere in the wizard.
+  it('does NOT render a plan-tier field (Aaron flat-pricing-locked)', () => {
+    const step1 = renderNewCustomer(data(1)).body;
+    const step2 = renderNewCustomer(data(2)).body;
+    const step3 = renderNewCustomer(data(3)).body;
+    for (const body of [step1, step2, step3]) {
+      expect(body).not.toMatch(/<select[^>]*name="plan"/);
+      expect(body).not.toContain('name="plan"');
+    }
   });
   it('previews the collision-safe path-based URL', () => {
     const { body } = renderNewCustomer(data(1));
@@ -141,9 +147,11 @@ describe('renderNewCustomer — step 3 branding + review', () => {
     expect(body).toMatch(/id="ncCreateBtn"/);
     // POST target points at the caller's reseller id.
     expect(body).toContain('data-create-url="/admin/reseller/org_reseller/customers"');
-    // Plan + name flow to the request body via data-attrs.
-    expect(body).toContain('data-plan="Pro"');
+    // Name flows to the request body via data-attr. (No data-plan — the
+    // server-side body schema ignores plan under flat-pricing; see
+    // src/reseller/routes.ts:parseCreateCustomerBody.)
     expect(body).toContain('data-name="Northwind IT Group"');
+    expect(body).not.toContain('data-plan=');
     // Step-3 script is what actually POSTs and redirects.
     expect(pageScripts).toContain("fetch(btn.dataset.createUrl");
     expect(pageScripts).toContain("/org/customers/' + encodeURIComponent(body.id)");
@@ -174,7 +182,6 @@ describe('renderNewCustomer — create contract + input carry (regression)', () 
     const step1 = renderNewCustomer(data(1)).body;
     expect(step1).toContain('<form method="GET" action="/org/customers/new">');
     expect(step1).toContain('name="name"'); // org-name input is named -> serialized
-    expect(step1).toContain('name="plan"');
     expect(step1).toMatch(/<button type="submit"[^>]*class="nc-next"/); // Next submits the form
 
     const step2 = renderNewCustomer(data(2)).body;
@@ -182,6 +189,5 @@ describe('renderNewCustomer — create contract + input carry (regression)', () 
     expect(step2).toContain('name="adminEmail"'); // owner email input is named
     // Step 2 carries the step-1 fields forward as hidden inputs (no server draft store).
     expect(step2).toContain('<input type="hidden" name="name"');
-    expect(step2).toContain('<input type="hidden" name="plan"');
   });
 });

@@ -31,7 +31,6 @@ export interface NewCustomerDraft {
   name: string;
   /** Collision-safe path segment, derived from the name. */
   subdomain: string;
-  plan: string;
   adminEmail: string;
   /** Inherit the reseller's white-label branding vs. set a custom accent. */
   inheritBranding: boolean;
@@ -42,7 +41,6 @@ export interface NewCustomerData {
   /** The reseller org creating the customer. */
   org: Organization;
   step: NewCustomerStep;
-  planTiers: string[];
   draft: NewCustomerDraft;
 }
 
@@ -76,7 +74,6 @@ function stepUrl(step: NewCustomerStep, draft: NewCustomerDraft): string {
     step: String(step),
     name: draft.name,
     subdomain: draft.subdomain,
-    plan: draft.plan,
     adminEmail: draft.adminEmail,
   });
   return escapeHtml(`/org/customers/new?${params.toString()}`);
@@ -87,7 +84,6 @@ function carryFields(draft: NewCustomerDraft, omit: Set<string> = new Set()): st
   const fields: Array<[string, string]> = [
     ['name', draft.name],
     ['subdomain', draft.subdomain],
-    ['plan', draft.plan],
     ['adminEmail', draft.adminEmail],
   ];
   return fields
@@ -117,7 +113,7 @@ function renderStepper(current: NewCustomerStep): string {
 // ---- steps ---------------------------------------------------------------
 
 function renderStep1(data: NewCustomerData): string {
-  const { draft, planTiers } = data;
+  const { draft } = data;
   const slug = escapeHtml(draft.subdomain);
   const resellerSlug = escapeHtml(
     data.org.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
@@ -141,15 +137,6 @@ function renderStep1(data: NewCustomerData): string {
       <span class="nc-help">
         URL: conduit.wyre.ai/v1/mcp/${resellerSlug}/<span id="ncSlugEcho">${slug}</span>
       </span>
-    </label>
-
-    <label class="nc-field">
-      <span class="nc-label">Plan tier</span>
-      <select class="nc-select" name="plan">
-        ${planTiers.map((p) =>
-          `<option${p === draft.plan ? ' selected' : ''}>${escapeHtml(p)}</option>`,
-        ).join('')}
-      </select>
     </label>
 
     <div class="nc-actions">
@@ -190,7 +177,6 @@ function renderStep3(data: NewCustomerData): string {
   const summary: Array<[string, string]> = [
     ['Organization', draft.name],
     ['Subdomain', `conduit.wyre.ai/v1/mcp/${resellerSlug}/${draft.subdomain}`],
-    ['Plan', draft.plan],
     ['Owner invite', draft.adminEmail],
     ['Branding', draft.inheritBranding ? `Inherits ${org.name}` : `Custom accent ${draft.accent}`],
   ];
@@ -234,7 +220,6 @@ function renderStep3(data: NewCustomerData): string {
       <a class="nc-back" href="${stepUrl(2, draft)}">&larr; Back</a>
       <button type="button" id="ncCreateBtn" class="nc-create"
         data-create-url="${escapeHtml(createUrl)}"
-        data-plan="${escapeHtml(draft.plan)}"
         data-admin-email="${escapeHtml(draft.adminEmail)}"
         data-name="${escapeHtml(draft.name)}">
         Create customer
@@ -300,7 +285,6 @@ export function renderNewCustomer(data: NewCustomerData): { body: string; pageSc
           body: JSON.stringify({
             name: btn.dataset.name,
             admin_email: btn.dataset.adminEmail,
-            plan: (btn.dataset.plan || 'free').toLowerCase(),
           }),
         });
         if (res.status === 201) {

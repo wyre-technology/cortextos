@@ -855,12 +855,10 @@ export function webRoutes(deps: WebRouteDeps) {
       const data: NewCustomerData = {
         org,
         step,
-        planTiers: ['Free', 'Pro', 'Business'],
         draft: {
           name: draftName,
           subdomain:
             typeof q.subdomain === 'string' && q.subdomain.length > 0 ? q.subdomain : derivedSlug,
-          plan: typeof q.plan === 'string' && q.plan.length > 0 ? q.plan : 'Pro',
           adminEmail: typeof q.adminEmail === 'string' ? q.adminEmail : '',
           inheritBranding: q.inheritBranding !== 'false',
           accent: typeof q.accent === 'string' && q.accent.length > 0 ? q.accent : '#00C9DB',
