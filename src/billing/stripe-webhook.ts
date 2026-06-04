@@ -299,6 +299,7 @@ export function stripeWebhookRoutes(
                   status = 'canceled',
                   first_failure_at = NULL,
                   recovered_at = NULL,
+                  suspension_notified_at = NULL,
                   updated_at = NOW()
               `;
             } else {
@@ -391,6 +392,7 @@ export function stripeWebhookRoutes(
                 status = 'canceled',
                 first_failure_at = NULL,
                 recovered_at = NULL,
+                suspension_notified_at = NULL,
                 updated_at = NOW()
             `;
             app.log.info({ orgId }, 'Subscription canceled (service denied via status gate)');
@@ -496,10 +498,11 @@ export function stripeWebhookRoutes(
             // state='none'.
             const updated = await sql<{ org_id: string; was_in_dunning: boolean }[]>`
               UPDATE subscriptions
-                 SET recovered_at     = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
-                     first_failure_at = NULL,
-                     status           = 'active',
-                     updated_at       = NOW()
+                 SET recovered_at           = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
+                     first_failure_at       = NULL,
+                     suspension_notified_at = NULL,
+                     status                 = 'active',
+                     updated_at             = NOW()
                WHERE stripe_subscription_id = ${subscriptionId}
               RETURNING org_id, (recovered_at = NOW()) AS was_in_dunning
             `;

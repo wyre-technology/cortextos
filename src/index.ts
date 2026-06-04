@@ -74,6 +74,7 @@ import { logShippingRoutes } from './log-shipping/routes.js';
 import { profileRoutes } from './profile/routes.js';
 import { VendorMonitor } from './monitoring/vendor-monitor.js';
 import { DripScheduler } from './email/drip-scheduler.js';
+import { DunningSuspensionScheduler } from './billing/dunning-suspension-scheduler.js';
 import { DashboardService } from './dashboard/dashboard-service.js';
 import { dashboardRoutes } from './dashboard/routes.js';
 import { ResellerService } from './reseller/reseller-service.js';
@@ -300,6 +301,7 @@ const logShippingAdapters = new Map<string, import('./log-shipping/adapters/type
 const logShipper = new LogShipper(logShippingService, logShippingAdapters, app.log);
 const vendorMonitor = new VendorMonitor(app.log);
 const dripScheduler = new DripScheduler(app.log);
+const dunningSuspensionScheduler = new DunningSuspensionScheduler(app.log, orgService);
 
 // ---------------------------------------------------------------------------
 // Boot-time DB initialisation — system-path (BYPASSRLS)
@@ -379,6 +381,7 @@ vendorMonitor.start();
 // (per-tick transport-configured guard). interval.unref() means it does not
 // block process exit. .stop() is called from the shutdown hook below.
 dripScheduler.start();
+dunningSuspensionScheduler.start();
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -652,6 +655,7 @@ const shutdown = async () => {
   logShipper.stop();
   vendorMonitor.stop();
   dripScheduler.stop();
+  dunningSuspensionScheduler.stop();
   await app.close();
   await closePools();
   process.exit(0);
