@@ -14,20 +14,98 @@ export interface TeamDomainsData {
 }
 
 export const TEAM_DOMAINS_STYLES = `
-  .domain-row { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); }
+  /* Consumes brand-token migration shipped in PR #337 (THEME_VARS):
+   * - --accent (lime) for primary CTAs (Add, Verify)
+   * - --text-on-accent for legible text on the lime fill
+   * - --accent-text (cyan) for link-style emphasis
+   * - --error-text / --success-text for status messaging
+   * - --bg-card / --border-primary / --text-primary for surfaces
+   * Per Aaron-flag "generic text buttons that sort of just suck" — this
+   * upgrade replaces the unstyled <button> defaults with proper
+   * tokenized buttons so the page renders in the new design language.
+   */
+  .domain-row {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 16px; border-bottom:1px solid var(--border-secondary, var(--border));
+  }
   .domain-row:last-child { border-bottom:none; }
-  .domain-name { font-weight:600; font-size:14px; }
+  .domain-name { font-weight:600; font-size:14px; color:var(--text-primary); }
+
+  /* Status badges — tokenized so dark/light + brand updates flow through */
   .badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600; margin-left:8px; }
-  .badge-verified { background:#dcfce7; color:#166534; }
-  .badge-pending { background:#fef3c7; color:#92400e; }
-  .dns-block { font-family: ui-monospace, monospace; background:var(--bg-muted,#f4f4f5); padding:8px 12px; border-radius:6px; font-size:12px; margin-top:6px; word-break:break-all; }
-  .dns-help { font-size:12px; color:var(--text-muted); margin-top:4px; }
-  .domain-actions button { margin-left:6px; }
-  .add-form { display:flex; gap:8px; margin-top:16px; }
-  .add-form input { flex:1; padding:8px 12px; border:1px solid var(--border); border-radius:6px; }
-  #domainStatus { font-size:13px; margin-top:8px; min-height:18px; }
-  .status-error { color:#b91c1c; }
-  .status-ok { color:#166534; }
+  .badge-verified { background:var(--badge-event-bg); color:var(--success-text); }
+  .badge-pending { background:var(--badge-personal-bg); color:var(--warning-text); }
+
+  /* DNS-record block — monospace, surface-tokened */
+  .dns-block {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    background: var(--bg-input, var(--bg-card));
+    color: var(--text-primary);
+    padding:10px 14px; border:1px solid var(--border-tertiary, var(--border));
+    border-radius:6px; font-size:12px; margin-top:8px;
+    word-break:break-all;
+  }
+  .dns-help { font-size:12px; color:var(--text-secondary); margin-top:6px; }
+
+  /* Action buttons — primary fills lime, secondary is outline.
+   * Replaces the previous browser-default-button look. */
+  .domain-actions { display:flex; gap:8px; }
+  .domain-actions button,
+  .add-form button {
+    font-family: var(--font-heading, 'Oswald', sans-serif);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    line-height: 1.2;
+  }
+  /* Primary: lime fill, dark text-on-accent (per --text-on-accent SoT) */
+  .btn-create-invite {
+    background: var(--accent);
+    color: var(--text-on-accent, #0a0a0a);
+    border-color: var(--accent);
+  }
+  .btn-create-invite:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  /* Secondary: outline, picks up text-color, hover fills */
+  .btn-disconnect {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--border-primary);
+  }
+  .btn-disconnect:hover {
+    background: var(--bg-hover);
+    color: var(--error-text);
+    border-color: var(--error-text);
+  }
+
+  .add-form { display:flex; gap:10px; margin-top:16px; align-items:stretch; }
+  .add-form input {
+    flex:1;
+    padding:8px 12px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border:1px solid var(--border-primary);
+    border-radius:6px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    transition: border-color 120ms ease;
+  }
+  .add-form input:focus {
+    outline: none;
+    border-color: var(--accent-text);
+  }
+
+  #domainStatus { font-size:13px; margin-top:10px; min-height:18px; }
+  .status-error { color: var(--error-text); }
+  .status-ok { color: var(--success-text); }
 `;
 
 export function renderTeamDomains(data: TeamDomainsData): string {
