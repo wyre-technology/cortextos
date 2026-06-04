@@ -3,6 +3,11 @@ import { brand } from '../../brand/index.js';
 import { getVendorsByCategory } from '../../credentials/vendor-config.js';
 import { escapeHtml } from '../helpers.js';
 import { isPaidPlan } from '../../billing/gate.js';
+import {
+  renderDunningBanner,
+  renderSuspendedView,
+  type DunningView,
+} from './team-billing.js';
 
 export interface PersonalConnectionsData {
   connectedVendors: string[];
@@ -13,6 +18,17 @@ export interface PersonalConnectionsData {
   upgraded: boolean;
   isOwner: boolean;
   stripeEnabled: boolean;
+  /**
+   * Dunning view-state for the caller's org — surfaces the same banner /
+   * suspended-card here as on /org/billing so a customer 302'd here by
+   * requireTeamAccess (suspended → canAccessPaidFeatures false →
+   * redirect to /settings) sees what's going on. Ruby D1 HIGH launch-
+   * blocker fix 2026-06-04. Single-source-pin with /org/billing's
+   * dunning surface: same `subscriptions` row drives both.
+   */
+  dunning?: DunningView;
+  /** Used by dunning copy (greeting line on the suspended-card). */
+  firstName?: string | null;
 }
 
 // Short tab labels for the category filter bar
@@ -299,7 +315,23 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
   const {
     connectedVendors, org, orgVendors, memberCount,
     connectionLimit, upgraded, isOwner,
+    dunning = { state: 'none' } as DunningView,
+    firstName = null,
   } = data;
+
+  // Dunning surface (D1) — ruby HIGH launch-blocker fix. When the org has
+  // an active dunning state, render the same banner that /org/billing
+  // shows; when SUSPENDED, additionally render the suspended-card on top
+  // (the page the suspended-redirect lands on now actually explains why).
+  // Both helpers are re-used from team-billing.ts so /settings + /org/
+  // billing surface the SAME copy, the SAME CTA, the SAME state machine
+  // — single-source-pin by shared-render-helper.
+  const dunningBanner =
+    dunning.state !== 'none' && dunning.state !== 'recovered'
+      ? renderDunningBanner(dunning, firstName)
+      : '';
+  const suspendedView =
+    dunning.state === 'suspended' ? renderSuspendedView(dunning, firstName) : '';
 
   const categories = getVendorsByCategory();
   const connectedSet = new Set(connectedVendors);
@@ -556,6 +588,8 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
   </script>`;
 
   const body = `
+    ${dunningBanner}
+    ${suspendedView}
     ${upgradeBanner}
     ${orgSection}
     ${limitBanner}

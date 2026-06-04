@@ -79,7 +79,7 @@ import {
   type CustomerTabId,
   type CustomerTabData,
 } from './templates/reseller-customer-tabs.js';
-import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData, type TrialState } from './templates/team-billing.js';
+import { renderTeamBilling, TEAM_BILLING_STYLES, DUNNING_TOAST_SCRIPT, type TeamBillingData, type TrialState, type DunningView } from './templates/team-billing.js';
 import { getPlan, getDefaultPlan } from '../billing/plan-catalog.js';
 import { computeSeatBilling } from '../billing/seat-service.js';
 import { deriveDunningView } from '../billing/dunning-view.js';
@@ -553,12 +553,33 @@ export function webRoutes(deps: WebRouteDeps) {
         let orgVendors: string[] = [];
         let memberCount = 0;
         let isOwner = false;
+        let dunning: DunningView = { state: 'none' };
         if (org) {
           orgVendors = await credentialService.listOrgVendors(org.id);
           const members = await orgService.getMembers(org.id);
           memberCount = members.length;
           const membership = await orgService.getMembership(org.id, user.sub);
           isOwner = membership?.role === 'owner' || membership?.role === 'admin';
+
+          // Dunning surface on /settings — ruby D1 HIGH launch-blocker
+          // (2026-06-04): a suspended customer trying any billing surface
+          // gets 302'd here by requireTeamAccess + canAccessPaidFeatures,
+          // and previously this page rendered ZERO dunning state — so
+          // their first signal of suspension is "the redirect dropped me
+          // somewhere that doesn't explain anything." Now /settings reads
+          // the same dunning view as /org/billing (single-source-pin) and
+          // the template surfaces the banner / suspended-card. Customer
+          // sees the same picture whether they were 302'd here or arrived
+          // directly. Same `subscriptions` row drives both.
+          const settingsStripeClient = config.stripeSecretKey
+            ? new Stripe(config.stripeSecretKey)
+            : null;
+          dunning = await deriveDunningView(org.id, {
+            orgService,
+            stripe: settingsStripeClient,
+            graceDays: config.dunningGraceDays,
+            stripeSubscriptionId: org.stripeSubscriptionId,
+          });
         }
 
         const connectionLimit = await billingGate.getConnectionLimit(user.sub);
@@ -573,6 +594,8 @@ export function webRoutes(deps: WebRouteDeps) {
           upgraded,
           isOwner,
           stripeEnabled: !!(config.stripeSecretKey && config.stripeProPriceId),
+          dunning,
+          firstName: (user.name || '').split(/\s+/)[0] || null,
         });
 
         const html = renderLayout({
