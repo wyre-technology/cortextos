@@ -320,6 +320,55 @@ export function stripeWebhookRoutes(
             break;
           }
 
+          case 'customer.subscription.trial_will_end': {
+            // Stripe fires this event ~3 days before `trial_end` for any
+            // subscription with a trial. Without this handler the event
+            // fell to the default 200-ack-and-ignore branch → trialing
+            // customers got ZERO conduit-side warning before the first
+            // charge (Tier-3 customer-acquisition-loss surface; ruby T2
+            // HIGH launch-blocker audit 2026-06-04).
+            //
+            // Pattern-family with `invoice.payment_failed` (PR #221):
+            // Stripe-event → lookup org-owner → fire Loops event. Same
+            // shape, same single-source-pin (sub.current_period_end IS
+            // the trial-end the /org/billing banner reads — they cannot
+            // disagree).
+            const subscription = event.data.object as Stripe.Subscription;
+            const orgId = subscription.metadata?.org_id;
+            if (!orgId) break;
+
+            const trialEndUnix =
+              (subscription as unknown as { trial_end?: number | null }).trial_end ??
+              (subscription as unknown as { current_period_end?: number | null })
+                .current_period_end ??
+              null;
+            const trialEndIso = trialEndUnix ? new Date(trialEndUnix * 1000).toISOString() : null;
+
+            // Fire Loops event by looking up the org owner's email.
+            // Loops event slug `trial-will-end` is COPY-PLACEHOLDER —
+            // pending Aaron-copy decision (subject, body, CTA URL all
+            // owned by the Loops template, not this code). Once the
+            // template lands in Loops dashboard, this slug becomes live
+            // with no further code change. Until then the Loops API
+            // returns success-no-template; safe-fallback.
+            const owner = await orgService.getOrg(orgId).catch(() => null);
+            if (owner) {
+              const members = await orgService.getMembersWithProfiles(orgId).catch(() => []);
+              const ownerMember = members.find((m) => m.role === 'owner');
+              if (ownerMember?.email) {
+                sendLoopsEvent(ownerMember.email, 'trial-will-end', {
+                  org_id: orgId,
+                  trial_end_at: trialEndIso,
+                }).catch((err) =>
+                  app.log.warn({ err, orgId }, 'failed to send Loops trial-will-end event'),
+                );
+              }
+            }
+
+            app.log.info({ orgId, trialEndIso }, 'Trial-will-end notice queued');
+            break;
+          }
+
           case 'customer.subscription.deleted': {
             const subscription = event.data.object as Stripe.Subscription;
             const orgId = subscription.metadata?.org_id;
