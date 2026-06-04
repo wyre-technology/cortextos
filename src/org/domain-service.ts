@@ -81,6 +81,32 @@ function toDomain(row: OrgDomainRow): OrgDomain {
 // not starting/ending with hyphen, total length <= 253.
 const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
 
+/**
+ * Extract the bare nanoid from a stored verificationToken.
+ *
+ * Format: `conduit-verify=<24-char nanoid>` per add() at this file. Return
+ * the part after the `=`. Returns null if the token doesn't fit the
+ * expected shape (defensive — shouldn't happen for any row created via
+ * the current add() path, but legacy rows or schema-divergence-via-direct-
+ * DB-write would surface here).
+ *
+ * Used by verify()'s tolerance-by-construction fallback path: when a
+ * customer's TXT record matches the bare nanoid but not the full token
+ * (e.g. their DNS provider stripped the hyphen, doubled quote-escaping,
+ * etc), accept the verification — the 24-char nanoid is the entropy
+ * source; the prefix exists for human-readable namespace identification.
+ */
+export function bareNanoidFromVerificationToken(token: string): string | null {
+  const eqIdx = token.indexOf('=');
+  if (eqIdx < 0) return null;
+  const bare = token.slice(eqIdx + 1);
+  // Defensive: require at least 16 chars of nanoid-shape for the
+  // tolerance path to apply. Prevents accidental match against any short
+  // string after a literal '=' character in the TXT record.
+  if (bare.length < 16) return null;
+  return bare;
+}
+
 export function isValidDomain(domain: string): boolean {
   return DOMAIN_RE.test(normalizeDomain(domain));
 }
@@ -178,7 +204,12 @@ export class OrgDomainService {
    * Look up _conduit-verify.<domain> TXT records. Match if any record value
    * equals the stored verification_token exactly. On success, set verified_at.
    */
-  async verify(id: string, orgId: string, verifiedBy: string): Promise<OrgDomain> {
+  async verify(
+    id: string,
+    orgId: string,
+    verifiedBy: string,
+    logger?: { warn: (obj: object, msg: string) => void },
+  ): Promise<OrgDomain> {
     const existing = await this.getById(id, orgId);
     if (!existing) {
       throw new OrgDomainError('DOMAIN_NOT_FOUND', `domain claim ${id} not found`);
@@ -196,11 +227,43 @@ export class OrgDomainService {
     }
 
     const joined = records.map((chunks) => chunks.join(''));
+
+    // STRICT match first — happy-path is unchanged.
     if (!joined.includes(existing.verificationToken)) {
-      throw new OrgDomainError(
-        'VERIFICATION_TOKEN_MISSING',
-        `TXT record for _conduit-verify.${existing.domain} did not contain the expected token`,
-      );
+      // FALLBACK: bare-nanoid match. The verificationToken is
+      // `conduit-verify=<nanoid>`; the human-readable prefix is namespace-
+      // marker, the nanoid IS the entropy source. When a customer types the
+      // TXT value at their DNS provider, the prefix can drift in three ways
+      // we've observed at the customer-input substrate:
+      //
+      //   - hyphen stripped: `conduitverify=<nanoid>`  (Aaron 2026-06-04, prod)
+      //   - case variation: `Conduit-Verify=<nanoid>`
+      //   - quotation-marks doubled / stripped by provider input field
+      //
+      // Tolerance-by-construction at the customer-input substrate (boss-
+      // banked 2026-06-04 sibling to fail-closed-by-construction at the
+      // system-output substrate): accept any TXT record that contains the
+      // bare nanoid. Security property preserved: the 24-char nanoid is
+      // the unique entropy source; the prefix exists for human-readable
+      // namespace identification, not security.
+      const bareToken = bareNanoidFromVerificationToken(existing.verificationToken);
+      if (!bareToken || !joined.some((r) => r.includes(bareToken))) {
+        throw new OrgDomainError(
+          'VERIFICATION_TOKEN_MISSING',
+          `TXT record for _conduit-verify.${existing.domain} did not contain the expected token`,
+        );
+      }
+      // Telemetry: the bare-nanoid path matched but the strict path did
+      // not. Logs the customer-input variation so the systemic-rate of
+      // this divergence is observable. If this fires at scale we know the
+      // tolerance is load-bearing; if it stays rare we can simplify back
+      // to strict comparison later.
+      if (logger) {
+        logger.warn(
+          { event: 'domain_verify_hyphen_normalize_fired', domain: existing.domain, orgId },
+          `domain-verify: TXT record matched bare nanoid but not full token prefix — customer-input variation accepted`,
+        );
+      }
     }
 
     // Race on verified uniqueness: if another org slipped in between add() and

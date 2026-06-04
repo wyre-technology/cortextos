@@ -126,7 +126,7 @@ export function domainRoutes(deps: DomainRouteDeps) {
         const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
         if (!user) return;
         try {
-          const record = await domainService.verify(id, orgId, user.sub);
+          const record = await domainService.verify(id, orgId, user.sub, request.log);
           return reply.send(record);
         } catch (err) {
           return handleDomainError(reply, err);
@@ -245,7 +245,7 @@ export function domainRoutes(deps: DomainRouteDeps) {
         // landed yet, the verify call fails with VERIFICATION_TOKEN_MISSING
         // and the user retries manually after a minute.
         try {
-          await domainService.verify(id, orgId, user.sub);
+          await domainService.verify(id, orgId, user.sub, request.log);
           return reply.redirect(`/settings/domains?${okFlash}`, 302);
         } catch (err) {
           const msg = err instanceof OrgDomainError ? err.message : 'verification failed';
