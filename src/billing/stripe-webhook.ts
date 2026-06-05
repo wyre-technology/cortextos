@@ -40,14 +40,16 @@ export async function handleResellerInvoicePaymentSucceeded(
   resellerInvoiceId: string,
   log: FastifyInstance['log'],
   sql: Sql,
+  orgService?: OrgService,
 ): Promise<void> {
-  const result = await sql`
+  const result = await sql<{ msp_org_id: string; amount_cents: number; currency: string }[]>`
     UPDATE reseller_invoices
        SET status = 'paid'
      WHERE id = ${resellerInvoiceId}
        AND status IN ('open', 'past_due')
+    RETURNING msp_org_id, amount_cents, currency
   `;
-  if ((result as unknown as { count: number }).count === 0) {
+  if (result.length === 0) {
     log.warn(
       { resellerInvoiceId },
       'reseller invoice payment_succeeded matched no open/past_due row — acking (permanent, retry cannot help)',
@@ -55,6 +57,32 @@ export async function handleResellerInvoicePaymentSucceeded(
     return;
   }
   log.info({ resellerInvoiceId }, 'reseller invoice marked paid');
+
+  // RC1 reseller-customer-paid Loops event (ruby 2026-06-05): the MSP
+  // (reseller_admin) needs Conduit-side acknowledgment of sub-customer
+  // payment so MSP can reconcile books + notice churn-signals at cap-
+  // stone moments. Server-side row-update alone left zero MSP signal.
+  // Fire-and-forget; lookup failure does NOT block the webhook ack.
+  if (orgService) {
+    const { msp_org_id: mspOrgId, amount_cents: amountCents, currency } = result[0];
+    try {
+      const members = await orgService.getMembersWithProfiles(mspOrgId);
+      const owner = members.find((m) => m.role === 'owner');
+      if (owner?.email) {
+        sendLoopsEvent(owner.email, 'reseller-customer-paid', {
+          msp_org_id: mspOrgId,
+          reseller_invoice_id: resellerInvoiceId,
+          amount_cents: amountCents,
+          currency,
+          paid_at: new Date().toISOString(),
+        }).catch((err) =>
+          log.warn({ err, mspOrgId }, 'failed to send Loops reseller-customer-paid event'),
+        );
+      }
+    } catch (err) {
+      log.warn({ err, mspOrgId }, 'reseller-customer-paid notify lookup failed (non-fatal)');
+    }
+  }
 }
 
 /**
@@ -73,14 +101,16 @@ export async function handleResellerInvoicePaymentFailed(
   resellerInvoiceId: string,
   log: FastifyInstance['log'],
   sql: Sql,
+  orgService?: OrgService,
 ): Promise<void> {
-  const result = await sql`
+  const result = await sql<{ msp_org_id: string; amount_cents: number; currency: string }[]>`
     UPDATE reseller_invoices
        SET status = 'past_due'
      WHERE id = ${resellerInvoiceId}
        AND status = 'open'
+    RETURNING msp_org_id, amount_cents, currency
   `;
-  if ((result as unknown as { count: number }).count === 0) {
+  if (result.length === 0) {
     log.warn(
       { resellerInvoiceId },
       'reseller invoice payment_failed matched no open row — acking (permanent, retry cannot help)',
@@ -88,6 +118,31 @@ export async function handleResellerInvoicePaymentFailed(
     return;
   }
   log.info({ resellerInvoiceId }, 'reseller invoice marked past_due');
+
+  // RC1 reseller-customer-past-due Loops event (ruby 2026-06-05): MSP
+  // needs Conduit-side dunning signal so reconciliation flags problem
+  // sub-customers before WYRE's MSP-level subscription dunning fires
+  // (which is downstream cap-stone, not the warning for this invoice).
+  if (orgService) {
+    const { msp_org_id: mspOrgId, amount_cents: amountCents, currency } = result[0];
+    try {
+      const members = await orgService.getMembersWithProfiles(mspOrgId);
+      const owner = members.find((m) => m.role === 'owner');
+      if (owner?.email) {
+        sendLoopsEvent(owner.email, 'reseller-customer-past-due', {
+          msp_org_id: mspOrgId,
+          reseller_invoice_id: resellerInvoiceId,
+          amount_cents: amountCents,
+          currency,
+          past_due_at: new Date().toISOString(),
+        }).catch((err) =>
+          log.warn({ err, mspOrgId }, 'failed to send Loops reseller-customer-past-due event'),
+        );
+      }
+    } catch (err) {
+      log.warn({ err, mspOrgId }, 'reseller-customer-past-due notify lookup failed (non-fatal)');
+    }
+  }
 }
 
 /**
@@ -505,7 +560,7 @@ export function stripeWebhookRoutes(
             // Track A subscription-dunning path.
             const resellerInvoiceIdF = invoice.metadata?.reseller_invoice_id;
             if (resellerInvoiceIdF) {
-              await handleResellerInvoicePaymentFailed(resellerInvoiceIdF, app.log, sql);
+              await handleResellerInvoicePaymentFailed(resellerInvoiceIdF, app.log, sql, orgService);
               break;
             }
 
@@ -580,7 +635,7 @@ export function stripeWebhookRoutes(
             // Track A subscription-recovery path.
             const resellerInvoiceIdS = invoice.metadata?.reseller_invoice_id;
             if (resellerInvoiceIdS) {
-              await handleResellerInvoicePaymentSucceeded(resellerInvoiceIdS, app.log, sql);
+              await handleResellerInvoicePaymentSucceeded(resellerInvoiceIdS, app.log, sql, orgService);
               break;
             }
 

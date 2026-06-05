@@ -19,6 +19,7 @@ import { config } from '../config.js';
 import type { ResellerService } from './reseller-service.js';
 import { OrgHierarchyError, type OrgService } from '../org/org-service.js';
 import { sendInvitationEmail } from '../email/transactional.js';
+import { sendLoopsEvent } from '../email/loops.js';
 import {
   ResellerMemberError,
   RESELLER_ROLES,
@@ -556,6 +557,43 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
               invitationId: invitation.id,
             },
           }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+          // RC1 reseller-customer-created Loops event (ruby 2026-06-05).
+          // Per actor-self-confirmation-omitted-by-construction principle
+          // (boss-banked 2026-06-05): notify OTHER reseller admins/owners
+          // (those with standing-to-know that org-state changed without
+          // their direct action), NOT the actor themselves (they have
+          // agent-knowledge of their own action; UI-feedback closes the
+          // self-confirmation loop). If actor is the only admin on the
+          // reseller-org -> no fire by-construction.
+          try {
+            const resellerMembers = await orgService.getMembersWithProfiles(ctx.resellerId);
+            const recipients = resellerMembers.filter(
+              (m) =>
+                m.userId !== ctx.user.sub
+                && (m.role === 'owner' || m.role === 'admin')
+                && m.email,
+            );
+            for (const recipient of recipients) {
+              sendLoopsEvent(recipient.email as string, 'reseller-customer-created', {
+                msp_org_id: ctx.resellerId,
+                customer_org_id: customer.id,
+                customer_org_name: customer.name,
+                created_by_user_id: ctx.user.sub,
+                created_at: new Date().toISOString(),
+              }).catch((err) =>
+                request.log.warn(
+                  { err, mspOrgId: ctx.resellerId, customerOrgId: customer.id },
+                  'failed to send Loops reseller-customer-created event',
+                ),
+              );
+            }
+          } catch (err) {
+            request.log.warn(
+              { err, mspOrgId: ctx.resellerId },
+              'reseller-customer-created notify lookup failed (non-fatal)',
+            );
+          }
 
           return reply.code(201).send({ ...customer, invitation_id: invitation.id });
         } catch (err) {
