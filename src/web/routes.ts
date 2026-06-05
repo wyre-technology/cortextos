@@ -554,6 +554,7 @@ export function webRoutes(deps: WebRouteDeps) {
         let memberCount = 0;
         let isOwner = false;
         let dunning: DunningView = { state: 'none' };
+        let trial: TrialState | null = null;
         if (org) {
           orgVendors = await credentialService.listOrgVendors(org.id);
           const members = await orgService.getMembers(org.id);
@@ -571,9 +572,18 @@ export function webRoutes(deps: WebRouteDeps) {
           // the template surfaces the banner / suspended-card. Customer
           // sees the same picture whether they were 302'd here or arrived
           // directly. Same `subscriptions` row drives both.
+          //
+          // Trial-banner pull-through (ruby OC6 elevation): the trial-
+          // banner is also surfaced here for the same reason — flat-
+          // pricing, /settings is the personal-default landing surface
+          // for trialing users, the banner cannot live only on
+          // /org/billing. Single read of `subscriptions` drives both
+          // `trial` and `dunning` for one round-trip.
           const settingsStripeClient = config.stripeSecretKey
             ? new Stripe(config.stripeSecretKey)
             : null;
+          const subscription = await orgService.getSubscription(org.id);
+          trial = deriveTrialFromSubscription(subscription);
           dunning = await deriveDunningView(org.id, {
             orgService,
             stripe: settingsStripeClient,
@@ -585,6 +595,19 @@ export function webRoutes(deps: WebRouteDeps) {
         const connectionLimit = await billingGate.getConnectionLimit(user.sub);
         const upgraded = request.query.upgraded === 'true';
 
+        // Seat-billing only needed when we render the trial banner — it
+        // carries the per-seat charge composition for "first charge of
+        // $X on <date>" copy. Loaded conditionally to avoid an extra
+        // service-clients roundtrip on the /settings cold-path.
+        let seatBillingForTrial = null;
+        if (org && trial) {
+          const serviceClients = await orgService.listServiceClients(org.id);
+          seatBillingForTrial = computeSeatBilling({
+            humans: memberCount,
+            agents: serviceClients.length,
+          });
+        }
+
         const { body: bodyContent, pageStyles: connectionsPageStyles } = renderPersonalConnections({
           connectedVendors,
           org,
@@ -595,6 +618,8 @@ export function webRoutes(deps: WebRouteDeps) {
           isOwner,
           stripeEnabled: !!(config.stripeSecretKey && config.stripeProPriceId),
           dunning,
+          trial,
+          seatBilling: seatBillingForTrial,
           firstName: (user.name || '').split(/\s+/)[0] || null,
         });
 

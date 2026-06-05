@@ -6,8 +6,11 @@ import { isPaidPlan } from '../../billing/gate.js';
 import {
   renderDunningBanner,
   renderSuspendedView,
+  renderTrialBanner,
   type DunningView,
+  type TrialState,
 } from './team-billing.js';
+import type { SeatBilling } from '../../billing/seat-service.js';
 
 export interface PersonalConnectionsData {
   connectedVendors: string[];
@@ -27,6 +30,19 @@ export interface PersonalConnectionsData {
    * dunning surface: same `subscriptions` row drives both.
    */
   dunning?: DunningView;
+  /**
+   * Trial-banner state — surfaces the same trial banner here as on
+   * /org/billing. Ruby OC6 HIGH (T1-elevation) fix: a trialing
+   * customer's default personal landing surface is /settings, so the
+   * banner cannot live only on /org/billing. Same `subscriptions` row
+   * drives both (single-source-pin via deriveTrialFromSubscription).
+   */
+  trial?: TrialState | null;
+  /**
+   * Seat-billing snapshot — required for the trial-banner "first charge
+   * of $X on <date>" copy. Null when not trialing (banner not rendered).
+   */
+  seatBilling?: SeatBilling | null;
   /** Used by dunning copy (greeting line on the suspended-card). */
   firstName?: string | null;
 }
@@ -316,8 +332,17 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
     connectedVendors, org, orgVendors, memberCount,
     connectionLimit, upgraded, isOwner,
     dunning = { state: 'none' } as DunningView,
+    trial = null,
+    seatBilling = null,
     firstName = null,
   } = data;
+
+  // Trial-banner pull-through (OC6 — T1 elevation): when the org is
+  // inside its 14-day trial, surface the same banner /org/billing
+  // shows. Single-source-pin: deriveTrialFromSubscription is the
+  // shared substrate (both routes consume the same helper).
+  const trialBanner =
+    trial && seatBilling ? renderTrialBanner(trial, seatBilling) : '';
 
   // Dunning surface (D1) — ruby HIGH launch-blocker fix. When the org has
   // an active dunning state, render the same banner that /org/billing
@@ -350,8 +375,6 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
       <form id="create-team-form" onsubmit="createTeam(event)" style="display:flex;flex-direction:column;gap:8px;max-width:320px">
         <input type="text" name="team_name" placeholder="Team name" required
           style="padding:8px 12px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-sidebar);color:var(--text-primary);font-size:14px;font-family:inherit" />
-        <input type="text" name="invite_code" placeholder="Invite code (optional)"
-          style="padding:8px 12px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-sidebar);color:var(--text-primary);font-size:14px;font-family:inherit" />
         <button type="submit" class="btn-create-team">Create a Team</button>
       </form>
     </div>
@@ -360,33 +383,37 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
         e.preventDefault();
         const form = document.getElementById('create-team-form');
         const name = form.team_name.value.trim();
-        const invite_code = form.invite_code.value.trim() || undefined;
         if (!name) return;
         const res = await fetch('/api/orgs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, invite_code }),
+          body: JSON.stringify({ name }),
         });
         if (res.ok) window.location.reload();
         else alert('Failed to create team: ' + (await res.json()).error);
       }
     </script>`;
   } else {
-    // Flat-pricing: no free tier. Every org is on the single plan, so the
-    // former free-community section (upgrade-to-pro CTA + redeem-code) is
-    // gone — all orgs render the paid summary below.
+    // Flat-pricing: no free tier, no plan-tier choice. Every org is on
+    // the single Conduit plan, so there is no badge to render (ruby OC1
+    // HIGH 2026-06-04: prior `<span class="plan-badge pro">Pro</span>`
+    // was Tier-3 active-inversion — there is no Pro tier).
     orgSection = `
     <div class="org-section">
       <div class="org-header">
         <span class="org-name">${escapeHtml(org.name)}</span>
-        <span class="plan-badge pro">Pro</span>
       </div>
       <p class="org-meta">${memberCount} member${memberCount !== 1 ? 's' : ''}${isOwner ? ' &middot; <a class="btn-manage" href="/org">Manage Team</a>' : ''}</p>
     </div>`;
   }
 
+  // Trial-converted banner (ruby OC2 HIGH 2026-06-04): /settings?upgraded=true
+  // is the Stripe checkout success_url landing. Under flat-pricing there
+  // is no Pro upgrade path — what just happened is the customer's trial
+  // converted to a paid subscription. Preserve the positive moment-of-
+  // payment-success with copy that matches the actual transition.
   const upgradeBanner = upgraded
-    ? '<div class="upgrade-banner">Your team has been upgraded to Pro! You now have unlimited connections, team management, and audit logging.</div>'
+    ? '<div class="upgrade-banner">Welcome aboard! Your trial converted to a paid subscription. Thanks for trusting Conduit with your MCP gateway.</div>'
     : '';
 
   const limitBanner = atLimit && connectionLimit !== Infinity
@@ -588,6 +615,7 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
   </script>`;
 
   const body = `
+    ${trialBanner}
     ${dunningBanner}
     ${suspendedView}
     ${upgradeBanner}
