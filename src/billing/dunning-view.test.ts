@@ -84,18 +84,85 @@ describe('mapSubscriptionToDunningView', () => {
   });
 
   describe('terminal states', () => {
-    it.each(['canceled', 'incomplete_expired'])(
-      'returns suspended for %s status regardless of grace',
-      (status) => {
-        const out = mapSubscriptionToDunningView(
-          { status, first_failure_at: null, recovered_at: null },
-          REAL_VISUALS,
-          GRACE_DAYS,
-          NOW,
-        );
-        expect(out.state).toBe('suspended');
-      },
-    );
+    // Ruby CC2 2026-06-05: customer-cancel-intent split from payment-
+    // failure-suspension. Previously these two statuses collapsed into
+    // 'suspended'; they now render distinct view-states with distinct
+    // copy registers (peer-acknowledgment of customer choice vs we-
+    // couldn't-bill-you).
+    it('returns canceled for canceled status (customer-cancel-intent)', () => {
+      const out = mapSubscriptionToDunningView(
+        { status: 'canceled', first_failure_at: null, recovered_at: null },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('canceled');
+    });
+
+    it('returns suspended for incomplete_expired status (Stripe gave up on initial payment)', () => {
+      const out = mapSubscriptionToDunningView(
+        { status: 'incomplete_expired', first_failure_at: null, recovered_at: null },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('suspended');
+    });
+  });
+
+  describe('CC4 scheduled-cancel state (ruby 2026-06-05)', () => {
+    it('returns scheduled-cancel when status=active + cancel_at_period_end=TRUE + current_period_end present', () => {
+      const periodEnd = new Date(NOW.getTime() + 10 * 24 * HOUR);
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: null,
+          cancel_at_period_end: true,
+          current_period_end: periodEnd,
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('scheduled-cancel');
+      if (out.state === 'scheduled-cancel') {
+        expect(out.scheduledEndAt).toBe(periodEnd.toISOString());
+      }
+    });
+
+    it('still returns none when status=active + cancel_at_period_end=FALSE (the normal active sub)', () => {
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: null,
+          cancel_at_period_end: false,
+          current_period_end: new Date(NOW.getTime() + 30 * 24 * HOUR),
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('none');
+    });
+
+    it('returns none when cancel_at_period_end=TRUE but current_period_end is missing (defensive)', () => {
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: null,
+          cancel_at_period_end: true,
+          current_period_end: null,
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      // Without a period-end we cannot render the countdown -- fail open.
+      expect(out.state).toBe('none');
+    });
   });
 
   describe('past_due / unpaid / incomplete', () => {

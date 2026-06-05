@@ -33,6 +33,21 @@ interface SubscriptionRow {
   status: string;
   first_failure_at: Date | null;
   recovered_at: Date | null;
+  /**
+   * Whether Stripe carries cancel_at_period_end=TRUE on the subscription.
+   * Required for CC4 'scheduled-cancel' state derivation (ruby 2026-06-05):
+   * previously the field lived in the DB row but wasn't read into the
+   * view, so the scheduled-cancel UX state was structurally unreachable.
+   * Optional for backward-compat with existing test fixtures; falsy
+   * defaults to FALSE on read (= not-scheduled-cancel, the safe default).
+   */
+  cancel_at_period_end?: boolean | null;
+  /**
+   * Current billing period end. For active+scheduled-cancel subs this is
+   * the date service will end; the renderer derives the countdown from it.
+   * Optional for backward-compat with existing test fixtures.
+   */
+  current_period_end?: Date | null;
 }
 
 interface StripeVisuals {
@@ -92,7 +107,13 @@ export function mapSubscriptionToDunningView(
   graceDays: number,
   now: Date,
 ): DunningView {
-  const { status, first_failure_at: firstFailAt, recovered_at: recoveredAt } = sub;
+  const {
+    status,
+    first_failure_at: firstFailAt,
+    recovered_at: recoveredAt,
+    cancel_at_period_end: cancelAtPeriodEnd,
+    current_period_end: currentPeriodEnd,
+  } = sub;
 
   // Recovered toast: within 1h of a successful recovery on an active sub.
   // After 1h the toast collapses to 'none' so it doesn't replay forever.
@@ -109,12 +130,41 @@ export function mapSubscriptionToDunningView(
     }
   }
 
+  // CC4 scheduled-cancel (ruby 2026-06-05): active sub that the customer
+  // scheduled to end at the current period boundary. Distinct UX from
+  // 'none' (which would hide the scheduled-end entirely) and from
+  // 'canceled' (which is the post-end state). Banner-class surface: lets
+  // the customer see the countdown + uncancel before service ends.
+  if (
+    (status === 'active' || status === 'trialing')
+    && cancelAtPeriodEnd === true
+    && currentPeriodEnd
+  ) {
+    return {
+      state: 'scheduled-cancel',
+      scheduledEndAt: currentPeriodEnd.toISOString(),
+    };
+  }
+
   if (status === 'active' || status === 'trialing') {
     return { state: 'none' };
   }
 
-  // Stripe terminal states → suspended. No grace, no countdown.
-  if (status === 'canceled' || status === 'incomplete_expired') {
+  // CC2 (ruby 2026-06-05): split customer-cancel-intent from payment-
+  // failure-suspension. Both used to collapse into 'suspended' here,
+  // which rendered identical copy for semantically different lifecycle
+  // moments (customer chose to leave vs we couldn't bill them).
+  if (status === 'canceled') {
+    return {
+      state: 'canceled',
+      canceledAt: now.toISOString(),
+    };
+  }
+
+  // Stripe terminal payment-failure -> suspended. No grace, no countdown.
+  // 'incomplete_expired' = Stripe gave up on the initial payment after
+  // 23h of retries (not a customer-intent cancel).
+  if (status === 'incomplete_expired') {
     return {
       state: 'suspended',
       firstFailDate: firstFailAt?.toISOString() ?? now.toISOString(),

@@ -67,6 +67,17 @@ export type DunningStateName =
   | 'past-due'
   | 'final-warning'
   | 'suspended'
+  // CC2 2026-06-05: customer-cancel-intent split out from suspended (which
+  // previously conflated cancel-by-customer-intent and payment-failure-
+  // suspension into identical UX). 'canceled' carries the post-end state
+  // after customer chose to leave.
+  | 'canceled'
+  // CC4 2026-06-05: scheduled-cancel is the active+cancel_at_period_end=TRUE
+  // state. Banner-class surface (countdown to scheduled-end + uncancel
+  // affordance), NOT suspended-card. Falls back to 'none' only if the
+  // customer reverses the cancel (CC5 #351 event-handler flips the column
+  // back to FALSE).
+  | 'scheduled-cancel'
   | 'recovered';
 
 export interface DunningStateNone { state: 'none'; }
@@ -112,11 +123,35 @@ export interface DunningStateRecovered {
   nextChargeDate: string;
 }
 
+/**
+ * CC2 customer-cancel-intent state. Distinct from 'suspended' (payment-
+ * failure-suspension) — customer chose to leave. Render surface is the
+ * canceled-view (analogous to suspended-card but with different copy
+ * register: peer-acknowledgment + come-back-anytime + how-to-resubscribe).
+ */
+export interface DunningStateCanceled {
+  state: 'canceled';
+  canceledAt: string;
+}
+
+/**
+ * CC4 scheduled-cancel state. Active sub with cancel_at_period_end=TRUE.
+ * Banner-class surface with countdown to scheduledEndAt + uncancel
+ * affordance. The customer is still on the service through scheduledEndAt;
+ * reverting (CC5 #351 cancel-reversed) lands them back in 'none'.
+ */
+export interface DunningStateScheduledCancel {
+  state: 'scheduled-cancel';
+  scheduledEndAt: string;
+}
+
 export type DunningView =
   | DunningStateNone
   | DunningStateActive
   | DunningStateFinalWarning
   | DunningStateSuspended
+  | DunningStateCanceled
+  | DunningStateScheduledCancel
   | DunningStateRecovered;
 
 function assertNever(x: never): never {
@@ -188,6 +223,7 @@ export function renderDunningChip(dunning: DunningView): string {
   switch (dunning.state) {
     case 'none':
     case 'suspended':
+    case 'canceled':
     case 'recovered':
       return '';
     case 'payment-failing':
@@ -196,6 +232,8 @@ export function renderDunningChip(dunning: DunningView): string {
       return `<span class="dunning-chip dunning-chip--warn">Past due</span>`;
     case 'final-warning':
       return `<span class="dunning-chip dunning-chip--warn">Service pausing soon</span>`;
+    case 'scheduled-cancel':
+      return `<span class="dunning-chip dunning-chip--info">Subscription ending soon</span>`;
     default:
       return assertNever(dunning);
   }
@@ -220,7 +258,13 @@ export function renderDunningBanner(
   dunning: DunningView,
   _firstName: string | null,
 ): string {
-  if (dunning.state === 'none' || dunning.state === 'suspended' || dunning.state === 'recovered') {
+  if (
+    dunning.state === 'none'
+    || dunning.state === 'suspended'
+    || dunning.state === 'canceled'
+    || dunning.state === 'scheduled-cancel'
+    || dunning.state === 'recovered'
+  ) {
     return '';
   }
 
@@ -281,6 +325,67 @@ export function renderSuspendedView(
       <p class="suspended-card__footnote">
         Need help? <a href="/contact-support">Contact support →</a>
       </p>
+    </div>
+  `;
+}
+
+/**
+ * CC2 customer-cancel-intent view (ruby 2026-06-05). Sibling-shape with
+ * renderSuspendedView but with cancel-by-customer copy register (peer-
+ * acknowledgment of customer decision + come-back-anytime + how-to-
+ * resubscribe affordance). COPY-PLACEHOLDER: scribe Voice-4 variant
+ * coords copy; this scaffold ships the structural surface with copy
+ * tunable at the template-substrate.
+ */
+export function renderCanceledView(
+  dunning: DunningStateCanceled,
+  _firstName: string | null,
+): string {
+  return `
+    <div class="suspended-card suspended-card--canceled">
+      <div class="suspended-card__icon">${ICON_PAUSE}</div>
+      <h1 class="suspended-card__title">Your subscription has ended</h1>
+      <p class="suspended-card__subhead">
+        Thanks for trying Conduit. You're welcome back anytime.
+      </p>
+      <p class="suspended-card__body">
+        Subscription ended ${escapeHtml(new Date(dunning.canceledAt).toLocaleDateString())}.
+        Your data and settings are preserved — resubscribe to pick up where you left off.
+      </p>
+      <a href="/org/billing/resubscribe" class="btn-primary suspended-card__cta">
+        Resubscribe
+      </a>
+      <p class="suspended-card__footnote">
+        Questions? <a href="/contact-support">Contact support →</a>
+      </p>
+    </div>
+  `;
+}
+
+/**
+ * CC4 scheduled-cancel banner (ruby 2026-06-05). Active sub that the
+ * customer has scheduled to end at scheduledEndAt. Banner-class surface
+ * (not suspended-card) — service is still running through the date.
+ * Sibling shape to renderTrialBanner (countdown to a future moment +
+ * single CTA to reverse the decision).
+ *
+ * COPY-PLACEHOLDER: scribe Voice-4 variant — peer-acknowledgment of
+ * scheduled-end + uncancel-affordance.
+ */
+export function renderScheduledCancelBanner(dunning: DunningStateScheduledCancel): string {
+  const endDate = new Date(dunning.scheduledEndAt);
+  const daysLeft = Math.max(0, Math.ceil((endDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+  const daysLabel = daysLeft === 1 ? '1 day left' : `${daysLeft} days left`;
+  return `
+    <div class="trial-banner trial-banner--scheduled-cancel" role="status">
+      <span class="trial-banner__icon">${ICON_INFO}</span>
+      <div class="trial-banner__copy">
+        <div class="trial-banner__line1">Subscription ending — ${escapeHtml(daysLabel)}</div>
+        <div class="trial-banner__line2">
+          Service ends ${escapeHtml(endDate.toLocaleDateString())}.
+          Changed your mind? <a href="/org/billing/uncancel">Keep your subscription →</a>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -496,12 +601,31 @@ export function renderTeamBilling(data: TeamBillingData): string {
     `;
   }
 
+  // CC2 customer-cancel-intent (2026-06-05): distinct view from suspended.
+  // Same structural shape (full-page card replaces normal layout) but
+  // different copy register.
+  if (dunning.state === 'canceled') {
+    return `
+      ${renderCanceledView(dunning, firstName)}
+
+      ${renderBillingDetails(org)}
+    `;
+  }
+
+  // CC4 scheduled-cancel banner (2026-06-05): the customer is still on
+  // service through scheduledEndAt — render the normal four-card layout
+  // with the scheduled-cancel banner above the H1 (sibling-position to
+  // the trial banner).
+  const scheduledCancelBanner =
+    dunning.state === 'scheduled-cancel' ? renderScheduledCancelBanner(dunning) : '';
+
   // The trial banner sits above the H1, like the dunning banner; both can
   // be present (a trialing org with a failing card), trial first.
   const trialBanner = trial ? renderTrialBanner(trial, data.seatBilling) : '';
 
   return `
     ${trialBanner}
+    ${scheduledCancelBanner}
     ${banner}
 
     <h1 style="margin-bottom:4px">Billing</h1>

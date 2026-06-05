@@ -6,6 +6,8 @@ import { isPaidPlan } from '../../billing/gate.js';
 import {
   renderDunningBanner,
   renderSuspendedView,
+  renderCanceledView,
+  renderScheduledCancelBanner,
   renderRecoveredToast,
   renderTrialBanner,
   DUNNING_TOAST_SCRIPT,
@@ -370,6 +372,15 @@ export function renderPersonalConnections(data: PersonalConnectionsData): {
       : '';
   const suspendedView =
     dunning.state === 'suspended' ? renderSuspendedView(dunning, firstName) : '';
+  // CC2/CC4 (2026-06-05) shared-helper LEVEL-1 import-reuse extending the
+  // PR #345 D1 pattern + PR #349 PSR1 pattern: both new dunning states
+  // render via the same helpers consumed at /org/billing, so /settings
+  // surfaces identical copy + state-machine for canceled + scheduled-
+  // cancel transitions. Single-source-pin holds across both surfaces.
+  const canceledView =
+    dunning.state === 'canceled' ? renderCanceledView(dunning, firstName) : '';
+  const scheduledCancelBanner =
+    dunning.state === 'scheduled-cancel' ? renderScheduledCancelBanner(dunning) : '';
 
   // Recovered-toast surface (PSR1) — ruby MED 2026-06-05: the recovered-
   // state 1h-TTL toast lived only on /org/billing. A customer who paid a
@@ -639,9 +650,11 @@ export function renderPersonalConnections(data: PersonalConnectionsData): {
 
   const body = `
     ${recoveredToast}
+    ${scheduledCancelBanner}
     ${trialBanner}
     ${dunningBanner}
     ${suspendedView}
+    ${canceledView}
     ${upgradeBanner}
     ${orgSection}
     ${limitBanner}
