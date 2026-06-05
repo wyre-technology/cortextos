@@ -129,10 +129,27 @@ describe('renderCustomerTab — Settings', () => {
 });
 
 describe('renderCustomerTab — invariants', () => {
-  it('mock-first tabs carry a documented swap-in contract', () => {
-    // Usage + Audit are wired live; the rest are still mock-first.
+  // RC4 customer-facing dev-language leak fix (ruby + Aaron 2026-06-05):
+  // the SWAP-IN CONTRACT strings used to render directly in the
+  // customer-facing UI via the seam() helper. Now suppressed at the
+  // helper-substrate (returns ''), so the regression-guard inverts:
+  // mock-first tabs MUST NOT render the dev-language text. The seam
+  // call-sites remain in the source as documented swap-in markers for
+  // the future real-data wiring; only the runtime render is silenced.
+  it('mock-first tabs do NOT render dev-language SWAP-IN-CONTRACT text to customers (RC4 regression-guard)', () => {
     for (const t of ['mcps', 'users', 'tools', 'billing', 'settings'] as CustomerTabId[]) {
-      expect(renderCustomerTab(data(t)).body).toContain('SWAP-IN CONTRACT');
+      const body = renderCustomerTab(data(t)).body;
+      expect(body).not.toContain('SWAP-IN CONTRACT');
+      expect(body).not.toContain('Mock-data-first');
+      expect(body).not.toContain('ia-shell-note');
+    }
+  });
+  it('live tabs (Usage + Audit) also do NOT leak their authz-enforcement-described dev-language', () => {
+    for (const t of ['usage', 'audit'] as CustomerTabId[]) {
+      const body = renderCustomerTab(data(t)).body;
+      expect(body).not.toContain('reseller-scoped');
+      expect(body).not.toContain('enforces reseller-owns-customer');
+      expect(body).not.toContain('ia-shell-note');
     }
   });
   it('escapes the customer name (no HTML injection)', () => {

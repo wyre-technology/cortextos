@@ -54,15 +54,30 @@ describe('renderResellerCustomers', () => {
     expect(html).toContain('>12<');
   });
 
-  it('maps plan to the right badge class', () => {
+  // RC4 (ruby + Aaron 2026-06-05): plan badge removed from the LIST.
+  // Flat-pricing has one plan; FREE/PRO/BUSINESS labels were UX-
+  // misleading (same OC1-class fix as the wizard + the customer-detail
+  // header). Lock the absence: no plan badge spans + no plan filter
+  // dropdown + no Plan column header.
+  it('RC4: does NOT render plan-badge spans for any plan slug (flat-pricing single-plan, OC1-class)', () => {
     const html = renderResellerCustomers(data([
       customer({ id: 'b', plan: 'business' }),
       customer({ id: 'p', plan: 'pro' }),
       customer({ id: 'f', plan: 'free' }),
     ]));
-    expect(html).toContain('rc-plan-business');
-    expect(html).toContain('rc-plan-pro');
-    expect(html).toContain('rc-plan-free');
+    expect(html).not.toContain('rc-plan-business');
+    expect(html).not.toContain('rc-plan-pro');
+    expect(html).not.toContain('rc-plan-free');
+    expect(html).not.toContain('>BUSINESS<');
+    expect(html).not.toContain('>PRO<');
+    expect(html).not.toContain('>FREE<');
+  });
+
+  it('RC4: does NOT render Plan column header or filter dropdown', () => {
+    const html = renderResellerCustomers(data([customer({ id: 'b' })]));
+    expect(html).not.toContain('<th>Plan</th>');
+    expect(html).not.toContain('rcPlanFilter');
+    expect(html).not.toContain('Plan: All');
   });
 
   it('opens the customer via a live link; impersonate + more stay disabled', () => {

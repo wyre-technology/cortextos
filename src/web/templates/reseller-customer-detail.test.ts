@@ -43,9 +43,15 @@ describe('renderResellerCustomerDetail', () => {
     expect(body).toContain('AM3 Technology');
   });
 
-  it('renders the header with the plan/counts/subdomain subtitle', () => {
+  // RC4 (ruby + Aaron 2026-06-05): plan removed from subtitle per OC1-
+  // class fix (flat-pricing single-plan, no FREE/PRO/BUSINESS to convey).
+  // The test inverts: previously locked the BUG (plan-label rendered);
+  // now locks the FIX (no plan-label, counts + subdomain only).
+  it('RC4: header subtitle renders counts/subdomain WITHOUT plan label (no FREE/PRO/BUSINESS)', () => {
     const { body } = renderResellerCustomerDetail(data());
-    expect(body).toContain('BUSINESS plan');
+    expect(body).not.toContain('BUSINESS plan');
+    expect(body).not.toContain('FREE plan');
+    expect(body).not.toContain('PRO plan');
     expect(body).toContain('12 users');
     expect(body).toContain('4 MCPs');
     expect(body).toContain('am3.conduit.wyre.ai');

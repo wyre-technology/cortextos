@@ -203,7 +203,11 @@ export function renderResellerCustomerDetail(
           // Omit any segment whose source value is empty, rather than
           // rendering a dangling " · " (omit-not-blank, Track C Rule 1).
           [
-            customer.plan ? `${escapeHtml(customer.plan)} plan` : '',
+            // RC4 (ruby + Aaron 2026-06-05): plan removed from the
+            // customer-detail header subtitle. Same OC1-class fix —
+            // flat-pricing has one plan; the "BUSINESS plan" /
+            // "FREE plan" labels were UX-misleading rather than
+            // informative.
             `${customer.userCount.toLocaleString()} users`,
             `${customer.mcpCount.toLocaleString()} MCPs`,
             customer.subdomain ? escapeHtml(customer.subdomain) : '',

@@ -47,11 +47,16 @@ export interface ResellerCustomersData {
   customers: ResellerCustomer[];
 }
 
-const PLAN_LABEL: Record<CustomerPlan, string> = {
-  free: 'FREE',
-  pro: 'PRO',
-  business: 'BUSINESS',
-};
+// RC4 (ruby + Aaron 2026-06-05): plan badge removed. Same OC1 class fix
+// — flat-pricing has one plan (conduit), no tier-choice exists, so the
+// FREE/PRO/BUSINESS labels were UX-misleading. The customer LIST no
+// longer renders the badge; renderPlanBadge + PLAN_LABEL + the filter
+// dropdown all removed by-construction. The data-plan attr stays on
+// the row for backward-compat with any external selector, but the
+// in-template filter logic is gone.
+//
+// Note: CustomerPlan type + coerceCustomerPlan default both stay (used
+// elsewhere) — separate scope-cleanup post-launch.
 
 /** Em-dash placeholder for any not-yet-aggregated derived stat. */
 const EM_DASH = '—';
@@ -70,9 +75,6 @@ function formatRelativeTime(iso: string | null, now: Date = new Date()): string 
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-function renderPlanBadge(plan: CustomerPlan): string {
-  return `<span class="rc-plan rc-plan-${escapeHtml(plan)}">${escapeHtml(PLAN_LABEL[plan])}</span>`;
-}
 
 /**
  * Per-row action triad (Figma open-question #3 resolved to inline-always).
@@ -103,7 +105,6 @@ function renderRow(c: ResellerCustomer): string {
         <div class="rc-name">${name}</div>
         <div class="rc-sub">${escapeHtml(formatRelativeTime(c.lastActivity))} · ${escapeHtml(c.subdomain)}</div>
       </td>
-      <td data-label="Plan">${renderPlanBadge(c.plan)}</td>
       <td class="rc-num" data-label="Users">${fmtStat(c.userCount)}</td>
       <td class="rc-num" data-label="MCP Calls (30d)">${fmtStat(c.mcpCalls30d)}</td>
       <td class="rc-activity" data-label="Last Activity">${escapeHtml(formatRelativeTime(c.lastActivity))}</td>
@@ -132,12 +133,6 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
     <div class="rc-toolbar">
       <input type="text" id="rcSearch" class="rc-search" placeholder="Search customers…"
         oninput="rcFilter()" aria-label="Search customers" />
-      <select id="rcPlanFilter" class="rc-select" onchange="rcFilter()" aria-label="Filter by plan">
-        <option value="all">Plan: All</option>
-        <option value="business">Business</option>
-        <option value="pro">Pro</option>
-        <option value="free">Free</option>
-      </select>
       <select id="rcStatusFilter" class="rc-select" aria-label="Filter by status" disabled
         title="Status filtering lands with the Track A customer-status field">
         <option value="active">Status: Active</option>
@@ -148,7 +143,6 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
       <thead>
         <tr>
           <th>Customer</th>
-          <th>Plan</th>
           <th>Users</th>
           <th>MCP Calls (30d)</th>
           <th>Last Activity</th>
@@ -174,13 +168,11 @@ export const RESELLER_CUSTOMERS_SCRIPT = `
 <script>
   function rcFilter() {
     var q = (document.getElementById('rcSearch').value || '').trim().toLowerCase();
-    var plan = document.getElementById('rcPlanFilter').value;
     var rows = document.querySelectorAll('#rcRows .rc-row');
     var shown = 0;
     rows.forEach(function (row) {
       var matchName = !q || (row.getAttribute('data-name') || '').indexOf(q) !== -1;
-      var matchPlan = plan === 'all' || row.getAttribute('data-plan') === plan;
-      var visible = matchName && matchPlan;
+      var visible = matchName;
       row.style.display = visible ? '' : 'none';
       if (visible) shown++;
     });

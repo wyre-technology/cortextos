@@ -93,13 +93,26 @@ function renderChrome(data: CustomerTabData, body: string): string {
       <span class="cdt-crumb-current">${title}</span>
     </nav>
     <h1 class="cdt-title">${title}</h1>
-    <p class="section-desc">${name} · ${escapeHtml(customer.plan)} plan</p>
+    <p class="section-desc">${name}</p>
     ${body}
   `;
 }
 
-function seam(text: string): string {
-  return `<p class="ia-shell-note">${escapeHtml(text)}</p>`;
+// RC4 customer-facing dev-language leak fix (ruby 2026-06-05, Aaron-
+// flagged at staging): the seam() helper previously rendered the
+// internal "Mock-data-first. SWAP-IN CONTRACT: ..." dev-documentation
+// directly as a visible <p> in the customer-facing UI (dashed-border
+// box at the bottom of each tab). Customers saw literal compiler-
+// engineer language. Now suppressed at the helper-substrate — single
+// site closes all 5 seam-call leak-throughs (MCPs / Users / Tool
+// Access / Billing / Settings tabs) by-construction. The seam-comments
+// remain in the source as the documented swap-in contract for the
+// real-data wiring work; the renderer is silent until that work lands.
+// Argument is kept (vs removed) so call-sites stay stable + the
+// source-grep regression-guard tracks each call-site for the eventual
+// real-data swap-in audit.
+function seam(_text: string): string {
+  return '';
 }
 
 // ---- tab: MCPs -----------------------------------------------------------
@@ -167,9 +180,7 @@ function renderUsage(data: CustomerTabData): string {
         <thead><tr><th scope="col">Source</th><th class="cdt-num" scope="col">Calls</th></tr></thead>
         <tbody id="cdtuSources"></tbody>
       </table>
-    </div>
-    <p class="ia-shell-note">Live — sourced from the reseller-scoped customer-dashboard
-      endpoint, which enforces reseller-owns-customer access.</p>`);
+    </div>`);
 }
 
 /** Live loader for the Usage tab — reseller-scoped, endpoint owns authz. */
@@ -252,9 +263,7 @@ function renderAudit(data: CustomerTabData): string {
     <table class="cdt-table" id="cdtAuditTable" style="display:none">
       <thead><tr><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th></tr></thead>
       <tbody id="cdtAuditRows"></tbody>
-    </table>
-    <p class="ia-shell-note">Live — sourced from the reseller-scoped customer
-      audit endpoint, which enforces reseller-owns-customer access.</p>`);
+    </table>`);
 }
 
 /** Live loader for the Audit Log tab — reseller-scoped, endpoint owns authz. */
