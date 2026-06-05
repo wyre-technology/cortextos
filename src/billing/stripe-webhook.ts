@@ -491,38 +491,90 @@ export function stripeWebhookRoutes(
             const subscriptionId = typeof subRaw === 'string' ? subRaw : subRaw?.id ?? null;
             if (!subscriptionId) break;
 
-            // Only fires dunning-recovered if this success ended a dunning
-            // cycle (first_failure_at was set). Normal billing-cycle success
-            // is silent. recovered_at carries the 1h TTL window so the
-            // UI can render the recovered state briefly then collapse to
-            // state='none'.
-            const updated = await sql<{ org_id: string; was_in_dunning: boolean }[]>`
-              UPDATE subscriptions
-                 SET recovered_at           = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
-                     first_failure_at       = NULL,
-                     suspension_notified_at = NULL,
-                     status                 = 'active',
-                     updated_at             = NOW()
-               WHERE stripe_subscription_id = ${subscriptionId}
-              RETURNING org_id, (recovered_at = NOW()) AS was_in_dunning
+            // Two acknowledgment paths fire here depending on prior state:
+            //   - was_in_dunning: ended a dunning cycle -> 'dunning-recovered'
+            //   - just_converted: trial -> paid first charge -> 'trial-converted'
+            //     (ruby CS1 HIGH 2026-06-05; the highest-trust-stakes lifecycle
+            //     moment got zero Conduit-side acknowledgment before this fix)
+            // Both are atomic per-row idempotent: recovered_at carries the 1h
+            // TTL recovery surface; trial_converted_at (mig 043) is the
+            // one-time terminal marker. Subsequent normal billing-cycle
+            // invoice.payment_succeeded events stay silent.
+            //
+            // The CTE pattern captures the prior (status, trial_converted_at)
+            // in `before` BEFORE the UPDATE rewrites them; the SELECT at the
+            // end joins them so the handler sees both old + new state. This
+            // resolves "what state was the subscription in before this
+            // event fired?" atomically without a separate SELECT-then-UPDATE
+            // race window.
+            const updated = await sql<{
+              org_id: string;
+              was_in_dunning: boolean;
+              just_converted: boolean;
+            }[]>`
+              WITH before AS (
+                SELECT status, trial_converted_at
+                  FROM subscriptions
+                 WHERE stripe_subscription_id = ${subscriptionId}
+              ),
+              upd AS (
+                UPDATE subscriptions
+                   SET recovered_at           = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
+                       first_failure_at       = NULL,
+                       suspension_notified_at = NULL,
+                       trial_converted_at     = COALESCE(
+                                                  trial_converted_at,
+                                                  CASE WHEN status = 'trialing' THEN NOW() ELSE NULL END
+                                                ),
+                       status                 = 'active',
+                       updated_at             = NOW()
+                 WHERE stripe_subscription_id = ${subscriptionId}
+                RETURNING org_id, recovered_at
+              )
+              SELECT upd.org_id,
+                     (upd.recovered_at = NOW()) AS was_in_dunning,
+                     (before.status = 'trialing' AND before.trial_converted_at IS NULL) AS just_converted
+                FROM upd, before
             `;
 
             if (updated.length === 0) break;
 
-            const { org_id: orgId, was_in_dunning: wasInDunning } = updated[0];
+            const { org_id: orgId, was_in_dunning: wasInDunning, just_converted: justConverted } = updated[0];
 
-            if (wasInDunning) {
+            // Fetch owner email once if either Loops event will fire.
+            let ownerEmail: string | null = null;
+            if (wasInDunning || justConverted) {
               const members = await orgService.getMembersWithProfiles(orgId).catch(() => []);
-              const ownerMember = members.find((m) => m.role === 'owner');
-              if (ownerMember?.email) {
-                sendLoopsEvent(ownerMember.email, 'dunning-recovered', {
-                  org_id: orgId,
-                  amount_paid_cents: invoice.amount_paid,
-                  currency: invoice.currency,
-                }).catch((err) => app.log.warn({ err, orgId }, 'failed to send Loops dunning-recovered event'));
-              }
+              ownerEmail = members.find((m) => m.role === 'owner')?.email ?? null;
+            }
 
+            if (wasInDunning && ownerEmail) {
+              sendLoopsEvent(ownerEmail, 'dunning-recovered', {
+                org_id: orgId,
+                amount_paid_cents: invoice.amount_paid,
+                currency: invoice.currency,
+              }).catch((err) => app.log.warn({ err, orgId }, 'failed to send Loops dunning-recovered event'));
               app.log.info({ orgId, subscriptionId }, 'Dunning cycle recovered');
+            }
+
+            if (justConverted && ownerEmail) {
+              // COPY-PLACEHOLDER: Loops template body/subject/CTA owned
+              // by the Loops dashboard. Slug 'trial-converted' activates
+              // when Aaron-copy (scribe Voice 4 RELATIONSHIP-CONFIRMATION
+              // model) lands in Loops. Until then sendLoopsEvent succeeds
+              // no-template; safe-fallback.
+              //
+              // Bounded payload (per banked discipline at the event-emit
+              // boundary): emit identifiers + state-axes; let the
+              // template-substrate compose presentation-derived fields.
+              sendLoopsEvent(ownerEmail, 'trial-converted', {
+                org_id: orgId,
+                amount_paid_cents: invoice.amount_paid,
+                currency: invoice.currency,
+              }).catch((err) =>
+                app.log.warn({ err, orgId }, 'failed to send Loops trial-converted event'),
+              );
+              app.log.info({ orgId, subscriptionId }, 'Trial -> paid converted');
             }
             break;
           }
