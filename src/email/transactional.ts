@@ -150,3 +150,141 @@ export function sendRoleChangedEmail(
     }),
   );
 }
+
+/**
+ * MR1 — invite-accepted-admin-notify (ruby MR1 launch-blocker 2026-06-05).
+ *
+ * Fires when an invitee accepts an outstanding org invitation. Notifies
+ * the inviter (admin) that the invite landed — admin previously had no
+ * signal of acceptance beyond manually re-checking the members list.
+ *
+ * Scribe Voice 4 admin-trusting-teammate register. COPY-PLACEHOLDER:
+ * subject + body land in scribe's deliverable; this helper ships the
+ * structural surface with default-graceful copy.
+ */
+export function sendInvitationAcceptedEmail(
+  log: FastifyBaseLogger,
+  opts: { to: string; orgName: string; inviteeEmail: string; inviteeName?: string },
+): void {
+  const inviteeLabel = opts.inviteeName?.trim() || 'A teammate';
+  const html = layout(
+    '<h2 style="margin:0 0 12px">Your invite was accepted</h2>' +
+      `<p><strong>${esc(inviteeLabel)}</strong> (${esc(opts.inviteeEmail)}) accepted ` +
+      `your invitation to <strong>${esc(opts.orgName)}</strong> on Conduit.</p>` +
+      '<p>They now have access. You can manage roles and permissions from ' +
+      'your team settings.</p>',
+  );
+  fireAndForget(log, 'invitation_accepted', opts.to, () =>
+    sendTransactionalEmail(log, {
+      to: opts.to,
+      subject: `${inviteeLabel} accepted your invite to ${opts.orgName}`,
+      html,
+    }),
+  );
+}
+
+/**
+ * MR2 — joined-org-welcome (ruby MR2 launch-blocker 2026-06-05).
+ *
+ * Welcomes the new member after they accept an invitation. Distinct
+ * from the generic first-login welcome (which is org-agnostic) — this
+ * one names the org they just joined and the role they hold.
+ *
+ * Scribe Voice 4 welcome-to-team register. COPY-PLACEHOLDER.
+ */
+export function sendJoinedOrgWelcomeEmail(
+  log: FastifyBaseLogger,
+  opts: { to: string; orgName: string; role: string; memberName?: string },
+): void {
+  const memberLabel = opts.memberName?.trim() || 'there';
+  const html = layout(
+    `<h2 style="margin:0 0 12px">Welcome to ${esc(opts.orgName)}</h2>` +
+      `<p>Hi ${esc(memberLabel)} — you joined <strong>${esc(opts.orgName)}</strong> ` +
+      `as a <strong>${esc(opts.role)}</strong>.</p>` +
+      '<p>You can connect vendor accounts, access shared team credentials, ' +
+      'and route MCP traffic through your team gateway from your Conduit ' +
+      'dashboard.</p>',
+  );
+  fireAndForget(log, 'joined_org_welcome', opts.to, () =>
+    sendTransactionalEmail(log, {
+      to: opts.to,
+      subject: `Welcome to ${opts.orgName} on Conduit`,
+      html,
+    }),
+  );
+}
+
+/**
+ * SK1 — server-access-granted-member-notify (ruby SK1 launch-blocker
+ * 2026-06-05). Notifies member that an admin granted them access to a
+ * vendor — member previously discovered new access only by navigating
+ * /settings (lower stakes than the revoke gap but consistency-application).
+ *
+ * Scribe Voice 4 capability-enabled register. COPY-PLACEHOLDER.
+ */
+export function sendServerAccessGrantedEmail(
+  log: FastifyBaseLogger,
+  opts: {
+    to: string;
+    orgName: string;
+    vendorName: string;
+    grantedByName?: string;
+    memberName?: string;
+  },
+): void {
+  const granterLabel = opts.grantedByName?.trim() || 'Your team admin';
+  const memberLabel = opts.memberName?.trim() || 'there';
+  const html = layout(
+    `<h2 style="margin:0 0 12px">You have access to ${esc(opts.vendorName)}</h2>` +
+      `<p>Hi ${esc(memberLabel)} — ${esc(granterLabel)} granted you access to ` +
+      `<strong>${esc(opts.vendorName)}</strong> on <strong>${esc(opts.orgName)}</strong>.</p>` +
+      '<p>You can now use this vendor in your MCP workflows. No further setup ' +
+      'is needed — the team credential is shared with you.</p>',
+  );
+  fireAndForget(log, 'server_access_granted', opts.to, () =>
+    sendTransactionalEmail(log, {
+      to: opts.to,
+      subject: `Access to ${opts.vendorName} on ${opts.orgName}`,
+      html,
+    }),
+  );
+}
+
+/**
+ * SK2 — server-access-revoked-member-notify (ruby SK1 launch-blocker
+ * 2026-06-05). Notifies member that an admin revoked their access to
+ * a vendor — member previously discovered revocation only when their
+ * AI agent started failing on next request (worst-discovery-moment for
+ * capability-affecting consent event, per ruby's refined v4 clause).
+ *
+ * Scribe Voice 4 sad-but-respectful security-grade register.
+ * COPY-PLACEHOLDER.
+ */
+export function sendServerAccessRevokedEmail(
+  log: FastifyBaseLogger,
+  opts: {
+    to: string;
+    orgName: string;
+    vendorName: string;
+    revokedByName?: string;
+    memberName?: string;
+  },
+): void {
+  const revokerLabel = opts.revokedByName?.trim() || 'Your team admin';
+  const memberLabel = opts.memberName?.trim() || 'there';
+  const html = layout(
+    `<h2 style="margin:0 0 12px">Your access to ${esc(opts.vendorName)} was removed</h2>` +
+      `<p>Hi ${esc(memberLabel)} — ${esc(revokerLabel)} removed your access to ` +
+      `<strong>${esc(opts.vendorName)}</strong> on <strong>${esc(opts.orgName)}</strong>.</p>` +
+      '<p>Your AI agents and integrations relying on this vendor will no longer ' +
+      'be able to call it. If you believe this was a mistake, contact an admin ' +
+      'of your organization. This is a security notice so the change is visible to you.</p>',
+  );
+  fireAndForget(log, 'server_access_revoked', opts.to, () =>
+    sendTransactionalEmail(log, {
+      to: opts.to,
+      subject: `Your access to ${opts.vendorName} was removed`,
+      html,
+    }),
+  );
+}

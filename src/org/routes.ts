@@ -21,6 +21,10 @@ import {
   sendInvitationEmail,
   sendMemberRemovedEmail,
   sendRoleChangedEmail,
+  sendInvitationAcceptedEmail,
+  sendJoinedOrgWelcomeEmail,
+  sendServerAccessGrantedEmail,
+  sendServerAccessRevokedEmail,
 } from '../email/transactional.js';
 import { validateEmail } from '../signup/routes.js';
 import { getSql } from '../db/context.js';
@@ -518,6 +522,31 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
         const grant = await orgService.grantServerAccess(orgId, userId, vendorSlug, user.sub);
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_granted', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // SK1 (ruby SK1 launch-blocker 2026-06-05): notify the granted
+        // member. Best-effort lookups for org name + member emails +
+        // names; transactional helper handles missing-name defaults.
+        // Failure to look up does NOT block the grant response.
+        try {
+          const [org, members] = await Promise.all([
+            orgService.getOrg(orgId).catch(() => null),
+            orgService.getMembersWithProfiles(orgId).catch(() => []),
+          ]);
+          const targetMember = members.find((m) => m.userId === userId);
+          if (targetMember?.email) {
+            const granter = members.find((m) => m.userId === user.sub);
+            sendServerAccessGrantedEmail(request.log, {
+              to: targetMember.email,
+              orgName: org?.name ?? 'your organization',
+              vendorName: getVendor(vendorSlug)?.name ?? vendorSlug,
+              grantedByName: granter?.name ?? granter?.displayName ?? undefined,
+              memberName: targetMember.name ?? targetMember.displayName ?? undefined,
+            });
+          }
+        } catch (err) {
+          request.log.warn({ err, orgId, userId }, 'SK1 grant-notify failed (non-fatal)');
+        }
+
         return reply.send(grant);
       },
     );
@@ -539,6 +568,34 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
         await orgService.revokeServerAccess(orgId, userId, vendorSlug);
         void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_revoked', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // SK2 (ruby SK1 launch-blocker 2026-06-05): notify the revoked
+        // member at the consent/capability-affecting moment — this is
+        // the higher-stakes sibling of SK1 (per ruby v4 refined clause
+        // 'consent/capability-affecting events require explicit
+        // counterparty-notification regardless of channel-mix'). The
+        // worst-discovery moment was the member's AI agent failing on
+        // next request with no signal of why.
+        try {
+          const [org, members] = await Promise.all([
+            orgService.getOrg(orgId).catch(() => null),
+            orgService.getMembersWithProfiles(orgId).catch(() => []),
+          ]);
+          const targetMember = members.find((m) => m.userId === userId);
+          if (targetMember?.email) {
+            const revoker = members.find((m) => m.userId === user.sub);
+            sendServerAccessRevokedEmail(request.log, {
+              to: targetMember.email,
+              orgName: org?.name ?? 'your organization',
+              vendorName: getVendor(vendorSlug)?.name ?? vendorSlug,
+              revokedByName: revoker?.name ?? revoker?.displayName ?? undefined,
+              memberName: targetMember.name ?? targetMember.displayName ?? undefined,
+            });
+          }
+        } catch (err) {
+          request.log.warn({ err, orgId, userId }, 'SK2 revoke-notify failed (non-fatal)');
+        }
+
         return reply.code(204).send();
       },
     );
@@ -913,6 +970,51 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         void adminAuditService.log({ orgId: result.orgId, actorId: user.sub, eventType: 'invitation_accepted' }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        // MR1+MR2 (ruby launch-blocker 2026-06-05): notify both sides of
+        // the invite-accept cap-stone. Best-effort lookups for names +
+        // emails; transactional helpers handle missing-name graceful
+        // defaults at the template substrate. Failure to look up does
+        // NOT block the accept-redirect (the security-critical action
+        // already succeeded).
+        try {
+          const [org, invitation, members] = await Promise.all([
+            orgService.getOrg(result.orgId).catch(() => null),
+            orgService.getInvitationByToken(token).catch(() => null),
+            orgService.getMembersWithProfiles(result.orgId).catch(() => []),
+          ]);
+          const orgName = org?.name ?? 'your organization';
+          const acceptorMember = members.find((m) => m.userId === user.sub);
+          const acceptorName = acceptorMember?.name ?? acceptorMember?.displayName ?? user.name ?? undefined;
+          const acceptorEmail = user.email ?? acceptorMember?.email ?? null;
+
+          // MR2 — welcome the new member to the org.
+          if (acceptorEmail) {
+            sendJoinedOrgWelcomeEmail(request.log, {
+              to: acceptorEmail,
+              orgName,
+              role: result.role,
+              memberName: acceptorName,
+            });
+          }
+
+          // MR1 — notify the admin/inviter that the invite was accepted.
+          if (invitation?.invitedBy) {
+            const inviterMember = members.find((m) => m.userId === invitation.invitedBy);
+            const inviterEmail = inviterMember?.email ?? null;
+            if (inviterEmail) {
+              sendInvitationAcceptedEmail(request.log, {
+                to: inviterEmail,
+                orgName,
+                inviteeEmail: acceptorEmail ?? invitation.recipientEmail ?? 'a teammate',
+                inviteeName: acceptorName,
+              });
+            }
+          }
+        } catch (err) {
+          request.log.warn({ err, orgId: result.orgId }, 'MR1/MR2 post-accept notify failed (non-fatal)');
+        }
+
         return reply.redirect('/settings', 302);
       },
     );
