@@ -608,7 +608,11 @@ export function webRoutes(deps: WebRouteDeps) {
           });
         }
 
-        const { body: bodyContent, pageStyles: connectionsPageStyles } = renderPersonalConnections({
+        const {
+          body: bodyContent,
+          pageStyles: connectionsPageStyles,
+          pageScripts: connectionsPageScripts,
+        } = renderPersonalConnections({
           connectedVendors,
           org,
           orgVendors,
@@ -629,6 +633,7 @@ export function webRoutes(deps: WebRouteDeps) {
           activePath: '/settings',
           title: 'Settings',
           pageStyles: connectionsPageStyles,
+          pageScripts: connectionsPageScripts,
         }, bodyContent);
 
         return reply.type('text/html').send(html);

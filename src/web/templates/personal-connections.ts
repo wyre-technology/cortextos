@@ -6,7 +6,9 @@ import { isPaidPlan } from '../../billing/gate.js';
 import {
   renderDunningBanner,
   renderSuspendedView,
+  renderRecoveredToast,
   renderTrialBanner,
+  DUNNING_TOAST_SCRIPT,
   type DunningView,
   type TrialState,
 } from './team-billing.js';
@@ -327,7 +329,18 @@ export const CONNECTIONS_PAGE_STYLES = `
   }
 `;
 
-export function renderPersonalConnections(data: PersonalConnectionsData): { body: string; pageStyles: string } {
+export function renderPersonalConnections(data: PersonalConnectionsData): {
+  body: string;
+  pageStyles: string;
+  /**
+   * Page-script for the recovered-toast 1h-TTL auto-dismiss. Undefined
+   * when the dunning state is anything other than 'recovered' so
+   * non-recovered renders stay scriptless. /settings route handler
+   * passes this through to renderLayout (sibling to /org/billing's
+   * existing pageScripts wiring at routes.ts:749).
+   */
+  pageScripts?: string;
+} {
   const {
     connectedVendors, org, orgVendors, memberCount,
     connectionLimit, upgraded, isOwner,
@@ -357,6 +370,16 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
       : '';
   const suspendedView =
     dunning.state === 'suspended' ? renderSuspendedView(dunning, firstName) : '';
+
+  // Recovered-toast surface (PSR1) — ruby MED 2026-06-05: the recovered-
+  // state 1h-TTL toast lived only on /org/billing. A customer who paid a
+  // failed invoice and lands on /settings during the TTL window saw
+  // nothing while /org/billing showed "You're set." Asymmetric cap-stone-
+  // instrumentation across personal-default surfaces. Now the recovered
+  // toast renders here too via the same renderRecoveredToast helper —
+  // shared-helper-LEVEL-1 import-reuse sibling to D1's banner reuse.
+  const recoveredToast =
+    dunning.state === 'recovered' ? renderRecoveredToast(dunning) : '';
 
   const categories = getVendorsByCategory();
   const connectedSet = new Set(connectedVendors);
@@ -615,6 +638,7 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
   </script>`;
 
   const body = `
+    ${recoveredToast}
     ${trialBanner}
     ${dunningBanner}
     ${suspendedView}
@@ -639,5 +663,9 @@ export function renderPersonalConnections(data: PersonalConnectionsData): { body
       <a href="${brand.issuesUrl}?labels=enhancement,gateway&amp;title=[Gateway]+Feature+request:+&amp;body=**Describe+the+feature**%0A%0A**Use+case**%0A" target="_blank" rel="noopener noreferrer" style="color:var(--text-muted);text-decoration:none;">Suggest a feature</a>
     </div>`;
 
-  return { body, pageStyles: CONNECTIONS_PAGE_STYLES };
+  return {
+    body,
+    pageStyles: CONNECTIONS_PAGE_STYLES,
+    pageScripts: dunning.state === 'recovered' ? DUNNING_TOAST_SCRIPT : undefined,
+  };
 }

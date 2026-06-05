@@ -106,3 +106,52 @@ describe('renderPersonalConnections — ruby OC1+OC2+OC3+OC6 regression-guards',
     expect(body).not.toContain('trial-banner');
   });
 });
+
+/**
+ * Regression-guards for ruby PSR1 (2026-06-05). PR #345 D1 wired the
+ * dunning banner + suspended-card to /settings but explicitly excluded
+ * the recovered state — so a customer who paid a failed invoice and
+ * landed on /settings during the 1h-TTL recovered window saw nothing,
+ * while /org/billing showed "You're set." This restores symmetry across
+ * the personal-default surfaces using the same shared-helper pattern.
+ *
+ * Falsifiable triad on the recovered substrate:
+ *   (a) state='recovered' → toast rendered + DUNNING_TOAST_SCRIPT
+ *       returned via pageScripts (auto-dismiss after 1h TTL)
+ *   (b) non-recovered states → pageScripts undefined (no idle script)
+ *   (c) recovered state does NOT additionally render the banner (toast
+ *       is the only surface; banner is for active dunning only)
+ */
+describe('renderPersonalConnections — ruby PSR1 regression-guards (recovered-toast symmetry)', () => {
+  const recoveredDunning = {
+    state: 'recovered' as const,
+    recoveredAt: '2026-06-05T11:00:00.000Z',
+    amountCents: 39900,
+    currency: 'usd',
+    nextChargeDate: '2026-07-05T00:00:00.000Z',
+  };
+
+  it('PSR1 (a): recovered state renders the toast', () => {
+    const { body } = renderPersonalConnections(baseData({ dunning: recoveredDunning }));
+    expect(body).toContain('dunning-toast');
+  });
+
+  it('PSR1 (a): recovered state returns DUNNING_TOAST_SCRIPT as pageScripts', () => {
+    const { pageScripts } = renderPersonalConnections(baseData({ dunning: recoveredDunning }));
+    expect(pageScripts).toBeTruthy();
+    // The auto-dismiss script targets the toast DOM node.
+    expect(pageScripts).toContain('dunning-toast');
+  });
+
+  it('PSR1 (b): pageScripts is undefined for the non-recovered default (no idle script payload)', () => {
+    const { pageScripts } = renderPersonalConnections(baseData({ dunning: { state: 'none' } }));
+    expect(pageScripts).toBeUndefined();
+  });
+
+  it('PSR1 (c): recovered state does NOT additionally render the active-dunning banner', () => {
+    const { body } = renderPersonalConnections(baseData({ dunning: recoveredDunning }));
+    // The banner is for active dunning (payment-failing/past-due/final-warning).
+    // Recovered uses the toast surface only.
+    expect(body).not.toContain('dunning-banner');
+  });
+});
