@@ -1181,6 +1181,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         await credentialService.storeTeamCredential(teamId, orgId, slug, request.body, user.sub);
+        void adminAuditService.log({
+          orgId,
+          actorId: user.sub,
+          targetId: teamId,
+          eventType: 'team_credential_created',
+          metadata: { teamId, vendor: slug },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.send({ ok: true });
       },
     );
@@ -1199,6 +1206,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         await credentialService.deleteTeamCredential(teamId, slug);
+        void adminAuditService.log({
+          orgId,
+          actorId: user.sub,
+          targetId: teamId,
+          eventType: 'team_credential_deleted',
+          metadata: { teamId, vendor: slug },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.code(204).send();
       },
     );
@@ -1234,6 +1248,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         await credentialService.storeServiceClientCredential(clientId, orgId, slug, request.body, user.sub);
+        void adminAuditService.log({
+          orgId,
+          actorId: user.sub,
+          targetId: clientId,
+          eventType: 'service_client_credential_created',
+          metadata: { clientId, vendor: slug },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.send({ ok: true });
       },
     );
@@ -1247,6 +1268,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!user) return;
 
         await credentialService.deleteServiceClientCredential(clientId, slug);
+        void adminAuditService.log({
+          orgId,
+          actorId: user.sub,
+          targetId: clientId,
+          eventType: 'service_client_credential_deleted',
+          metadata: { clientId, vendor: slug },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
         return reply.code(204).send();
       },
     );

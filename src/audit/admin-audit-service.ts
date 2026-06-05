@@ -12,6 +12,21 @@ export type AdminEventType =
   | 'invitation_revoked'
   | 'org_credential_created'
   | 'org_credential_deleted'
+  // Team + service-client credential CRUD audit (ruby VC1 SOC2 audit-
+  // trail gap closure 2026-06-05). org_credential_* event-types above
+  // already cover org-scoped creds (fired from src/org/routes.ts route
+  // layer); these add coverage for team-scoped + service-client-scoped
+  // credential CRUD, which were unaudited at the user-action substrate.
+  | 'team_credential_created'
+  | 'team_credential_deleted'
+  | 'service_client_credential_created'
+  | 'service_client_credential_deleted'
+  // Reseller-channel customer org creation audit (ruby RC3 launch-
+  // foundational gap closure 2026-06-05). MSP-side reseller_admin
+  // creates a sub-customer org via POST /admin/reseller/:resellerId/
+  // customers; this is the first event in the multi-party reseller
+  // lifecycle and was previously unaudited.
+  | 'customer_org_created'
   | 'role_changed'
   | 'org_updated'
   | 'org_deleted'

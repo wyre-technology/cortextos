@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { CredentialService } from '../credentials/credential-service.js';
 import type { OrgService, OrgRole } from '../org/org-service.js';
 import type { LogShippingService } from '../log-shipping/log-shipping-service.js';
+import type { AdminAuditService } from '../audit/admin-audit-service.js';
 import { ROLE_LEVEL } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import type { CreditService } from '../billing/credit-service.js';
@@ -108,6 +109,14 @@ interface WebRouteDeps {
   completeAuth: (sessionId: string, userId: string) => Promise<{ redirectUrl: string } | null>;
   logShippingService: LogShippingService;
   vendorMonitor: VendorMonitor;
+  /**
+   * Required for the OAuth-callback paths that write org/team credentials
+   * (ruby VC1 SOC2 audit-trail gap closure 2026-06-05). The credentialService
+   * writes are the secret-material movement; without firing the audit event
+   * at the callback path, the OAuth-flow store goes unaudited even though
+   * the equivalent direct-POST path is audited at src/org/routes.ts.
+   */
+  adminAuditService: AdminAuditService;
 }
 
 /**
@@ -246,7 +255,7 @@ export function deriveTrialFromSubscription(
  * connection flow, settings page, and team management pages.
  */
 export function webRoutes(deps: WebRouteDeps) {
-  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor } = deps;
+  const { credentialService, orgService, billingGate, completeAuth, logShippingService, vendorOAuthStates, vendorMonitor, adminAuditService } = deps;
 
   const sweepInterval = setInterval(() => {
     // The interval tick has NO request context — sweepExpired()'s getSql()
@@ -419,12 +428,28 @@ export function webRoutes(deps: WebRouteDeps) {
         if (pending.teamId && pending.orgId) {
           // Sub-team connect flow: store at team level
           await credentialService.storeTeamCredential(pending.teamId, pending.orgId, pending.vendorSlug, credData, pending.userId);
+          // VC1 SOC2 audit-trail closure: equivalent direct-POST path
+          // at src/org/routes.ts also fires this event; OAuth-callback
+          // path now matches.
+          void adminAuditService.log({
+            orgId: pending.orgId,
+            actorId: pending.userId,
+            targetId: pending.teamId,
+            eventType: 'team_credential_created',
+            metadata: { teamId: pending.teamId, vendor: pending.vendorSlug, source: 'oauth_callback' },
+          }).catch((err) => request.log.error(err, 'admin audit log failed'));
           return reply.redirect(`/org/teams/${pending.teamId}/connections`, 302);
         }
 
         if (pending.orgId) {
           // Org connect flow: store at org level
           await credentialService.storeOrgCredential(pending.orgId, pending.vendorSlug, credData, pending.userId);
+          void adminAuditService.log({
+            orgId: pending.orgId,
+            actorId: pending.userId,
+            eventType: 'org_credential_created',
+            metadata: { vendor: pending.vendorSlug, source: 'oauth_callback' },
+          }).catch((err) => request.log.error(err, 'admin audit log failed'));
           return reply.redirect('/org/connections', 302);
         }
 

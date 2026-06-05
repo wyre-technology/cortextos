@@ -23,6 +23,7 @@ import type { OrgService, Organization } from '../org/org-service.js';
 import { OrgHierarchyError } from '../org/org-service.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
 import type { AuditService } from '../audit/audit-service.js';
+import type { AdminAuditService } from '../audit/admin-audit-service.js';
 
 // ---------------------------------------------------------------------------
 // Mock requireAuth0
@@ -99,6 +100,7 @@ interface MockDeps {
   orgService: OrgService;
   dashboardService: DashboardService;
   auditService: AuditService;
+  adminAuditService: AdminAuditService;
 }
 
 function makeMocks(options: {
@@ -216,7 +218,11 @@ function makeMocks(options: {
     query: options.auditQueryImpl ?? vi.fn(async () => ({ entries: [], total: 0 })),
   } as unknown as AuditService;
 
-  return { resellerService, resellerMemberService, orgService, dashboardService, auditService };
+  const adminAuditService = {
+    log: vi.fn(async () => undefined),
+  } as unknown as AdminAuditService;
+
+  return { resellerService, resellerMemberService, orgService, dashboardService, auditService, adminAuditService };
 }
 
 async function buildApp(deps: MockDeps, featureEnabled = true): Promise<FastifyInstance> {
@@ -770,6 +776,46 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
         TEST_USER.sub,
         'conduit',
         { type: 'customer', parentOrgId: RESELLER_ID },
+      );
+    });
+
+    // Ruby RC3 SOC2 audit-trail closure 2026-06-05: customer_org_created
+    // is the first event in the multi-party reseller lifecycle. Locks the
+    // event-shape so a future refactor cannot silently drop the audit.
+    it('RC3: fires customer_org_created audit event scoped to the child customer org with reseller-admin as actor', async () => {
+      authenticateAs();
+      const createOrgImpl = vi.fn(async (name: string, ownerId: string, plan, opts) => ({
+        id: 'cust_new',
+        name,
+        ownerId,
+        plan: plan ?? 'free',
+        defaultServerAccess: 'none' as const,
+        promptCaptureEnabled: false,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        type: opts?.type ?? 'standalone',
+        parentOrgId: opts?.parentOrgId ?? null,
+        createdAt: '2024-03-01T00:00:00.000Z',
+        updatedAt: '2024-03-01T00:00:00.000Z',
+      }));
+      const mocks = makeMocks({
+        actorRole: 'reseller_admin',
+        createOrgImpl: createOrgImpl as unknown as OrgService['createOrg'],
+      });
+      app = await buildApp(mocks);
+      const res = await app.inject({ method: 'POST', url, payload: validPayload });
+      expect(res.statusCode).toBe(201);
+      expect(mocks.adminAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'cust_new', // scoped to the CHILD customer org
+          actorId: TEST_USER.sub,
+          targetId: RESELLER_ID,
+          eventType: 'customer_org_created',
+          metadata: expect.objectContaining({
+            parentResellerOrgId: RESELLER_ID,
+            adminEmail: 'admin@northwind.test',
+          }),
+        }),
       );
     });
 

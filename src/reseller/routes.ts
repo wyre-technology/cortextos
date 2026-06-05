@@ -33,6 +33,7 @@ import {
 } from './middleware.js';
 import type { DashboardService } from '../dashboard/dashboard-service.js';
 import type { AuditService } from '../audit/audit-service.js';
+import type { AdminAuditService } from '../audit/admin-audit-service.js';
 
 export interface ResellerRoutesDeps {
   resellerService: ResellerService;
@@ -40,6 +41,13 @@ export interface ResellerRoutesDeps {
   orgService: OrgService;
   dashboardService: DashboardService;
   auditService: AuditService;
+  /**
+   * Required for the reseller-customer-create audit event (ruby RC3
+   * launch-foundational gap closure 2026-06-05). The customer-org
+   * provisioning was the first event in the multi-party reseller
+   * lifecycle and was previously unaudited.
+   */
+  adminAuditService: AdminAuditService;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +253,7 @@ function parsePagination(query: unknown): Pagination | { error: string } {
 // ---------------------------------------------------------------------------
 
 export function resellerRoutes(deps: ResellerRoutesDeps) {
-  const { resellerService, resellerMemberService, orgService, dashboardService, auditService } = deps;
+  const { resellerService, resellerMemberService, orgService, dashboardService, auditService, adminAuditService } = deps;
   const requireResellerAccess = makeRequireResellerAccess(resellerService);
   const requireResellerRole = makeRequireResellerRole(resellerService);
   const requireResellerOrCustomerAccess = makeRequireResellerOrCustomerAccess(
@@ -531,6 +539,23 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
             inviteUrl,
             invitedByEmail: ctx.user.email ?? undefined,
           });
+
+          // RC3 SOC2 audit-trail closure: customer-org-create is the first
+          // event in the multi-party reseller lifecycle. Audited at the
+          // CHILD customer-org scope so the audit_log query for that org
+          // surfaces the provisioning event with the reseller-admin as
+          // actorId + the parent reseller in metadata.
+          void adminAuditService.log({
+            orgId: customer.id,
+            actorId: ctx.user.sub,
+            targetId: ctx.resellerId,
+            eventType: 'customer_org_created',
+            metadata: {
+              parentResellerOrgId: ctx.resellerId,
+              adminEmail: parsed.adminEmail,
+              invitationId: invitation.id,
+            },
+          }).catch((err) => request.log.error(err, 'admin audit log failed'));
 
           return reply.code(201).send({ ...customer, invitation_id: invitation.id });
         } catch (err) {

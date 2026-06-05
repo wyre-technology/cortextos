@@ -504,6 +504,7 @@ await app.register(webRoutes({
   completeAuth,
   logShippingService,
   vendorMonitor,
+  adminAuditService,
 }));
 
 // Organization management API + invitation routes
@@ -554,7 +555,7 @@ await app.register(dashboardRoutes({
 // MSP Admin Console (`/admin/reseller/*`) — scaffold, dark by default.
 // The plugin itself also enforces the RESELLER_CONSOLE_ENABLED flag so the
 // surface 404s even if the flag flips at runtime.
-await app.register(resellerRoutes({ resellerService, resellerMemberService, orgService, dashboardService, auditService }));
+await app.register(resellerRoutes({ resellerService, resellerMemberService, orgService, dashboardService, auditService, adminAuditService }));
 
 // Admin API: set org plan directly (for managed services contracts)
 app.post<{
