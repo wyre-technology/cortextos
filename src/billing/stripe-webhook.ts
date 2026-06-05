@@ -284,6 +284,16 @@ export function stripeWebhookRoutes(
               (subscription as unknown as { current_period_end?: number | null })
                 .current_period_end;
             const periodEndIso = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+            // cancel_at_period_end — previously the UPSERT wrote literal
+            // FALSE in both INSERT + CONFLICT branches, leaving the column
+            // as dead-storage that never tracked Stripe's value. The
+            // CC5 cancel-reversed detection requires the column to
+            // actually mirror Stripe; this also closes a latent bug
+            // (customer toggling cancel_at_period_end via Stripe Portal
+            // had no effect on the row).
+            const cancelAtPeriodEnd =
+              (subscription as unknown as { cancel_at_period_end?: boolean | null })
+                .cancel_at_period_end === true;
             if (isTerminal) {
               await sql`
                 INSERT INTO subscriptions (
@@ -297,27 +307,72 @@ export function stripeWebhookRoutes(
                 )
                 ON CONFLICT (stripe_subscription_id) DO UPDATE SET
                   status = 'canceled',
+                  cancel_at_period_end = FALSE,
                   first_failure_at = NULL,
                   recovered_at = NULL,
                   suspension_notified_at = NULL,
                   updated_at = NOW()
               `;
             } else {
-              await sql`
-                INSERT INTO subscriptions (
-                  id, org_id, stripe_customer_id, stripe_subscription_id,
-                  plan, status, current_period_end, cancel_at_period_end
+              // CC5 cancel-reversed Loops fire (ruby CC5 launch-blocker
+              // 2026-06-05): customer who toggled cancel_at_period_end
+              // TRUE -> FALSE (changed-mind, decided to stay) got zero
+              // Conduit-side acknowledgment. CTE captures prior value
+              // BEFORE the rewrite; Loops event fires only on the
+              // TRUE -> FALSE transition (idempotency-by-construction
+              // via cancel_at_period_end-guard: subsequent events with
+              // before.cancel_at_period_end already FALSE won't refire).
+              const reverseResult = await sql<{
+                org_id: string;
+                just_reversed: boolean;
+                current_period_end: Date | null;
+              }[]>`
+                WITH before AS (
+                  SELECT cancel_at_period_end FROM subscriptions
+                   WHERE stripe_subscription_id = ${subscription.id}
+                ),
+                upd AS (
+                  INSERT INTO subscriptions (
+                    id, org_id, stripe_customer_id, stripe_subscription_id,
+                    plan, status, current_period_end, cancel_at_period_end
+                  )
+                  VALUES (
+                    ${subscription.id}, ${orgId}, ${subscription.customer as string},
+                    ${subscription.id}, 'conduit', ${status}, ${periodEndIso}, ${cancelAtPeriodEnd}
+                  )
+                  ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                    status = ${status},
+                    cancel_at_period_end = ${cancelAtPeriodEnd},
+                    updated_at = NOW()
+                  RETURNING org_id, current_period_end
                 )
-                VALUES (
-                  ${subscription.id}, ${orgId}, ${subscription.customer as string},
-                  ${subscription.id}, 'conduit', ${status}, ${periodEndIso}, FALSE
-                )
-                ON CONFLICT (stripe_subscription_id) DO UPDATE SET
-                  status = ${status},
-                  updated_at = NOW()
+                SELECT upd.org_id,
+                       (COALESCE(before.cancel_at_period_end, FALSE) = TRUE
+                         AND ${cancelAtPeriodEnd} = FALSE) AS just_reversed,
+                       upd.current_period_end
+                  FROM upd LEFT JOIN before ON TRUE
               `;
+
+              const justReversed = reverseResult[0]?.just_reversed ?? false;
+              if (justReversed) {
+                // COPY-PLACEHOLDER: Loops slug 'cancel-reversed' activates
+                // when Aaron-copy (scribe Voice 4 RELATIONSHIP-CONFIRMATION,
+                // peer-acknowledgment-of-customer-decision register) lands.
+                const members = await orgService.getMembersWithProfiles(orgId).catch(() => []);
+                const ownerMember = members.find((m) => m.role === 'owner');
+                if (ownerMember?.email) {
+                  sendLoopsEvent(ownerMember.email, 'cancel-reversed', {
+                    org_id: orgId,
+                    reversed_at: new Date().toISOString(),
+                    current_period_end: reverseResult[0]?.current_period_end?.toISOString() ?? null,
+                  }).catch((err) =>
+                    app.log.warn({ err, orgId }, 'failed to send Loops cancel-reversed event'),
+                  );
+                }
+                app.log.info({ orgId }, 'Subscription cancel-reversed');
+              }
             }
-            app.log.info({ orgId, status }, 'Subscription status mirrored');
+            app.log.info({ orgId, status, cancelAtPeriodEnd }, 'Subscription status mirrored');
             break;
           }
 
@@ -379,23 +434,66 @@ export function stripeWebhookRoutes(
             // subscriptions.status gate, not a plan downgrade (no free tier).
             // UPSERT status=canceled (Stripe-truth writer wins) + clear the
             // dunning-clock fields (cancel ends the cycle).
-            await sql`
-              INSERT INTO subscriptions (
-                id, org_id, stripe_customer_id, stripe_subscription_id,
-                plan, status, cancel_at_period_end, first_failure_at, recovered_at
+            //
+            // CC1 cancel-confirmed Loops fire (ruby CC1 launch-blocker 2026-
+            // 06-05): customer's cancellation got zero Conduit-side
+            // acknowledgment. CTE captures prior status BEFORE the rewrite;
+            // Loops event fires only when the prior status was NOT already
+            // 'canceled' (Stripe-redelivery idempotency-by-construction via
+            // status-guard — no new column needed).
+            const cancelResult = await sql<{
+              org_id: string;
+              just_canceled: boolean;
+              current_period_end: Date | null;
+            }[]>`
+              WITH before AS (
+                SELECT status FROM subscriptions WHERE stripe_subscription_id = ${subscription.id}
+              ),
+              upd AS (
+                INSERT INTO subscriptions (
+                  id, org_id, stripe_customer_id, stripe_subscription_id,
+                  plan, status, cancel_at_period_end, first_failure_at, recovered_at
+                )
+                VALUES (
+                  ${subscription.id}, ${orgId}, ${subscription.customer as string},
+                  ${subscription.id}, 'conduit', 'canceled', FALSE, NULL, NULL
+                )
+                ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                  status = 'canceled',
+                  first_failure_at = NULL,
+                  recovered_at = NULL,
+                  suspension_notified_at = NULL,
+                  updated_at = NOW()
+                RETURNING org_id, current_period_end
               )
-              VALUES (
-                ${subscription.id}, ${orgId}, ${subscription.customer as string},
-                ${subscription.id}, 'conduit', 'canceled', FALSE, NULL, NULL
-              )
-              ON CONFLICT (stripe_subscription_id) DO UPDATE SET
-                status = 'canceled',
-                first_failure_at = NULL,
-                recovered_at = NULL,
-                suspension_notified_at = NULL,
-                updated_at = NOW()
+              SELECT upd.org_id,
+                     COALESCE(before.status, '') <> 'canceled' AS just_canceled,
+                     upd.current_period_end
+                FROM upd LEFT JOIN before ON TRUE
             `;
-            app.log.info({ orgId }, 'Subscription canceled (service denied via status gate)');
+
+            const justCanceled = cancelResult[0]?.just_canceled ?? false;
+            const currentPeriodEnd = cancelResult[0]?.current_period_end ?? null;
+
+            if (justCanceled) {
+              // COPY-PLACEHOLDER: Loops template body/subject/CTA owned by
+              // the Loops dashboard. Slug 'cancel-confirmed' activates when
+              // Aaron-copy (scribe Voice 4 RELATIONSHIP-CONFIRMATION model)
+              // lands in Loops. Bounded payload sibling to T2/D2/CS1.
+              const members = await orgService.getMembersWithProfiles(orgId).catch(() => []);
+              const ownerMember = members.find((m) => m.role === 'owner');
+              if (ownerMember?.email) {
+                sendLoopsEvent(ownerMember.email, 'cancel-confirmed', {
+                  org_id: orgId,
+                  canceled_at: new Date().toISOString(),
+                  current_period_end: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
+                }).catch((err) =>
+                  app.log.warn({ err, orgId }, 'failed to send Loops cancel-confirmed event'),
+                );
+              }
+            }
+
+            app.log.info({ orgId, justCanceled }, 'Subscription canceled (service denied via status gate)');
             break;
           }
 
