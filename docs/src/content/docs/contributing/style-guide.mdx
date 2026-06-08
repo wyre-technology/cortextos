@@ -101,6 +101,15 @@ Irreversible or destructive. Data loss, credential leak, etc.
 Pick the weakest callout that fits. Promote to `caution` or `danger`
 only when the consequence is real.
 
+Only these four types exist. Names from other docs tools — `:::warning`,
+`:::info`, `:::important` — are **not** recognized: Starlight renders the
+line as literal text instead of a callout. A test (`callout-types.test.ts`)
+fails the build on any unrecognized type. Add an optional title in brackets:
+`:::caution[Customer-side secret handling]`.
+
+Do not use a Markdown blockquote (`>`) as a callout. Blockquotes are for
+quoting a source; callouts are asides. Use the `:::` syntax above.
+
 ### Lists
 
 - Use `-` for unordered lists (consistent with the rest of the repo).
