@@ -98,6 +98,13 @@ export const FAQ_DATA: Record<string, readonly FaqEntry[]> = {
       a: 'Yes — once the connector is wired and tested in the maker portal, publishing the agent to any Copilot Studio channel carries the connector with it. Each end user completes the one-time per-end-user consent the first time they invoke a gateway tool.',
     },
   ],
+  "reference/supported-clients": [
+    { q: "Which AI clients work with Conduit?", a: "Any MCP-capable client. Conduit speaks the standard Model Context Protocol end to end, so Claude Desktop, Claude Code, Perplexity Computer, Cline, Continue, Cursor, and any other client that implements the MCP client spec connect — there is no per-vendor lock-in." },
+    { q: "Do I need a Claude-specific setup to use Conduit?", a: "No. Connection is standard OAuth 2.1 + PKCE (the MCP authorization spec), not a Claude-specific flow, and Conduit passes through each vendor's own MCP tool schemas unchanged — so any MCP client connects the same way." },
+    { q: "How does a client connect to Conduit?", a: "There are exactly two methods: native remote MCP, for clients that connect to a remote MCP server by URL (like Claude Code's `claude mcp add --transport http`), and the `mcp-remote` bridge, for clients that only speak local stdio MCP. Both use the same Conduit endpoint and OAuth 2.1 sign-in." },
+    { q: "Does Conduit have to add support for a new MCP client before it works?", a: "No. Because Conduit is MCP-native, client support is a property of the protocol, not a per-vendor integration — a new MCP-capable client works on day one without any change to Conduit." },
+    { q: "What about AI tools that don't speak MCP?", a: "Some platforms do tool-calling without native MCP — for example, an app built directly on a provider's function-calling API. Support for those is a demand-driven roadmap item, an additive per-provider adapter layer, not shipped today. Raise specific needs with your WYRE contact." },
+  ],
 };
 
 /**
