@@ -48,6 +48,16 @@ interface SubscriptionRow {
    * Optional for backward-compat with existing test fixtures.
    */
   current_period_end?: Date | null;
+  /**
+   * History-marker for PSR2 recovery-toast copy-pivot (ruby 2026-06-05).
+   * Set in stripe-webhook invoice.payment_succeeded handler iff the
+   * recovery was from a previously-suspended state (suspension_notified_at
+   * was non-null at recovery time). Used here to discriminate the
+   * 'Welcome back. / Your service is restored.' copy variant from the
+   * routine 'You're set. / Card was charged successfully.' copy.
+   * Optional for backward-compat with existing fixtures.
+   */
+  recovered_from_suspended_at?: Date | null;
 }
 
 interface StripeVisuals {
@@ -113,6 +123,7 @@ export function mapSubscriptionToDunningView(
     recovered_at: recoveredAt,
     cancel_at_period_end: cancelAtPeriodEnd,
     current_period_end: currentPeriodEnd,
+    recovered_from_suspended_at: recoveredFromSuspendedAt,
   } = sub;
 
   // Recovered toast: within 1h of a successful recovery on an active sub.
@@ -120,12 +131,25 @@ export function mapSubscriptionToDunningView(
   if ((status === 'active' || status === 'trialing') && recoveredAt) {
     const ageMs = now.getTime() - recoveredAt.getTime();
     if (ageMs >= 0 && ageMs < RECOVERED_TTL_MS) {
+      // PSR2 (ruby 2026-06-05, Aaron-option-A): discriminate post-
+      // suspension recovery vs routine recovery via the
+      // recovered_from_suspended_at marker (mig 045). Must be within
+      // the same 1h-TTL window — checked against recovered_at, not
+      // separately (a stale recovered_from_suspended_at from an older
+      // cycle would not pair with a fresh recovered_at). Per the SQL
+      // write in stripe-webhook, recovered_from_suspended_at is only
+      // (re)written in the same payment_succeeded UPDATE that sets
+      // recovered_at = NOW(), so timestamp-comparison is sufficient.
+      const wasPreviouslySuspended =
+        !!recoveredFromSuspendedAt
+        && Math.abs(recoveredFromSuspendedAt.getTime() - recoveredAt.getTime()) < RECOVERED_TTL_MS;
       return {
         state: 'recovered',
         recoveredAt: recoveredAt.toISOString(),
         amountCents: visuals.amountCents,
         currency: visuals.currency,
         nextChargeDate: visuals.currentPeriodEnd ?? new Date(now.getTime() + 30 * DAY_MS).toISOString(),
+        wasPreviouslySuspended,
       };
     }
   }

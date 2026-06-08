@@ -188,6 +188,31 @@ describe('renderRecoveredToast', () => {
     expect(html).toContain('aria-label="Dismiss"');
     expect(html).toContain('aria-live="polite"');
   });
+
+  // Ruby PSR2 (2026-06-05, Aaron-option-A): post-suspension recovery
+  // gets a distinct copy variant. Routine recovery preserved.
+  it('PSR2: post-suspension recovery renders Welcome back / Your service is restored', () => {
+    const html = renderRecoveredToast({ ...RECOVERED, wasPreviouslySuspended: true });
+    expect(html).toContain('Welcome back.');
+    expect(html).toContain('Your service is restored.');
+    expect(html).not.toContain("You're set");
+    expect(html).not.toContain('Card was charged successfully');
+  });
+
+  it('PSR2: routine recovery (wasPreviouslySuspended omitted/false) preserves existing copy', () => {
+    const html = renderRecoveredToast({ ...RECOVERED, wasPreviouslySuspended: false });
+    expect(html).toContain("You're set.");
+    expect(html).toContain('Card was charged successfully.');
+    expect(html).not.toContain('Welcome back');
+    expect(html).not.toContain('Your service is restored');
+  });
+
+  it('PSR2: wasPreviouslySuspended undefined defaults to routine copy (backward-compat)', () => {
+    // Explicitly omit the field — existing call-sites that haven't
+    // upgraded to pass it shouldn't change behavior.
+    const html = renderRecoveredToast(RECOVERED);
+    expect(html).toContain("You're set.");
+  });
 });
 
 describe('renderTeamBilling insertion logic', () => {

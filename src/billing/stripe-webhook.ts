@@ -660,21 +660,37 @@ export function stripeWebhookRoutes(
             // resolves "what state was the subscription in before this
             // event fired?" atomically without a separate SELECT-then-UPDATE
             // race window.
+            // PSR2 (ruby 2026-06-05): also snapshot prior suspension_notified_at
+            // in the BEFORE CTE. recovered_from_suspended_at (mig 045) writes
+            // NOW() iff the prior suspension marker was non-null AND this
+            // recovery actually ended a dunning cycle (first_failure_at was
+            // set). The dunning-view reads this within the existing 1h-TTL
+            // recovery window to discriminate the welcome-back copy variant
+            // ("Welcome back. / Your service is restored.") from the routine
+            // recovery copy ("You're set. / Card was charged successfully.").
             const updated = await sql<{
               org_id: string;
               was_in_dunning: boolean;
               just_converted: boolean;
             }[]>`
               WITH before AS (
-                SELECT status, trial_converted_at
+                SELECT status, trial_converted_at, suspension_notified_at, first_failure_at
                   FROM subscriptions
                  WHERE stripe_subscription_id = ${subscriptionId}
               ),
               upd AS (
                 UPDATE subscriptions
-                   SET recovered_at           = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
-                       first_failure_at       = NULL,
-                       suspension_notified_at = NULL,
+                   SET recovered_at                = CASE WHEN first_failure_at IS NOT NULL THEN NOW() ELSE recovered_at END,
+                       first_failure_at            = NULL,
+                       suspension_notified_at      = NULL,
+                       recovered_from_suspended_at = (
+                         CASE
+                           WHEN (SELECT suspension_notified_at FROM before) IS NOT NULL
+                             AND (SELECT first_failure_at FROM before) IS NOT NULL
+                             THEN NOW()
+                           ELSE recovered_from_suspended_at
+                         END
+                       ),
                        trial_converted_at     = COALESCE(
                                                   trial_converted_at,
                                                   CASE WHEN status = 'trialing' THEN NOW() ELSE NULL END

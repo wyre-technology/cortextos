@@ -121,6 +121,16 @@ export interface DunningStateRecovered {
   amountCents: number;
   currency: string;
   nextChargeDate: string;
+  /**
+   * PSR2 copy-pivot discriminator (ruby 2026-06-05, Aaron-option-A):
+   * TRUE when the recovery exited a previously-suspended dunning cycle
+   * (mig 045 recovered_from_suspended_at was paired with this
+   * recovered_at). FALSE for routine billing-cycle success. Drives the
+   * 'Welcome back. / Your service is restored.' vs 'You're set.' copy
+   * branch in renderRecoveredToast. Optional for backward-compat —
+   * defaults to false when absent (routine-recovery copy).
+   */
+  wasPreviouslySuspended?: boolean;
 }
 
 /**
@@ -391,9 +401,18 @@ export function renderScheduledCancelBanner(dunning: DunningStateScheduledCancel
 }
 
 export function renderRecoveredToast(dunning: DunningStateRecovered): string {
-  // Discriminator parameter is kept (vs ignored) so future copy can pivot on
-  // amount/date without changing the function signature.
-  void dunning;
+  // PSR2 copy-pivot (ruby 2026-06-05, Aaron-option-A): post-suspension
+  // recovery gets a distinct copy variant ('Welcome back. / Your service
+  // is restored.') that acknowledges the customer just exited a
+  // suspended state. Routine billing-cycle recovery keeps the existing
+  // 'You're set. / Card was charged successfully.' copy. Same toast
+  // chrome + auto-dismiss + click-dismiss; only the title + subtitle
+  // diverge.
+  const isPostSuspension = dunning.wasPreviouslySuspended === true;
+  const title = isPostSuspension ? 'Welcome back.' : "You're set.";
+  const subtitle = isPostSuspension
+    ? 'Your service is restored.'
+    : 'Card was charged successfully.';
   return `
     <div class="dunning-toast dunning-toast--success"
          data-auto-dismiss="8000"
@@ -401,8 +420,8 @@ export function renderRecoveredToast(dunning: DunningStateRecovered): string {
          aria-live="polite">
       <div class="dunning-toast__icon">${ICON_CHECK}</div>
       <div class="dunning-toast__body">
-        <div class="dunning-toast__title">You're set.</div>
-        <div class="dunning-toast__subtitle">Card was charged successfully.</div>
+        <div class="dunning-toast__title">${title}</div>
+        <div class="dunning-toast__subtitle">${subtitle}</div>
       </div>
       <button type="button" class="dunning-toast__dismiss" aria-label="Dismiss">${ICON_DISMISS}</button>
     </div>

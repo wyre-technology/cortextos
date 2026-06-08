@@ -81,6 +81,69 @@ describe('mapSubscriptionToDunningView', () => {
         expect(out.nextChargeDate).toBe(fallback);
       }
     });
+
+    // Ruby PSR2 (2026-06-05, Aaron-option-A): wasPreviouslySuspended
+    // discriminator derives from recovered_from_suspended_at (mig 044)
+    // paired with recovered_at within the 1h TTL window.
+    it('PSR2: wasPreviouslySuspended=true when recovered_from_suspended_at pairs with recovered_at', () => {
+      const recoveredAt = new Date(NOW.getTime() - 10 * 60 * 1000);
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: recoveredAt,
+          recovered_from_suspended_at: recoveredAt, // paired (same write moment)
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('recovered');
+      if (out.state === 'recovered') {
+        expect(out.wasPreviouslySuspended).toBe(true);
+      }
+    });
+
+    it('PSR2: wasPreviouslySuspended=false when recovered_from_suspended_at is absent (routine recovery)', () => {
+      const recoveredAt = new Date(NOW.getTime() - 10 * 60 * 1000);
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: recoveredAt,
+          // recovered_from_suspended_at omitted = routine recovery
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('recovered');
+      if (out.state === 'recovered') {
+        expect(out.wasPreviouslySuspended).toBe(false);
+      }
+    });
+
+    it('PSR2: stale recovered_from_suspended_at (older than 1h from current recovered_at) does NOT promote', () => {
+      // Old suspension marker from a previous cycle should not pair
+      // with a fresh recovered_at from a routine billing-cycle success.
+      const recoveredAt = new Date(NOW.getTime() - 10 * 60 * 1000);
+      const stale = new Date(recoveredAt.getTime() - 24 * HOUR);
+      const out = mapSubscriptionToDunningView(
+        {
+          status: 'active',
+          first_failure_at: null,
+          recovered_at: recoveredAt,
+          recovered_from_suspended_at: stale,
+        },
+        REAL_VISUALS,
+        GRACE_DAYS,
+        NOW,
+      );
+      expect(out.state).toBe('recovered');
+      if (out.state === 'recovered') {
+        expect(out.wasPreviouslySuspended).toBe(false);
+      }
+    });
   });
 
   describe('terminal states', () => {
