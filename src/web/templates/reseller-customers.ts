@@ -1,5 +1,5 @@
-import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import type { Organization } from "../../org/org-service.js";
+import { escapeHtml } from "../helpers.js";
 
 // Track C Surface 1 — Reseller Dashboard ("Customers" list).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 1:2.
@@ -14,7 +14,7 @@ import { escapeHtml } from '../helpers.js';
 // pass). The template itself renders unchanged on either source — its
 // only contract is the `ResellerCustomer[]` shape.
 
-export type CustomerPlan = 'free' | 'pro' | 'business';
+export type CustomerPlan = "free" | "pro" | "business";
 
 export interface ResellerCustomer {
   id: string;
@@ -59,22 +59,24 @@ export interface ResellerCustomersData {
 // elsewhere) — separate scope-cleanup post-launch.
 
 /** Em-dash placeholder for any not-yet-aggregated derived stat. */
-const EM_DASH = '—';
+const EM_DASH = "—";
 
-function formatRelativeTime(iso: string | null, now: Date = new Date()): string {
+function formatRelativeTime(
+  iso: string | null,
+  now: Date = new Date(),
+): string {
   if (iso === null) return EM_DASH;
   const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return 'unknown';
+  if (Number.isNaN(then)) return "unknown";
   const diffMs = Math.max(0, now.getTime() - then);
   const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
-
 
 /**
  * Per-row action triad (Figma open-question #3 resolved to inline-always).
@@ -88,8 +90,6 @@ function renderRowActions(customer: ResellerCustomer): string {
   return `
     <div class="rc-actions">
       <a class="rc-action" href="${escapeHtml(href)}" title="Open customer detail" aria-label="Open ${name}">→</a>
-      <button type="button" class="rc-action" disabled title="Impersonate for support — lands in a follow-up" aria-label="Impersonate a user at ${name}">&#128100;</button>
-      <button type="button" class="rc-action" disabled title="More actions — lands in a follow-up" aria-label="More actions for ${name}">&#8943;</button>
     </div>`;
 }
 
@@ -117,9 +117,10 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
   const orgName = escapeHtml(org.name);
   const count = customers.length;
 
-  const rows = customers.length > 0
-    ? customers.map(renderRow).join('')
-    : `<tr><td colspan="6" class="rc-empty">No customer organizations yet.</td></tr>`;
+  const rows =
+    customers.length > 0
+      ? customers.map(renderRow).join("")
+      : `<tr><td colspan="6" class="rc-empty">No customer organizations yet.</td></tr>`;
 
   return `
     <div class="rc-header">
@@ -133,8 +134,7 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
     <div class="rc-toolbar">
       <input type="text" id="rcSearch" class="rc-search" placeholder="Search customers…"
         oninput="rcFilter()" aria-label="Search customers" />
-      <select id="rcStatusFilter" class="rc-select" aria-label="Filter by status" disabled
-        title="Status filtering lands with the Track A customer-status field">
+      <select id="rcStatusFilter" class="rc-select" aria-label="Filter by status" disabled>
         <option value="active">Status: Active</option>
       </select>
     </div>
@@ -154,13 +154,6 @@ export function renderResellerCustomers(data: ResellerCustomersData): string {
       </tbody>
     </table>
     <p class="rc-empty-filtered" id="rcNoMatch" role="status" aria-live="polite" hidden>No customers match your filters.</p>
-
-    <p class="ia-shell-note">
-      Customer detail, onboarding, and impersonation route through follow-up
-      Track C surfaces. This dashboard currently renders mock data; the
-      data source (<code>OrgService.getCustomersOfReseller</code>) has
-      shipped, and a follow-up PR wires this page-handler to it.
-    </p>
   `;
 }
 

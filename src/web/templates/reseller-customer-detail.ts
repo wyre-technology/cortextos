@@ -1,5 +1,5 @@
-import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import type { Organization } from "../../org/org-service.js";
+import { escapeHtml } from "../helpers.js";
 
 // Track C Surface 2 — Reseller Customer Detail (/org/customers/:id).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 4:2.
@@ -210,15 +210,13 @@ export function renderResellerCustomerDetail(
             // informative.
             `${customer.userCount.toLocaleString()} users`,
             `${customer.mcpCount.toLocaleString()} MCPs`,
-            customer.subdomain ? escapeHtml(customer.subdomain) : '',
-          ].filter(Boolean).join(' · ')
+            customer.subdomain ? escapeHtml(customer.subdomain) : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")
         }</p>
       </div>
       <div class="cd-actions">
-        <button type="button" class="cd-btn-secondary" disabled
-          title="User impersonation is its own auth surface — lands in a follow-up">
-          Impersonate user
-        </button>
         <a class="cd-btn-primary" href="${onboardHref}">+ Onboard MCP</a>
       </div>
     </div>
@@ -262,14 +260,6 @@ export function renderResellerCustomerDetail(
       </table>
     </div>
 
-    <p class="ia-shell-note">
-      Analytics on this page are live — sourced from the reseller-scoped
-      customer-dashboard endpoints. Customer identity (plan, counts,
-      subdomain), per-connection wiring type and health, and per-user
-      role/department render once the reseller-scoped customer-detail,
-      vendor-health, and member read endpoints land; this v1 ships the
-      live-analytics subset.
-    </p>
   `;
 
   return { body, pageScripts: buildScript(org.id, customer.id) };
