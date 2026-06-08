@@ -133,6 +133,35 @@ quoting a source; callouts are asides. Use the `:::` syntax above.
   permalink at the pinned SHA recorded in the page's `upstream_sha`
   front-matter, not to `main`.
 
+### Cross-references (the Related component)
+
+For a page's "Related" section, use the `Related` component instead of a
+hand-written link list. It resolves each slug to the target page's current
+title at build time, so link text never drifts from the page it points at,
+and a renamed or removed page fails the build instead of shipping a dead
+link.
+
+```mdx
+import Related from '../../../components/Related.astro';
+
+## Related
+
+<Related links={[
+  { slug: 'reference/security', note: 'the credential-encryption model.' },
+  { slug: 'guides/scim' },
+]} />
+```
+
+- Keep the `## Related` heading in the MDX (the component renders only the
+  list) so the section still appears in the page's table of contents.
+- `slug` is the page's collection id — the path under `src/content/docs`
+  without the extension, the same value used in the sidebar config.
+- `note` is an optional one-line gloss. `label` overrides the link text;
+  use it only when editorial phrasing must differ from the page title.
+- The import path's depth depends on the page's folder (`../../../` for a
+  page one level deep like `guides/` or `reference/`, `../../../../` one
+  level deeper like `guides/onprem/`).
+
 ### Front-matter
 
 Every page has at minimum:

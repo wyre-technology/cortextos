@@ -4,6 +4,7 @@ description: How to connect Claude Code, Claude Desktop, or any MCP-capable AI c
 ---
 
 import FaqSchema from '../../../components/FaqSchema.astro';
+import Related from '../../../components/Related.astro';
 
 <FaqSchema slug="guides/connecting-a-client" />
 
@@ -119,5 +120,7 @@ Either your organization hasn't connected any vendors yet, or your role's tool a
 
 ## Related
 
-- [Getting Started](/docs/getting-started/) — the MSP-side setup that stands up the gateway you are connecting to.
-- [Vendor Connections](/docs/guides/vendor-connections/) — how your MSP connects the vendors whose tools you see.
+<Related links={[
+  { slug: 'getting-started', note: 'the MSP-side setup that stands up the gateway you are connecting to.' },
+  { slug: 'guides/vendor-connections', note: 'how your MSP connects the vendors whose tools you see.' },
+]} />
