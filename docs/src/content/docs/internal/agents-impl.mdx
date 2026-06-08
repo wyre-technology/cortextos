@@ -3,6 +3,10 @@ title: Agents — implementation
 description: Internal reference for how Conduit agents are defined, registered, and resolved at runtime. Includes the full per-agent catalog.
 upstream: mcp-gateway/docs/agents.md
 upstream_sha: ad19acd090540765cffc3cc21b57d6fb8555207c
+# Keep internal/ pages out of the Pagefind search index (Finding A: internal
+# docs stay out of EVERY discovery channel — page-serve, sitemap, llms.txt,
+# robots, and now search). Enforced by search-exclusion.test.ts.
+pagefind: false
 ---
 
 :::caution[Internal]
