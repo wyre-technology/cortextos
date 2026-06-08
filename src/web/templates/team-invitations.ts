@@ -126,6 +126,11 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
           const data = await res.json();
           const url = baseUrl + '/invite/' + data.token;
           await navigator.clipboard.writeText(url).catch(() => {});
+          // MR3 (ruby 2026-06-05): toast names the action explicitly per
+          // scribe Voice-1 INFORMATIONAL spec — 'Invite link copied to
+          // clipboard' was the existing copy; keeping it because the link
+          // copy IS the load-bearing acknowledgment (admin needs to know
+          // their clipboard has the URL).
           showToast('Invite link copied to clipboard');
           setTimeout(() => window.location.reload(), 500);
         } else {
@@ -138,8 +143,16 @@ export function renderTeamInvitations(data: TeamInvitationsData): string {
       async function revokeInvite(inviteId) {
         if (!confirm('Revoke this invite link?')) return;
         const res = await fetch('/api/orgs/' + orgId + '/invitations/' + inviteId, { method: 'DELETE' });
-        if (res.ok) window.location.reload();
-        else alert('Failed to revoke invitation');
+        if (res.ok) {
+          // MR3: in-app toast acknowledgment for the admin's own revoke
+          // action. 500ms delay before reload so toast renders visibly.
+          // (Inviting still uses the existing 'Invite link copied'
+          // toast — that one carries clipboard-side load-bearing-info.)
+          showToast('Invite revoked.');
+          setTimeout(function() { window.location.reload(); }, 500);
+        } else {
+          alert('Failed to revoke invitation');
+        }
       }
     </script>`;
 }

@@ -28,15 +28,27 @@ export function renderTeamMembers(data: TeamMembersData): string {
       const isOwner = m.role === 'owner';
       const isSelf = m.userId === viewerUserId;
       const canRemove = !isOwner && !isSelf && (isViewerOwner || m.role === 'member');
-      const removeBtn = canRemove
-        ? `<button class="btn-disconnect" onclick="removeMember('${escapeHtml(m.userId)}')">Remove</button>`
-        : '';
       const displayName = m.name || m.email || m.userId;
+      // MR3 (ruby 2026-06-05): pass displayName via data-attr so the toast
+      // can name the removed/role-changed member (scribe Voice-1 INFOR-
+      // MATIONAL spec: '{{member_name | default: A teammate}} removed
+      // from {{org_name | default: your organization}}.').
+      const removeBtn = canRemove
+        ? `<button class="btn-disconnect"
+            data-user-id="${escapeHtml(m.userId)}"
+            data-member-name="${escapeHtml(displayName)}"
+            onclick="removeMember(this.dataset.userId, this.dataset.memberName)">Remove</button>`
+        : '';
       const emailLine = m.email && m.name ? `<span class="member-email">${escapeHtml(m.email)}</span>` : '';
 
       let roleCell: string;
       if (isViewerOwner && !isOwner && !isSelf) {
-        roleCell = `<select class="role-select" onchange="changeRole('${escapeHtml(m.userId)}', this.value)">
+        // MR3: data-attr passes member name so toast names the affected
+        // user. Sibling-shape to removeBtn above.
+        roleCell = `<select class="role-select"
+            data-user-id="${escapeHtml(m.userId)}"
+            data-member-name="${escapeHtml(displayName)}"
+            onchange="changeRole(this.dataset.userId, this.value, this.dataset.memberName)">
           <option value="member"${m.role === 'member' ? ' selected' : ''}>member</option>
           <option value="admin"${m.role === 'admin' ? ' selected' : ''}>admin</option>
         </select>`;
@@ -79,21 +91,30 @@ export function renderTeamMembers(data: TeamMembersData): string {
         setTimeout(() => t.classList.remove('show'), 2000);
       }
 
-      async function removeMember(userId) {
+      async function removeMember(userId, memberName) {
         if (!confirm('Remove this member from the team?')) return;
         const res = await fetch('/api/orgs/' + orgId + '/members/' + userId, { method: 'DELETE' });
-        if (res.ok) window.location.reload();
-        else alert('Failed to remove member');
+        if (res.ok) {
+          // MR3: in-app toast acknowledgment for admin's own action.
+          // 500ms delay before reload so toast renders visibly.
+          showToast((memberName || 'A teammate') + ' removed from the team.');
+          setTimeout(function() { window.location.reload(); }, 500);
+        } else {
+          alert('Failed to remove member');
+        }
       }
 
-      async function changeRole(userId, newRole) {
+      async function changeRole(userId, newRole, memberName) {
         const res = await fetch('/api/orgs/' + orgId + '/members/' + userId + '/role', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ role: newRole }),
         });
         if (res.ok) {
-          showToast('Role updated');
+          // MR3: enriched toast names the affected member + the new role
+          // (scribe Voice-1 spec). Existing 'Role updated' bare-toast
+          // didn't name the member.
+          showToast((memberName || 'A teammate') + ' role changed to ' + newRole + '.');
         } else {
           const data = await res.json().catch(function() { return {}; });
           alert('Failed to change role: ' + (data.error || 'Unknown error'));
