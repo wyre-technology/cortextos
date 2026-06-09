@@ -9,6 +9,8 @@ import { migrateCronsForAgent } from './cron-migration.js';
 import type { CronDefinition } from '../types/index.js';
 import { TelegramAPI } from '../telegram/api.js';
 import { TelegramPoller } from '../telegram/poller.js';
+import { createGatewayFromEnv, type DiscordGateway } from '../discord/gateway.js';
+import { deliverInbound } from '../discord/inbound.js';
 import { resolvePaths } from '../utils/paths.js';
 import { resolveEnv } from '../utils/env.js';
 import { recordInboundTelegram, cacheLastSent, logOutboundMessage, buildRecentHistory } from '../telegram/logging.js';
@@ -24,7 +26,7 @@ type LogFn = (msg: string) => void;
  * Manages all agents in a cortextOS instance.
  */
 export class AgentManager {
-  private agents: Map<string, { process: AgentProcess; checker: FastChecker; poller?: TelegramPoller; activityPoller?: TelegramPoller; telegramRejectCount?: number; telegramLastRejectAlertAt?: number }> = new Map();
+  private agents: Map<string, { process: AgentProcess; checker: FastChecker; poller?: TelegramPoller; activityPoller?: TelegramPoller; gateway?: DiscordGateway; telegramRejectCount?: number; telegramLastRejectAlertAt?: number }> = new Map();
   private workers: Map<string, WorkerProcess> = new Map();
   /** Daemon-level cron scheduler registry: one CronScheduler per enabled agent. */
   private cronSchedulers: Map<string, CronScheduler> = new Map();
@@ -425,6 +427,73 @@ export class AgentManager {
 
     // Start agent
     await agentProcess.start();
+
+    // ── Discord gateway (inbound human control plane) ──────────────────────
+    // Opt-in + orchestrator-only. The DISCORD_* env is instance-global, so a
+    // default-on adapter would open one socket PER agent — instead we gate on
+    // config.discord_gateway (set true only on the orchestrator). Purely
+    // additive: agents without the flag are unaffected, so the Telegram fleet
+    // is untouched. Mirrors the Telegram poller: create → wire onMessage (which
+    // routes to the orchestrator's bus inbox via deliverInbound) → restart-on-
+    // throw wrapper → store the reference so stopAgent() can tear it down.
+    if (config?.discord_gateway === true) {
+      const gateway = createGatewayFromEnv();
+      if (!gateway) {
+        log('discord_gateway:true but DISCORD_BOT_TOKEN/DISCORD_ORCH_CHANNEL_ID unset — Discord disabled');
+      } else {
+        gateway.onMessage((msg) => {
+          try {
+            const res = deliverInbound({
+              paths,
+              ctxRoot: this.ctxRoot,
+              orchestrator: name,
+              org: resolvedOrg,
+              message: msg,
+              log,
+            });
+            if (res.delivered) {
+              log(`Discord → ${name} inbox (bus ${res.busMessageId})`);
+            }
+            // res.delivered:false (bot_author / empty) is a normal skip.
+          } catch (err) {
+            log(`Discord deliverInbound error: ${err}`);
+          }
+        });
+
+        // discord.js reconnects transient WS drops internally, so this wrapper
+        // only covers a hard login()/start() throw (bad token, network down at
+        // boot). start() resolves once the initial login succeeds; thereafter
+        // the client keeps the socket alive on its own. Give up after 5min of
+        // consecutive connect failures (operator-visible), mirroring the
+        // Telegram wrapper's budget.
+        const startGatewayWithRestart = async () => {
+          const RETRY_SLEEP_MS = 30_000;
+          const MAX_CONSECUTIVE_MS = 5 * 60 * 1000;
+          let firstFailureAt: number | null = null;
+          while (true) {
+            if (!this.agents.has(name)) return;
+            try {
+              await gateway.start();
+              log(`Discord gateway connected for ${name} (orchestrator-only, channel-scoped)`);
+              return;
+            } catch (err) {
+              log(`Discord gateway start failed for ${name}: ${err}`);
+              if (firstFailureAt === null) firstFailureAt = Date.now();
+              if (Date.now() - firstFailureAt > MAX_CONSECUTIVE_MS) {
+                log(`Discord gateway for ${name} could not connect within 5min — giving up. Check DISCORD_BOT_TOKEN and that the MessageContent intent is enabled.`);
+                return;
+              }
+              await new Promise((r) => setTimeout(r, RETRY_SLEEP_MS));
+            }
+          }
+        };
+        startGatewayWithRestart().catch((err) => log(`Discord gateway wrapper crashed: ${err}`));
+
+        const dEntry = this.agents.get(name);
+        if (dEntry) dEntry.gateway = gateway;
+        log(`Discord gateway enabled for ${name}`);
+      }
+    }
 
     // Subtask 2.2: Auto-migrate crons from config.json → crons.json before
     // starting the scheduler, so the scheduler always has a populated crons.json
@@ -858,6 +927,7 @@ export class AgentManager {
 
     if (entry.poller) entry.poller.stop();
     if (entry.activityPoller) entry.activityPoller.stop();
+    if (entry.gateway) { void entry.gateway.stop(); }
     entry.checker.stop();
     await entry.process.stop();
     this.agents.delete(name);

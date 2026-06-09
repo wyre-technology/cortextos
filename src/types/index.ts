@@ -209,6 +209,14 @@ export interface AgentConfig {
    * poller will be skipped regardless.
    */
   telegram_polling?: boolean;
+  /**
+   * Opt-in: when true (set only on the orchestrator agent), the daemon opens
+   * the Discord gateway WebSocket for this agent and routes inbound messages
+   * from DISCORD_ORCH_CHANNEL_ID into its bus inbox. Default-off because the
+   * DISCORD_* env is instance-global — leaving it unset on specialists keeps
+   * them off the control plane and avoids duplicate gateway connections.
+   */
+  discord_gateway?: boolean;
 }
 
 export interface CronEntry {
