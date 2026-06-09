@@ -437,7 +437,25 @@ export class AgentManager {
     // routes to the orchestrator's bus inbox via deliverInbound) → restart-on-
     // throw wrapper → store the reference so stopAgent() can tear it down.
     if (config?.discord_gateway === true) {
-      const gateway = createGatewayFromEnv();
+      // Source DISCORD_* from orgs/{org}/secrets.env (gitignored — the same
+      // place init.ts directs the Telegram token), merged over process.env.
+      // The daemon does not load secrets.env into its own process.env, and a
+      // global load would be wrong for multi-org instances, so read this
+      // agent's org secrets explicitly.
+      const discordEnv: NodeJS.ProcessEnv = { ...process.env };
+      const secretsPath = join(this.frameworkRoot, 'orgs', resolvedOrg, 'secrets.env');
+      if (existsSync(secretsPath)) {
+        for (const line of readFileSync(secretsPath, 'utf-8').split('\n')) {
+          const t = line.trim();
+          if (!t || t.startsWith('#')) continue;
+          const i = t.indexOf('=');
+          if (i <= 0) continue;
+          let v = t.slice(i + 1);
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+          discordEnv[t.slice(0, i)] = v;
+        }
+      }
+      const gateway = createGatewayFromEnv(discordEnv);
       if (!gateway) {
         log('discord_gateway:true but DISCORD_BOT_TOKEN/DISCORD_ORCH_CHANNEL_ID unset — Discord disabled');
       } else {
