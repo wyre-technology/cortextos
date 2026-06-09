@@ -26,6 +26,7 @@ import { spawnWorkerCommand, terminateWorkerCommand, listWorkersCommand, injectW
 import { importAgentCommand } from './import-agent.js';
 import { addEngineerCommand } from './add-engineer.js';
 import { slackCommand } from './slack.js';
+import { discordCommand } from './discord.js';
 import { updateCommand } from './update.js';
 
 const program = new Command();
