@@ -36,3 +36,4 @@ dev-debug.log
 # tasks.json
 # tasks/ 
 /screenshots/
+graphify-out/

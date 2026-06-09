@@ -8,8 +8,9 @@
  * Accepts an optional BrandConfig + pathPrefix for customer-branded pages.
  */
 
-import { brand } from '../brand/index.js';
-import type { BrandConfig } from '../brand/types.js';
+import { brand } from "../brand/index.js";
+import type { BrandConfig } from "../brand/types.js";
+import { escapeHtml } from "../web/helpers.js";
 
 /**
  * Extract bare font family names from a CSS font-family string so we can
@@ -19,8 +20,17 @@ function googleFontFamilies(cfg: BrandConfig): string[] {
   const raw = [cfg.headingFont, cfg.bodyFont];
   const families = new Set<string>();
   for (const value of raw) {
-    const first = value.split(',')[0].trim().replace(/'/g, '');
-    if (!['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(first.toLowerCase())) {
+    const first = value.split(",")[0].trim().replace(/'/g, "");
+    if (
+      ![
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+      ].includes(first.toLowerCase())
+    ) {
       families.add(first);
     }
   }
@@ -29,12 +39,17 @@ function googleFontFamilies(cfg: BrandConfig): string[] {
 
 function googleFontsLink(cfg: BrandConfig): string {
   const families = googleFontFamilies(cfg);
-  if (families.length === 0) return '';
-  const params = families.map(f => `family=${f.replace(/ /g, '+')}:wght@400;500;600;700`).join('&');
+  if (families.length === 0) return "";
+  const params = families
+    .map((f) => `family=${f.replace(/ /g, "+")}:wght@400;500;600;700`)
+    .join("&");
   return `<link href="https://fonts.googleapis.com/css2?${params}&display=swap" rel="stylesheet" />`;
 }
 
-export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: string): string {
+export function renderLandingPage(
+  overrideBrand?: BrandConfig,
+  pathPrefix?: string,
+): string {
   const b = overrideBrand ?? brand;
   const isCustomer = !!overrideBrand;
   // The non-customer Sign In button targets the provider chooser at /login,
@@ -43,10 +58,104 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
   // configured (see landingRoutes /login handler), so single-provider
   // deployments don't see a pointless one-button "chooser." Customer-
   // branded pages already use ${prefix}/login.
-  const loginPath = isCustomer ? `${pathPrefix}/login` : '/login';
-  const homePath = pathPrefix || '/';
-  const heroHeadline = isCustomer ? 'Your AI-Powered Operations Hub' : 'Your AI-Powered Operations Hub';
-  const heroSubtitle = 'Connect all your tools to AI agents securely. One gateway, zero complexity.';
+  const loginPath = isCustomer ? `${pathPrefix}/login` : "/login";
+  const homePath = pathPrefix || "/";
+  const heroHeadline = isCustomer
+    ? "Your AI-Powered Operations Hub"
+    : "Your AI-Powered Operations Hub";
+  const heroSubtitle =
+    "Connect all your tools to AI agents securely. One gateway, zero complexity.";
+
+  // SEO + AEO/GEO metadata. Renders only on the non-customer (default)
+  // landing — reseller-white-labeled pages keep their own entity surface.
+  // Matches the schema shape of the Astro marketing site at conduit.wyre.ai
+  // (wyre-ai-site/src/pages/conduit/index.astro) so that when the cutover
+  // from Astro-marketing to this Fastify app happens, the Organization +
+  // SoftwareApplication entities answer engines have learned stay stable.
+  // 2026-06-09 SEO/AEO/GEO audit.
+  const canonicalUrl = process.env.BASE_URL ?? "https://conduit.wyre.ai";
+  const ogImage =
+    process.env.BRAND_OG_IMAGE ?? `${canonicalUrl}/assets/og-conduit.png`;
+  const seoTitle = `${b.name} — ${b.tagline}`;
+  const seoHead = isCustomer
+    ? ""
+    : `
+  <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
+  <meta property="og:title" content="${escapeHtml(seoTitle)}" />
+  <meta property="og:description" content="${escapeHtml(b.tagline)}" />
+  <meta property="og:image" content="${escapeHtml(ogImage)}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+  <meta property="og:site_name" content="WYRE Technology" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(seoTitle)}" />
+  <meta name="twitter:description" content="${escapeHtml(b.tagline)}" />
+  <meta name="twitter:image" content="${escapeHtml(ogImage)}" />
+  <script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "WYRE Technology",
+    url: "https://wyre.ai",
+    logo: "https://wyre.ai/assets/wyre-logo.svg",
+    sameAs: [
+      "https://conduit.wyre.ai",
+      "https://mcp.wyre.ai",
+      "https://wyretechnology.com",
+      "https://www.linkedin.com/company/wyre-technology",
+      "https://github.com/wyre-technology",
+      "https://facebook.com/WYRETech",
+    ],
+  })}</script>
+  <script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: seoTitle,
+    description: b.tagline,
+    url: canonicalUrl,
+    about: {
+      "@type": "SoftwareApplication",
+      name: "Conduit",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      description:
+        "AI gateway for managed service providers. Visibility and control over every AI action across the MSP's tool stack, with white-label resale to clients.",
+      provider: {
+        "@type": "Organization",
+        name: "WYRE Technology",
+        url: "https://wyre.ai",
+      },
+    },
+  })}</script>
+  <script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "What is Conduit?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Conduit is a Model Context Protocol (MCP) gateway for managed service providers. It gives MSP owners full visibility into every AI action their team takes, control over every connection to vendor tools, and confidence that client data stays where it belongs.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Who is Conduit for?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "MSPs and their clients. Conduit ships as a multi-tenant SaaS where MSP owners onboard their team, white-label the experience for downstream customers, and resell MCP-powered AI access to those customers under their own brand.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How does Conduit relate to the WYRE MCP Gateway?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Conduit is WYRE Technology’s hosted MCP gateway product. The WYRE MCP Gateway open-source project (mcp.wyre.ai) is the same technology offered as a self-hosted Claude Code plugin for solo operators; Conduit is the managed multi-tenant SaaS for MSPs that need user-level visibility, audit, and white-label resale.",
+        },
+      },
+    ],
+  })}</script>`;
 
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -55,7 +164,7 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${b.name} — ${b.tagline}</title>
   <meta name="description" content="${b.tagline}" />
-  <link rel="icon" href="${b.logoUrl}" />
+  <link rel="icon" href="${b.logoUrl}" />${seoHead}
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   ${googleFontsLink(b)}
@@ -457,7 +566,7 @@ export function renderLandingPage(overrideBrand?: BrandConfig, pathPrefix?: stri
       <ul class="site-footer__links">
         <li><a href="/privacy">Privacy</a></li>
         <li><a href="/terms">Terms</a></li>
-        <li><a href="${b.supportUrl || '/support'}">Support</a></li>
+        <li><a href="${b.supportUrl || "/support"}">Support</a></li>
       </ul>
     </div>
   </footer>

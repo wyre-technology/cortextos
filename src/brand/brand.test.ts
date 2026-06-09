@@ -1,11 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-describe('brand config', () => {
+describe("brand config", () => {
   const envBackup: Record<string, string | undefined> = {};
   const BRAND_VARS = [
-    'BRAND_NAME', 'BRAND_TAGLINE', 'BRAND_LOGO_URL', 'BRAND_SUPPORT_URL',
-    'BRAND_DOCS_URL', 'BRAND_ISSUES_URL', 'BRAND_PRIMARY_COLOR', 'BRAND_DOMAIN',
-    'BASE_URL',
+    "BRAND_NAME",
+    "BRAND_TAGLINE",
+    "BRAND_LOGO_URL",
+    "BRAND_SUPPORT_URL",
+    "BRAND_DOCS_URL",
+    "BRAND_ISSUES_URL",
+    "BRAND_PRIMARY_COLOR",
+    "BRAND_DOMAIN",
+    "BASE_URL",
   ];
 
   beforeEach(() => {
@@ -27,23 +33,30 @@ describe('brand config', () => {
 
   async function loadBrand() {
     // Dynamic import to pick up env changes (module cache is per-import in vitest)
-    const mod = await import('./index.js');
+    const mod = await import("./index.js");
     return mod.brand;
   }
 
-  it('uses default values when no env vars set', async () => {
+  it("uses default values when no env vars set", async () => {
     const b = await loadBrand();
-    expect(b.name).toBe('Wyre Technology');
-    expect(b.tagline).toBe('Customer MCP Gateway');
-    expect(b.logoUrl).toBe('https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp');
-    expect(b.supportUrl).toBe('');
-    expect(b.docsUrl).toBe('/');
-    expect(b.issuesUrl).toContain('github.com/wyre-technology');
-    expect(b.primaryColor).toBe('#EDE947');
+    // 2026-06-09 SEO/AEO/GEO audit (Aaron): default product branding is
+    // "Conduit" — answer engines need to learn the canonical product name
+    // for this codebase. WYRE Technology remains the PROVIDER entity (set
+    // in the landing Organization JSON-LD). Resellers white-label via
+    // BRAND_NAME / BRAND_TAGLINE env vars.
+    expect(b.name).toBe("Conduit");
+    expect(b.tagline).toBe("AI Gateway for MSPs");
+    expect(b.logoUrl).toBe(
+      "https://wyretechnology.com/wp-content/uploads/2018/02/WYRE-Square-web.webp",
+    );
+    expect(b.supportUrl).toBe("");
+    expect(b.docsUrl).toBe("/");
+    expect(b.issuesUrl).toContain("github.com/wyre-technology");
+    expect(b.primaryColor).toBe("#EDE947");
   });
 
-  it('exports BrandConfig type', async () => {
-    const mod = await import('./types.js');
+  it("exports BrandConfig type", async () => {
+    const mod = await import("./types.js");
     // Type-only test — just ensure the module loads
     expect(mod).toBeDefined();
   });
