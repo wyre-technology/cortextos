@@ -64,6 +64,7 @@ program.addCommand(injectWorkerCommand);
 program.addCommand(importAgentCommand);
 program.addCommand(addEngineerCommand);
 program.addCommand(slackCommand);
+program.addCommand(discordCommand);
 program.addCommand(updateCommand);
 
 // crash-alert: SessionEnd hook — cross-platform replacement for crash-alert.sh
