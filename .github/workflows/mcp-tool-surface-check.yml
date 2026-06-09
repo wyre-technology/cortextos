@@ -1,0 +1,90 @@
+name: MCP Tool-Surface Check
+
+# Run scripts/mcp-tool-surface-check.ts against staging on every PR to main
+# (catches reviewer-visible drift before merge) AND on a nightly cron
+# (catches drift from upstream vendor MCPs that release outside our control).
+#
+# PR runs are strict: ANY drift fails the build (vendor add/remove, tool
+# add/remove, count mismatch). Nightly runs allow new tools (vendor releases
+# adding tools is informational, not a regression) but still fail on tool
+# REMOVAL — that's the silent-regression vector we cannot tolerate.
+#
+# Secrets required (set 2026-06-09 via boss):
+#   - CONDUIT_STAGING_CLIENT_ID
+#   - CONDUIT_STAGING_CLIENT_SECRET
+#
+# Baseline lives at tests/mcp/baselines/staging-tools.json. Refresh it via
+# the procedure in tests/mcp/baselines/README.md when an intentional vendor
+# change ships, and commit the new baseline alongside that PR so reviewers
+# see the surface delta.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # Run on any change that could plausibly affect the gateway tool surface:
+      # vendor MCP config, gateway routing, the script/baseline themselves.
+      - 'src/mcp/**'
+      - 'src/gateway/**'
+      - 'scripts/mcp-tool-surface-check.ts'
+      - 'tests/mcp/baselines/**'
+      - '.github/workflows/mcp-tool-surface-check.yml'
+  schedule:
+    # Nightly at 09:15 UTC (05:15 ET) — after any vendor MCP releases land
+    # and before the working day starts. Picked an off-minute (:15 not :00)
+    # to spread load across the GitHub Actions fleet.
+    - cron: '15 9 * * *'
+  workflow_dispatch:
+    # Manual fire for ad-hoc validation after a vendor incident or before
+    # a release cut.
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel in-flight PR runs when a new commit lands on the same PR.
+  # Keep nightly + dispatch runs serialized so a slow run doesn't get
+  # cancelled mid-flight by the next scheduled fire.
+  group: mcp-tool-surface-check-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  staging:
+    name: tools/list drift vs staging baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONDUIT_GATEWAY_URL: https://staging.conduit.wyre.ai
+      CONDUIT_CLIENT_ID: ${{ secrets.CONDUIT_STAGING_CLIENT_ID }}
+      CONDUIT_CLIENT_SECRET: ${{ secrets.CONDUIT_STAGING_CLIENT_SECRET }}
+      # Nightly + manual runs allow new tools (informational); PR runs are
+      # strict so unintentional vendor changes get reviewer attention.
+      ALLOW_NEW_TOOLS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+    steps:
+      - name: Guard against missing secrets
+        # Surface a clear failure mode if a fork PR or a misconfigured repo
+        # is missing the secrets — otherwise the script fails with a less
+        # informative OAuth 401 a few seconds in.
+        if: ${{ env.CONDUIT_CLIENT_ID == '' || env.CONDUIT_CLIENT_SECRET == '' }}
+        run: |
+          echo "::error::CONDUIT_STAGING_CLIENT_ID and/or CONDUIT_STAGING_CLIENT_SECRET secret is unset on this run."
+          echo "::error::Forks cannot read repo secrets; that's expected. Skip this check for fork PRs or rerun from a head-repo branch."
+          exit 78
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run drift detector
+        # Exit codes (mirrors scripts/mcp-tool-surface-check.ts header):
+        #   0 — no drift
+        #   1 — drift (vendor/tool add/remove, count mismatch, or new tool when ALLOW_NEW_TOOLS=0)
+        #   2 — operational failure (token grant / gateway HTTP / unreadable baseline)
+        run: npx tsx scripts/mcp-tool-surface-check.ts
