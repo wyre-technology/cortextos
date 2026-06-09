@@ -32,6 +32,21 @@ The `--transport http` flag tells Claude Code this is a remote HTTP server (with
 
 On first use, Claude Code opens a browser for sign-in — see [First connection](#first-connection) below.
 
+## Connect Perplexity Computer
+
+Perplexity Computer connects to a remote MCP server directly, as a **custom connector** — no bridge needed. In Perplexity Computer:
+
+1. Open **Settings → Connectors** and choose **Add custom connector** (Pro, Max, or Enterprise plans).
+2. Give it a name (e.g. `Conduit`) and paste your endpoint as the **MCP server URL**: `https://<your-conduit-host>/v1/mcp`.
+3. Set the authentication method to **OAuth**, then save.
+4. Perplexity opens a browser for sign-in — see [First connection](#first-connection) below.
+
+Once authorized, your organization's connected vendors appear as tools that Perplexity's assistant can call.
+
+:::note
+Choose **OAuth**, not an API key — Conduit authenticates clients with OAuth 2.1 + PKCE, so there is no API key to paste. The first connection runs the sign-in flow described below.
+:::
+
 ## Connect Claude Desktop and other clients via the mcp-remote bridge
 
 Claude Desktop — and many other MCP clients — connect only to MCP servers that run locally as a program, not to a remote web address. To reach Conduit from one of those clients, you use **`mcp-remote`**: a small community tool (a third-party npm package, not a WYRE component) that runs locally and bridges your client to the remote Conduit endpoint.

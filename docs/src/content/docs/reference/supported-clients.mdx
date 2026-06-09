@@ -5,7 +5,7 @@ description: Which AI clients work with Conduit. Conduit speaks the standard Mod
 
 Conduit is **provider-neutral by design.** It speaks the standard **Model Context Protocol (MCP)** end to end — it does not translate tools into any one AI vendor's format. That means Conduit is the connection fabric for *any* MCP-capable AI assistant: it gives your AI the **access and visibility** it needs into your MSP tools, without locking you to a single AI vendor.
 
-Claude Desktop and Claude Code are the clients we document end-to-end today, but they are examples — not a requirement. Any client that implements the MCP client spec connects the same way.
+Claude Desktop, Claude Code, and Perplexity Computer are the clients we document end-to-end today, but they are examples — not a requirement. Any client that implements the MCP client spec connects the same way.
 
 ---
 
@@ -24,6 +24,7 @@ Both methods use the same Conduit endpoint (`/v1/mcp`) and the same OAuth 2.1 si
 |--------|-------------------|--------|
 | **Claude Code** | Native remote (`claude mcp add --transport http`) | **Documented** — see the connect guide |
 | **Claude Desktop** | `mcp-remote` bridge | **Documented** — see the connect guide |
+| **Perplexity Computer** | Native remote (custom connector + OAuth) | **Documented** — see the connect guide |
 | **Microsoft Copilot Studio** | Power Platform custom connector + service-client (API key) auth | **Documented** — see [Connecting Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/) |
 | **Cline** (VS Code) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
 | **Continue** (VS Code / JetBrains) | MCP client — native remote or `mcp-remote` | MCP-spec compatible |
@@ -36,7 +37,7 @@ Both methods use the same Conduit endpoint (`/v1/mcp`) and the same OAuth 2.1 si
 - **MCP-spec compatible** — the client implements the MCP client spec, so it connects through the same standard methods and OAuth flow. Conduit doesn't special-case any client; if it speaks MCP, it works. Formal per-client connection walkthroughs for these are being added.
 
 :::note
-This matrix reflects MCP-protocol compatibility, not per-client certification. Because Conduit is MCP-native, support is a property of the protocol, not a per-vendor integration — a new MCP-capable client works on day one without any change to Conduit.
+This matrix reflects MCP-protocol compatibility, not per-client certification. Because Conduit is MCP-native, support is a property of the protocol, not a per-vendor integration — a new MCP-capable client works on day one without any change to Conduit. Perplexity Computer is the most recent example: a non-Anthropic client that connected with no gateway change.
 :::
 
 ## What "provider-neutral" means here
