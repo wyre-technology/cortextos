@@ -1,9 +1,9 @@
-import type { FastifyInstance } from 'fastify';
-import { nanoid } from 'nanoid';
-import { brand } from '../brand/index.js';
-import { config } from '../config.js';
-import { sendWebhook } from '../monitoring/webhook.js';
-import { getSql } from '../db/context.js';
+import type { FastifyInstance } from "fastify";
+import { nanoid } from "nanoid";
+import { brand } from "../brand/index.js";
+import { config } from "../config.js";
+import { sendWebhook } from "../monitoring/webhook.js";
+import { getSql, runAsSystem } from "../db/context.js";
 
 /**
  * Waitlist routes — collects emails from interested users.
@@ -11,34 +11,40 @@ import { getSql } from '../db/context.js';
  */
 export function waitlistRoutes() {
   return async function plugin(app: FastifyInstance): Promise<void> {
-    // Ensure table exists
-    await getSql()`
-      CREATE TABLE IF NOT EXISTS waitlist (
-        id         TEXT PRIMARY KEY,
-        email      TEXT UNIQUE NOT NULL,
-        name       TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `;
+    // Boot-time schema-init runs OUTSIDE the request-path AsyncLocalStorage
+    // context (no preHandler hook has fired yet), so `getSql()` would throw
+    // "called with no DB context." Wrapping in `runAsSystem` enters the
+    // system-pool context the same way the migration runner does. Same fix
+    // as src/signup/routes.ts boot-fix 2026-06-12.
+    await runAsSystem(async () => {
+      await getSql()`
+        CREATE TABLE IF NOT EXISTS waitlist (
+          id         TEXT PRIMARY KEY,
+          email      TEXT UNIQUE NOT NULL,
+          name       TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+    });
 
     // POST /waitlist — add email to waitlist
     app.post<{ Body: { email: string; name?: string } }>(
-      '/waitlist',
+      "/waitlist",
       {
         config: {
-          rateLimit: { max: 5, timeWindow: '1 hour' },
+          rateLimit: { max: 5, timeWindow: "1 hour" },
         },
       },
       async (request, reply) => {
         const { email, name } = request.body || {};
 
-        if (!email || typeof email !== 'string') {
-          return reply.code(400).send({ error: 'Email is required' });
+        if (!email || typeof email !== "string") {
+          return reply.code(400).send({ error: "Email is required" });
         }
 
         const normalized = email.trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-          return reply.code(400).send({ error: 'Invalid email address' });
+          return reply.code(400).send({ error: "Invalid email address" });
         }
 
         try {
@@ -49,25 +55,32 @@ export function waitlistRoutes() {
           `;
 
           if (config.waitlistNotifyUrl) {
-            const label = name?.trim() ? `${name.trim()} (${normalized})` : normalized;
+            const label = name?.trim()
+              ? `${name.trim()} (${normalized})`
+              : normalized;
             void sendWebhook(config.waitlistNotifyUrl, {
               content: `New waitlist signup: **${label}**`,
             }).catch(() => {});
           }
         } catch (err) {
-          app.log.error(err, 'Waitlist insert failed');
-          return reply.code(500).send({ error: 'Failed to join waitlist' });
+          app.log.error(err, "Waitlist insert failed");
+          return reply.code(500).send({ error: "Failed to join waitlist" });
         }
 
-        return reply.code(201).send({ message: 'You\'re on the list! We\'ll be in touch.' });
+        return reply
+          .code(201)
+          .send({ message: "You're on the list! We'll be in touch." });
       },
     );
 
     // GET /waitlist — public signup page
-    app.get('/waitlist', async (_request, reply) => {
+    app.get("/waitlist", async (_request, reply) => {
       const rows = await getSql()`SELECT COUNT(*)::int AS count FROM waitlist`;
       const count = rows[0].count as number;
-      const countText = count > 0 ? `${count} ${count === 1 ? 'person has' : 'people have'} already joined.` : '';
+      const countText =
+        count > 0
+          ? `${count} ${count === 1 ? "person has" : "people have"} already joined.`
+          : "";
 
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -255,7 +268,7 @@ export function waitlistRoutes() {
     </form>
 
     <div id="message" class="message"></div>
-    ${countText ? `<p class="social-proof">${countText}</p>` : ''}
+    ${countText ? `<p class="social-proof">${countText}</p>` : ""}
 
     <div class="features">
       <h2>What you get</h2>
@@ -322,23 +335,25 @@ export function waitlistRoutes() {
 </body>
 </html>`;
 
-      return reply.type('text/html').send(html);
+      return reply.type("text/html").send(html);
     });
 
     // GET /waitlist/count — public count for social proof (no auth needed)
-    app.get('/waitlist/count', async (_request, reply) => {
+    app.get("/waitlist/count", async (_request, reply) => {
       const rows = await getSql()`SELECT COUNT(*)::int AS count FROM waitlist`;
       return reply.send({ count: rows[0].count });
     });
 
     // GET /admin/waitlist — full list for internal use (admin API key required)
-    app.get('/admin/waitlist', async (request, reply) => {
-      const auth = request.headers.authorization ?? '';
-      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    app.get("/admin/waitlist", async (request, reply) => {
+      const auth = request.headers.authorization ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
       if (!config.adminApiKey || token !== config.adminApiKey) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+        return reply.code(401).send({ error: "Unauthorized" });
       }
-      const rows = await getSql()<{ id: string; email: string; name: string | null; created_at: Date }[]>`
+      const rows = await getSql()<
+        { id: string; email: string; name: string | null; created_at: Date }[]
+      >`
         SELECT id, email, name, created_at FROM waitlist ORDER BY created_at ASC
       `;
       return reply.send({ count: rows.length, signups: rows });

@@ -35,18 +35,18 @@
  *   placeholder rows that confuse admin queries.
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { nanoid } from 'nanoid';
-import { brand } from '../brand/index.js';
-import { config } from '../config.js';
-import { PAGE_STYLES } from '../web/styles.js';
-import { escapeHtml } from '../web/helpers.js';
-import { getSql } from '../db/context.js';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { nanoid } from "nanoid";
+import { brand } from "../brand/index.js";
+import { config } from "../config.js";
+import { PAGE_STYLES } from "../web/styles.js";
+import { escapeHtml } from "../web/helpers.js";
+import { getSql, runAsSystem } from "../db/context.js";
 import {
   AI_MSA_DOCUMENT_URL,
   ConsentService,
   type DocumentFingerprint,
-} from '../consent/consent-service.js';
+} from "../consent/consent-service.js";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -57,12 +57,17 @@ import {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EMAIL_MAX_LEN = 254; // RFC 5321
 
-export function validateEmail(raw: unknown): { ok: true; email: string } | { ok: false; reason: string } {
-  if (typeof raw !== 'string') return { ok: false, reason: 'Email is required' };
+export function validateEmail(
+  raw: unknown,
+): { ok: true; email: string } | { ok: false; reason: string } {
+  if (typeof raw !== "string")
+    return { ok: false, reason: "Email is required" };
   const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return { ok: false, reason: 'Email is required' };
-  if (trimmed.length > EMAIL_MAX_LEN) return { ok: false, reason: 'Email is too long' };
-  if (!EMAIL_RE.test(trimmed)) return { ok: false, reason: 'Invalid email address' };
+  if (!trimmed) return { ok: false, reason: "Email is required" };
+  if (trimmed.length > EMAIL_MAX_LEN)
+    return { ok: false, reason: "Email is too long" };
+  if (!EMAIL_RE.test(trimmed))
+    return { ok: false, reason: "Invalid email address" };
   return { ok: true, email: trimmed };
 }
 
@@ -89,7 +94,11 @@ export class InMemoryRateLimiter {
     private readonly now: () => number = Date.now,
   ) {}
 
-  check(key: string): { allowed: boolean; remaining: number; retryAfterMs: number } {
+  check(key: string): {
+    allowed: boolean;
+    remaining: number;
+    retryAfterMs: number;
+  } {
     const now = this.now();
     const existing = this.buckets.get(key);
     if (!existing || existing.resetAt <= now) {
@@ -97,10 +106,18 @@ export class InMemoryRateLimiter {
       return { allowed: true, remaining: this.max - 1, retryAfterMs: 0 };
     }
     if (existing.count >= this.max) {
-      return { allowed: false, remaining: 0, retryAfterMs: existing.resetAt - now };
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs: existing.resetAt - now,
+      };
     }
     existing.count += 1;
-    return { allowed: true, remaining: this.max - existing.count, retryAfterMs: 0 };
+    return {
+      allowed: true,
+      remaining: this.max - existing.count,
+      retryAfterMs: 0,
+    };
   }
 
   /** Test helper. */
@@ -128,15 +145,17 @@ interface RenderSignupPageOptions {
 
 export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
   const brandName = escapeHtml(brand.name);
-  const emailValue = opts.email ? escapeHtml(opts.email) : '';
+  const emailValue = opts.email ? escapeHtml(opts.email) : "";
   const consentChecked = opts.consentChecked === true;
   // Default to the AI_MSA constant; injected override for tests + future
   // org-customizable URL scope. Always escapeHtml — the URL ends up in an
   // anchor href, so an attacker-controlled override would otherwise XSS.
-  const consentDocumentUrl = escapeHtml(opts.consentDocumentUrl ?? AI_MSA_DOCUMENT_URL);
+  const consentDocumentUrl = escapeHtml(
+    opts.consentDocumentUrl ?? AI_MSA_DOCUMENT_URL,
+  );
   const errorBlock = opts.error
     ? `<div class="error-box" role="alert">${escapeHtml(opts.error)}</div>`
-    : '';
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -222,7 +241,7 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
         </div>
         <div class="form-row consent-row">
           <label class="consent-label">
-            <input type="checkbox" id="accept_msa" name="accept_msa" value="1"${consentChecked ? ' checked' : ''} required />
+            <input type="checkbox" id="accept_msa" name="accept_msa" value="1"${consentChecked ? " checked" : ""} required />
             <span>I accept the WYRE AI <a href="${consentDocumentUrl}" target="_blank" rel="noopener noreferrer">Master Service Agreement</a>.</span>
           </label>
         </div>
@@ -247,13 +266,13 @@ function buildAuthorizeUrl(params: {
   state: string;
 }): string {
   const url = new URL(`https://${params.domain}/authorize`);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', params.clientId);
-  url.searchParams.set('redirect_uri', params.redirectUri);
-  url.searchParams.set('scope', 'openid profile email');
-  url.searchParams.set('login_hint', params.email);
-  url.searchParams.set('screen_hint', 'signup');
-  url.searchParams.set('state', params.state);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", params.clientId);
+  url.searchParams.set("redirect_uri", params.redirectUri);
+  url.searchParams.set("scope", "openid profile email");
+  url.searchParams.set("login_hint", params.email);
+  url.searchParams.set("screen_hint", "signup");
+  url.searchParams.set("state", params.state);
   return url.toString();
 }
 
@@ -283,48 +302,80 @@ export function signupRoutes(deps: SignupRoutesDeps) {
     // Pre-auth signup intents. One row per submitted email + state pair.
     // Consumed by the Auth0 callback (follow-up task) and promoted to
     // onboarding_progress once a user + reseller org exist.
-    await getSql()`
-      CREATE TABLE IF NOT EXISTS signup_intents (
-        id          TEXT PRIMARY KEY,
-        email       TEXT NOT NULL,
-        funnel      TEXT NOT NULL DEFAULT 'reseller',
-        ip          TEXT,
-        user_agent  TEXT,
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        consumed_at TIMESTAMPTZ
-      )
-    `;
+    //
+    // Boot-time schema-init runs OUTSIDE the request-path AsyncLocalStorage
+    // context (no preHandler hook has fired yet), so `getSql()` would throw
+    // "called with no DB context." Wrapping in `runAsSystem` enters the
+    // system-pool context the same way the migration runner does — the
+    // explicit entry-point makes this query intentional system-path work.
+    // 2026-06-12 boot-fix (boss): without this wrapper, enabling
+    // SIGNUP_ENABLED=true crashes the container on startup. Same shape will
+    // need applying to other plugins that lazy-create tables at registration
+    // (waitlist/routes.ts has identical pattern but is currently
+    // dark on staging so the bug is latent there).
+    await runAsSystem(async () => {
+      await getSql()`
+        CREATE TABLE IF NOT EXISTS signup_intents (
+          id          TEXT PRIMARY KEY,
+          email       TEXT NOT NULL,
+          funnel      TEXT NOT NULL DEFAULT 'reseller',
+          ip          TEXT,
+          user_agent  TEXT,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          consumed_at TIMESTAMPTZ
+        )
+      `;
+    });
 
     // GET /signup — public HTML
-    app.get('/signup', async (_request, reply) => {
-      return reply.type('text/html').send(renderSignupPage());
+    app.get("/signup", async (_request, reply) => {
+      return reply.type("text/html").send(renderSignupPage());
     });
 
     // POST /signup — validate + rate-limit + capture MSA consent + persist + redirect to Auth0
     app.post<{ Body: { email?: string; accept_msa?: string } }>(
-      '/signup',
-      async (request: FastifyRequest<{ Body: { email?: string; accept_msa?: string } }>, reply: FastifyReply) => {
-        const ip = request.ip || 'unknown';
+      "/signup",
+      async (
+        request: FastifyRequest<{
+          Body: { email?: string; accept_msa?: string };
+        }>,
+        reply: FastifyReply,
+      ) => {
+        const ip = request.ip || "unknown";
         const limit = limiter.check(ip);
         if (!limit.allowed) {
-          reply.header('Retry-After', Math.ceil(limit.retryAfterMs / 1000).toString());
-          return reply.code(429).type('text/html').send(
-            renderSignupPage({ error: 'Too many signup attempts. Please try again later.' }),
+          reply.header(
+            "Retry-After",
+            Math.ceil(limit.retryAfterMs / 1000).toString(),
           );
+          return reply
+            .code(429)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error: "Too many signup attempts. Please try again later.",
+              }),
+            );
         }
 
         const result = validateEmail(request.body?.email);
         if (!result.ok) {
-          return reply.code(400).type('text/html').send(
-            renderSignupPage({
-              error: result.reason,
-              email: typeof request.body?.email === 'string' ? request.body.email : undefined,
-              // Preserve checkbox state across email-error re-renders so the
-              // user doesn't have to re-check it. The HTML form posts the
-              // checkbox as 'accept_msa=1' when checked; absent otherwise.
-              consentChecked: request.body?.accept_msa === '1',
-            }),
-          );
+          return reply
+            .code(400)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error: result.reason,
+                email:
+                  typeof request.body?.email === "string"
+                    ? request.body.email
+                    : undefined,
+                // Preserve checkbox state across email-error re-renders so the
+                // user doesn't have to re-check it. The HTML form posts the
+                // checkbox as 'accept_msa=1' when checked; absent otherwise.
+                consentChecked: request.body?.accept_msa === "1",
+              }),
+            );
         }
         const email = result.email;
 
@@ -335,25 +386,35 @@ export function signupRoutes(deps: SignupRoutesDeps) {
         // irreversible-failure (user proceeds without binding consent).
         // The [POLICY-DECISION] in WYREAI-98 + WYREAI-113 may relax this
         // later; the default is STRICT.
-        if (request.body?.accept_msa !== '1') {
-          return reply.code(400).type('text/html').send(
-            renderSignupPage({
-              error: 'Please accept the WYRE AI Master Service Agreement to continue.',
-              email,
-              consentChecked: false,
-            }),
-          );
+        if (request.body?.accept_msa !== "1") {
+          return reply
+            .code(400)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error:
+                  "Please accept the WYRE AI Master Service Agreement to continue.",
+                email,
+                consentChecked: false,
+              }),
+            );
         }
 
         if (!config.auth0Domain || !config.auth0ClientId) {
-          app.log.error('Signup attempted but Auth0 is not configured (AUTH0_DOMAIN / AUTH0_CLIENT_ID)');
-          return reply.code(503).type('text/html').send(
-            renderSignupPage({
-              error: 'Signup is temporarily unavailable. Please try again shortly.',
-              email,
-              consentChecked: true,
-            }),
+          app.log.error(
+            "Signup attempted but Auth0 is not configured (AUTH0_DOMAIN / AUTH0_CLIENT_ID)",
           );
+          return reply
+            .code(503)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error:
+                  "Signup is temporarily unavailable. Please try again shortly.",
+                email,
+                consentChecked: true,
+              }),
+            );
         }
 
         // CRYPTOGRAPHIC LAYER: SHA256-at-click-time of the canonical MSA.
@@ -364,16 +425,24 @@ export function signupRoutes(deps: SignupRoutesDeps) {
         // 503-temporarily-unavailable; user can retry once upstream is back.
         let fingerprint: DocumentFingerprint;
         try {
-          fingerprint = await consentService.fetchDocumentFingerprint(AI_MSA_DOCUMENT_URL);
+          fingerprint =
+            await consentService.fetchDocumentFingerprint(AI_MSA_DOCUMENT_URL);
         } catch (err) {
-          app.log.error({ err, url: AI_MSA_DOCUMENT_URL }, 'Failed to fetch MSA for consent capture');
-          return reply.code(503).type('text/html').send(
-            renderSignupPage({
-              error: 'MSA is temporarily unavailable. Please try again in a moment.',
-              email,
-              consentChecked: true,
-            }),
+          app.log.error(
+            { err, url: AI_MSA_DOCUMENT_URL },
+            "Failed to fetch MSA for consent capture",
           );
+          return reply
+            .code(503)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error:
+                  "MSA is temporarily unavailable. Please try again in a moment.",
+                email,
+                consentChecked: true,
+              }),
+            );
         }
 
         const intentId = nanoid();
@@ -389,9 +458,9 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             VALUES (
               ${intentId},
               ${email},
-              ${'reseller'},
+              ${"reseller"},
               ${ip},
-              ${request.headers['user-agent'] ?? null},
+              ${request.headers["user-agent"] ?? null},
               ${true},
               ${AI_MSA_DOCUMENT_URL},
               ${fingerprint.version},
@@ -400,17 +469,21 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             )
           `;
         } catch (err) {
-          app.log.error({ err }, 'Failed to persist signup intent');
-          return reply.code(500).type('text/html').send(
-            renderSignupPage({
-              error: 'Something went wrong. Please try again.',
-              email,
-              consentChecked: true,
-            }),
-          );
+          app.log.error({ err }, "Failed to persist signup intent");
+          return reply
+            .code(500)
+            .type("text/html")
+            .send(
+              renderSignupPage({
+                error: "Something went wrong. Please try again.",
+                email,
+                consentChecked: true,
+              }),
+            );
         }
 
-        const redirectUri = config.auth0CallbackUrl || `${config.baseUrl}/auth/callback`;
+        const redirectUri =
+          config.auth0CallbackUrl || `${config.baseUrl}/auth/callback`;
         const authorizeUrl = buildAuthorizeUrl({
           domain: config.auth0Domain,
           clientId: config.auth0ClientId,
