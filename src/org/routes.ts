@@ -1470,11 +1470,26 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // NOT block the accept-redirect (the security-critical action
         // already succeeded).
         try {
-          const [org, invitation, members] = await Promise.all([
-            orgService.getOrg(result.orgId).catch(() => null),
-            orgService.getInvitationByToken(token).catch(() => null),
-            orgService.getMembersWithProfiles(result.orgId).catch(() => []),
-          ]);
+          // 2026-06-12 launch-day fix (boss): wrap these post-accept lookups
+          // in runAsSystem too. The acceptee just transitioned from non-member
+          // to member of the customer org, but the request-path RLS context
+          // still sees the PRE-accept membership (the request-pool tx hasn't
+          // committed yet — onResponse settles it AFTER this handler returns).
+          // Running `getMembersWithProfiles(customerOrgId)` on the request
+          // pool against an org the caller is not-yet-a-row-in causes the
+          // INSTRUMENTED hang surfaced via the step markers — handler runs
+          // through E (acceptInvitation success) but never reaches reply.send,
+          // confirmed via PR #372 instrumentation. Using runAsSystem here
+          // bypasses RLS so these read-only lookups for the welcome-email +
+          // inviter-notify side-effects complete. They are best-effort and
+          // already wrapped in try/catch — non-fatal for the accept itself.
+          const [org, invitation, members] = await runAsSystem(() =>
+            Promise.all([
+              orgService.getOrg(result.orgId).catch(() => null),
+              orgService.getInvitationByToken(token).catch(() => null),
+              orgService.getMembersWithProfiles(result.orgId).catch(() => []),
+            ]),
+          );
           const orgName = org?.name ?? "your organization";
           const acceptorMember = members.find((m) => m.userId === user.sub);
           const acceptorName =
