@@ -1359,24 +1359,10 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/invite/:token",
       { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
       async (request, reply) => {
-        request.log.warn({
-          instrumentation: "accept-invite",
-          step: "A.handler-entry",
-        });
         const user = requireAuth0(request, reply);
-        request.log.warn({
-          instrumentation: "accept-invite",
-          step: "B.after-requireAuth0",
-          userPresent: !!user,
-        });
         if (!user) return;
 
         const { token } = request.params;
-        request.log.warn({
-          instrumentation: "accept-invite",
-          step: "C.before-runAsSystem",
-          token: token.slice(0, 6),
-        });
         // Layer 1: acceptInvitation can now return a discriminated-union
         // failure (email-match miss or owner-invite scope violation) in
         // addition to OrgMember | null. Each kind maps to the right HTTP
@@ -1404,33 +1390,14 @@ export function orgRoutes(deps: OrgRouteDeps) {
         //
         // Removing this workaround once the RLS policy is fixed is a
         // one-line revert.
-        const result = await runAsSystem(async () => {
-          request.log.warn({
-            instrumentation: "accept-invite",
-            step: "D.inside-runAsSystem",
-          });
-          const r = await orgService.acceptInvitation(
+        const result = await runAsSystem(() =>
+          orgService.acceptInvitation(
             token,
             user.sub,
             request.log,
             user.email ?? null,
-          );
-          request.log.warn({
-            instrumentation: "accept-invite",
-            step: "E.after-acceptInvitation",
-            resultType:
-              r === null
-                ? "null"
-                : typeof r === "object" && "kind" in r
-                  ? `error:${r.kind}`
-                  : "member",
-          });
-          return r;
-        });
-        request.log.warn({
-          instrumentation: "accept-invite",
-          step: "F.after-runAsSystem",
-        });
+          ),
+        );
         if (!result) {
           return reply
             .code(404)
