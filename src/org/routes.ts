@@ -1,22 +1,22 @@
-import { createHash } from 'node:crypto';
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { nanoid } from 'nanoid';
-import { brand } from '../brand/index.js';
-import { requireAuth0 } from '../auth/auth0.js';
-import type { Auth0User } from '../auth/auth0.js';
-import type { OrgService, OrgRole } from './org-service.js';
-import { ROLE_LEVEL, isAcceptInvitationError } from './org-service.js';
-import type { CredentialService } from '../credentials/credential-service.js';
-import type { BillingGate } from '../billing/gate.js';
-import { isPaidPlan } from '../billing/gate.js';
-import type { AdminAuditService } from '../audit/admin-audit-service.js';
-import { getVendor } from '../credentials/vendor-config.js';
+import { createHash } from "node:crypto";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { nanoid } from "nanoid";
+import { brand } from "../brand/index.js";
+import { requireAuth0 } from "../auth/auth0.js";
+import type { Auth0User } from "../auth/auth0.js";
+import type { OrgService, OrgRole } from "./org-service.js";
+import { ROLE_LEVEL, isAcceptInvitationError } from "./org-service.js";
+import type { CredentialService } from "../credentials/credential-service.js";
+import type { BillingGate } from "../billing/gate.js";
+import { isPaidPlan } from "../billing/gate.js";
+import type { AdminAuditService } from "../audit/admin-audit-service.js";
+import { getVendor } from "../credentials/vendor-config.js";
 import {
   assembleOrgVendorHealth,
   type VendorMonitor,
-} from '../monitoring/vendor-monitor.js';
-import { config } from '../config.js';
-import { sendLoopsEvent } from '../email/loops.js';
+} from "../monitoring/vendor-monitor.js";
+import { config } from "../config.js";
+import { sendLoopsEvent } from "../email/loops.js";
 import {
   sendInvitationEmail,
   sendMemberRemovedEmail,
@@ -25,9 +25,9 @@ import {
   sendJoinedOrgWelcomeEmail,
   sendServerAccessGrantedEmail,
   sendServerAccessRevokedEmail,
-} from '../email/transactional.js';
-import { validateEmail } from '../signup/routes.js';
-import { getSql } from '../db/context.js';
+} from "../email/transactional.js";
+import { validateEmail } from "../signup/routes.js";
+import { getSql, runAsSystem } from "../db/context.js";
 
 interface OrgRouteDeps {
   orgService: OrgService;
@@ -52,8 +52,13 @@ async function requireOrgRole(
   if (!user) return null;
 
   const membership = await orgService.getMembership(orgId, user.sub);
-  if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL[minRole]) {
-    reply.code(403).send({ error: 'You do not have permission to perform this action' });
+  if (
+    !membership ||
+    ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL[minRole]
+  ) {
+    reply
+      .code(403)
+      .send({ error: "You do not have permission to perform this action" });
     return null;
   }
 
@@ -70,7 +75,13 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
 }
 
 export function orgRoutes(deps: OrgRouteDeps) {
-  const { orgService, credentialService, billingGate, adminAuditService, vendorMonitor } = deps;
+  const {
+    orgService,
+    credentialService,
+    billingGate,
+    adminAuditService,
+    vendorMonitor,
+  } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -79,21 +90,25 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // POST /api/orgs — create a new organization
     app.post<{ Body: { name: string; invite_code?: string } }>(
-      '/api/orgs',
+      "/api/orgs",
       async (request, reply) => {
         const user = requireAuth0(request, reply);
         if (!user) return;
 
         const { name, invite_code: inviteCode } = request.body;
         if (!name?.trim()) {
-          return reply.code(400).send({ error: 'Organization name is required' });
+          return reply
+            .code(400)
+            .send({ error: "Organization name is required" });
         }
 
         // Check if user already owns an org
         const existingOrgs = await orgService.getUserOrgs(user.sub);
         const ownedOrg = existingOrgs.find((o) => o.ownerId === user.sub);
         if (ownedOrg) {
-          return reply.code(409).send({ error: 'You already own an organization', org: ownedOrg });
+          return reply
+            .code(409)
+            .send({ error: "You already own an organization", org: ownedOrg });
         }
 
         // Layer 1: every standalone org is created on the conduit plan
@@ -116,11 +131,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // Fire one Loops event so org-level drips can trigger without
         // starting a new contact (avoids overlap with the user-signup drip).
         if (user.email) {
-          sendLoopsEvent(user.email, 'org_created', {
+          sendLoopsEvent(user.email, "org_created", {
             orgId: org.id,
             orgName: org.name,
             plan: org.plan,
-          }).catch((err) => app.log.warn({ err }, 'failed to send Loops org_created event'));
+          }).catch((err) =>
+            app.log.warn({ err }, "failed to send Loops org_created event"),
+          );
         }
 
         return reply.code(201).send(org);
@@ -128,7 +145,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
     );
 
     // GET /api/orgs — list user's orgs
-    app.get('/api/orgs', async (request, reply) => {
+    app.get("/api/orgs", async (request, reply) => {
       const user = requireAuth0(request, reply);
       if (!user) return;
 
@@ -138,15 +155,21 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId — get org details
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId',
+      "/api/orgs/:orgId",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "member",
+        );
         if (!user) return;
 
         const org = await orgService.getOrg(orgId);
         if (!org) {
-          return reply.code(404).send({ error: 'Organization not found' });
+          return reply.code(404).send({ error: "Organization not found" });
         }
 
         return reply.send(org);
@@ -155,63 +178,94 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // PATCH /api/orgs/:orgId — update org name
     app.patch<{ Params: { orgId: string }; Body: { name: string } }>(
-      '/api/orgs/:orgId',
+      "/api/orgs/:orgId",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
         if (!user) return;
 
         const { name } = request.body;
         if (!name?.trim()) {
-          return reply.code(400).send({ error: 'Organization name is required' });
+          return reply
+            .code(400)
+            .send({ error: "Organization name is required" });
         }
 
         const org = await orgService.updateOrg(orgId, name.trim());
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'org_updated', metadata: { name: name.trim() } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "org_updated",
+            metadata: { name: name.trim() },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send(org);
       },
     );
 
     // POST /api/orgs/:orgId/redeem-code — redeem an invite code to upgrade to pro
     app.post<{ Params: { orgId: string }; Body: { code: string } }>(
-      '/api/orgs/:orgId/redeem-code',
-      { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } },
+      "/api/orgs/:orgId/redeem-code",
+      { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
         if (!user) return;
 
         const { code } = request.body;
         if (!code?.trim()) {
-          return reply.code(400).send({ error: 'Invite code is required' });
+          return reply.code(400).send({ error: "Invite code is required" });
         }
 
         if (!config.alphaInviteCodes.has(code.trim())) {
-          return reply.code(422).send({ error: 'Invalid invite code' });
+          return reply.code(422).send({ error: "Invalid invite code" });
         }
 
         const org = await orgService.getOrg(orgId);
         if (isPaidPlan(org?.plan)) {
-          return reply.code(409).send({ error: 'Organization is already on the plan' });
+          return reply
+            .code(409)
+            .send({ error: "Organization is already on the plan" });
         }
 
         // Flat-pricing: one plan. (Post-flat every org resolves to the
         // single 'conduit' plan via getPlan, so isPaidPlan is effectively
         // always true and this endpoint 409s — retained for parity.)
-        await orgService.updateOrgPlan(orgId, 'conduit');
-        return reply.send({ success: true, plan: 'conduit' });
+        await orgService.updateOrgPlan(orgId, "conduit");
+        return reply.send({ success: true, plan: "conduit" });
       },
     );
 
     // DELETE /api/orgs/:orgId — delete org
     app.delete<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId',
+      "/api/orgs/:orgId",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
         if (!user) return;
 
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'org_deleted' }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({ orgId, actorId: user.sub, eventType: "org_deleted" })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         await orgService.deleteOrg(orgId);
         return reply.code(204).send();
       },
@@ -228,17 +282,25 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // still carries the copy-link, so an omitted `email` is the unchanged
     // copy-link flow.
     app.post<{ Params: { orgId: string }; Body: { email?: string } }>(
-      '/api/orgs/:orgId/invitations',
-      { config: { rateLimit: { max: 10, timeWindow: '1 hour' } } },
+      "/api/orgs/:orgId/invitations",
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         // Require pro plan for team features
         const canTeam = await billingGate.canUseTeamFeatures(orgId);
         if (!canTeam) {
-          return reply.code(402).send({ error: 'Upgrade to Pro to invite team members' });
+          return reply
+            .code(402)
+            .send({ error: "Upgrade to Pro to invite team members" });
         }
 
         // Validate the optional invitee address BEFORE the mutation, so a
@@ -267,7 +329,14 @@ export function orgRoutes(deps: OrgRouteDeps) {
         );
         const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
 
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'member_invited', metadata: { invitationId: invitation.id } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "member_invited",
+            metadata: { invitationId: invitation.id },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         // Email prep + send are non-blocking: a failure here must not 500 a
         // request whose invitation was already created.
@@ -276,12 +345,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
             const org = await orgService.getOrg(orgId);
             sendInvitationEmail(request.log, {
               to: inviteEmail,
-              orgName: org?.name ?? 'your organization',
+              orgName: org?.name ?? "your organization",
               inviteUrl,
               invitedByEmail: user.email,
             });
           } catch (err) {
-            request.log.warn({ err }, 'invitation email prep failed');
+            request.log.warn({ err }, "invitation email prep failed");
           }
         }
 
@@ -289,16 +358,24 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // moment it ever exists in cleartext outside the inviter's clipboard.
         // Subsequent reads (listInvitations, getInvitationByToken) never carry
         // the plaintext.
-        return reply.code(201).send({ ...invitation, token: plainToken, inviteUrl });
+        return reply
+          .code(201)
+          .send({ ...invitation, token: plainToken, inviteUrl });
       },
     );
 
     // GET /api/orgs/:orgId/invitations — list pending invites
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/invitations',
+      "/api/orgs/:orgId/invitations",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const invitations = await orgService.listInvitations(orgId);
@@ -308,10 +385,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // DELETE /api/orgs/:orgId/invitations/:id — revoke invite
     app.delete<{ Params: { orgId: string; id: string } }>(
-      '/api/orgs/:orgId/invitations/:id',
+      "/api/orgs/:orgId/invitations/:id",
       async (request, reply) => {
         const { orgId, id } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const revoked = await orgService.revokeInvitation(id, orgId);
@@ -319,9 +402,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
           // No row matched (id, orgId) — the invitation does not exist or
           // belongs to another org. Honest 404, not a silent 204: a 204
           // would hand a cross-tenant caller a false success signal.
-          return reply.code(404).send({ error: 'Invitation not found' });
+          return reply.code(404).send({ error: "Invitation not found" });
         }
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: id, eventType: 'invitation_revoked' }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: id,
+            eventType: "invitation_revoked",
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
@@ -332,10 +422,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/members — list members
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/members',
+      "/api/orgs/:orgId/members",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "member",
+        );
         if (!user) return;
 
         const members = await orgService.getMembers(orgId);
@@ -345,27 +441,43 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // DELETE /api/orgs/:orgId/members/:userId — remove member
     app.delete<{ Params: { orgId: string; userId: string } }>(
-      '/api/orgs/:orgId/members/:userId',
+      "/api/orgs/:orgId/members/:userId",
       async (request, reply) => {
         const { orgId, userId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         // Admins cannot remove other admins — only owners can
         const actorMembership = await orgService.getMembership(orgId, user.sub);
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (
-          actorMembership?.role === 'admin' &&
-          targetMembership?.role === 'admin'
+          actorMembership?.role === "admin" &&
+          targetMembership?.role === "admin"
         ) {
-          return reply.code(403).send({ error: 'Admins cannot remove other admins' });
+          return reply
+            .code(403)
+            .send({ error: "Admins cannot remove other admins" });
         }
 
         const removed = await orgService.removeMember(orgId, userId);
         if (!removed) {
-          return reply.code(400).send({ error: 'Cannot remove the org owner' });
+          return reply.code(400).send({ error: "Cannot remove the org owner" });
         }
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'member_removed', metadata: { memberRole: targetMembership?.role } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "member_removed",
+            metadata: { memberRole: targetMembership?.role },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         // Email prep + send are non-blocking: a failure here must not 500 a
         // request whose member removal already committed. The users row
@@ -376,61 +488,79 @@ export function orgRoutes(deps: OrgRouteDeps) {
             const org = await orgService.getOrg(orgId);
             sendMemberRemovedEmail(request.log, {
               to,
-              orgName: org?.name ?? 'an organization',
+              orgName: org?.name ?? "an organization",
             });
           }
         } catch (err) {
-          request.log.warn({ err }, 'member-removed email prep failed');
+          request.log.warn({ err }, "member-removed email prep failed");
         }
         return reply.code(204).send();
       },
     );
 
     // PATCH /api/orgs/:orgId/members/:userId/role — change member role (owner only)
-    app.patch<{ Params: { orgId: string; userId: string }; Body: { role: string } }>(
-      '/api/orgs/:orgId/members/:userId/role',
-      async (request, reply) => {
-        const { orgId, userId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
-        if (!user) return;
+    app.patch<{
+      Params: { orgId: string; userId: string };
+      Body: { role: string };
+    }>("/api/orgs/:orgId/members/:userId/role", async (request, reply) => {
+      const { orgId, userId } = request.params;
+      const user = await requireOrgRole(
+        request,
+        reply,
+        orgService,
+        orgId,
+        "owner",
+      );
+      if (!user) return;
 
-        const { role } = request.body;
-        if (role !== 'admin' && role !== 'member') {
-          return reply.code(400).send({ error: 'Role must be "admin" or "member"' });
+      const { role } = request.body;
+      if (role !== "admin" && role !== "member") {
+        return reply
+          .code(400)
+          .send({ error: 'Role must be "admin" or "member"' });
+      }
+
+      if (userId === user.sub) {
+        return reply.code(400).send({ error: "Cannot change your own role" });
+      }
+
+      const targetMembership = await orgService.getMembership(orgId, userId);
+      const oldRole = targetMembership?.role ?? "unknown";
+
+      const updated = await orgService.updateMemberRole(orgId, userId, role);
+      if (!updated) {
+        return reply
+          .code(400)
+          .send({ error: "Cannot change role of the org owner" });
+      }
+
+      void adminAuditService
+        .log({
+          orgId,
+          actorId: user.sub,
+          targetId: userId,
+          eventType: "role_changed",
+          metadata: { oldRole, newRole: role },
+        })
+        .catch((err) => request.log.error(err, "admin audit log failed"));
+
+      // Email prep + send are non-blocking: a failure here must not 500 a
+      // request whose role change already committed.
+      try {
+        const to = await resolveUserEmail(userId);
+        if (to) {
+          const org = await orgService.getOrg(orgId);
+          sendRoleChangedEmail(request.log, {
+            to,
+            orgName: org?.name ?? "an organization",
+            newRole: role,
+          });
         }
-
-        if (userId === user.sub) {
-          return reply.code(400).send({ error: 'Cannot change your own role' });
-        }
-
-        const targetMembership = await orgService.getMembership(orgId, userId);
-        const oldRole = targetMembership?.role ?? 'unknown';
-
-        const updated = await orgService.updateMemberRole(orgId, userId, role);
-        if (!updated) {
-          return reply.code(400).send({ error: 'Cannot change role of the org owner' });
-        }
-
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'role_changed', metadata: { oldRole, newRole: role } }).catch((err) => request.log.error(err, 'admin audit log failed'));
-
-        // Email prep + send are non-blocking: a failure here must not 500 a
-        // request whose role change already committed.
-        try {
-          const to = await resolveUserEmail(userId);
-          if (to) {
-            const org = await orgService.getOrg(orgId);
-            sendRoleChangedEmail(request.log, {
-              to,
-              orgName: org?.name ?? 'an organization',
-              newRole: role,
-            });
-          }
-        } catch (err) {
-          request.log.warn({ err }, 'role-changed email prep failed');
-        }
-        return reply.send(updated);
-      },
-    );
+      } catch (err) {
+        request.log.warn({ err }, "role-changed email prep failed");
+      }
+      return reply.send(updated);
+    });
 
     // -----------------------------------------------------------------------
     // Vendor health
@@ -442,17 +572,26 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // Current-state only — no uptime history (see
     // .taskmaster/docs/spec-observability-vendor-health.md §5.4).
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/vendor-health',
+      "/api/orgs/:orgId/vendor-health",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "member",
+        );
         if (!user) return;
 
         // assembleOrgVendorHealth is the single source of truth for the
         // org-scoped raw-cache → tenant-4-state mapping — shared with the
         // /org/connections SSR page so the two renderings cannot drift.
         const slugs = await credentialService.listOrgVendors(orgId);
-        const vendors = assembleOrgVendorHealth(slugs, vendorMonitor.getStatus());
+        const vendors = assembleOrgVendorHealth(
+          slugs,
+          vendorMonitor.getStatus(),
+        );
 
         return reply.send({ vendors });
       },
@@ -464,10 +603,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/server-access — list all grants (admin+)
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/server-access',
+      "/api/orgs/:orgId/server-access",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const grants = await orgService.listServerAccess(orgId);
@@ -477,7 +622,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/members/:userId/server-access — list user's vendor access (admin+ or self)
     app.get<{ Params: { orgId: string; userId: string } }>(
-      '/api/orgs/:orgId/members/:userId/server-access',
+      "/api/orgs/:orgId/members/:userId/server-access",
       async (request, reply) => {
         const { orgId, userId } = request.params;
         const user = requireAuth0(request, reply);
@@ -486,14 +631,25 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // Allow self-access or admin+
         if (user.sub !== userId) {
           const membership = await orgService.getMembership(orgId, user.sub);
-          if (!membership || ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin) {
-            return reply.code(403).send({ error: 'You do not have permission to perform this action' });
+          if (
+            !membership ||
+            ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin
+          ) {
+            return reply
+              .code(403)
+              .send({
+                error: "You do not have permission to perform this action",
+              });
           }
         } else {
           // Still must be a member
           const membership = await orgService.getMembership(orgId, user.sub);
           if (!membership) {
-            return reply.code(403).send({ error: 'You do not have permission to perform this action' });
+            return reply
+              .code(403)
+              .send({
+                error: "You do not have permission to perform this action",
+              });
           }
         }
 
@@ -504,10 +660,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // PUT /api/orgs/:orgId/members/:userId/server-access/:vendor — grant access (admin+)
     app.put<{ Params: { orgId: string; userId: string; vendor: string } }>(
-      '/api/orgs/:orgId/members/:userId/server-access/:vendor',
+      "/api/orgs/:orgId/members/:userId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         // Verify the target user is actually a member of this org. Without
@@ -517,11 +679,28 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // audit record is the lie (gateway PR #78 M10).
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
+          return reply
+            .code(404)
+            .send({
+              error: "Target user is not a member of this organization",
+            });
         }
 
-        const grant = await orgService.grantServerAccess(orgId, userId, vendorSlug, user.sub);
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_granted', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        const grant = await orgService.grantServerAccess(
+          orgId,
+          userId,
+          vendorSlug,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "server_access_granted",
+            metadata: { vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         // SK1 (ruby SK1 launch-blocker 2026-06-05): notify the granted
         // member. Best-effort lookups for org name + member emails +
@@ -537,14 +716,18 @@ export function orgRoutes(deps: OrgRouteDeps) {
             const granter = members.find((m) => m.userId === user.sub);
             sendServerAccessGrantedEmail(request.log, {
               to: targetMember.email,
-              orgName: org?.name ?? 'your organization',
+              orgName: org?.name ?? "your organization",
               vendorName: getVendor(vendorSlug)?.name ?? vendorSlug,
               grantedByName: granter?.name ?? granter?.displayName ?? undefined,
-              memberName: targetMember.name ?? targetMember.displayName ?? undefined,
+              memberName:
+                targetMember.name ?? targetMember.displayName ?? undefined,
             });
           }
         } catch (err) {
-          request.log.warn({ err, orgId, userId }, 'SK1 grant-notify failed (non-fatal)');
+          request.log.warn(
+            { err, orgId, userId },
+            "SK1 grant-notify failed (non-fatal)",
+          );
         }
 
         return reply.send(grant);
@@ -553,21 +736,39 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // DELETE /api/orgs/:orgId/members/:userId/server-access/:vendor — revoke access (admin+)
     app.delete<{ Params: { orgId: string; userId: string; vendor: string } }>(
-      '/api/orgs/:orgId/members/:userId/server-access/:vendor',
+      "/api/orgs/:orgId/members/:userId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         // Target-membership check — same rationale as the grant handler
         // (gateway PR #78 M10): no audit entry for a non-member user id.
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
+          return reply
+            .code(404)
+            .send({
+              error: "Target user is not a member of this organization",
+            });
         }
 
         await orgService.revokeServerAccess(orgId, userId, vendorSlug);
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_revoked', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "server_access_revoked",
+            metadata: { vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         // SK2 (ruby SK1 launch-blocker 2026-06-05): notify the revoked
         // member at the consent/capability-affecting moment — this is
@@ -586,14 +787,18 @@ export function orgRoutes(deps: OrgRouteDeps) {
             const revoker = members.find((m) => m.userId === user.sub);
             sendServerAccessRevokedEmail(request.log, {
               to: targetMember.email,
-              orgName: org?.name ?? 'your organization',
+              orgName: org?.name ?? "your organization",
               vendorName: getVendor(vendorSlug)?.name ?? vendorSlug,
               revokedByName: revoker?.name ?? revoker?.displayName ?? undefined,
-              memberName: targetMember.name ?? targetMember.displayName ?? undefined,
+              memberName:
+                targetMember.name ?? targetMember.displayName ?? undefined,
             });
           }
         } catch (err) {
-          request.log.warn({ err, orgId, userId }, 'SK2 revoke-notify failed (non-fatal)');
+          request.log.warn(
+            { err, orgId, userId },
+            "SK2 revoke-notify failed (non-fatal)",
+          );
         }
 
         return reply.code(204).send();
@@ -601,51 +806,93 @@ export function orgRoutes(deps: OrgRouteDeps) {
     );
 
     // PUT /api/orgs/:orgId/members/:userId/server-access — bulk-set access (admin+)
-    app.put<{ Params: { orgId: string; userId: string }; Body: { vendors: string[] } }>(
-      '/api/orgs/:orgId/members/:userId/server-access',
+    app.put<{
+      Params: { orgId: string; userId: string };
+      Body: { vendors: string[] };
+    }>(
+      "/api/orgs/:orgId/members/:userId/server-access",
       async (request, reply) => {
         const { orgId, userId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const { vendors } = request.body;
         if (!Array.isArray(vendors)) {
-          return reply.code(400).send({ error: 'vendors must be an array of vendor slugs' });
+          return reply
+            .code(400)
+            .send({ error: "vendors must be an array of vendor slugs" });
         }
 
         // Target-membership check — same rationale as the grant handler
         // (gateway PR #78 M10).
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply.code(404).send({ error: 'Target user is not a member of this organization' });
+          return reply
+            .code(404)
+            .send({
+              error: "Target user is not a member of this organization",
+            });
         }
 
         await orgService.bulkSetServerAccess(orgId, userId, vendors, user.sub);
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'server_access_bulk_set', metadata: { vendors } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "server_access_bulk_set",
+            metadata: { vendors },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send({ success: true });
       },
     );
 
     // PATCH /api/orgs/:orgId/settings — update org settings (owner only)
-    app.patch<{ Params: { orgId: string }; Body: { defaultServerAccess?: string } }>(
-      '/api/orgs/:orgId/settings',
-      async (request, reply) => {
-        const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
-        if (!user) return;
+    app.patch<{
+      Params: { orgId: string };
+      Body: { defaultServerAccess?: string };
+    }>("/api/orgs/:orgId/settings", async (request, reply) => {
+      const { orgId } = request.params;
+      const user = await requireOrgRole(
+        request,
+        reply,
+        orgService,
+        orgId,
+        "owner",
+      );
+      if (!user) return;
 
-        const { defaultServerAccess } = request.body;
-        if (defaultServerAccess && defaultServerAccess !== 'none' && defaultServerAccess !== 'all') {
-          return reply.code(400).send({ error: 'defaultServerAccess must be "none" or "all"' });
-        }
+      const { defaultServerAccess } = request.body;
+      if (
+        defaultServerAccess &&
+        defaultServerAccess !== "none" &&
+        defaultServerAccess !== "all"
+      ) {
+        return reply
+          .code(400)
+          .send({ error: 'defaultServerAccess must be "none" or "all"' });
+      }
 
-        const org = await orgService.updateOrgSettings(orgId, {
-          defaultServerAccess: defaultServerAccess as 'none' | 'all' | undefined,
-        });
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'org_updated', metadata: { defaultServerAccess } }).catch((err) => request.log.error(err, 'admin audit log failed'));
-        return reply.send(org);
-      },
-    );
+      const org = await orgService.updateOrgSettings(orgId, {
+        defaultServerAccess: defaultServerAccess as "none" | "all" | undefined,
+      });
+      void adminAuditService
+        .log({
+          orgId,
+          actorId: user.sub,
+          eventType: "org_updated",
+          metadata: { defaultServerAccess },
+        })
+        .catch((err) => request.log.error(err, "admin audit log failed"));
+      return reply.send(org);
+    });
 
     // -----------------------------------------------------------------------
     // Teams
@@ -653,29 +900,53 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // POST /api/orgs/:orgId/teams — create team
     app.post<{ Params: { orgId: string }; Body: { name: string } }>(
-      '/api/orgs/:orgId/teams',
+      "/api/orgs/:orgId/teams",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const canTeam = await billingGate.canUseTeamFeatures(orgId);
         if (!canTeam) {
-          return reply.code(402).send({ error: 'Upgrade to Pro to use teams' });
+          return reply.code(402).send({ error: "Upgrade to Pro to use teams" });
         }
 
         const { name } = request.body;
         if (!name?.trim()) {
-          return reply.code(400).send({ error: 'Team name is required' });
+          return reply.code(400).send({ error: "Team name is required" });
         }
 
         try {
-          const team = await orgService.createTeam(orgId, name.trim(), user.sub);
-          void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'team_created', metadata: { teamId: team.id, name: team.name } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+          const team = await orgService.createTeam(
+            orgId,
+            name.trim(),
+            user.sub,
+          );
+          void adminAuditService
+            .log({
+              orgId,
+              actorId: user.sub,
+              eventType: "team_created",
+              metadata: { teamId: team.id, name: team.name },
+            })
+            .catch((err) => request.log.error(err, "admin audit log failed"));
           return reply.code(201).send(team);
         } catch (err: unknown) {
-          if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
-            return reply.code(409).send({ error: 'A team with that name already exists' });
+          if (
+            err &&
+            typeof err === "object" &&
+            "code" in err &&
+            (err as { code: string }).code === "23505"
+          ) {
+            return reply
+              .code(409)
+              .send({ error: "A team with that name already exists" });
           }
           throw err;
         }
@@ -684,10 +955,16 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/teams — list teams
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/teams',
+      "/api/orgs/:orgId/teams",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const teams = await orgService.listTeamsWithDetails(orgId);
@@ -696,126 +973,218 @@ export function orgRoutes(deps: OrgRouteDeps) {
     );
 
     // PATCH /api/orgs/:orgId/teams/:teamId — rename team
-    app.patch<{ Params: { orgId: string; teamId: string }; Body: { name: string } }>(
-      '/api/orgs/:orgId/teams/:teamId',
-      async (request, reply) => {
-        const { orgId, teamId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
-        if (!user) return;
+    app.patch<{
+      Params: { orgId: string; teamId: string };
+      Body: { name: string };
+    }>("/api/orgs/:orgId/teams/:teamId", async (request, reply) => {
+      const { orgId, teamId } = request.params;
+      const user = await requireOrgRole(
+        request,
+        reply,
+        orgService,
+        orgId,
+        "admin",
+      );
+      if (!user) return;
 
-        const team = await orgService.getTeam(teamId);
-        if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
-        }
+      const team = await orgService.getTeam(teamId);
+      if (!team || team.orgId !== orgId) {
+        return reply.code(404).send({ error: "Team not found" });
+      }
 
-        const { name } = request.body;
-        if (!name?.trim()) {
-          return reply.code(400).send({ error: 'Team name is required' });
-        }
+      const { name } = request.body;
+      if (!name?.trim()) {
+        return reply.code(400).send({ error: "Team name is required" });
+      }
 
-        const updated = await orgService.renameTeam(teamId, name.trim());
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'team_renamed', metadata: { teamId, oldName: team.name, newName: name.trim() } }).catch((err) => request.log.error(err, 'admin audit log failed'));
-        return reply.send(updated);
-      },
-    );
+      const updated = await orgService.renameTeam(teamId, name.trim());
+      void adminAuditService
+        .log({
+          orgId,
+          actorId: user.sub,
+          eventType: "team_renamed",
+          metadata: { teamId, oldName: team.name, newName: name.trim() },
+        })
+        .catch((err) => request.log.error(err, "admin audit log failed"));
+      return reply.send(updated);
+    });
 
     // DELETE /api/orgs/:orgId/teams/:teamId — delete team (owner only)
     app.delete<{ Params: { orgId: string; teamId: string } }>(
-      '/api/orgs/:orgId/teams/:teamId',
+      "/api/orgs/:orgId/teams/:teamId",
       async (request, reply) => {
         const { orgId, teamId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'owner');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         await orgService.deleteTeam(teamId);
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'team_deleted', metadata: { teamId, name: team.name } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "team_deleted",
+            metadata: { teamId, name: team.name },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
 
     // PUT /api/orgs/:orgId/teams/:teamId/members/:userId — add member
     app.put<{ Params: { orgId: string; teamId: string; userId: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/members/:userId',
+      "/api/orgs/:orgId/teams/:teamId/members/:userId",
       async (request, reply) => {
         const { orgId, teamId, userId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         // Verify user is an org member
         const membership = await orgService.getMembership(orgId, userId);
         if (!membership) {
-          return reply.code(400).send({ error: 'User is not a member of this organization' });
+          return reply
+            .code(400)
+            .send({ error: "User is not a member of this organization" });
         }
 
-        const member = await orgService.addTeamMember(teamId, orgId, userId, user.sub);
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'team_member_added', metadata: { teamId, teamName: team.name } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        const member = await orgService.addTeamMember(
+          teamId,
+          orgId,
+          userId,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "team_member_added",
+            metadata: { teamId, teamName: team.name },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send(member);
       },
     );
 
     // DELETE /api/orgs/:orgId/teams/:teamId/members/:userId — remove member
     app.delete<{ Params: { orgId: string; teamId: string; userId: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/members/:userId',
+      "/api/orgs/:orgId/teams/:teamId/members/:userId",
       async (request, reply) => {
         const { orgId, teamId, userId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         await orgService.removeTeamMember(teamId, userId);
-        void adminAuditService.log({ orgId, actorId: user.sub, targetId: userId, eventType: 'team_member_removed', metadata: { teamId, teamName: team.name } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: userId,
+            eventType: "team_member_removed",
+            metadata: { teamId, teamName: team.name },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
 
     // PUT /api/orgs/:orgId/teams/:teamId/server-access/:vendor — grant vendor
     app.put<{ Params: { orgId: string; teamId: string; vendor: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/server-access/:vendor',
+      "/api/orgs/:orgId/teams/:teamId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, teamId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
-        const grant = await orgService.grantTeamServerAccess(orgId, teamId, vendorSlug, user.sub);
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'team_server_access_granted', metadata: { teamId, teamName: team.name, vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        const grant = await orgService.grantTeamServerAccess(
+          orgId,
+          teamId,
+          vendorSlug,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "team_server_access_granted",
+            metadata: { teamId, teamName: team.name, vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send(grant);
       },
     );
 
     // DELETE /api/orgs/:orgId/teams/:teamId/server-access/:vendor — revoke vendor
     app.delete<{ Params: { orgId: string; teamId: string; vendor: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/server-access/:vendor',
+      "/api/orgs/:orgId/teams/:teamId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, teamId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         await orgService.revokeTeamServerAccess(teamId, vendorSlug);
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'team_server_access_revoked', metadata: { teamId, teamName: team.name, vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "team_server_access_revoked",
+            metadata: { teamId, teamName: team.name, vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
@@ -825,25 +1194,36 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // -----------------------------------------------------------------------
 
     // POST /api/orgs/:orgId/credentials/:vendor — store org credential
-    app.post<{ Params: { orgId: string; vendor: string }; Body: Record<string, string> }>(
-      '/api/orgs/:orgId/credentials/:vendor',
+    app.post<{
+      Params: { orgId: string; vendor: string };
+      Body: Record<string, string>;
+    }>(
+      "/api/orgs/:orgId/credentials/:vendor",
       {
-        config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+        config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
       },
       async (request, reply) => {
         const { orgId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         // Require pro plan
         const canTeam = await billingGate.canUseTeamFeatures(orgId);
         if (!canTeam) {
-          return reply.code(402).send({ error: 'Upgrade to Pro to manage team credentials' });
+          return reply
+            .code(402)
+            .send({ error: "Upgrade to Pro to manage team credentials" });
         }
 
         const vendor = getVendor(vendorSlug);
         if (!vendor) {
-          return reply.code(404).send({ error: 'Unknown vendor' });
+          return reply.code(404).send({ error: "Unknown vendor" });
         }
 
         // OAuth-only vendors must authenticate via the OAuth flow, not direct credential posting.
@@ -858,7 +1238,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const credData: Record<string, string> = {};
         for (const field of vendor.fields) {
           if (field.required && !body[field.key]?.trim()) {
-            return reply.code(400).send({ error: `${field.label} is required` });
+            return reply
+              .code(400)
+              .send({ error: `${field.label} is required` });
           }
           if (body[field.key]) {
             credData[field.key] = body[field.key].trim();
@@ -870,25 +1252,48 @@ export function orgRoutes(deps: OrgRouteDeps) {
           try {
             const result = await vendor.validate(credData);
             if (!result.valid) {
-              return reply.code(422).send({ error: result.error || 'Invalid credentials' });
+              return reply
+                .code(422)
+                .send({ error: result.error || "Invalid credentials" });
             }
           } catch {
-            app.log.warn({ vendor: vendorSlug }, 'Org credential validation skipped: vendor API unreachable');
+            app.log.warn(
+              { vendor: vendorSlug },
+              "Org credential validation skipped: vendor API unreachable",
+            );
           }
         }
 
-        const id = await credentialService.storeOrgCredential(orgId, vendorSlug, credData, user.sub);
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'org_credential_created', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        const id = await credentialService.storeOrgCredential(
+          orgId,
+          vendorSlug,
+          credData,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "org_credential_created",
+            metadata: { vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(201).send({ id, vendor: vendorSlug });
       },
     );
 
     // GET /api/orgs/:orgId/credentials — list org vendor connections
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/credentials',
+      "/api/orgs/:orgId/credentials",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'member');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "member",
+        );
         if (!user) return;
 
         const vendors = await credentialService.listOrgVendors(orgId);
@@ -898,14 +1303,27 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // DELETE /api/orgs/:orgId/credentials/:vendor — remove org credential
     app.delete<{ Params: { orgId: string; vendor: string } }>(
-      '/api/orgs/:orgId/credentials/:vendor',
+      "/api/orgs/:orgId/credentials/:vendor",
       async (request, reply) => {
         const { orgId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         await credentialService.deleteOrgCredential(orgId, vendorSlug);
-        void adminAuditService.log({ orgId, actorId: user.sub, eventType: 'org_credential_deleted', metadata: { vendor: vendorSlug } }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "org_credential_deleted",
+            metadata: { vendor: vendorSlug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
@@ -916,7 +1334,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /invite/:token — show invitation acceptance page
     app.get<{ Params: { token: string } }>(
-      '/invite/:token',
+      "/invite/:token",
       async (request, reply) => {
         const user = requireAuth0(request, reply);
         if (!user) return; // Redirects to login
@@ -924,22 +1342,32 @@ export function orgRoutes(deps: OrgRouteDeps) {
         const { token } = request.params;
         const invitation = await orgService.getInvitationByToken(token);
         if (!invitation) {
-          return reply.code(404).type('text/html').send(renderInviteErrorPage('This invitation has expired or is no longer valid.'));
+          return reply
+            .code(404)
+            .type("text/html")
+            .send(
+              renderInviteErrorPage(
+                "This invitation has expired or is no longer valid.",
+              ),
+            );
         }
 
         const org = await orgService.getOrg(invitation.orgId);
         if (!org) {
-          return reply.code(404).type('text/html').send(renderInviteErrorPage('Organization not found.'));
+          return reply
+            .code(404)
+            .type("text/html")
+            .send(renderInviteErrorPage("Organization not found."));
         }
 
-        return reply.type('text/html').send(renderInvitePage(org.name, token));
+        return reply.type("text/html").send(renderInvitePage(org.name, token));
       },
     );
 
     // POST /invite/:token — accept invitation
     app.post<{ Params: { token: string } }>(
-      '/invite/:token',
-      { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } },
+      "/invite/:token",
+      { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
       async (request, reply) => {
         const user = requireAuth0(request, reply);
         if (!user) return;
@@ -949,14 +1377,46 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // failure (email-match miss or owner-invite scope violation) in
         // addition to OrgMember | null. Each kind maps to the right HTTP
         // status + named-actionable-choice copy.
-        const result = await orgService.acceptInvitation(
-          token,
-          user.sub,
-          request.log,
-          user.email ?? null,
+        //
+        // 2026-06-12 launch-day workaround (boss): wrap in runAsSystem so the
+        // underlying INSERT into customer-org-org_members bypasses the RLS
+        // policy that currently hangs request-path writes initiated by a
+        // user who is not yet a row in that table for the target org. The
+        // acceptee is BY DEFINITION not yet a member (that's what accept is
+        // adding them as), so the request-path connection's row-visibility
+        // context lacks the membership row the RLS policy is checking
+        // against. Same hang class boss hit on POST /api/orgs/:customerId/
+        // invitations earlier today; sibling workaround PR #370 sidestepped
+        // that one via a reseller-scoped route — this one needs a different
+        // shape because the acceptee, not the reseller, initiates accept.
+        //
+        // Security model preserved: requireAuth0 above verifies the caller's
+        // identity, and acceptInvitation internally enforces
+        // recipient_email match, max_uses, expiry, and owner-invite scope
+        // — those checks all run inside the runAsSystem block, just on the
+        // BYPASSRLS pool. RLS bypass only widens DB row-visibility for the
+        // function's own queries; it does NOT change the caller-identity or
+        // the function's own authorization logic.
+        //
+        // Removing this workaround once the RLS policy is fixed is a
+        // one-line revert.
+        const result = await runAsSystem(() =>
+          orgService.acceptInvitation(
+            token,
+            user.sub,
+            request.log,
+            user.email ?? null,
+          ),
         );
         if (!result) {
-          return reply.code(404).type('text/html').send(renderInviteErrorPage('This invitation has expired or is no longer valid.'));
+          return reply
+            .code(404)
+            .type("text/html")
+            .send(
+              renderInviteErrorPage(
+                "This invitation has expired or is no longer valid.",
+              ),
+            );
         }
         if (isAcceptInvitationError(result)) {
           // Distinct surfaces — different recovery paths.
@@ -965,11 +1425,20 @@ export function orgRoutes(deps: OrgRouteDeps) {
           //   owner_invite_scope_violation → 409, system-level invariant
           //     violation (should never reach a user in production; design
           //     constraint refused at the boundary).
-          const status = result.kind === 'email_mismatch' ? 403 : 409;
-          return reply.code(status).type('text/html').send(renderInviteErrorPage(result.message));
+          const status = result.kind === "email_mismatch" ? 403 : 409;
+          return reply
+            .code(status)
+            .type("text/html")
+            .send(renderInviteErrorPage(result.message));
         }
 
-        void adminAuditService.log({ orgId: result.orgId, actorId: user.sub, eventType: 'invitation_accepted' }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId: result.orgId,
+            actorId: user.sub,
+            eventType: "invitation_accepted",
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         // MR1+MR2 (ruby launch-blocker 2026-06-05): notify both sides of
         // the invite-accept cap-stone. Best-effort lookups for names +
@@ -983,9 +1452,13 @@ export function orgRoutes(deps: OrgRouteDeps) {
             orgService.getInvitationByToken(token).catch(() => null),
             orgService.getMembersWithProfiles(result.orgId).catch(() => []),
           ]);
-          const orgName = org?.name ?? 'your organization';
+          const orgName = org?.name ?? "your organization";
           const acceptorMember = members.find((m) => m.userId === user.sub);
-          const acceptorName = acceptorMember?.name ?? acceptorMember?.displayName ?? user.name ?? undefined;
+          const acceptorName =
+            acceptorMember?.name ??
+            acceptorMember?.displayName ??
+            user.name ??
+            undefined;
           const acceptorEmail = user.email ?? acceptorMember?.email ?? null;
 
           // MR2 — welcome the new member to the org.
@@ -1000,22 +1473,28 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
           // MR1 — notify the admin/inviter that the invite was accepted.
           if (invitation?.invitedBy) {
-            const inviterMember = members.find((m) => m.userId === invitation.invitedBy);
+            const inviterMember = members.find(
+              (m) => m.userId === invitation.invitedBy,
+            );
             const inviterEmail = inviterMember?.email ?? null;
             if (inviterEmail) {
               sendInvitationAcceptedEmail(request.log, {
                 to: inviterEmail,
                 orgName,
-                inviteeEmail: acceptorEmail ?? invitation.recipientEmail ?? 'a teammate',
+                inviteeEmail:
+                  acceptorEmail ?? invitation.recipientEmail ?? "a teammate",
                 inviteeName: acceptorName,
               });
             }
           }
         } catch (err) {
-          request.log.warn({ err, orgId: result.orgId }, 'MR1/MR2 post-accept notify failed (non-fatal)');
+          request.log.warn(
+            { err, orgId: result.orgId },
+            "MR1/MR2 post-accept notify failed (non-fatal)",
+          );
         }
 
-        return reply.redirect('/settings', 302);
+        return reply.redirect("/settings", 302);
       },
     );
 
@@ -1024,102 +1503,141 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // -----------------------------------------------------------------------
 
     // POST /api/orgs/:orgId/service-clients — create a service client
-    app.post<{ Params: { orgId: string }; Body: { name: string; expires_in_days?: number } }>(
-      '/api/orgs/:orgId/service-clients',
-      async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
-        if (!user) return;
+    app.post<{
+      Params: { orgId: string };
+      Body: { name: string; expires_in_days?: number };
+    }>("/api/orgs/:orgId/service-clients", async (request, reply) => {
+      const user = await requireOrgRole(
+        request,
+        reply,
+        orgService,
+        request.params.orgId,
+        "admin",
+      );
+      if (!user) return;
 
-        // Business-tier gate. Enforced at the API layer (not just the
-        // /org/service-clients web page, which gates on requireTeamAccess)
-        // so a below-Business org admin cannot create a service client by
-        // calling this endpoint directly. List + revoke stay ungated so a
-        // downgraded org can still see and wind down existing clients.
-        if (!(await billingGate.canUseServiceClients(request.params.orgId))) {
-          return reply
-            .code(402)
-            .send({ error: 'Service clients require the Business plan' });
-        }
+      // Business-tier gate. Enforced at the API layer (not just the
+      // /org/service-clients web page, which gates on requireTeamAccess)
+      // so a below-Business org admin cannot create a service client by
+      // calling this endpoint directly. List + revoke stay ungated so a
+      // downgraded org can still see and wind down existing clients.
+      if (!(await billingGate.canUseServiceClients(request.params.orgId))) {
+        return reply
+          .code(402)
+          .send({ error: "Service clients require the Business plan" });
+      }
 
-        const { name, expires_in_days: expiresInDays } = request.body;
-        if (!name?.trim()) {
-          return reply.code(400).send({ error: 'Service client name is required' });
-        }
+      const { name, expires_in_days: expiresInDays } = request.body;
+      if (!name?.trim()) {
+        return reply
+          .code(400)
+          .send({ error: "Service client name is required" });
+      }
 
-        // Generate credentials
-        const clientId = `svc_${nanoid(24)}`;
-        const clientSecret = nanoid(48);
-        const clientSecretHash = createHash('sha256').update(clientSecret).digest('hex');
+      // Generate credentials
+      const clientId = `svc_${nanoid(24)}`;
+      const clientSecret = nanoid(48);
+      const clientSecretHash = createHash("sha256")
+        .update(clientSecret)
+        .digest("hex");
 
-        const expiresAt = expiresInDays
-          ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
-          : undefined;
+      const expiresAt = expiresInDays
+        ? new Date(
+            Date.now() + expiresInDays * 24 * 60 * 60 * 1000,
+          ).toISOString()
+        : undefined;
 
-        const serviceClient = await orgService.createServiceClient({
-          orgId: request.params.orgId,
-          name: name.trim(),
-          clientId,
-          clientSecretHash,
-          createdBy: user.sub,
-          expiresAt,
-        });
+      const serviceClient = await orgService.createServiceClient({
+        orgId: request.params.orgId,
+        name: name.trim(),
+        clientId,
+        clientSecretHash,
+        createdBy: user.sub,
+        expiresAt,
+      });
 
-        void adminAuditService.log({
+      void adminAuditService
+        .log({
           orgId: request.params.orgId,
           actorId: user.sub,
-          eventType: 'service_client_created',
-          metadata: { clientId, name: name.trim(), expiresAt: expiresAt ?? 'never' },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+          eventType: "service_client_created",
+          metadata: {
+            clientId,
+            name: name.trim(),
+            expiresAt: expiresAt ?? "never",
+          },
+        })
+        .catch((err) => request.log.error(err, "admin audit log failed"));
 
-        // Return secret ONCE — it's hashed in DB and cannot be retrieved later
-        return reply.code(201).send({
-          id: serviceClient.id,
-          name: serviceClient.name,
-          client_id: clientId,
-          client_secret: clientSecret,
-          expires_at: serviceClient.expiresAt,
-          created_at: serviceClient.createdAt,
-        });
-      },
-    );
+      // Return secret ONCE — it's hashed in DB and cannot be retrieved later
+      return reply.code(201).send({
+        id: serviceClient.id,
+        name: serviceClient.name,
+        client_id: clientId,
+        client_secret: clientSecret,
+        expires_at: serviceClient.expiresAt,
+        created_at: serviceClient.createdAt,
+      });
+    });
 
     // GET /api/orgs/:orgId/service-clients — list service clients
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/service-clients',
+      "/api/orgs/:orgId/service-clients",
       async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          request.params.orgId,
+          "admin",
+        );
         if (!user) return;
 
-        const clients = await orgService.listServiceClients(request.params.orgId);
-        return reply.send(clients.map((c) => ({
-          id: c.id,
-          name: c.name,
-          client_id: c.clientId,
-          last_used_at: c.lastUsedAt,
-          expires_at: c.expiresAt,
-          created_at: c.createdAt,
-        })));
+        const clients = await orgService.listServiceClients(
+          request.params.orgId,
+        );
+        return reply.send(
+          clients.map((c) => ({
+            id: c.id,
+            name: c.name,
+            client_id: c.clientId,
+            last_used_at: c.lastUsedAt,
+            expires_at: c.expiresAt,
+            created_at: c.createdAt,
+          })),
+        );
       },
     );
 
     // DELETE /api/orgs/:orgId/service-clients/:clientId — revoke a service client
     app.delete<{ Params: { orgId: string; clientId: string } }>(
-      '/api/orgs/:orgId/service-clients/:clientId',
+      "/api/orgs/:orgId/service-clients/:clientId",
       async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          request.params.orgId,
+          "admin",
+        );
         if (!user) return;
 
-        const deleted = await orgService.deleteServiceClient(request.params.orgId, request.params.clientId);
+        const deleted = await orgService.deleteServiceClient(
+          request.params.orgId,
+          request.params.clientId,
+        );
         if (!deleted) {
-          return reply.code(404).send({ error: 'Service client not found' });
+          return reply.code(404).send({ error: "Service client not found" });
         }
 
-        void adminAuditService.log({
-          orgId: request.params.orgId,
-          actorId: user.sub,
-          eventType: 'service_client_revoked',
-          metadata: { clientId: request.params.clientId },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId: request.params.orgId,
+            actorId: user.sub,
+            eventType: "service_client_revoked",
+            metadata: { clientId: request.params.clientId },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         return reply.code(204).send();
       },
@@ -1133,110 +1651,144 @@ export function orgRoutes(deps: OrgRouteDeps) {
     app.post<{
       Params: { orgId: string };
       Body: { idp_type: string; default_role: string };
-    }>(
-      '/api/orgs/:orgId/scim/connections',
-      async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
-        if (!user) return;
+    }>("/api/orgs/:orgId/scim/connections", async (request, reply) => {
+      const user = await requireOrgRole(
+        request,
+        reply,
+        orgService,
+        request.params.orgId,
+        "admin",
+      );
+      if (!user) return;
 
-        // Business-tier gate. Enforced at the API layer (not just the
-        // /org/scim web page, which gates on requireTeamAccess) so a
-        // below-Business org admin cannot create a SCIM/SSO connection by
-        // calling this endpoint directly. List + revoke stay ungated so a
-        // downgraded org can still see and wind down existing connections.
-        if (!(await billingGate.canUseSso(request.params.orgId))) {
-          return reply
-            .code(402)
-            .send({ error: 'SSO / SCIM provisioning requires the Business plan' });
-        }
+      // Business-tier gate. Enforced at the API layer (not just the
+      // /org/scim web page, which gates on requireTeamAccess) so a
+      // below-Business org admin cannot create a SCIM/SSO connection by
+      // calling this endpoint directly. List + revoke stay ungated so a
+      // downgraded org can still see and wind down existing connections.
+      if (!(await billingGate.canUseSso(request.params.orgId))) {
+        return reply
+          .code(402)
+          .send({
+            error: "SSO / SCIM provisioning requires the Business plan",
+          });
+      }
 
-        const { idp_type: idpType, default_role: defaultRole } = request.body;
-        const allowedIdps = ['entra', 'okta', 'jumpcloud', 'google', 'generic'];
-        if (!allowedIdps.includes(idpType)) {
-          return reply.code(400).send({ error: 'Unsupported idp_type' });
-        }
-        if (!defaultRole?.trim()) {
-          return reply.code(400).send({ error: 'default_role is required' });
-        }
+      const { idp_type: idpType, default_role: defaultRole } = request.body;
+      const allowedIdps = ["entra", "okta", "jumpcloud", "google", "generic"];
+      if (!allowedIdps.includes(idpType)) {
+        return reply.code(400).send({ error: "Unsupported idp_type" });
+      }
+      if (!defaultRole?.trim()) {
+        return reply.code(400).send({ error: "default_role is required" });
+      }
 
-        // Tenant scope: customer/standalone orgs. Reseller scope: type=reseller.
-        const org = await orgService.getOrg(request.params.orgId);
-        if (!org) return reply.code(404).send({ error: 'Org not found' });
-        const scope = org.type === 'reseller' ? 'reseller' : 'tenant';
+      // Tenant scope: customer/standalone orgs. Reseller scope: type=reseller.
+      const org = await orgService.getOrg(request.params.orgId);
+      if (!org) return reply.code(404).send({ error: "Org not found" });
+      const scope = org.type === "reseller" ? "reseller" : "tenant";
 
-        const { ScimConnectionsService } = await import('../scim/connections-service.js');
-        const connections = new ScimConnectionsService();
-        const created = await connections.create({
-          orgId: request.params.orgId,
-          scope,
-          idpType: idpType as 'entra' | 'okta' | 'jumpcloud' | 'google' | 'generic',
-          defaultRole: defaultRole.trim(),
-          createdBy: user.sub,
-        });
+      const { ScimConnectionsService } =
+        await import("../scim/connections-service.js");
+      const connections = new ScimConnectionsService();
+      const created = await connections.create({
+        orgId: request.params.orgId,
+        scope,
+        idpType: idpType as
+          | "entra"
+          | "okta"
+          | "jumpcloud"
+          | "google"
+          | "generic",
+        defaultRole: defaultRole.trim(),
+        createdBy: user.sub,
+      });
 
-        void adminAuditService.log({
+      void adminAuditService
+        .log({
           orgId: request.params.orgId,
           actorId: user.sub,
-          eventType: 'scim_connection_created',
+          eventType: "scim_connection_created",
           metadata: { connectionId: created.connection.id, idpType, scope },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        })
+        .catch((err) => request.log.error(err, "admin audit log failed"));
 
-        return reply.code(201).send({
-          id: created.connection.id,
-          idp_type: created.connection.idpType,
-          scope: created.connection.scope,
-          default_role: created.connection.defaultRole,
-          token: created.token,
-          created_at: created.connection.createdAt,
-        });
-      },
-    );
+      return reply.code(201).send({
+        id: created.connection.id,
+        idp_type: created.connection.idpType,
+        scope: created.connection.scope,
+        default_role: created.connection.defaultRole,
+        token: created.token,
+        created_at: created.connection.createdAt,
+      });
+    });
 
     // GET /api/orgs/:orgId/scim/connections — list connections
     app.get<{ Params: { orgId: string } }>(
-      '/api/orgs/:orgId/scim/connections',
+      "/api/orgs/:orgId/scim/connections",
       async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          request.params.orgId,
+          "admin",
+        );
         if (!user) return;
 
-        const { ScimConnectionsService } = await import('../scim/connections-service.js');
+        const { ScimConnectionsService } =
+          await import("../scim/connections-service.js");
         const connections = new ScimConnectionsService();
         const rows = await connections.listForOrg(request.params.orgId);
-        return reply.send(rows.map((c) => ({
-          id: c.id,
-          idp_type: c.idpType,
-          scope: c.scope,
-          default_role: c.defaultRole,
-          status: c.status,
-          last_sync_at: c.lastSyncAt,
-          last_error: c.lastError,
-          created_at: c.createdAt,
-        })));
+        return reply.send(
+          rows.map((c) => ({
+            id: c.id,
+            idp_type: c.idpType,
+            scope: c.scope,
+            default_role: c.defaultRole,
+            status: c.status,
+            last_sync_at: c.lastSyncAt,
+            last_error: c.lastError,
+            created_at: c.createdAt,
+          })),
+        );
       },
     );
 
     // DELETE /api/orgs/:orgId/scim/connections/:id — revoke a connection
     app.delete<{ Params: { orgId: string; id: string } }>(
-      '/api/orgs/:orgId/scim/connections/:id',
+      "/api/orgs/:orgId/scim/connections/:id",
       async (request, reply) => {
-        const user = await requireOrgRole(request, reply, orgService, request.params.orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          request.params.orgId,
+          "admin",
+        );
         if (!user) return;
 
-        const { ScimConnectionsService } = await import('../scim/connections-service.js');
+        const { ScimConnectionsService } =
+          await import("../scim/connections-service.js");
         const connections = new ScimConnectionsService();
         const conn = await connections.getById(request.params.id);
         if (!conn || conn.orgId !== request.params.orgId) {
-          return reply.code(404).send({ error: 'Connection not found' });
+          return reply.code(404).send({ error: "Connection not found" });
         }
         const revoked = await connections.revoke(request.params.id);
-        if (!revoked) return reply.code(404).send({ error: 'Already revoked' });
+        if (!revoked) return reply.code(404).send({ error: "Already revoked" });
 
-        void adminAuditService.log({
-          orgId: request.params.orgId,
-          actorId: user.sub,
-          eventType: 'scim_connection_revoked',
-          metadata: { connectionId: request.params.id, idpType: conn.idpType },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId: request.params.orgId,
+            actorId: user.sub,
+            eventType: "scim_connection_revoked",
+            metadata: {
+              connectionId: request.params.id,
+              idpType: conn.idpType,
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
 
         return reply.code(204).send();
       },
@@ -1248,15 +1800,21 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/teams/:teamId/credentials — list team vendors
     app.get<{ Params: { orgId: string; teamId: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/credentials',
+      "/api/orgs/:orgId/teams/:teamId/credentials",
       async (request, reply) => {
         const { orgId, teamId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         const vendors = await credentialService.listTeamVendors(teamId);
@@ -1265,16 +1823,25 @@ export function orgRoutes(deps: OrgRouteDeps) {
     );
 
     // POST /api/orgs/:orgId/teams/:teamId/credentials/:slug — store team credential
-    app.post<{ Params: { orgId: string; teamId: string; slug: string }; Body: Record<string, string> }>(
-      '/api/orgs/:orgId/teams/:teamId/credentials/:slug',
+    app.post<{
+      Params: { orgId: string; teamId: string; slug: string };
+      Body: Record<string, string>;
+    }>(
+      "/api/orgs/:orgId/teams/:teamId/credentials/:slug",
       async (request, reply) => {
         const { orgId, teamId, slug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         const vendor = getVendor(slug);
@@ -1282,39 +1849,55 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(404).send({ error: `Unknown vendor: ${slug}` });
         }
 
-        await credentialService.storeTeamCredential(teamId, orgId, slug, request.body, user.sub);
-        void adminAuditService.log({
+        await credentialService.storeTeamCredential(
+          teamId,
           orgId,
-          actorId: user.sub,
-          targetId: teamId,
-          eventType: 'team_credential_created',
-          metadata: { teamId, vendor: slug },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+          slug,
+          request.body,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: teamId,
+            eventType: "team_credential_created",
+            metadata: { teamId, vendor: slug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send({ ok: true });
       },
     );
 
     // DELETE /api/orgs/:orgId/teams/:teamId/credentials/:slug — delete team credential
     app.delete<{ Params: { orgId: string; teamId: string; slug: string } }>(
-      '/api/orgs/:orgId/teams/:teamId/credentials/:slug',
+      "/api/orgs/:orgId/teams/:teamId/credentials/:slug",
       async (request, reply) => {
         const { orgId, teamId, slug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const team = await orgService.getTeam(teamId);
         if (!team || team.orgId !== orgId) {
-          return reply.code(404).send({ error: 'Team not found' });
+          return reply.code(404).send({ error: "Team not found" });
         }
 
         await credentialService.deleteTeamCredential(teamId, slug);
-        void adminAuditService.log({
-          orgId,
-          actorId: user.sub,
-          targetId: teamId,
-          eventType: 'team_credential_deleted',
-          metadata: { teamId, vendor: slug },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: teamId,
+            eventType: "team_credential_deleted",
+            metadata: { teamId, vendor: slug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
@@ -1325,23 +1908,39 @@ export function orgRoutes(deps: OrgRouteDeps) {
 
     // GET /api/orgs/:orgId/service-clients/:clientId/credentials — list vendors
     app.get<{ Params: { orgId: string; clientId: string } }>(
-      '/api/orgs/:orgId/service-clients/:clientId/credentials',
+      "/api/orgs/:orgId/service-clients/:clientId/credentials",
       async (request, reply) => {
         const { orgId, clientId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
-        const vendors = await credentialService.listServiceClientVendors(clientId);
+        const vendors =
+          await credentialService.listServiceClientVendors(clientId);
         return reply.send({ vendors });
       },
     );
 
     // POST /api/orgs/:orgId/service-clients/:clientId/credentials/:slug — store credential
-    app.post<{ Params: { orgId: string; clientId: string; slug: string }; Body: Record<string, string> }>(
-      '/api/orgs/:orgId/service-clients/:clientId/credentials/:slug',
+    app.post<{
+      Params: { orgId: string; clientId: string; slug: string };
+      Body: Record<string, string>;
+    }>(
+      "/api/orgs/:orgId/service-clients/:clientId/credentials/:slug",
       async (request, reply) => {
         const { orgId, clientId, slug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         const vendor = getVendor(slug);
@@ -1349,34 +1948,50 @@ export function orgRoutes(deps: OrgRouteDeps) {
           return reply.code(404).send({ error: `Unknown vendor: ${slug}` });
         }
 
-        await credentialService.storeServiceClientCredential(clientId, orgId, slug, request.body, user.sub);
-        void adminAuditService.log({
+        await credentialService.storeServiceClientCredential(
+          clientId,
           orgId,
-          actorId: user.sub,
-          targetId: clientId,
-          eventType: 'service_client_credential_created',
-          metadata: { clientId, vendor: slug },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+          slug,
+          request.body,
+          user.sub,
+        );
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: clientId,
+            eventType: "service_client_credential_created",
+            metadata: { clientId, vendor: slug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.send({ ok: true });
       },
     );
 
     // DELETE /api/orgs/:orgId/service-clients/:clientId/credentials/:slug — delete credential
     app.delete<{ Params: { orgId: string; clientId: string; slug: string } }>(
-      '/api/orgs/:orgId/service-clients/:clientId/credentials/:slug',
+      "/api/orgs/:orgId/service-clients/:clientId/credentials/:slug",
       async (request, reply) => {
         const { orgId, clientId, slug } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
         if (!user) return;
 
         await credentialService.deleteServiceClientCredential(clientId, slug);
-        void adminAuditService.log({
-          orgId,
-          actorId: user.sub,
-          targetId: clientId,
-          eventType: 'service_client_credential_deleted',
-          metadata: { clientId, vendor: slug },
-        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            targetId: clientId,
+            eventType: "service_client_credential_deleted",
+            metadata: { clientId, vendor: slug },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(204).send();
       },
     );
@@ -1413,7 +2028,11 @@ const INVITE_STYLES = `
 `;
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function renderInvitePage(orgName: string, token: string): string {
