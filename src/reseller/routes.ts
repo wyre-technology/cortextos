@@ -14,27 +14,28 @@
  *   - MEMBER_NOT_FOUND       → 404
  */
 
-import type { FastifyInstance, FastifyReply } from 'fastify';
-import { config } from '../config.js';
-import type { ResellerService } from './reseller-service.js';
-import { OrgHierarchyError, type OrgService } from '../org/org-service.js';
-import { sendInvitationEmail } from '../email/transactional.js';
-import { sendLoopsEvent } from '../email/loops.js';
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { config } from "../config.js";
+import type { ResellerService } from "./reseller-service.js";
+import { OrgHierarchyError, type OrgService } from "../org/org-service.js";
+import { sendInvitationEmail } from "../email/transactional.js";
+import { validateEmail } from "../signup/routes.js";
+import { sendLoopsEvent } from "../email/loops.js";
 import {
   ResellerMemberError,
   RESELLER_ROLES,
   type ResellerMemberErrorCode,
   type ResellerMemberService,
   type ResellerRole,
-} from '../org/reseller-member-service.js';
+} from "../org/reseller-member-service.js";
 import {
   makeRequireResellerAccess,
   makeRequireResellerRole,
   makeRequireResellerOrCustomerAccess,
-} from './middleware.js';
-import type { DashboardService } from '../dashboard/dashboard-service.js';
-import type { AuditService } from '../audit/audit-service.js';
-import type { AdminAuditService } from '../audit/admin-audit-service.js';
+} from "./middleware.js";
+import type { DashboardService } from "../dashboard/dashboard-service.js";
+import type { AuditService } from "../audit/audit-service.js";
+import type { AdminAuditService } from "../audit/admin-audit-service.js";
 
 export interface ResellerRoutesDeps {
   resellerService: ResellerService;
@@ -60,11 +61,13 @@ export interface ResellerRoutesDeps {
  * `ResellerMemberError` identity to differ between the route module and the
  * test module, so `instanceof` would incorrectly miss real errors.
  */
-function isResellerMemberError(err: unknown): err is { name: string; code: ResellerMemberErrorCode; message: string } {
+function isResellerMemberError(
+  err: unknown,
+): err is { name: string; code: ResellerMemberErrorCode; message: string } {
   if (err instanceof ResellerMemberError) return true;
-  if (typeof err !== 'object' || err === null) return false;
+  if (typeof err !== "object" || err === null) return false;
   const e = err as { name?: unknown; code?: unknown };
-  return e.name === 'ResellerMemberError' && typeof e.code === 'string';
+  return e.name === "ResellerMemberError" && typeof e.code === "string";
 }
 
 function sendResellerMemberError(
@@ -72,18 +75,18 @@ function sendResellerMemberError(
   err: { code: ResellerMemberErrorCode; message: string },
 ): FastifyReply {
   switch (err.code) {
-    case 'INVALID_ROLE':
+    case "INVALID_ROLE":
       return reply.code(400).send({ error: err.message, code: err.code });
-    case 'INSUFFICIENT_PERMISSION':
+    case "INSUFFICIENT_PERMISSION":
       return reply.code(403).send({ error: err.message, code: err.code });
-    case 'LAST_OWNER_PROTECTION':
+    case "LAST_OWNER_PROTECTION":
       return reply.code(409).send({ error: err.message, code: err.code });
-    case 'ACTOR_NOT_FOUND':
-    case 'MEMBER_NOT_FOUND':
+    case "ACTOR_NOT_FOUND":
+    case "MEMBER_NOT_FOUND":
       return reply.code(404).send({ error: err.message, code: err.code });
     default: {
       // Exhaustiveness guard — unknown codes fall through as 500.
-      return reply.code(500).send({ error: 'Internal error' });
+      return reply.code(500).send({ error: "Internal error" });
     }
   }
 }
@@ -93,25 +96,30 @@ function sendResellerMemberError(
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isResellerRole(value: unknown): value is ResellerRole {
-  return typeof value === 'string' && (RESELLER_ROLES as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (RESELLER_ROLES as readonly string[]).includes(value)
+  );
 }
 
 interface UpdateResellerBody {
   name: string;
 }
 
-function parseUpdateResellerBody(body: unknown): UpdateResellerBody | { error: string } {
-  if (!isRecord(body)) return { error: 'Request body must be a JSON object' };
+function parseUpdateResellerBody(
+  body: unknown,
+): UpdateResellerBody | { error: string } {
+  if (!isRecord(body)) return { error: "Request body must be a JSON object" };
   const name = body.name;
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return { error: 'name is required and must be a non-empty string' };
+  if (typeof name !== "string" || name.trim().length === 0) {
+    return { error: "name is required and must be a non-empty string" };
   }
   if (name.length > 200) {
-    return { error: 'name must be 200 characters or fewer' };
+    return { error: "name must be 200 characters or fewer" };
   }
   return { name: name.trim() };
 }
@@ -121,15 +129,17 @@ interface CreateMemberBody {
   role: ResellerRole;
 }
 
-function parseCreateMemberBody(body: unknown): CreateMemberBody | { error: string } {
-  if (!isRecord(body)) return { error: 'Request body must be a JSON object' };
+function parseCreateMemberBody(
+  body: unknown,
+): CreateMemberBody | { error: string } {
+  if (!isRecord(body)) return { error: "Request body must be a JSON object" };
   const userId = body.userId;
   const role = body.role;
-  if (typeof userId !== 'string' || userId.trim().length === 0) {
-    return { error: 'userId is required and must be a non-empty string' };
+  if (typeof userId !== "string" || userId.trim().length === 0) {
+    return { error: "userId is required and must be a non-empty string" };
   }
   if (!isResellerRole(role)) {
-    return { error: `role must be one of: ${RESELLER_ROLES.join(', ')}` };
+    return { error: `role must be one of: ${RESELLER_ROLES.join(", ")}` };
   }
   return { userId, role };
 }
@@ -145,14 +155,16 @@ interface CreateCustomerBody {
   adminEmail: string;
 }
 
-function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: string } {
-  if (!isRecord(body)) return { error: 'Request body must be a JSON object' };
+function parseCreateCustomerBody(
+  body: unknown,
+): CreateCustomerBody | { error: string } {
+  if (!isRecord(body)) return { error: "Request body must be a JSON object" };
   const name = body.name;
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return { error: 'name is required and must be a non-empty string' };
+  if (typeof name !== "string" || name.trim().length === 0) {
+    return { error: "name is required and must be a non-empty string" };
   }
   if (name.length > 200) {
-    return { error: 'name must be 200 characters or fewer' };
+    return { error: "name must be 200 characters or fewer" };
   }
   // Flat-pricing: no tiers. The wizard no longer collects a plan; the
   // customer org is created on the single plan like every org (reseller
@@ -164,15 +176,15 @@ function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: s
   // unbacked-by-build — caught pre-PR by scribe coordination + boss flag
   // (msg 1779430440810).
   const adminEmailRaw = body.admin_email;
-  if (typeof adminEmailRaw !== 'string' || adminEmailRaw.trim().length === 0) {
-    return { error: 'admin_email is required and must be a non-empty string' };
+  if (typeof adminEmailRaw !== "string" || adminEmailRaw.trim().length === 0) {
+    return { error: "admin_email is required and must be a non-empty string" };
   }
   // Light shape check; normalization (lowercase+trim) happens inside
   // createInvitation via src/email/normalize.ts. Rejecting an obviously
   // malformed address surfaces the input error at the wizard layer rather
   // than minting an invite that nobody can use.
-  if (!adminEmailRaw.includes('@') || adminEmailRaw.length > 320) {
-    return { error: 'admin_email must look like an email address' };
+  if (!adminEmailRaw.includes("@") || adminEmailRaw.length > 320) {
+    return { error: "admin_email must look like an email address" };
   }
 
   return { name: name.trim(), adminEmail: adminEmailRaw.trim() };
@@ -183,11 +195,13 @@ function parseCreateCustomerBody(body: unknown): CreateCustomerBody | { error: s
  * isResellerMemberError above: tests reset modules, so `instanceof` would
  * miss real errors thrown from a different module instance.
  */
-function isOrgHierarchyError(err: unknown): err is { name: string; code: string; message: string } {
+function isOrgHierarchyError(
+  err: unknown,
+): err is { name: string; code: string; message: string } {
   if (err instanceof OrgHierarchyError) return true;
-  if (typeof err !== 'object' || err === null) return false;
+  if (typeof err !== "object" || err === null) return false;
   const e = err as { name?: unknown; code?: unknown };
-  return e.name === 'OrgHierarchyError' && typeof e.code === 'string';
+  return e.name === "OrgHierarchyError" && typeof e.code === "string";
 }
 
 function sendOrgHierarchyError(
@@ -195,16 +209,16 @@ function sendOrgHierarchyError(
   err: { code: string; message: string },
 ): FastifyReply {
   switch (err.code) {
-    case 'PARENT_NOT_FOUND':
+    case "PARENT_NOT_FOUND":
       return reply.code(404).send({ error: err.message, code: err.code });
-    case 'PARENT_NOT_RESELLER':
-    case 'CUSTOMER_REQUIRES_PARENT':
-    case 'STANDALONE_CANNOT_HAVE_PARENT':
-    case 'RESELLER_CANNOT_HAVE_PARENT':
-    case 'INVALID_ORG_TYPE':
+    case "PARENT_NOT_RESELLER":
+    case "CUSTOMER_REQUIRES_PARENT":
+    case "STANDALONE_CANNOT_HAVE_PARENT":
+    case "RESELLER_CANNOT_HAVE_PARENT":
+    case "INVALID_ORG_TYPE":
       return reply.code(400).send({ error: err.message, code: err.code });
     default:
-      return reply.code(500).send({ error: 'Internal error' });
+      return reply.code(500).send({ error: "Internal error" });
   }
 }
 
@@ -212,11 +226,13 @@ interface UpdateMemberBody {
   role: ResellerRole;
 }
 
-function parseUpdateMemberBody(body: unknown): UpdateMemberBody | { error: string } {
-  if (!isRecord(body)) return { error: 'Request body must be a JSON object' };
+function parseUpdateMemberBody(
+  body: unknown,
+): UpdateMemberBody | { error: string } {
+  if (!isRecord(body)) return { error: "Request body must be a JSON object" };
   const role = body.role;
   if (!isResellerRole(role)) {
-    return { error: `role must be one of: ${RESELLER_ROLES.join(', ')}` };
+    return { error: `role must be one of: ${RESELLER_ROLES.join(", ")}` };
   }
   return { role };
 }
@@ -233,16 +249,20 @@ function parsePagination(query: unknown): Pagination | { error: string } {
   let page = 1;
   let pageSize = 20;
   if (pageRaw !== undefined) {
-    const n = typeof pageRaw === 'number' ? pageRaw : parseInt(String(pageRaw), 10);
+    const n =
+      typeof pageRaw === "number" ? pageRaw : parseInt(String(pageRaw), 10);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-      return { error: 'page must be a positive integer' };
+      return { error: "page must be a positive integer" };
     }
     page = n;
   }
   if (pageSizeRaw !== undefined) {
-    const n = typeof pageSizeRaw === 'number' ? pageSizeRaw : parseInt(String(pageSizeRaw), 10);
+    const n =
+      typeof pageSizeRaw === "number"
+        ? pageSizeRaw
+        : parseInt(String(pageSizeRaw), 10);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > 100) {
-      return { error: 'pageSize must be an integer between 1 and 100' };
+      return { error: "pageSize must be an integer between 1 and 100" };
     }
     pageSize = n;
   }
@@ -254,7 +274,14 @@ function parsePagination(query: unknown): Pagination | { error: string } {
 // ---------------------------------------------------------------------------
 
 export function resellerRoutes(deps: ResellerRoutesDeps) {
-  const { resellerService, resellerMemberService, orgService, dashboardService, auditService, adminAuditService } = deps;
+  const {
+    resellerService,
+    resellerMemberService,
+    orgService,
+    dashboardService,
+    auditService,
+    adminAuditService,
+  } = deps;
   const requireResellerAccess = makeRequireResellerAccess(resellerService);
   const requireResellerRole = makeRequireResellerRole(resellerService);
   const requireResellerOrCustomerAccess = makeRequireResellerOrCustomerAccess(
@@ -264,20 +291,20 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Feature-flag gate — keeps the entire /admin/reseller/* surface dark.
-    app.addHook('onRequest', async (request, reply) => {
-      if (!request.url.startsWith('/admin/reseller')) return;
+    app.addHook("onRequest", async (request, reply) => {
+      if (!request.url.startsWith("/admin/reseller")) return;
       if (!config.features.resellerConsole) {
-        reply.code(404).send({ error: 'Not found' });
+        reply.code(404).send({ error: "Not found" });
       }
     });
 
     // -----------------------------------------------------------------------
     // GET /admin/reseller/ — landing (kept from scaffold; HTML)
     // -----------------------------------------------------------------------
-    app.get('/admin/reseller/', async (request, reply) => {
+    app.get("/admin/reseller/", async (request, reply) => {
       const ctx = await requireResellerAccess(request, reply);
       if (!ctx) return;
-      return reply.type('text/html; charset=utf-8').send(
+      return reply.type("text/html; charset=utf-8").send(
         `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><title>MSP Admin Console</title></head>
@@ -294,15 +321,18 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // GET /admin/reseller/:resellerId — reseller profile
     // -----------------------------------------------------------------------
     app.get<{ Params: { resellerId: string } }>(
-      '/admin/reseller/:resellerId',
+      "/admin/reseller/:resellerId",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_support_agent')(request, reply);
+        const ctx = await requireResellerRole("reseller_support_agent")(
+          request,
+          reply,
+        );
         if (!ctx) return;
 
         const { resellerId } = ctx;
         const org = await orgService.getOrg(resellerId);
-        if (!org || org.type !== 'reseller') {
-          return reply.code(404).send({ error: 'Reseller not found' });
+        if (!org || org.type !== "reseller") {
+          return reply.code(404).send({ error: "Reseller not found" });
         }
 
         // Sequential, NOT Promise.all: each call issues a DB query on the
@@ -328,21 +358,23 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // PATCH /admin/reseller/:resellerId — update reseller name (admin+)
     // -----------------------------------------------------------------------
     app.patch<{ Params: { resellerId: string }; Body: unknown }>(
-      '/admin/reseller/:resellerId',
+      "/admin/reseller/:resellerId",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
         if (!ctx) return;
 
         const parsed = parseUpdateResellerBody(request.body);
-        if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+        if ("error" in parsed)
+          return reply.code(400).send({ error: parsed.error });
 
         const existing = await orgService.getOrg(ctx.resellerId);
-        if (!existing || existing.type !== 'reseller') {
-          return reply.code(404).send({ error: 'Reseller not found' });
+        if (!existing || existing.type !== "reseller") {
+          return reply.code(404).send({ error: "Reseller not found" });
         }
 
         const updated = await orgService.updateOrg(ctx.resellerId, parsed.name);
-        if (!updated) return reply.code(404).send({ error: 'Reseller not found' });
+        if (!updated)
+          return reply.code(404).send({ error: "Reseller not found" });
 
         return reply.send({
           id: updated.id,
@@ -358,13 +390,16 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // GET /admin/reseller/:resellerId/members — paginated member list
     // -----------------------------------------------------------------------
     app.get<{ Params: { resellerId: string }; Querystring: unknown }>(
-      '/admin/reseller/:resellerId/members',
+      "/admin/reseller/:resellerId/members",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_support_agent')(request, reply);
+        const ctx = await requireResellerRole("reseller_support_agent")(
+          request,
+          reply,
+        );
         if (!ctx) return;
 
         const pagination = parsePagination(request.query);
-        if ('error' in pagination) {
+        if ("error" in pagination) {
           return reply.code(400).send({ error: pagination.error });
         }
 
@@ -386,19 +421,23 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // POST /admin/reseller/:resellerId/members — invite/create member
     // -----------------------------------------------------------------------
     app.post<{ Params: { resellerId: string }; Body: unknown }>(
-      '/admin/reseller/:resellerId/members',
+      "/admin/reseller/:resellerId/members",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
         if (!ctx) return;
 
         const parsed = parseCreateMemberBody(request.body);
-        if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+        if ("error" in parsed)
+          return reply.code(400).send({ error: parsed.error });
 
         // Extra guard: only reseller_owner may create another reseller_owner.
-        if (parsed.role === 'reseller_owner' && ctx.membership.role !== 'reseller_owner') {
+        if (
+          parsed.role === "reseller_owner" &&
+          ctx.membership.role !== "reseller_owner"
+        ) {
           return reply.code(403).send({
-            error: 'Only reseller_owner may create another reseller_owner',
-            code: 'INSUFFICIENT_PERMISSION',
+            error: "Only reseller_owner may create another reseller_owner",
+            code: "INSUFFICIENT_PERMISSION",
           });
         }
 
@@ -411,7 +450,8 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           );
           return reply.code(201).send(member);
         } catch (err) {
-          if (isResellerMemberError(err)) return sendResellerMemberError(reply, err);
+          if (isResellerMemberError(err))
+            return sendResellerMemberError(reply, err);
           throw err;
         }
       },
@@ -420,14 +460,18 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // -----------------------------------------------------------------------
     // PATCH /admin/reseller/:resellerId/members/:memberId — update role
     // -----------------------------------------------------------------------
-    app.patch<{ Params: { resellerId: string; memberId: string }; Body: unknown }>(
-      '/admin/reseller/:resellerId/members/:memberId',
+    app.patch<{
+      Params: { resellerId: string; memberId: string };
+      Body: unknown;
+    }>(
+      "/admin/reseller/:resellerId/members/:memberId",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
         if (!ctx) return;
 
         const parsed = parseUpdateMemberBody(request.body);
-        if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+        if ("error" in parsed)
+          return reply.code(400).send({ error: parsed.error });
 
         const { memberId } = request.params;
 
@@ -439,7 +483,8 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           );
           return reply.send(updated);
         } catch (err) {
-          if (isResellerMemberError(err)) return sendResellerMemberError(reply, err);
+          if (isResellerMemberError(err))
+            return sendResellerMemberError(reply, err);
           throw err;
         }
       },
@@ -449,19 +494,24 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // DELETE /admin/reseller/:resellerId/members/:memberId — remove member
     // -----------------------------------------------------------------------
     app.delete<{ Params: { resellerId: string; memberId: string } }>(
-      '/admin/reseller/:resellerId/members/:memberId',
+      "/admin/reseller/:resellerId/members/:memberId",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
         if (!ctx) return;
 
         const { memberId } = request.params;
 
         try {
-          const removed = await resellerMemberService.delete(memberId, ctx.membership.id);
-          if (!removed) return reply.code(404).send({ error: 'Member not found' });
+          const removed = await resellerMemberService.delete(
+            memberId,
+            ctx.membership.id,
+          );
+          if (!removed)
+            return reply.code(404).send({ error: "Member not found" });
           return reply.code(204).send();
         } catch (err) {
-          if (isResellerMemberError(err)) return sendResellerMemberError(reply, err);
+          if (isResellerMemberError(err))
+            return sendResellerMemberError(reply, err);
           throw err;
         }
       },
@@ -486,13 +536,14 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // OrgService.createOrg (parent must exist + be type='reseller').
     // -----------------------------------------------------------------------
     app.post<{ Params: { resellerId: string }; Body: unknown }>(
-      '/admin/reseller/:resellerId/customers',
+      "/admin/reseller/:resellerId/customers",
       async (request, reply) => {
-        const ctx = await requireResellerRole('reseller_admin')(request, reply);
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
         if (!ctx) return;
 
         const parsed = parseCreateCustomerBody(request.body);
-        if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
+        if ("error" in parsed)
+          return reply.code(400).send({ error: parsed.error });
 
         try {
           // Step 1: create the customer org. ctx.user.sub (reseller_admin)
@@ -500,8 +551,8 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           const customer = await orgService.createOrg(
             parsed.name,
             ctx.user.sub,
-            'conduit',
-            { type: 'customer', parentOrgId: ctx.resellerId },
+            "conduit",
+            { type: "customer", parentOrgId: ctx.resellerId },
           );
 
           // Step 2: mint the owner-invite addressed to admin_email.
@@ -519,7 +570,7 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
             customer.id,
             ctx.user.sub,
             {
-              intendedRole: 'owner',
+              intendedRole: "owner",
               recipientEmail: parsed.adminEmail,
               maxUses: 1,
               expiresInHours: 168, // 7 days
@@ -546,17 +597,19 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           // CHILD customer-org scope so the audit_log query for that org
           // surfaces the provisioning event with the reseller-admin as
           // actorId + the parent reseller in metadata.
-          void adminAuditService.log({
-            orgId: customer.id,
-            actorId: ctx.user.sub,
-            targetId: ctx.resellerId,
-            eventType: 'customer_org_created',
-            metadata: {
-              parentResellerOrgId: ctx.resellerId,
-              adminEmail: parsed.adminEmail,
-              invitationId: invitation.id,
-            },
-          }).catch((err) => request.log.error(err, 'admin audit log failed'));
+          void adminAuditService
+            .log({
+              orgId: customer.id,
+              actorId: ctx.user.sub,
+              targetId: ctx.resellerId,
+              eventType: "customer_org_created",
+              metadata: {
+                parentResellerOrgId: ctx.resellerId,
+                adminEmail: parsed.adminEmail,
+                invitationId: invitation.id,
+              },
+            })
+            .catch((err) => request.log.error(err, "admin audit log failed"));
 
           // RC1 reseller-customer-created Loops event (ruby 2026-06-05).
           // Per actor-self-confirmation-omitted-by-construction principle
@@ -567,35 +620,43 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           // self-confirmation loop). If actor is the only admin on the
           // reseller-org -> no fire by-construction.
           try {
-            const resellerMembers = await orgService.getMembersWithProfiles(ctx.resellerId);
+            const resellerMembers = await orgService.getMembersWithProfiles(
+              ctx.resellerId,
+            );
             const recipients = resellerMembers.filter(
               (m) =>
-                m.userId !== ctx.user.sub
-                && (m.role === 'owner' || m.role === 'admin')
-                && m.email,
+                m.userId !== ctx.user.sub &&
+                (m.role === "owner" || m.role === "admin") &&
+                m.email,
             );
             for (const recipient of recipients) {
-              sendLoopsEvent(recipient.email as string, 'reseller-customer-created', {
-                msp_org_id: ctx.resellerId,
-                customer_org_id: customer.id,
-                customer_org_name: customer.name,
-                created_by_user_id: ctx.user.sub,
-                created_at: new Date().toISOString(),
-              }).catch((err) =>
+              sendLoopsEvent(
+                recipient.email as string,
+                "reseller-customer-created",
+                {
+                  msp_org_id: ctx.resellerId,
+                  customer_org_id: customer.id,
+                  customer_org_name: customer.name,
+                  created_by_user_id: ctx.user.sub,
+                  created_at: new Date().toISOString(),
+                },
+              ).catch((err) =>
                 request.log.warn(
                   { err, mspOrgId: ctx.resellerId, customerOrgId: customer.id },
-                  'failed to send Loops reseller-customer-created event',
+                  "failed to send Loops reseller-customer-created event",
                 ),
               );
             }
           } catch (err) {
             request.log.warn(
               { err, mspOrgId: ctx.resellerId },
-              'reseller-customer-created notify lookup failed (non-fatal)',
+              "reseller-customer-created notify lookup failed (non-fatal)",
             );
           }
 
-          return reply.code(201).send({ ...customer, invitation_id: invitation.id });
+          return reply
+            .code(201)
+            .send({ ...customer, invitation_id: invitation.id });
         } catch (err) {
           if (isOrgHierarchyError(err)) {
             return sendOrgHierarchyError(reply, err);
@@ -623,7 +684,7 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     // reseller must see every customer they own, on any tier or billing state.
     // -----------------------------------------------------------------------
     const dashboardBase =
-      '/admin/reseller/:resellerId/customers/:customerId/dashboard';
+      "/admin/reseller/:resellerId/customers/:customerId/dashboard";
 
     app.get<{
       Params: { resellerId: string; customerId: string };
@@ -660,10 +721,13 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
       const ctx = await requireResellerOrCustomerAccess(request, reply);
       if (!ctx) return;
 
-      const vendors = await dashboardService.getVendorBreakdown(ctx.customerId, {
-        start: request.query.start,
-        end: request.query.end,
-      });
+      const vendors = await dashboardService.getVendorBreakdown(
+        ctx.customerId,
+        {
+          start: request.query.start,
+          end: request.query.end,
+        },
+      );
       return reply.send({ vendors });
     });
 
@@ -683,7 +747,7 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
     app.get<{
       Params: { resellerId: string; customerId: string };
     }>(
-      '/admin/reseller/:resellerId/customers/:customerId/audit',
+      "/admin/reseller/:resellerId/customers/:customerId/audit",
       async (request, reply) => {
         const ctx = await requireResellerOrCustomerAccess(request, reply);
         if (!ctx) return;
@@ -695,10 +759,120 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
         const rows = entries.map((e) => ({
           when: e.createdAt,
           actor: e.userName ?? e.userEmail ?? e.userId,
-          action: 'mcp.tool.invoke',
+          action: "mcp.tool.invoke",
           target: e.toolName ? `${e.vendorSlug} · ${e.toolName}` : e.vendorSlug,
         }));
         return reply.send({ entries: rows });
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // POST /admin/reseller/:resellerId/customers/:customerId/invitations
+    //
+    // Reseller-scoped customer-user invite. Workaround/substrate-correction
+    // for the `POST /api/orgs/:orgId/invitations` hang on customer-org POSTs
+    // discovered 2026-06-12 during the launch-day end-to-end verification.
+    //
+    // Root cause of the hang is suspected to be an RLS-policy interaction on
+    // customer-org writes when invoked from the request-path connection
+    // bound to a reseller_admin user-id (the user is NOT a member of the
+    // customer org in org_members; the "owner" surface is derived from
+    // organizations.ownerId — see reseller/routes.ts:488 customer-create
+    // which inserts the reseller_admin as interim owner WITHOUT adding to
+    // org_members). The /api/orgs/:orgId/invitations route gates on
+    // requireOrgRole → getMembership → returns null → 403, but in practice
+    // the request hangs server-side before any completion log — symptom
+    // consistent with a never-returning RLS-checked query, not a fast 403.
+    //
+    // Architectural framing: the billing-gate at customer-org level is the
+    // WRONG substrate. The reseller is the paying entity; the customer org
+    // doesn't need to be on a paid plan for the reseller to invite users
+    // into it. This endpoint enforces:
+    //   - caller is reseller_admin of :resellerId
+    //   - :customerId is a customer org whose parent_org_id == :resellerId
+    // and then mints the invitation directly via orgService.createInvitation
+    // (same call the customer-create flow makes — proven to work).
+    //
+    // Diagnostic-debt: the underlying RLS-policy hang on
+    // POST /api/orgs/:customerId/invitations should be tracked as a
+    // separate cortextos issue + fixed post-launch. Removing this workaround
+    // once that route is healthy is a one-line modal-JS revert.
+    // -----------------------------------------------------------------------
+    app.post<{
+      Params: { resellerId: string; customerId: string };
+      Body: { email?: string };
+    }>(
+      "/admin/reseller/:resellerId/customers/:customerId/invitations",
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+      async (request, reply) => {
+        const ctx = await requireResellerRole("reseller_admin")(request, reply);
+        if (!ctx) return;
+
+        const { customerId } = request.params;
+
+        // Defense-in-depth: verify the target customer org is actually
+        // parented by the reseller the caller is authorized on. Same shape
+        // as requireResellerOrCustomerAccess uses below for the dashboard
+        // endpoints, but inlined here so reviewers can read the guard at
+        // the route call-site.
+        const customer = await orgService.getOrg(customerId);
+        if (
+          !customer ||
+          customer.type !== "customer" ||
+          customer.parentOrgId !== ctx.resellerId
+        ) {
+          return reply
+            .code(404)
+            .send({ error: "Customer not found under this reseller" });
+        }
+
+        // Optional invitee email. Validate same as the org-level endpoint:
+        // empty/whitespace skips straight to the copy-link flow; a present-
+        // but-malformed value is fast 400.
+        let inviteEmail: string | undefined;
+        if (request.body?.email?.trim()) {
+          const v = validateEmail(request.body.email);
+          if (!v.ok) return reply.code(400).send({ error: v.reason });
+          inviteEmail = v.email;
+        }
+
+        const { invitation, plainToken } = await orgService.createInvitation(
+          customerId,
+          ctx.user.sub,
+          inviteEmail ? { recipientEmail: inviteEmail } : undefined,
+        );
+        const inviteUrl = `${config.baseUrl}/invite/${plainToken}`;
+
+        void adminAuditService
+          .log({
+            orgId: customerId,
+            actorId: ctx.user.sub,
+            targetId: ctx.resellerId,
+            eventType: "member_invited",
+            metadata: {
+              invitationId: invitation.id,
+              parentResellerOrgId: ctx.resellerId,
+              via: "reseller-customer-invite-workaround",
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+
+        if (inviteEmail) {
+          try {
+            sendInvitationEmail(request.log, {
+              to: inviteEmail,
+              orgName: customer.name,
+              inviteUrl,
+              invitedByEmail: ctx.user.email ?? undefined,
+            });
+          } catch (err) {
+            request.log.warn({ err }, "invitation email prep failed");
+          }
+        }
+
+        return reply
+          .code(201)
+          .send({ ...invitation, token: plainToken, inviteUrl });
       },
     );
   };
@@ -707,9 +881,9 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
 // Minimal local escaper — keeps the scaffold landing page self-contained.
 function escapeForHtml(value: string): string {
   return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

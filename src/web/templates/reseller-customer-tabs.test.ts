@@ -128,11 +128,15 @@ describe("renderCustomerTab — Users", () => {
     expect(body).toContain('id="cdtInviteSubmit"');
   });
 
-  it("passes the customer id into the modal create-invite handler", () => {
+  it("passes the reseller id + customer id into the modal create-invite handler", () => {
     const { body } = renderCustomerTab(data("users"));
-    // The submit button binds the customer id so the POST URL is
-    // constructed against the correct customer org, not the reseller.
-    expect(body).toMatch(/onclick="cdtCreateInvite\('[^']+'\)"/);
+    // 2026-06-12 launch-day workaround: the modal POSTs to the reseller-
+    // scoped endpoint (sidesteps the customer-org /api/orgs/<id>/
+    // invitations hang). Both ids must be bound — the URL constructed in
+    // the handler is /admin/reseller/<resellerId>/customers/<customerId>/
+    // invitations.
+    expect(body).toMatch(/onclick="cdtCreateInvite\('[^']+',\s*'[^']+'\)"/);
+    expect(body).toContain("/admin/reseller/");
   });
 
   it("does NOT render the modal with innerHTML assignments (XSS guardrail)", () => {

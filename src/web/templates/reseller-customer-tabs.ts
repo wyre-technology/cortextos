@@ -157,6 +157,7 @@ function renderMcps(data: CustomerTabData): string {
 
 function renderUsers(data: CustomerTabData): string {
   const customerId = escapeHtml(data.customer.id);
+  const resellerId = escapeHtml(data.org.id);
   const rows = data.members
     .map(
       (u) => `
@@ -202,7 +203,7 @@ function renderUsers(data: CustomerTabData): string {
         <div id="cdtInviteError" class="cdt-modal-error" style="display:none"></div>
         <div class="cdt-modal-actions">
           <button type="button" class="cdt-btn-secondary" onclick="cdtCloseInviteModal()">Close</button>
-          <button type="button" id="cdtInviteSubmit" class="cdt-btn-primary" onclick="cdtCreateInvite('${customerId}')">Create invite</button>
+          <button type="button" id="cdtInviteSubmit" class="cdt-btn-primary" onclick="cdtCreateInvite('${resellerId}', '${customerId}')">Create invite</button>
         </div>
       </div>
     </div>`;
@@ -220,7 +221,7 @@ function renderUsers(data: CustomerTabData): string {
         document.getElementById('cdtInviteResult').style.display = 'none';
         document.getElementById('cdtInviteError').style.display = 'none';
       }
-      async function cdtCreateInvite(customerId) {
+      async function cdtCreateInvite(resellerId, customerId) {
         var btn = document.getElementById('cdtInviteSubmit');
         var err = document.getElementById('cdtInviteError');
         var result = document.getElementById('cdtInviteResult');
@@ -228,7 +229,13 @@ function renderUsers(data: CustomerTabData): string {
         btn.disabled = true; btn.textContent = 'Creating…';
         err.style.display = 'none'; result.style.display = 'none';
         try {
-          var res = await fetch('/api/orgs/' + customerId + '/invitations', {
+          // 2026-06-12 launch-day workaround: route through the reseller-
+          // scoped endpoint instead of /api/orgs/<customerId>/invitations,
+          // which hangs on customer-org POSTs (likely RLS interaction —
+          // tracked separately for post-launch root-cause). The new route
+          // enforces reseller_admin role + parent-org check + skips the
+          // customer-org billing-gate (reseller is the paying entity).
+          var res = await fetch('/admin/reseller/' + resellerId + '/customers/' + customerId + '/invitations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
