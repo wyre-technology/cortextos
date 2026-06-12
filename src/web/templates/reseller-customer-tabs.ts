@@ -156,6 +156,7 @@ function renderMcps(data: CustomerTabData): string {
 // ---- tab: Users ----------------------------------------------------------
 
 function renderUsers(data: CustomerTabData): string {
+  const customerId = escapeHtml(data.customer.id);
   const rows = data.members
     .map(
       (u) => `
@@ -172,14 +173,121 @@ function renderUsers(data: CustomerTabData): string {
     data.memberTotal > data.members.length
       ? `<p class="cdt-more">+ ${data.memberTotal - data.members.length} more users</p>`
       : "";
+
+  // 2026-06-12 Aaron-flagged "can't add users on /org/customers/<id>". The
+  // backend POST /api/orgs/:orgId/invitations endpoint has existed since
+  // the reseller-console RC; the reseller_admin (and the customer-org
+  // owner, which the reseller becomes at customer-create time) is granted
+  // `admin` role on the customer org and can therefore call it. Only the
+  // UI surface was missing. This adds:
+  //   - "Invite user" button in the Users tab toolbar
+  //   - inline modal with an email input (matches team-invitations.ts shape)
+  //   - JS that POSTs to /api/orgs/<customerId>/invitations and surfaces the
+  //     copy-link the API returns in plaintext (the only moment it exists)
+  // No new backend endpoint is needed — the existing org invitation route
+  // handles auth, rate-limiting (10/hour), audit logging, and optional
+  // email delivery.
+  const inviteToolbar = `
+    <div class="cdt-toolbar">
+      <button type="button" class="cdt-btn-invite" onclick="cdtShowInviteModal()">+ Invite user</button>
+    </div>`;
+  const inviteModal = `
+    <div id="cdtInviteOverlay" class="cdt-modal-overlay" style="display:none" aria-hidden="true">
+      <div class="cdt-modal" role="dialog" aria-modal="true" aria-labelledby="cdtInviteTitle">
+        <h2 id="cdtInviteTitle" class="cdt-modal-title">Invite a user to this customer</h2>
+        <p class="cdt-modal-desc">They will receive an invitation email if you provide an address. The invite link is also shown so you can share it any other way.</p>
+        <label class="cdt-modal-label" for="cdtInviteEmail">Email (optional)</label>
+        <input type="email" id="cdtInviteEmail" class="cdt-modal-input" placeholder="user@example.com" autocomplete="off" />
+        <div id="cdtInviteResult" class="cdt-modal-result" style="display:none"></div>
+        <div id="cdtInviteError" class="cdt-modal-error" style="display:none"></div>
+        <div class="cdt-modal-actions">
+          <button type="button" class="cdt-btn-secondary" onclick="cdtCloseInviteModal()">Close</button>
+          <button type="button" id="cdtInviteSubmit" class="cdt-btn-primary" onclick="cdtCreateInvite('${customerId}')">Create invite</button>
+        </div>
+      </div>
+    </div>`;
+  const inviteScript = `
+    <script>
+      function cdtShowInviteModal() {
+        document.getElementById('cdtInviteOverlay').style.display = 'flex';
+        document.getElementById('cdtInviteOverlay').setAttribute('aria-hidden', 'false');
+        document.getElementById('cdtInviteEmail').focus();
+      }
+      function cdtCloseInviteModal() {
+        document.getElementById('cdtInviteOverlay').style.display = 'none';
+        document.getElementById('cdtInviteOverlay').setAttribute('aria-hidden', 'true');
+        document.getElementById('cdtInviteEmail').value = '';
+        document.getElementById('cdtInviteResult').style.display = 'none';
+        document.getElementById('cdtInviteError').style.display = 'none';
+      }
+      async function cdtCreateInvite(customerId) {
+        var btn = document.getElementById('cdtInviteSubmit');
+        var err = document.getElementById('cdtInviteError');
+        var result = document.getElementById('cdtInviteResult');
+        var email = (document.getElementById('cdtInviteEmail').value || '').trim();
+        btn.disabled = true; btn.textContent = 'Creating…';
+        err.style.display = 'none'; result.style.display = 'none';
+        try {
+          var res = await fetch('/api/orgs/' + customerId + '/invitations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(email ? { email: email } : {}),
+          });
+          var data = await res.json();
+          if (!res.ok) {
+            err.textContent = data && data.error ? data.error : 'Failed to create invite (' + res.status + ')';
+            err.style.display = 'block';
+            return;
+          }
+          // Build the success block with DOM methods, not innerHTML — the
+          // email value is user-supplied input and the URL is a string we
+          // render to the user. textContent + structured node creation
+          // keeps both attacker-controlled fields out of HTML-parsing
+          // path. 2026-06-12 post-XSS-review hardening.
+          while (result.firstChild) result.removeChild(result.firstChild);
+          var label = document.createElement('div');
+          label.className = 'cdt-modal-result-label';
+          label.textContent = 'Invite link (copy + share):';
+          var url = data.inviteUrl || (window.location.origin + '/invite/' + (data.token || ''));
+          var code = document.createElement('code');
+          code.className = 'cdt-modal-result-url';
+          code.textContent = url;
+          var hint = document.createElement('div');
+          hint.className = 'cdt-modal-result-hint';
+          if (email) {
+            hint.appendChild(document.createTextNode('Also emailed to '));
+            var emailNode = document.createElement('strong');
+            emailNode.textContent = email;
+            hint.appendChild(emailNode);
+            hint.appendChild(document.createTextNode('.'));
+          } else {
+            hint.textContent = 'No email sent — share the link manually.';
+          }
+          result.appendChild(label);
+          result.appendChild(code);
+          result.appendChild(hint);
+          result.style.display = 'block';
+        } catch (e) {
+          err.textContent = 'Network error: ' + (e && e.message ? e.message : 'unknown');
+          err.style.display = 'block';
+        } finally {
+          btn.disabled = false; btn.textContent = 'Create invite';
+        }
+      }
+    </script>`;
+
   return renderChrome(
     data,
     `
+    ${inviteToolbar}
     <table class="cdt-table">
       <thead><tr><th scope="col">User</th><th scope="col">Role</th><th scope="col">Department</th><th scope="col">Tool Access</th><th scope="col">Last Active</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="5" class="cdt-empty">No members yet.</td></tr>`}</tbody>
     </table>
     ${more}
+    ${inviteModal}
+    ${inviteScript}
     ${seam("Mock-data-first. SWAP-IN CONTRACT: the real org-member query MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).")}`,
   );
 }
@@ -480,6 +588,104 @@ export const CUSTOMER_TAB_STYLES = `
   .cdt-activity { color: var(--text-tertiary); white-space: nowrap; }
   .cdt-empty { padding: 20px 12px; text-align: center; color: var(--text-tertiary); }
   .cdt-more { margin-top: 12px; font-size: 12px; color: var(--accent-text); }
+
+  /* Users tab toolbar + invite modal — 2026-06-12 Aaron-flagged surface */
+  .cdt-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+  .cdt-btn-invite {
+    padding: 8px 14px;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cdt-btn-invite:hover { background: var(--accent-hover); }
+  .cdt-modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .cdt-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    width: min(480px, 92vw);
+    padding: 24px;
+    color: var(--text-secondary);
+  }
+  .cdt-modal-title { font-size: 17px; margin: 0 0 6px; color: var(--text-primary); }
+  .cdt-modal-desc { font-size: 12px; color: var(--text-tertiary); margin: 0 0 16px; line-height: 1.5; }
+  .cdt-modal-label { display: block; font-size: 12px; color: var(--text-tertiary); margin-bottom: 6px; }
+  .cdt-modal-input {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--bg-input, var(--bg-card));
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .cdt-modal-input:focus { outline: none; border-color: var(--accent); }
+  .cdt-modal-result {
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    border-radius: 6px;
+  }
+  .cdt-modal-result-label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .cdt-modal-result-url {
+    display: block;
+    word-break: break-all;
+    font-size: 12px;
+    color: var(--text-primary);
+    background: var(--bg-card);
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .cdt-modal-result-hint { font-size: 11px; color: var(--text-tertiary); margin-top: 8px; }
+  .cdt-modal-error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 6px;
+    color: var(--error-text);
+    font-size: 13px;
+  }
+  .cdt-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .cdt-btn-primary {
+    padding: 8px 14px;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cdt-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .cdt-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+  .cdt-btn-secondary {
+    padding: 8px 14px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cdt-btn-secondary:hover { color: var(--text-primary); border-color: var(--border-hover); }
   /* visually-hidden text — state cues for screen readers only */
   .cdt-sr {
     position: absolute;

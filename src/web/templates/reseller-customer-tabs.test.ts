@@ -114,6 +114,36 @@ describe("renderCustomerTab — Users", () => {
     expect(body).toContain("cramirez@am3-it.com");
     expect(body).toContain("+ 11 more users");
   });
+
+  // 2026-06-12 Aaron-flagged "can't add users on /org/customers/<id>".
+  // Backend POST /api/orgs/:orgId/invitations already exists and accepts
+  // reseller_admin / customer-owner identity; only the UI surface was
+  // missing. Regression-guard the new Invite button + modal + the
+  // customerId being passed through to the modal handler.
+  it("renders the Invite user button + modal scaffolding", () => {
+    const { body } = renderCustomerTab(data("users"));
+    expect(body).toContain("+ Invite user");
+    expect(body).toContain('id="cdtInviteOverlay"');
+    expect(body).toContain('id="cdtInviteEmail"');
+    expect(body).toContain('id="cdtInviteSubmit"');
+  });
+
+  it("passes the customer id into the modal create-invite handler", () => {
+    const { body } = renderCustomerTab(data("users"));
+    // The submit button binds the customer id so the POST URL is
+    // constructed against the correct customer org, not the reseller.
+    expect(body).toMatch(/onclick="cdtCreateInvite\('[^']+'\)"/);
+  });
+
+  it("does NOT render the modal with innerHTML assignments (XSS guardrail)", () => {
+    const { body } = renderCustomerTab(data("users"));
+    // The result block on success is built with createElement + textContent —
+    // never `result.innerHTML = ...` — so a maliciously typed email cannot
+    // smuggle markup. If a refactor reintroduces innerHTML on the modal
+    // result/error nodes, this regression-guard fires.
+    expect(body).not.toMatch(/result\.innerHTML\s*=/);
+    expect(body).not.toMatch(/err\.innerHTML\s*=/);
+  });
 });
 
 describe("renderCustomerTab — Usage (live)", () => {
