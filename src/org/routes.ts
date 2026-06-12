@@ -635,21 +635,17 @@ export function orgRoutes(deps: OrgRouteDeps) {
             !membership ||
             ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL.admin
           ) {
-            return reply
-              .code(403)
-              .send({
-                error: "You do not have permission to perform this action",
-              });
+            return reply.code(403).send({
+              error: "You do not have permission to perform this action",
+            });
           }
         } else {
           // Still must be a member
           const membership = await orgService.getMembership(orgId, user.sub);
           if (!membership) {
-            return reply
-              .code(403)
-              .send({
-                error: "You do not have permission to perform this action",
-              });
+            return reply.code(403).send({
+              error: "You do not have permission to perform this action",
+            });
           }
         }
 
@@ -679,11 +675,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // audit record is the lie (gateway PR #78 M10).
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply
-            .code(404)
-            .send({
-              error: "Target user is not a member of this organization",
-            });
+          return reply.code(404).send({
+            error: "Target user is not a member of this organization",
+          });
         }
 
         const grant = await orgService.grantServerAccess(
@@ -752,11 +746,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // (gateway PR #78 M10): no audit entry for a non-member user id.
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply
-            .code(404)
-            .send({
-              error: "Target user is not a member of this organization",
-            });
+          return reply.code(404).send({
+            error: "Target user is not a member of this organization",
+          });
         }
 
         await orgService.revokeServerAccess(orgId, userId, vendorSlug);
@@ -833,11 +825,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
         // (gateway PR #78 M10).
         const targetMembership = await orgService.getMembership(orgId, userId);
         if (!targetMembership) {
-          return reply
-            .code(404)
-            .send({
-              error: "Target user is not a member of this organization",
-            });
+          return reply.code(404).send({
+            error: "Target user is not a member of this organization",
+          });
         }
 
         await orgService.bulkSetServerAccess(orgId, userId, vendors, user.sub);
@@ -1369,10 +1359,24 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/invite/:token",
       { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
       async (request, reply) => {
+        request.log.warn({
+          instrumentation: "accept-invite",
+          step: "A.handler-entry",
+        });
         const user = requireAuth0(request, reply);
+        request.log.warn({
+          instrumentation: "accept-invite",
+          step: "B.after-requireAuth0",
+          userPresent: !!user,
+        });
         if (!user) return;
 
         const { token } = request.params;
+        request.log.warn({
+          instrumentation: "accept-invite",
+          step: "C.before-runAsSystem",
+          token: token.slice(0, 6),
+        });
         // Layer 1: acceptInvitation can now return a discriminated-union
         // failure (email-match miss or owner-invite scope violation) in
         // addition to OrgMember | null. Each kind maps to the right HTTP
@@ -1400,14 +1404,33 @@ export function orgRoutes(deps: OrgRouteDeps) {
         //
         // Removing this workaround once the RLS policy is fixed is a
         // one-line revert.
-        const result = await runAsSystem(() =>
-          orgService.acceptInvitation(
+        const result = await runAsSystem(async () => {
+          request.log.warn({
+            instrumentation: "accept-invite",
+            step: "D.inside-runAsSystem",
+          });
+          const r = await orgService.acceptInvitation(
             token,
             user.sub,
             request.log,
             user.email ?? null,
-          ),
-        );
+          );
+          request.log.warn({
+            instrumentation: "accept-invite",
+            step: "E.after-acceptInvitation",
+            resultType:
+              r === null
+                ? "null"
+                : typeof r === "object" && "kind" in r
+                  ? `error:${r.kind}`
+                  : "member",
+          });
+          return r;
+        });
+        request.log.warn({
+          instrumentation: "accept-invite",
+          step: "F.after-runAsSystem",
+        });
         if (!result) {
           return reply
             .code(404)
@@ -1667,11 +1690,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
       // calling this endpoint directly. List + revoke stay ungated so a
       // downgraded org can still see and wind down existing connections.
       if (!(await billingGate.canUseSso(request.params.orgId))) {
-        return reply
-          .code(402)
-          .send({
-            error: "SSO / SCIM provisioning requires the Business plan",
-          });
+        return reply.code(402).send({
+          error: "SSO / SCIM provisioning requires the Business plan",
+        });
       }
 
       const { idp_type: idpType, default_role: defaultRole } = request.body;
