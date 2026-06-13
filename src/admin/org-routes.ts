@@ -4,6 +4,12 @@ import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import type { CreditService } from '../billing/credit-service.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
+import type { OrgIdpConnectionService } from '../org/org-idp-connection-service.js';
+import type { Auth0ManagementClient } from '../auth/auth0-management.js';
+import {
+  parseSamlIdpMetadata,
+  SamlMetadataParseError,
+} from '../auth/saml-metadata-parser.js';
 import { renderAdminPage } from './layout.js';
 import { FEATURES, PLAN_RANK, type FeatureKey, type Plan } from '../billing/features.js';
 import { getSql, runAsSystem } from '../db/context.js';
@@ -65,6 +71,21 @@ interface AdminOrgRoutesDeps {
   billingGate: BillingGate;
   creditService: CreditService;
   adminAuditService: AdminAuditService;
+  /**
+   * Multi-IdP foundation slice 6+7 PR-B (June 29 launch directive
+   * 2026-06-13): wizard substrate for per-org SAML IdP connection
+   * management at /admin/orgs/:orgId/idp-connections*.
+   *
+   * Optional for backward-compat with existing test fixtures + dev/
+   * test boots without an Auth0 Management API client configured. When
+   * EITHER dep is null/undefined, the wizard routes register but the
+   * POST handler 503-fails-loud (telling admin the IdP wizard isn't
+   * configured) rather than silently no-op'ing. The GET-list + GET-new
+   * routes still render — admin can see existing connections (none in
+   * the unconfigured case) and read the disabled-state banner.
+   */
+  orgIdpConnectionService?: OrgIdpConnectionService;
+  auth0ManagementClient?: Auth0ManagementClient;
 }
 
 interface OrgListRow {
@@ -102,7 +123,13 @@ interface AuditEntryRow {
 }
 
 export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
-  const { orgService, creditService, adminAuditService } = deps;
+  const {
+    orgService,
+    creditService,
+    adminAuditService,
+    orgIdpConnectionService,
+    auth0ManagementClient,
+  } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -890,5 +917,312 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         `/admin/orgs?flash_ok=${encodeURIComponent(`Deleted org "${org.name}"`)}`,
       );
     });
+
+    // -------------------------------------------------------------------------
+    // Multi-IdP foundation slice 6+7 PR-B (June 29 launch directive
+    // 2026-06-13): per-org SAML IdP connection wizard.
+    //
+    // Surface: 4 routes, all gated by requireAdmin (platform-admin path —
+    // NOT reseller-admin-acting-on-customer-org; that's a future slice).
+    //   GET    /admin/orgs/:orgId/idp-connections        — list existing
+    //   GET    /admin/orgs/:orgId/idp-connections/new    — wizard form
+    //   POST   /admin/orgs/:orgId/idp-connections        — submit (BOTH-OR-NEITHER)
+    //   POST   /admin/orgs/:orgId/idp-connections/:id/delete — remove (Auth0 + DB)
+    //
+    // BOTH-OR-NEITHER discipline (boss design call 3, msg-1781371246033):
+    //   Inline 2-step (Auth0 createConnection → Auth0 enableConnection →
+    //   DB INSERT). Auth0's deleteConnection cascades through
+    //   /enabled_connections automatically — a single rollback call
+    //   handles both create-only and create+enable failure paths. Same
+    //   uniform shape as slice-3's deleteOrganization rollback (verified
+    //   path, banked as worked-example in msg 1781370668208).
+    //
+    // FUTURE-PR BREADCRUMB (per analyst msg 1781370739032 + boss msg
+    // 1781370784165): when reseller-self-service IdP connection management
+    // lands as a later slice, every actingAs read MUST revalidate (3
+    // checks: member role, FK chain, not-archived). NOT this slice —
+    // platform-admin path runs under requireAdmin which doesn't traffic
+    // in actingAs. Breadcrumb here so the future PR's grep-discovery
+    // catches the discipline-requirement at the call-site.
+    // -------------------------------------------------------------------------
+
+    // GET /admin/orgs/:orgId/idp-connections — list existing connections
+    app.get<{ Params: { orgId: string }; Querystring: { flash_ok?: string; flash_err?: string } }>(
+      '/admin/orgs/:orgId/idp-connections',
+      async (request, reply) => {
+        if (!requireAdmin(request, reply)) return;
+        const orgId = request.params.orgId;
+        const org = await runAsSystem(() => orgService.getOrg(orgId));
+        if (!org) return reply.code(404).type('text/html').send('Org not found');
+
+        const connections = orgIdpConnectionService
+          ? await runAsSystem(() => orgIdpConnectionService.listForOrg(orgId))
+          : [];
+
+        const csrf = getOrSetCsrfToken(request, reply);
+        const flash = flashFromQuery(request.query as Record<string, string | undefined>);
+
+        const disabledNotice = !orgIdpConnectionService || !auth0ManagementClient
+          ? '<div class="alert alert-err">IdP wizard is not configured in this environment (AUTH0_M2M_CLIENT_ID/SECRET unset). Existing connections (if any) are shown read-only.</div>'
+          : '';
+
+        const rows = connections.length === 0
+          ? '<tr><td colspan="5" class="muted">No IdP connections configured for this org.</td></tr>'
+          : connections.map((c) => `
+            <tr>
+              <td><code>${escapeHtml(c.strategy)}</code></td>
+              <td>${escapeHtml(c.displayName ?? c.entityId)}</td>
+              <td><code class="muted">${escapeHtml(c.entityId)}</code></td>
+              <td><span class="badge badge-${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
+              <td>
+                <form method="POST" action="/admin/orgs/${escapeHtml(orgId)}/idp-connections/${escapeHtml(c.id)}/delete" style="display:inline">
+                  ${csrfHiddenInput(csrf)}
+                  <button type="submit" class="btn btn-danger" onclick="return confirm('Delete this IdP connection?')">Delete</button>
+                </form>
+              </td>
+            </tr>`).join('');
+
+        const body = `
+          <div class="header">
+            <div>
+              <h1>${escapeHtml(org.name)} — IdP Connections</h1>
+              <div class="subtitle"><a href="/admin/orgs/${escapeHtml(orgId)}">← Back to org</a></div>
+            </div>
+            <div>
+              <a href="/admin/orgs/${escapeHtml(orgId)}/idp-connections/new" class="btn btn-primary">Add SAML Connection</a>
+            </div>
+          </div>
+          ${flash}
+          ${disabledNotice}
+          <table class="data-table">
+            <thead><tr><th>Strategy</th><th>Display Name</th><th>Entity ID</th><th>Status</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+        return reply.type('text/html').send(renderAdminPage({
+          title: 'IdP Connections',
+          activePath: '/admin/orgs',
+          body,
+        }));
+      },
+    );
+
+    // GET /admin/orgs/:orgId/idp-connections/new — SAML wizard form
+    app.get<{ Params: { orgId: string }; Querystring: { flash_err?: string } }>(
+      '/admin/orgs/:orgId/idp-connections/new',
+      async (request, reply) => {
+        if (!requireAdmin(request, reply)) return;
+        const orgId = request.params.orgId;
+        const org = await runAsSystem(() => orgService.getOrg(orgId));
+        if (!org) return reply.code(404).type('text/html').send('Org not found');
+
+        const csrf = getOrSetCsrfToken(request, reply);
+        const flash = flashFromQuery(request.query as Record<string, string | undefined>);
+
+        const body = `
+          <div class="header">
+            <div>
+              <h1>${escapeHtml(org.name)} — Add SAML Connection</h1>
+              <div class="subtitle">
+                <a href="/admin/orgs/${escapeHtml(orgId)}/idp-connections">← Back to connections</a>
+              </div>
+            </div>
+          </div>
+          ${flash}
+          <form method="POST" action="/admin/orgs/${escapeHtml(orgId)}/idp-connections">
+            ${csrfHiddenInput(csrf)}
+            <div class="form-row">
+              <label for="displayName">Display name (optional)</label>
+              <input type="text" id="displayName" name="display_name" placeholder="Acme Okta" />
+            </div>
+            <div class="form-row">
+              <label for="metadata">SAML 2.0 IdP metadata XML</label>
+              <textarea id="metadata" name="metadata" rows="14" required
+                placeholder="<EntityDescriptor xmlns=&quot;urn:oasis:names:tc:SAML:2.0:metadata&quot; entityID=&quot;https://idp.example.com/sso&quot;>..."></textarea>
+              <div class="muted">Paste the metadata XML downloaded from the customer's IdP (Okta, Azure AD via SAML, JumpCloud, ADFS, etc.).</div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Create Connection</button>
+              <a href="/admin/orgs/${escapeHtml(orgId)}/idp-connections" class="btn">Cancel</a>
+            </div>
+          </form>`;
+        return reply.type('text/html').send(renderAdminPage({
+          title: 'Add SAML Connection',
+          activePath: '/admin/orgs',
+          body,
+        }));
+      },
+    );
+
+    // POST /admin/orgs/:orgId/idp-connections — BOTH-OR-NEITHER wizard submit
+    app.post<{
+      Params: { orgId: string };
+      Body: { metadata?: string; display_name?: string };
+    }>('/admin/orgs/:orgId/idp-connections', async (request, reply) => {
+      if (!requireAdminMutation(request, reply)) return;
+      const orgId = request.params.orgId;
+      const back = (qs: string): ReturnType<typeof reply.redirect> =>
+        reply.redirect(`/admin/orgs/${encodeURIComponent(orgId)}/idp-connections/new?${qs}`);
+
+      // 503-fail-loud when the wizard substrate isn't configured. Tells
+      // the admin exactly why the action didn't fire vs silently no-op'ing.
+      if (!orgIdpConnectionService || !auth0ManagementClient) {
+        return back(`flash_err=${encodeURIComponent('IdP wizard is not configured in this environment (AUTH0_M2M_CLIENT_ID/SECRET unset).')}`);
+      }
+
+      const org = await runAsSystem(() => orgService.getOrg(orgId));
+      if (!org) return reply.code(404).type('text/html').send('Org not found');
+      if (!org.auth0OrgId) {
+        return back(`flash_err=${encodeURIComponent('This org has no paired Auth0 Organization (auth0_org_id is null). The IdP wizard requires the slice-3 provisioning to have created the Auth0 Org peer first.')}`);
+      }
+
+      // Step 1: parse the metadata XML via samlify. SamlMetadataParseError
+      // discriminator codes map to named actionable error messages.
+      const metadata = (request.body.metadata ?? '').trim();
+      const displayName = (request.body.display_name ?? '').trim() || undefined;
+      let parsed;
+      try {
+        parsed = parseSamlIdpMetadata(metadata);
+      } catch (err) {
+        if (err instanceof SamlMetadataParseError) {
+          return back(`flash_err=${encodeURIComponent(`SAML metadata invalid (${err.code}): ${err.message}`)}`);
+        }
+        throw err;
+      }
+
+      const adminSub = request.auth0User?.sub;
+      if (!adminSub) {
+        return back(`flash_err=${encodeURIComponent('Admin session not found')}`);
+      }
+
+      // Derive an Auth0 connection name from the orgId + a sanitized
+      // entity id slug. Same alphabet rules as slice-3's org name (Auth0
+      // requires alphanumeric+hyphens, lowercase).
+      const entitySlug = parsed.entityId
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 40)
+        || 'idp';
+      const connectionName = `conduit-${orgId.toLowerCase().replace(/_/g, '-')}-${entitySlug}`;
+
+      // Step 2: Auth0 createConnection. If fails, NO DB write happens —
+      // BOTH-OR-NEITHER substrate-level guarantee (boss design call 3).
+      let auth0ConnectionId: string;
+      try {
+        const conn = await auth0ManagementClient.createConnection({
+          name: connectionName,
+          strategy: 'samlp',
+          options: parsed.options,
+          displayName: displayName ?? parsed.entityId,
+          metadata: { conduit_org_id: orgId, conduit_entity_id: parsed.entityId },
+        });
+        auth0ConnectionId = conn.id;
+      } catch (err) {
+        request.log.error({ err, orgId }, 'Auth0 createConnection failed');
+        return back(`flash_err=${encodeURIComponent('Auth0 connection-create failed (see server logs).')}`);
+      }
+
+      // Step 3: Auth0 enableConnection on the org's Auth0 Org peer. If
+      // fails, ROLLBACK via deleteConnection (cascade-rollback verified).
+      try {
+        await auth0ManagementClient.enableConnection(org.auth0OrgId, auth0ConnectionId);
+      } catch (err) {
+        request.log.error({ err, orgId, auth0ConnectionId }, 'Auth0 enableConnection failed — rolling back createConnection');
+        try {
+          await auth0ManagementClient.deleteConnection(auth0ConnectionId);
+        } catch (rollbackErr) {
+          request.log.error({ err: rollbackErr, auth0ConnectionId }, 'Auth0 rollback of createConnection failed — manual cleanup may be needed');
+        }
+        return back(`flash_err=${encodeURIComponent('Auth0 enableConnection failed (rolled back; see server logs).')}`);
+      }
+
+      // Step 4: DB INSERT. If fails, ROLLBACK Auth0 via deleteConnection
+      // (cascade also removes the enable side from /enabled_connections).
+      let created;
+      try {
+        created = await runAsSystem(() => orgIdpConnectionService.create({
+          orgId,
+          auth0ConnectionId,
+          entityId: parsed.entityId,
+          strategy: 'samlp',
+          displayName,
+          createdByUserId: adminSub,
+        }));
+      } catch (err) {
+        request.log.error({ err, orgId, auth0ConnectionId }, 'DB INSERT of org_idp_connection failed — rolling back Auth0 state');
+        try {
+          await auth0ManagementClient.deleteConnection(auth0ConnectionId);
+        } catch (rollbackErr) {
+          request.log.error({ err: rollbackErr, auth0ConnectionId }, 'Auth0 rollback after DB INSERT failure also failed — manual cleanup may be needed');
+        }
+        return back(`flash_err=${encodeURIComponent('Persistence failed (Auth0 state rolled back; see server logs).')}`);
+      }
+
+      // All four steps committed. Fire the audit event (analyst-locked
+      // visible-without-internal-knowledge naming: 'idp_connection_created').
+      void adminAuditService.log({
+        orgId,
+        actorId: adminSub,
+        eventType: 'idp_connection_created',
+        metadata: {
+          strategy: 'samlp',
+          entity_id: parsed.entityId,
+          auth0_connection_id: auth0ConnectionId,
+          display_name: displayName ?? null,
+        },
+      }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+      return reply.redirect(
+        `/admin/orgs/${encodeURIComponent(orgId)}/idp-connections?flash_ok=${encodeURIComponent(`Created SAML connection for ${parsed.entityId} (id=${created.id})`)}`,
+      );
+    });
+
+    // POST /admin/orgs/:orgId/idp-connections/:id/delete — admin remove
+    app.post<{ Params: { orgId: string; id: string } }>(
+      '/admin/orgs/:orgId/idp-connections/:id/delete',
+      async (request, reply) => {
+        if (!requireAdminMutation(request, reply)) return;
+        const { orgId, id } = request.params;
+        const back = (qs: string): ReturnType<typeof reply.redirect> =>
+          reply.redirect(`/admin/orgs/${encodeURIComponent(orgId)}/idp-connections?${qs}`);
+
+        if (!orgIdpConnectionService || !auth0ManagementClient) {
+          return back(`flash_err=${encodeURIComponent('IdP wizard is not configured in this environment.')}`);
+        }
+
+        const conn = await runAsSystem(() => orgIdpConnectionService.getById(id));
+        if (!conn || conn.orgId !== orgId) {
+          return back(`flash_err=${encodeURIComponent('Connection not found.')}`);
+        }
+
+        // Auth0-first delete. If Auth0 fails, the DB row stays (admin can
+        // retry the delete or manually clean up Auth0). Same uniform
+        // shape as slice-3 reverse — Auth0-is-the-load-bearing-system
+        // call goes first.
+        try {
+          await auth0ManagementClient.deleteConnection(conn.auth0ConnectionId);
+        } catch (err) {
+          request.log.error({ err, auth0ConnectionId: conn.auth0ConnectionId }, 'Auth0 deleteConnection failed');
+          return back(`flash_err=${encodeURIComponent('Auth0 delete failed (DB row preserved; see server logs).')}`);
+        }
+
+        await runAsSystem(() => orgIdpConnectionService.hardDelete(id));
+
+        const adminSub = request.auth0User?.sub ?? '';
+        void adminAuditService.log({
+          orgId,
+          actorId: adminSub,
+          eventType: 'idp_connection_deleted',
+          metadata: {
+            strategy: conn.strategy,
+            entity_id: conn.entityId,
+            auth0_connection_id: conn.auth0ConnectionId,
+          },
+        }).catch((err) => request.log.error(err, 'admin audit log failed'));
+
+        return back(`flash_ok=${encodeURIComponent(`Deleted SAML connection ${conn.entityId}`)}`);
+      },
+    );
   };
 }

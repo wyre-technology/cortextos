@@ -65,7 +65,19 @@ export type AdminEventType =
   // existing 'invitation_accepted' event at the swap-completion moment
   // (when the invited user accepts and the NARROWED-DELETE atomic-swap
   // replaces the stub).
-  | 'org_created_by_admin';
+  | 'org_created_by_admin'
+  // Multi-IdP foundation slice 6+7 (June 29 launch directive 2026-06-13).
+  // Platform-admin pastes SAML metadata XML at the wizard
+  // (POST /admin/orgs/:orgId/idp-connections) -> Auth0 createConnection +
+  // enableConnection on the org's Auth0 Org peer + INSERT into
+  // org_idp_connections (mig 047). Audit-event names per analyst's
+  // visible-without-internal-knowledge discipline (msg 1781371246033):
+  // 'idp_connection_*' is grep-traceable for future ops without needing
+  // to know the wizard surface lives at /admin/orgs/:orgId/idp-connections.
+  // Metadata carries: strategy ('samlp'|'oidc'), entity_id,
+  // auth0_connection_id, display_name?
+  | 'idp_connection_created'
+  | 'idp_connection_deleted';
 
 export interface AdminAuditEntry {
   id: string;

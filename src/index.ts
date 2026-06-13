@@ -28,6 +28,7 @@ import { OrgService } from './org/org-service.js';
 import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { Auth0ManagementClient } from './auth/auth0-management.js';
 import { createAuth0OrgProvisioner } from './org/org-auth0-provisioner.js';
+import { OrgIdpConnectionService } from './org/org-idp-connection-service.js';
 import { DefaultBillingGate } from './billing/gate.js';
 import { DefaultSeatService } from './billing/seat-service.js';
 import { createConduitSeatSyncer } from './billing/seat-syncer.js';
@@ -444,11 +445,22 @@ if (config.features.signup) {
 // emailVerified=true. See src/lib/admin-auth.ts.
 await app.register(adminMetricsRoutes());
 await app.register(adminReportsRoutes());
+// Multi-IdP foundation slice 6+7 PR-B (June 29 launch directive
+// 2026-06-13): wizard substrate for per-org SAML IdP connection
+// management. Reuses the auth0ManagementClient singleton from slice 2
+// + the singleton OrgIdpConnectionService instance.
+// When auth0ManagementClient is null (M2M creds unset), the wizard
+// routes render but the POST handler 503-fails-loud (rather than
+// silently no-op'ing) — admin sees the disabled-state banner + an
+// explicit error explaining why the action didn't fire.
+const orgIdpConnectionService = new OrgIdpConnectionService();
 await app.register(adminOrgRoutes({
   orgService,
   billingGate,
   creditService,
   adminAuditService,
+  orgIdpConnectionService,
+  auth0ManagementClient: auth0ManagementClient ?? undefined,
 }));
 
 // Legal pages (public): /terms, /privacy
