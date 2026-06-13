@@ -130,6 +130,35 @@ export class InMemoryRateLimiter {
 // HTML
 // ---------------------------------------------------------------------------
 
+/**
+ * Signup funnel choice — the org-type the signer is provisioning.
+ *
+ *   - 'reseller': MSP onboarding their clients. They will get the reseller
+ *     console (/org/customers, /org/hierarchy, etc.) and bill-and-resell
+ *     downstream customer orgs.
+ *   - 'direct': Direct customer (just their own team). They will get the
+ *     plain team console without the reseller surface. No customer-org
+ *     provisioning, no Stripe Connect, no white-label.
+ *
+ * The DB column already exists (`signup_intents.funnel TEXT NOT NULL DEFAULT
+ * 'reseller'`); this picker just lets the UI capture which one the signer
+ * actually wants instead of silently defaulting to reseller. 2026-06-13
+ * sweep-2 cluster-1 finding (Aaron): the missing picker was forcing every
+ * signup down the reseller funnel even when the signer was a direct end-
+ * user. The downstream Auth0 callback (separate PR) will branch on this
+ * field to create the right org type.
+ */
+export type SignupFunnel = "reseller" | "direct";
+
+export const SIGNUP_FUNNELS: readonly SignupFunnel[] = ["reseller", "direct"];
+
+export function isSignupFunnel(value: unknown): value is SignupFunnel {
+  return (
+    typeof value === "string" &&
+    (SIGNUP_FUNNELS as readonly string[]).includes(value)
+  );
+}
+
 interface RenderSignupPageOptions {
   error?: string;
   email?: string;
@@ -141,6 +170,14 @@ interface RenderSignupPageOptions {
    *  test-overridability + future scope where the URL becomes
    *  org-customizable. */
   consentDocumentUrl?: string;
+  /** Pre-selected funnel on re-render (sticky form state after a
+   *  validation error). Defaults to 'reseller' on first render — that is
+   *  the most common case (MSPs are the primary audience) and preserves
+   *  the pre-picker behavior where every signup was funneled as reseller.
+   *  Adding the picker is non-breaking by-construction: the default is
+   *  the pre-picker value, so a user who ignores the picker gets the same
+   *  experience as before. */
+  funnel?: SignupFunnel;
 }
 
 export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
@@ -156,6 +193,13 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
   const errorBlock = opts.error
     ? `<div class="error-box" role="alert">${escapeHtml(opts.error)}</div>`
     : "";
+  // Default the funnel pick to 'reseller' on first render — pre-picker
+  // behavior. Re-render uses the user's prior choice for sticky form
+  // state. The two values are constants so no escapeHtml needed (they
+  // appear as the `value=` attribute and in the `checked` discriminator).
+  const funnel: SignupFunnel = isSignupFunnel(opts.funnel)
+    ? opts.funnel
+    : "reseller";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -204,6 +248,33 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
       font-family: inherit;
     }
     .form-row input:focus { outline: none; border-color: var(--accent); }
+    /* Org-type picker — 2026-06-13 (boss) sweep-2 (2). Two stacked radio
+     * tiles. Whole tile is clickable (label wraps the radio). Selected
+     * tile gets the accent border + a subtle fill so the choice is
+     * obvious even at a glance. */
+    .funnel-picker { display: grid; gap: 8px; }
+    .funnel-tile {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .funnel-tile:hover { border-color: var(--accent); }
+    .funnel-tile input[type="radio"] { margin-top: 3px; }
+    .funnel-tile input[type="radio"]:checked + .funnel-tile-copy {
+      color: var(--text-primary);
+    }
+    .funnel-tile:has(input[type="radio"]:checked) {
+      border-color: var(--accent);
+      background: var(--bg-input-selected, var(--bg-input));
+    }
+    .funnel-tile-copy { display: block; }
+    .funnel-tile-title { display: block; font-weight: 600; font-size: 14px; color: var(--text-primary); }
+    .funnel-tile-desc { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .btn-primary {
       display: block;
       width: 100%;
@@ -232,9 +303,32 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
     <div class="card">
       <div class="brand">${brandName}</div>
       <h1>Start your Conduit trial</h1>
-      <p class="subtitle">Spin up a reseller workspace and connect your first customer in under fifteen minutes.</p>
+      <p class="subtitle">${
+        funnel === "direct"
+          ? "Spin up a workspace for your team and connect your first MCP server in under fifteen minutes."
+          : "Spin up a reseller workspace and connect your first customer in under fifteen minutes."
+      }</p>
       ${errorBlock}
       <form method="POST" action="/signup" novalidate>
+        <div class="form-row">
+          <label>Who is this for?</label>
+          <div class="funnel-picker" role="radiogroup" aria-label="Org type">
+            <label class="funnel-tile">
+              <input type="radio" name="funnel" value="reseller"${funnel === "reseller" ? " checked" : ""} />
+              <span class="funnel-tile-copy">
+                <span class="funnel-tile-title">MSP / Reseller</span>
+                <span class="funnel-tile-desc">I'm onboarding multiple downstream customer orgs and want the reseller console.</span>
+              </span>
+            </label>
+            <label class="funnel-tile">
+              <input type="radio" name="funnel" value="direct"${funnel === "direct" ? " checked" : ""} />
+              <span class="funnel-tile-copy">
+                <span class="funnel-tile-title">Direct customer</span>
+                <span class="funnel-tile-desc">It's just my team — no downstream customers to manage.</span>
+              </span>
+            </label>
+          </div>
+        </div>
         <div class="form-row">
           <label for="email">Work email</label>
           <input type="email" id="email" name="email" value="${emailValue}" placeholder="you@yourmsp.com" required autocomplete="email" />
@@ -333,15 +427,28 @@ export function signupRoutes(deps: SignupRoutesDeps) {
     });
 
     // POST /signup — validate + rate-limit + capture MSA consent + persist + redirect to Auth0
-    app.post<{ Body: { email?: string; accept_msa?: string } }>(
+    app.post<{
+      Body: { email?: string; accept_msa?: string; funnel?: string };
+    }>(
       "/signup",
       async (
         request: FastifyRequest<{
-          Body: { email?: string; accept_msa?: string };
+          Body: { email?: string; accept_msa?: string; funnel?: string };
         }>,
         reply: FastifyReply,
       ) => {
         const ip = request.ip || "unknown";
+        // Funnel resolution — accept the form-posted value if it is in the
+        // whitelist, fall back to 'reseller' otherwise. The fallback is
+        // intentional rather than an error response: any unrecognized
+        // value (missing field on an older client, tampered body, copy-
+        // paste from somewhere) should silently land in the pre-picker
+        // default funnel rather than surface a "your signup failed"
+        // 400 to a user who did nothing wrong. The whitelist gate
+        // protects the DB column from arbitrary string injection.
+        const funnel: SignupFunnel = isSignupFunnel(request.body?.funnel)
+          ? request.body.funnel
+          : "reseller";
         const limit = limiter.check(ip);
         if (!limit.allowed) {
           reply.header(
@@ -354,6 +461,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             .send(
               renderSignupPage({
                 error: "Too many signup attempts. Please try again later.",
+                funnel,
               }),
             );
         }
@@ -374,6 +482,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
                 // user doesn't have to re-check it. The HTML form posts the
                 // checkbox as 'accept_msa=1' when checked; absent otherwise.
                 consentChecked: request.body?.accept_msa === "1",
+                funnel,
               }),
             );
         }
@@ -396,6 +505,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
                   "Please accept the WYRE AI Master Service Agreement to continue.",
                 email,
                 consentChecked: false,
+                funnel,
               }),
             );
         }
@@ -413,6 +523,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
                   "Signup is temporarily unavailable. Please try again shortly.",
                 email,
                 consentChecked: true,
+                funnel,
               }),
             );
         }
@@ -441,6 +552,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
                   "MSA is temporarily unavailable. Please try again in a moment.",
                 email,
                 consentChecked: true,
+                funnel,
               }),
             );
         }
@@ -458,7 +570,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
             VALUES (
               ${intentId},
               ${email},
-              ${"reseller"},
+              ${funnel},
               ${ip},
               ${request.headers["user-agent"] ?? null},
               ${true},
@@ -478,6 +590,7 @@ export function signupRoutes(deps: SignupRoutesDeps) {
                 error: "Something went wrong. Please try again.",
                 email,
                 consentChecked: true,
+                funnel,
               }),
             );
         }
