@@ -2,6 +2,7 @@ import { getSql, type Sql } from '../db/context.js';
 import { nanoid } from 'nanoid';
 import { getDefaultPlan } from '../billing/plan-catalog.js';
 import type { OrgBillingProvisioner } from './org-billing-provisioner.js';
+import type { OrgAuth0Provisioner, OrgAuth0Rollback } from './org-auth0-provisioner.js';
 import type { SeatSyncer } from '../billing/seat-syncer.js';
 import { isAcceptInvitationError } from './invitation-service.js';
 export { isAcceptInvitationError } from './invitation-service.js';
@@ -255,6 +256,19 @@ export interface OrgServiceOptions {
    * skip-semantics as billingProvisioner.
    */
   seatSyncer?: SeatSyncer;
+  /**
+   * Optional Auth0-side provisioner + rollback pair (Multi-IdP foundation
+   * slice 3 — June 29 launch directive 2026-06-13). When present, every
+   * createOrg call pair-creates an Auth0 Organization peer BEFORE the DB
+   * INSERT and persists the returned id to organizations.auth0_org_id
+   * (column from migration 046, slice 1). When absent — tests, dev,
+   * production-without-M2M-creds — the org row is created with
+   * auth0_org_id=NULL and the auth flow falls through to legacy
+   * Universal Login. BOTH-OR-NEITHER discipline: see
+   * org-auth0-provisioner.ts docstring for the failure-mode rationale.
+   */
+  auth0Provisioner?: OrgAuth0Provisioner;
+  auth0Rollback?: OrgAuth0Rollback;
 }
 
 export class OrgService {
@@ -264,6 +278,8 @@ export class OrgService {
   private teamService: TeamService;
   private billingProvisioner?: OrgBillingProvisioner;
   private seatSyncer?: SeatSyncer;
+  private auth0Provisioner?: OrgAuth0Provisioner;
+  private auth0Rollback?: OrgAuth0Rollback;
 
   /** Resolves to the active request- or system-path connection. See src/db/context.ts. */
   private get sql(): Sql {
@@ -277,6 +293,8 @@ export class OrgService {
     this.teamService = new TeamService();
     this.billingProvisioner = options.billingProvisioner;
     this.seatSyncer = options.seatSyncer;
+    this.auth0Provisioner = options.auth0Provisioner;
+    this.auth0Rollback = options.auth0Rollback;
   }
 
   /**
@@ -298,6 +316,19 @@ export class OrgService {
    */
   setSeatSyncer(syncer: SeatSyncer): void {
     this.seatSyncer = syncer;
+  }
+
+  /**
+   * Post-construction wiring for the Auth0 org-provisioner + its rollback
+   * hook. Same cycle-breaking pattern as setBillingProvisioner — index.ts
+   * constructs orgService first, then the Auth0ManagementClient (which
+   * depends only on config + fetch), then calls this setter with the pair
+   * returned from createAuth0OrgProvisioner. Tests use the constructor
+   * option instead.
+   */
+  setAuth0Provisioner(provisioner: OrgAuth0Provisioner, rollback: OrgAuth0Rollback): void {
+    this.auth0Provisioner = provisioner;
+    this.auth0Rollback = rollback;
   }
 
   /**
@@ -766,17 +797,61 @@ export class OrgService {
       }
     }
 
-    const rows = await this.sql<OrgRow[]>`
-      INSERT INTO organizations (id, name, owner_id, plan, type, parent_org_id)
-      VALUES (${orgId}, ${name}, ${ownerId}, ${orgPlan}, ${orgType}, ${parentOrgId})
-      RETURNING *
-    `;
+    // Multi-IdP foundation slice 3 (June 29 launch directive 2026-06-13):
+    // pair-create the Auth0 Organization BEFORE the DB INSERT so that an
+    // Auth0-side failure results in zero DB state (no orphan org row to
+    // roll back). BOTH-OR-NEITHER discipline rationale lives at the
+    // src/org/org-auth0-provisioner.ts docstring.
+    //
+    // Provisioner-absent (tests, dev environments without M2M creds,
+    // prod-without-M2M-creds) → auth0OrgId stays null and the legacy
+    // Universal Login path stays active (slice 1 migration 046 documents
+    // this nullable contract on Organization.auth0OrgId).
+    let auth0OrgId: string | null = null;
+    if (this.auth0Provisioner) {
+      const auth0Result = await this.auth0Provisioner({
+        orgId,
+        orgName: name,
+        orgType,
+      });
+      auth0OrgId = auth0Result.auth0OrgId;
+    }
 
-    // Add owner as first member
-    await this.sql`
-      INSERT INTO org_members (id, org_id, user_id, role, joined_at)
-      VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
-    `;
+    // DB INSERT block wrapped in try/catch so a post-Auth0 failure can
+    // roll back the Auth0-side state (deleteOrganization) before the
+    // exception propagates — preserves BOTH-OR-NEITHER even when the
+    // failure happens AFTER the Auth0 succeed.
+    let rows: OrgRow[];
+    try {
+      rows = await this.sql<OrgRow[]>`
+        INSERT INTO organizations (id, name, owner_id, plan, type, parent_org_id, auth0_org_id)
+        VALUES (${orgId}, ${name}, ${ownerId}, ${orgPlan}, ${orgType}, ${parentOrgId}, ${auth0OrgId})
+        RETURNING *
+      `;
+
+      // Add owner as first member
+      await this.sql`
+        INSERT INTO org_members (id, org_id, user_id, role, joined_at)
+        VALUES (${memberId}, ${orgId}, ${ownerId}, 'owner', NOW())
+      `;
+    } catch (err) {
+      // Roll back the Auth0-side state if we got one before the DB INSERT
+      // failed. The rollback is best-effort — a rollback failure here is
+      // logged and swallowed; the original DB error is the load-bearing
+      // signal the caller needs to handle. Surfacing both would muddle
+      // the error contract.
+      if (auth0OrgId && this.auth0Rollback) {
+        try {
+          await this.auth0Rollback(auth0OrgId);
+        } catch (rollbackErr) {
+          log?.error(
+            { err: rollbackErr, auth0OrgId, orgId },
+            'Auth0 rollback failed after DB INSERT failure — manual cleanup may be needed',
+          );
+        }
+      }
+      throw err;
+    }
 
     // Notify new signup (from main — fire-and-forget signup analytics).
     if (log) {

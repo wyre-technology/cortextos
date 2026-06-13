@@ -26,6 +26,8 @@ import { TokenStore } from './oauth/token-store.js';
 import Stripe from 'stripe';
 import { OrgService } from './org/org-service.js';
 import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
+import { Auth0ManagementClient } from './auth/auth0-management.js';
+import { createAuth0OrgProvisioner } from './org/org-auth0-provisioner.js';
 import { DefaultBillingGate } from './billing/gate.js';
 import { DefaultSeatService } from './billing/seat-service.js';
 import { createConduitSeatSyncer } from './billing/seat-syncer.js';
@@ -269,6 +271,27 @@ if (config.stripeSecretKey) {
     }),
   );
 }
+
+// Multi-IdP foundation slice 3 (June 29 launch directive 2026-06-13): wire
+// the Auth0 org-provisioner alongside the billing pair. createIfConfigured
+// returns null when AUTH0_M2M_CLIENT_ID/SECRET are unset (dev, test, prod-
+// without-creds); createAuth0OrgProvisioner returns null when the client
+// is null. Either null path means we never call setAuth0Provisioner and
+// every createOrg falls through to the legacy null-auth0OrgId path. When
+// both creds + the client are configured, BOTH-OR-NEITHER applies:
+// Auth0 create runs BEFORE the DB INSERT, with rollback on post-Auth0 DB
+// failure (see src/org/org-auth0-provisioner.ts for the discipline-doc).
+const auth0ManagementClient = Auth0ManagementClient.createIfConfigured();
+const auth0OrgPair = createAuth0OrgProvisioner(auth0ManagementClient);
+if (auth0OrgPair) {
+  orgService.setAuth0Provisioner(auth0OrgPair.provisioner, auth0OrgPair.rollback);
+  app.log.info('Auth0 Management API client configured — org-create pairs with Auth0 Organization peer.');
+} else {
+  app.log.info(
+    'Auth0 Management API client not configured (AUTH0_M2M_CLIENT_ID/SECRET unset) — org-create uses legacy Universal Login path.',
+  );
+}
+
 const domainService = new OrgDomainService();
 const credentialService = new CredentialService();
 const tokenStore = new TokenStore();

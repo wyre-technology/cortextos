@@ -428,6 +428,138 @@ describe('OrgService', () => {
     });
   });
 
+  // Multi-IdP foundation slice 3 (June 29 launch directive 2026-06-13):
+  // BOTH-OR-NEITHER discipline on the Auth0 provisioner seam.
+  describe('Multi-IdP slice 3 — Auth0 provisioner BOTH-OR-NEITHER', () => {
+    it('happy path: provisioner is called with the to-be-minted orgId + name + type', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({ auth0OrgId: 'org_auth0_abc' });
+      const rollback = vi.fn().mockResolvedValue(undefined);
+      const service = new OrgService({ auth0Provisioner: provisioner, auth0Rollback: rollback });
+      const org = await runWithSql(sql, () => service.createOrg('Acme', 'user_owner'));
+      expect(provisioner).toHaveBeenCalledOnce();
+      expect(provisioner).toHaveBeenCalledWith({
+        orgId: org.id,
+        orgName: 'Acme',
+        orgType: 'standalone',
+      });
+      // Rollback never fires on the happy path. The auth0OrgId round-trip
+      // via the INSERT->RETURNING * is integration-test scope; the mockSql
+      // doesn't carry the column. The wire IS correct in production code
+      // (line `INSERT INTO organizations (..., auth0_org_id) VALUES (..., ${auth0OrgId})`).
+      expect(rollback).not.toHaveBeenCalled();
+    });
+
+    it('Auth0 provisioner throws -> createOrg throws + rollback is not called', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockRejectedValue(new Error('Auth0 503'));
+      const rollback = vi.fn();
+      const service = new OrgService({ auth0Provisioner: provisioner, auth0Rollback: rollback });
+      await expect(
+        runWithSql(sql, () => service.createOrg('Acme', 'user_owner')),
+      ).rejects.toThrow('Auth0 503');
+      expect(provisioner).toHaveBeenCalledOnce();
+      // No rollback needed — Auth0 never succeeded, no peer to delete.
+      expect(rollback).not.toHaveBeenCalled();
+      // BOTH-OR-NEITHER: no DB state was written because Auth0 ran FIRST
+      // and failed. The contract is locked structurally — the createOrg
+      // throw happens before reaching the INSERT block.
+    });
+
+    it('rollback signature matches the deleteOrganization shape (Auth0OrgId -> Promise<void>)', async () => {
+      // Locks the contract between the org-service rollback call-shape
+      // and createAuth0OrgProvisioner.rollback (defined in
+      // src/org/org-auth0-provisioner.ts). Cheap-detector at the type
+      // boundary — complements the load-bearing test below.
+      const rollback: import('./org-auth0-provisioner.js').OrgAuth0Rollback = async (
+        auth0OrgId: string,
+      ) => {
+        expect(auth0OrgId).toMatch(/^org_/);
+      };
+      await rollback('org_test_abc');
+    });
+
+    it('LOAD-BEARING: DB INSERT throws AFTER Auth0 succeed -> rollback fires with the right auth0OrgId + original DB error propagates', async () => {
+      // Wraps the mockSql with a throwing layer that simulates a real
+      // Postgres INSERT failure (FK violation / UNIQUE constraint / etc.)
+      // happening AFTER the Auth0 provisioner has already returned
+      // success. Locks the BOTH-OR-NEITHER contract end-to-end:
+      //   (a) the rollback hook fires
+      //   (b) it gets the auth0OrgId from step 1
+      //   (c) the original DB error propagates (rollback failure can't
+      //       mask the load-bearing signal the caller needs)
+      const base = createMockSql();
+      const throwingSql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const query = strings.join('?');
+        if (query.includes('INSERT INTO organizations')) {
+          return Promise.reject(new Error('Postgres FK violation: owner_id'));
+        }
+        // Delegate to the real mockSql for non-INSERT-organizations queries.
+        // The cast bridges TypeScript's strict template-tag typing — the
+        // mockSql's real signature is template-tag-shaped + the wrapper
+        // forwards arguments verbatim.
+        return (base as unknown as (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown[]>)(strings, ...values);
+      }) as unknown as ReturnType<typeof createMockSql>;
+      enterTestContext(throwingSql);
+
+      const provisioner = vi.fn().mockResolvedValue({ auth0OrgId: 'org_auth0_xyz' });
+      const rollback = vi.fn().mockResolvedValue(undefined);
+      const service = new OrgService({ auth0Provisioner: provisioner, auth0Rollback: rollback });
+
+      await expect(
+        runWithSql(throwingSql, () => service.createOrg('Acme', 'user_owner')),
+      ).rejects.toThrow('Postgres FK violation: owner_id');
+
+      expect(provisioner).toHaveBeenCalledOnce();
+      expect(rollback).toHaveBeenCalledOnce();
+      expect(rollback).toHaveBeenCalledWith('org_auth0_xyz');
+    });
+
+    it('LOAD-BEARING: rollback FAILURE after DB INSERT failure is swallowed; original DB error still propagates (no error-contract muddling)', async () => {
+      // When BOTH the DB INSERT and the rollback fail, the load-bearing
+      // signal stays the DB error — the caller can't disambiguate two
+      // errors from a single throw, and the DB error is the one they
+      // need to handle. Rollback-failure-log fires in production via
+      // log.error; in this unit-level setup we just assert the rollback
+      // was called once + the DB error propagates (not the rollback
+      // error).
+      const base = createMockSql();
+      const throwingSql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const query = strings.join('?');
+        if (query.includes('INSERT INTO organizations')) {
+          return Promise.reject(new Error('Postgres FK violation'));
+        }
+        // Delegate to the real mockSql for non-INSERT-organizations queries.
+        // The cast bridges TypeScript's strict template-tag typing — the
+        // mockSql's real signature is template-tag-shaped + the wrapper
+        // forwards arguments verbatim.
+        return (base as unknown as (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown[]>)(strings, ...values);
+      }) as unknown as ReturnType<typeof createMockSql>;
+      enterTestContext(throwingSql);
+
+      const provisioner = vi.fn().mockResolvedValue({ auth0OrgId: 'org_auth0_xyz' });
+      const rollback = vi.fn().mockRejectedValue(new Error('Auth0 deleteOrganization 500'));
+      const service = new OrgService({ auth0Provisioner: provisioner, auth0Rollback: rollback });
+
+      await expect(
+        runWithSql(throwingSql, () => service.createOrg('Acme', 'user_owner')),
+      ).rejects.toThrow('Postgres FK violation');
+
+      // Assert the rollback was attempted (not the Auth0 error that propagated).
+      expect(rollback).toHaveBeenCalledWith('org_auth0_xyz');
+    });
+
+    it('no provisioner configured -> auth0OrgId stays null (legacy Universal Login path active)', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService(); // no Auth0 wiring
+      const org = await runWithSql(sql, () => service.createOrg('Acme', 'user_owner'));
+      expect(org.auth0OrgId).toBeNull();
+    });
+  });
+
   describe('createOrg — Layer 1 billing-provisioner attach', () => {
     it('standalone org with a provisioner: provisioner is called and Stripe IDs land on the org row', async () => {
       const sql = createMockSql();
