@@ -1,5 +1,5 @@
-import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import type { Organization } from "../../org/org-service.js";
+import { escapeHtml } from "../helpers.js";
 
 export interface TeamOverviewData {
   org: Organization;
@@ -10,11 +10,15 @@ export function renderTeamOverview(data: TeamOverviewData): string {
   const { org, memberCount } = data;
   const orgName = escapeHtml(org.name);
 
+  // 2026-06-13 reseller-side OC1-class fix (boss). The "Pro" plan-badge is
+  // a holdover from the legacy BUSINESS/PRO/FREE tier system that flat-
+  // pricing made misleading (one plan = "conduit", no tier-choice to
+  // convey). Same fix shape as PR #362 RC4 on customer-LIST + customer-
+  // DETAIL + customer-Settings tab. Subtitle now just shows member count.
   return `
     <h1 style="margin-bottom:4px">${orgName}</h1>
     <p class="section-desc">
-      <span class="plan-badge pro" style="margin-right:8px">Pro</span>
-      ${memberCount} member${memberCount !== 1 ? 's' : ''}
+      ${memberCount} member${memberCount !== 1 ? "s" : ""}
     </p>
 
     <div class="org-section" style="margin-top:24px">
