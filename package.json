@@ -43,6 +43,7 @@
     "nanoid": "^5.1.11",
     "openid-client": "^6.8.4",
     "postgres": "^3.4.9",
+    "samlify": "^2.13.1",
     "scim-patch": "^0.9.1",
     "stripe": "^22.1.1",
     "ws": "^8.20.1",

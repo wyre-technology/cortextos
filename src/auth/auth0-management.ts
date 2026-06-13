@@ -77,6 +77,46 @@ export interface Auth0OrganizationResponse {
   metadata?: Record<string, string>;
 }
 
+/**
+ * Auth0 Connection create options (Multi-IdP slice 7).
+ *
+ * `name` must be alphanumeric + hyphens + underscores, lowercase. The
+ * SAML wizard derives this from the orgId + a sanitized IdP entity id.
+ *
+ * `strategy` slugs supported at launch:
+ *   - 'samlp' — SAML 2.0
+ *   - 'oidc'  — OpenID Connect (post-launch)
+ *
+ * `options` carries the strategy-specific config. For 'samlp' the wizard
+ * fills it from the parsed SAML metadata (see src/auth/saml-metadata-
+ * parser.ts). Caller-side type narrowing of `options` lives at the wizard
+ * layer; this surface accepts any record so the client stays strategy-
+ * agnostic and any future strategy slug works without a client release.
+ */
+export interface CreateConnectionOptions {
+  name: string;
+  strategy: 'samlp' | 'oidc';
+  options: Record<string, unknown>;
+  /**
+   * Auth0 client_ids this connection applies to. Optional — when omitted
+   * Auth0 applies the connection to all clients in the tenant. The wizard
+   * typically passes the Conduit user-facing app client_id so the
+   * connection is scoped to the application, not the whole tenant.
+   */
+  enabledClients?: string[];
+  /** Human-readable display name. Defaults to `name` if omitted. */
+  displayName?: string;
+  /** Arbitrary string-keyed metadata stored on the connection. */
+  metadata?: Record<string, string>;
+}
+
+export interface Auth0ConnectionResponse {
+  id: string;
+  name: string;
+  strategy: string;
+  display_name?: string;
+}
+
 interface CachedToken {
   accessToken: string;
   /** Epoch ms at which the token expires. */
@@ -149,6 +189,48 @@ export class Auth0ManagementClient {
     await this.request<unknown>(
       'DELETE',
       `/api/v2/organizations/${encodeURIComponent(auth0OrgId)}`,
+    );
+  }
+
+  /**
+   * Create an Auth0 Connection (Multi-IdP slice 7 — June 29 launch).
+   *
+   * Used by the SAML wizard: pasted SAML metadata XML is parsed via the
+   * src/auth/saml-metadata-parser helper into the `options` shape Auth0
+   * expects, then submitted here. Returns the connection id (`con_<alnum>`)
+   * that the wizard persists to org_idp_connections.auth0_connection_id.
+   *
+   * Strategy slugs Auth0 supports for our launch targets:
+   *   - 'samlp'    — SAML 2.0 (Okta, ADFS, Azure AD via SAML)
+   *   - 'oidc'     — OpenID Connect (Google direct, JumpCloud)
+   *   - 'google-oauth2' — Google OAuth2 (alternate to the OIDC connection)
+   * Slice 7 ships the SAML path; OIDC + others are post-launch.
+   */
+  async createConnection(opts: CreateConnectionOptions): Promise<Auth0ConnectionResponse> {
+    const body: Record<string, unknown> = {
+      name: opts.name,
+      strategy: opts.strategy,
+      options: opts.options,
+    };
+    if (opts.enabledClients) body.enabled_clients = opts.enabledClients;
+    if (opts.displayName) body.display_name = opts.displayName;
+    if (opts.metadata) body.metadata = opts.metadata;
+    return this.request<Auth0ConnectionResponse>('POST', '/api/v2/connections', body);
+  }
+
+  /**
+   * Delete an Auth0 Connection. Called from the slice-7 wizard's rollback
+   * path when the post-Auth0 Conduit DB INSERT fails AFTER createConnection
+   * (and optionally enableConnection) succeeded. Same uniform shape as
+   * slice-3's deleteOrganization — Auth0 cascades the connection deletion
+   * through any /enabled_connections associations automatically, so a
+   * single deleteConnection serves as the rollback for both create-only
+   * and create+enable failure paths.
+   */
+  async deleteConnection(connectionId: string): Promise<void> {
+    await this.request<unknown>(
+      'DELETE',
+      `/api/v2/connections/${encodeURIComponent(connectionId)}`,
     );
   }
 

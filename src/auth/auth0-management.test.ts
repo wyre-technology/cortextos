@@ -295,4 +295,72 @@ describe('Auth0ManagementClient — operation contracts', () => {
     expect(f.calls[1].method).toBe('DELETE');
     expect(f.calls[1].url).toContain('/api/v2/organizations/org_aaa');
   });
+
+  // Multi-IdP slice 7: createConnection + deleteConnection operations.
+  // Wire-format + URL-encoding defense + cascade rollback contract.
+
+  it('createConnection POSTs name + strategy + options + optional enabled_clients/display_name/metadata', async () => {
+    f.enqueueOk({ access_token: 'tok1', expires_in: 86400 });
+    f.enqueueOk({
+      id: 'con_xyz',
+      name: 'conduit-org-abc-saml',
+      strategy: 'samlp',
+    });
+    await client.createConnection({
+      name: 'conduit-org-abc-saml',
+      strategy: 'samlp',
+      options: {
+        signInEndpoint: 'https://idp.example.com/sso',
+        entityId: 'https://idp.example.com',
+      },
+      enabledClients: ['client_id_one'],
+      displayName: 'Acme SAML',
+      metadata: { conduit_org_id: 'org_abc' },
+    });
+    const call = f.calls[1];
+    expect(call.url).toContain('/api/v2/connections');
+    expect(call.method).toBe('POST');
+    const body = JSON.parse(call.body!);
+    expect(body).toEqual({
+      name: 'conduit-org-abc-saml',
+      strategy: 'samlp',
+      options: {
+        signInEndpoint: 'https://idp.example.com/sso',
+        entityId: 'https://idp.example.com',
+      },
+      enabled_clients: ['client_id_one'],
+      display_name: 'Acme SAML',
+      metadata: { conduit_org_id: 'org_abc' },
+    });
+  });
+
+  it('createConnection omits optional fields when absent (clean wire-format)', async () => {
+    f.enqueueOk({ access_token: 'tok1', expires_in: 86400 });
+    f.enqueueOk({ id: 'con_xyz', name: 'minimal', strategy: 'samlp' });
+    await client.createConnection({
+      name: 'minimal',
+      strategy: 'samlp',
+      options: {},
+    });
+    const body = JSON.parse(f.calls[1].body!);
+    expect(body).toEqual({ name: 'minimal', strategy: 'samlp', options: {} });
+    expect('enabled_clients' in body).toBe(false);
+    expect('display_name' in body).toBe(false);
+    expect('metadata' in body).toBe(false);
+  });
+
+  it('deleteConnection issues DELETE + accepts 204 (rollback path cascade)', async () => {
+    f.enqueueOk({ access_token: 'tok1', expires_in: 86400 });
+    f.enqueueNoContent();
+    await client.deleteConnection('con_xyz');
+    expect(f.calls[1].method).toBe('DELETE');
+    expect(f.calls[1].url).toContain('/api/v2/connections/con_xyz');
+  });
+
+  it('deleteConnection url-encodes the connection id (defense vs pathological ids)', async () => {
+    f.enqueueOk({ access_token: 'tok1', expires_in: 86400 });
+    f.enqueueNoContent();
+    await client.deleteConnection('con id with spaces');
+    expect(f.calls[1].url).toContain('/api/v2/connections/con%20id%20with%20spaces');
+  });
 });
