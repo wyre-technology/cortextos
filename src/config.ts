@@ -79,6 +79,16 @@ export const config = {
   auth0ClientSecret: process.env.AUTH0_CLIENT_SECRET ?? '',
   auth0CallbackUrl: process.env.AUTH0_CALLBACK_URL ?? '',  // e.g. "https://gateway.example.com/auth/callback"
 
+  // Auth0 Management API (Multi-IdP foundation slice 2 — June 29 launch).
+  // M2M credentials for the Management API. Used to create Auth0 Org peers
+  // when Conduit orgs are created (slice 3) + enable connections per-org +
+  // delete on org-removal. Distinct from the auth0Client* pair above which
+  // is the user-facing app's OIDC client. When unset, the Management client
+  // disables itself + the slice-3 provisioning hook skips creating an Auth0
+  // Org peer (existing legacy Universal Login path continues to work).
+  auth0M2mClientId: process.env.AUTH0_M2M_CLIENT_ID ?? '',
+  auth0M2mClientSecret: process.env.AUTH0_M2M_CLIENT_SECRET ?? '',
+
   // Azure AD OIDC configuration (multi-tenant).
   // MICROSOFT_CLIENT_ID/SECRET are accepted as fallbacks for the legacy
   // env-naming convention used by mcp-gateway. Deployments that predate
