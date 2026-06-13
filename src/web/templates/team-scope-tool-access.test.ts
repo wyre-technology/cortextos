@@ -22,6 +22,7 @@ const org: Organization = {
   stripeSubscriptionId: null,
   type: 'reseller',
   parentOrgId: null,
+  auth0OrgId: null,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-05-31T00:00:00Z',
 };

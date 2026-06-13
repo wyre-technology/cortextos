@@ -342,6 +342,7 @@ describe('makeRequireResellerOrCustomerAccess', () => {
       stripeSubscriptionId: null,
       type: parent ? 'customer' : 'standalone',
       parentOrgId: parent,
+      auth0OrgId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

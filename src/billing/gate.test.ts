@@ -20,6 +20,7 @@ function makeOrg(overrides: Partial<Organization> = {}): Organization {
     stripeSubscriptionId: null,
     type: 'standalone',
     parentOrgId: null,
+    auth0OrgId: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,

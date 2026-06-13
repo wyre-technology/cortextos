@@ -106,6 +106,7 @@ function orgOfType(type: Organization['type']): Organization {
     stripeSubscriptionId: null,
     type,
     parentOrgId: null,
+    auth0OrgId: null,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-05-16T00:00:00Z',
   };

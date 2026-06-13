@@ -411,6 +411,23 @@ describe('OrgService', () => {
     expect(membership!.role).toBe('owner');
   });
 
+  // Multi-IdP foundation slice 1 (June 29 launch directive 2026-06-13):
+  // Lock that the Organization surface carries auth0OrgId and defaults to
+  // null when the column is absent (pre-provisioning state). The end-to-end
+  // round-trip (slice-3 provisioning UPDATE then getOrg returns the new
+  // value) lives at integration-test layer — the unit mock here cannot
+  // simulate the DB column write without rebuilding mockSql against the
+  // migrated schema, which is out-of-scope for slice-1.
+  describe('Multi-IdP slice 1 — Organization.auth0OrgId surface', () => {
+    it('newly-created org returns auth0OrgId: null (no Auth0 Org peer yet)', async () => {
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new OrgService();
+      const org = await runWithSql(sql, () => service.createOrg('Acme', 'user_owner'));
+      expect(org.auth0OrgId).toBeNull();
+    });
+  });
+
   describe('createOrg — Layer 1 billing-provisioner attach', () => {
     it('standalone org with a provisioner: provisioner is called and Stripe IDs land on the org row', async () => {
       const sql = createMockSql();

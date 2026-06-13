@@ -41,6 +41,20 @@ export interface Organization {
   stripeSubscriptionId: string | null;
   type: OrgType;
   parentOrgId: string | null;
+  /**
+   * Paired Auth0 Organization id (`org_<alnum>`). Nullable while pre-launch
+   * orgs backfill + while the Management API provisioning slice ships.
+   *
+   * Multi-IdP foundation (June 29 launch directive 2026-06-13): the Auth0
+   * Org id is the routing key for per-org IdP connections (Okta, JumpCloud,
+   * Google direct). The authorize URL builder reads this to pass the
+   * `organization` param to Auth0; the callback handler validates the
+   * returned id_token's `org_id` claim against it.
+   *
+   * NULL = "Conduit org without an Auth0 Org peer yet" — the auth flow
+   * falls through to legacy Universal Login.
+   */
+  auth0OrgId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -192,6 +206,7 @@ interface OrgRow {
   stripe_subscription_id: string | null;
   type: string | null;
   parent_org_id: string | null;
+  auth0_org_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -648,6 +663,13 @@ export class OrgService {
       stripeSubscriptionId: row.stripe_subscription_id,
       type: (row.type as OrgType | null) ?? 'standalone',
       parentOrgId: row.parent_org_id,
+      // Coalesce `undefined` to `null` defensively: the mock SQL used in
+      // unit tests doesn't return rows with the auth0_org_id column until
+      // the migration runs against the test container, so an INSERT-result
+      // row mid-test can omit the field. Production rows + migrated rows
+      // always have a literal value (string or null). Mapping `undefined`
+      // to `null` keeps the type honest as `string | null` for callers.
+      auth0OrgId: row.auth0_org_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

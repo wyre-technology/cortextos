@@ -66,6 +66,7 @@ function makeOrg(partial: Partial<Organization> & Pick<Organization, 'id' | 'typ
     stripeSubscriptionId: partial.stripeSubscriptionId ?? null,
     type: partial.type,
     parentOrgId: partial.parentOrgId ?? null,
+    auth0OrgId: null,
     createdAt: partial.createdAt ?? now,
     updatedAt: partial.updatedAt ?? now,
   };
