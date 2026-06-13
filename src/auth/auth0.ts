@@ -205,11 +205,22 @@ export function auth0Plugin(deps: Auth0PluginDeps = {}) {
     // GET /auth/login
     // -----------------------------------------------------------------------
 
-    // Shared login/signup redirect logic
+    // Shared login/signup redirect logic.
+    //
+    // Multi-IdP foundation slice 4 (June 29 launch directive 2026-06-13):
+    // optional `auth0OrgId` param threads through to oidc.buildAuthorizationUrl
+    // as `organization=<auth0_org_id>`. When present, Auth0 routes the user
+    // to the org's enabled IdP connections (Okta SAML, JumpCloud, Google
+    // direct, etc.) instead of the WYRE default Universal Login connection
+    // pool. The actual decision of WHEN to pass it (email-domain match,
+    // return_to context, post-signup callback flow) lives in a separate
+    // routing slice owned by pearl — slice 4 here just plumbs the optional
+    // param through so callers can pass it when they know the context.
     async function redirectToAuth0(
       request: FastifyRequest<{ Querystring: { return_to?: string } }>,
       reply: FastifyReply,
       screenHint?: string,
+      auth0OrgId?: string,
     ): Promise<void> {
       const codeVerifier = oidc.randomPKCECodeVerifier();
       const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier);
@@ -245,6 +256,13 @@ export function auth0Plugin(deps: Auth0PluginDeps = {}) {
       };
       if (screenHint) {
         params.screen_hint = screenHint;
+      }
+      if (auth0OrgId) {
+        // Per Auth0 Organizations API: passing `organization` scopes the
+        // authorize flow to that org's enabled connections. The returned
+        // id_token will carry an `org_id` claim equal to this value; the
+        // /auth/callback handler reads + logs it (slice 5).
+        params.organization = auth0OrgId;
       }
 
       const authUrl = oidc.buildAuthorizationUrl(oidcConfig, params);
@@ -330,6 +348,22 @@ export function auth0Plugin(deps: Auth0PluginDeps = {}) {
       // string 'true') is treated as unverified — gates downstream of this
       // field MUST fail closed.
       const emailVerified = claims.email_verified === true;
+
+      // Multi-IdP foundation slice 5 (June 29 launch directive 2026-06-13):
+      // when the authorize flow passed `organization=<auth0_org_id>` (slice
+      // 4), Auth0 emits the value back as the `org_id` claim on the id_token.
+      // Read it defensively + log for visibility. Strict-match validation
+      // against an expected value (e.g. cookie-stored) is gated on the
+      // pearl routing-slice that DECIDES when to pass the param in the
+      // first place; until that ships, we just observe + log to verify
+      // the round-trip works end-to-end against live Auth0.
+      const tokenOrgId = typeof claims.org_id === 'string' ? claims.org_id : null;
+      if (tokenOrgId) {
+        request.log.info(
+          { sub, email, tokenOrgId },
+          'auth0 callback: id_token carries org_id claim (Multi-IdP authorize-flow round-trip)',
+        );
+      }
 
       await bindShadowUserOnLogin(systemPool(), sub, email);
 
