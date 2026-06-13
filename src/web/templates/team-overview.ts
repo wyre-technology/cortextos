@@ -4,21 +4,35 @@ import { escapeHtml } from "../helpers.js";
 export interface TeamOverviewData {
   org: Organization;
   memberCount: number;
+  /**
+   * Reseller-side enrichment (2026-06-13 sweep-2 cluster-1 (4)): count of
+   * customer orgs nested under this reseller. Only meaningful for reseller-
+   * type orgs; routes pass it for `org.type === 'reseller'` and omit it
+   * for customer/standalone orgs. When present, the subtitle surfaces
+   * "X customers" alongside the member count so the reseller has at-a-
+   * glance context about the size of their managed fleet.
+   */
+  customerCount?: number;
 }
 
 export function renderTeamOverview(data: TeamOverviewData): string {
-  const { org, memberCount } = data;
+  const { org, memberCount, customerCount } = data;
   const orgName = escapeHtml(org.name);
 
   // 2026-06-13 reseller-side OC1-class fix (boss). The "Pro" plan-badge is
   // a holdover from the legacy BUSINESS/PRO/FREE tier system that flat-
   // pricing made misleading (one plan = "conduit", no tier-choice to
   // convey). Same fix shape as PR #362 RC4 on customer-LIST + customer-
-  // DETAIL + customer-Settings tab. Subtitle now just shows member count.
+  // DETAIL + customer-Settings tab. Subtitle now just shows member count
+  // (plus customer count when reseller-side).
+  const customerLine =
+    typeof customerCount === "number"
+      ? ` &middot; ${customerCount} customer${customerCount !== 1 ? "s" : ""}`
+      : "";
   return `
     <h1 style="margin-bottom:4px">${orgName}</h1>
     <p class="section-desc">
-      ${memberCount} member${memberCount !== 1 ? "s" : ""}
+      ${memberCount} member${memberCount !== 1 ? "s" : ""}${customerLine}
     </p>
 
     <div class="org-section" style="margin-top:24px">

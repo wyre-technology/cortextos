@@ -1742,6 +1742,18 @@ export function webRoutes(deps: WebRouteDeps) {
       const { user, org } = ctx;
 
       const members = await orgService.getMembers(org.id);
+      // 2026-06-13 sweep-2 cluster-1 (4) (boss): when the org is a reseller,
+      // surface the customers count alongside member count so the Overview
+      // header gives the reseller at-a-glance context about their managed
+      // fleet size. The query is scoped to parent_org_id = org.id AND
+      // type = 'customer' (same tenant boundary as getResellerHierarchy +
+      // customer-list — never a cross-tenant jump). Customer + standalone
+      // orgs skip the query entirely (no customerCount, subtitle unchanged).
+      let customerCount: number | undefined;
+      if (org.type === "reseller") {
+        const customers = await orgService.getCustomersOfReseller(org.id);
+        customerCount = customers.length;
+      }
 
       const html = renderLayout(
         {
@@ -1751,7 +1763,7 @@ export function webRoutes(deps: WebRouteDeps) {
           title: `${org.name} - Overview`,
           pageStyles: TEAM_OVERVIEW_STYLES,
         },
-        renderTeamOverview({ org, memberCount: members.length }),
+        renderTeamOverview({ org, memberCount: members.length, customerCount }),
       );
       return reply.type("text/html").send(html);
     });

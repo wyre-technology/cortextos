@@ -64,4 +64,45 @@ describe("renderTeamOverview", () => {
     expect(html).not.toContain("<script>x</script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  // 2026-06-13 sweep-2 cluster-1 (4) (boss): reseller-side enrichment of
+  // the Overview header subtitle. When the route handler determines the
+  // org is a reseller, it queries getCustomersOfReseller and passes the
+  // count through as customerCount. The template appends "X customer(s)"
+  // alongside the member count. Customer + standalone orgs skip the
+  // query (customerCount undefined) and render the pre-enrichment shape.
+  describe("customerCount enrichment (reseller-side Overview)", () => {
+    it("omits the customer line when customerCount is undefined (customer + standalone orgs)", () => {
+      const html = renderTeamOverview(data());
+      expect(html).not.toContain("customer");
+      expect(html).not.toMatch(/\d+\s+customer/);
+    });
+
+    it("appends '0 customers' when the reseller has no customers yet", () => {
+      const html = renderTeamOverview(data({ customerCount: 0 }));
+      expect(html).toContain("0 customers");
+    });
+
+    it("appends '1 customer' singular when the reseller has exactly one", () => {
+      const html = renderTeamOverview(data({ customerCount: 1 }));
+      expect(html).toMatch(/\b1 customer\b(?!s)/);
+    });
+
+    it("appends 'N customers' plural for N != 1", () => {
+      expect(renderTeamOverview(data({ customerCount: 7 }))).toContain(
+        "7 customers",
+      );
+      expect(renderTeamOverview(data({ customerCount: 42 }))).toContain(
+        "42 customers",
+      );
+    });
+
+    it("renders member count alongside customer count (both in subtitle)", () => {
+      const html = renderTeamOverview(
+        data({ memberCount: 5, customerCount: 12 }),
+      );
+      expect(html).toContain("5 members");
+      expect(html).toContain("12 customers");
+    });
+  });
 });
