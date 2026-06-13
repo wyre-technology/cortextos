@@ -13,6 +13,7 @@ import {
   BrandResolver,
   BrandResolverError,
   WYRE_DEFAULT_BRAND_ID,
+  toBrandConfig,
 } from './resolver.js';
 import { runWithSql } from '../db/context.js';
 
@@ -334,5 +335,177 @@ describe('BrandResolver', () => {
     expect(db.callCount).toBeGreaterThan(callsAfterFirst);
 
     vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toBrandConfig — RC2 PR-A escape-boundary + templateOverrides round-trip
+//
+// Pearl-side foundation for RC2 cross-cutting brand-resolver-aware-output
+// across 15+ transactional/Loops fire-sites (dev's PR-B). Escape-at-seam
+// pattern is the N=2 cross-cycle firing of attacker-influenced-value-flowing-
+// into-rendered-output (sibling to WYREAI-98 #306 consentDocumentUrl XSS;
+// boss-locked at msg-1780675433546).
+//
+// asymmetric-pair shape per ruby's rot-vector-closure pin: every escape-test
+// has a paired pass-through-test for the unescaped-by-design fields
+// (templateOverrides VALUES, identifiers, enums) so a future refactor that
+// silently escapes them too gets caught.
+// ---------------------------------------------------------------------------
+
+function makeRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  // Minimum BrandProfileRow shape for toBrandConfig.
+  return {
+    id: 'b-1',
+    org_id: 'org-1',
+    parent_brand_id: null,
+    tier: 'reseller' as const,
+    is_wyre_default: false,
+    name: 'Acme MSP',
+    tagline: 'IT done right',
+    from_email_display_name: 'Acme Support',
+    support_url: 'https://acme.example/support',
+    support_email: 'help@acme.example',
+    docs_url: 'https://acme.example/docs',
+    issues_url: 'https://acme.example/bugs',
+    logo_url: 'https://cdn.acme.example/logo.svg',
+    logo_dark_url: 'https://cdn.acme.example/logo-dark.svg',
+    primary_color: '#0066ff',
+    accent_color: '#00cc88',
+    text_primary: '#111111',
+    text_secondary: '#666666',
+    bg_primary: '#ffffff',
+    bg_secondary: '#f0f0f0',
+    border_color: '#cccccc',
+    heading_font: 'Inter',
+    body_font: 'Inter',
+    border_radius: 8,
+    allow_customer_overrides: false,
+    version: 1,
+    template_overrides: null,
+    ...overrides,
+  };
+}
+
+describe('toBrandConfig — escape-boundary (RC2 PR-A)', () => {
+  it('escapes HTML in name (the highest-blast-radius field — flows into email From + body)', () => {
+    const row = makeRow({ name: '<script>alert(1)</script>Evil Co' });
+    const config = toBrandConfig(row as never);
+    expect(config.name).toBe('&lt;script&gt;alert(1)&lt;/script&gt;Evil Co');
+    expect(config.name).not.toContain('<script>');
+  });
+
+  it('escapes HTML in tagline', () => {
+    const row = makeRow({ tagline: '" onclick="alert(1)' });
+    const config = toBrandConfig(row as never);
+    expect(config.tagline).toBe('&quot; onclick=&quot;alert(1)');
+  });
+
+  it('escapes HTML in URL fields (logoUrl + supportUrl + docsUrl + issuesUrl)', () => {
+    // URLs end up in href + img src in rendered emails. Escape closes the
+    // attribute-breakout vector (e.g. `"><script>`) for any URL field.
+    const row = makeRow({
+      logo_url: 'https://x.test/"><script>',
+      support_url: 'https://x.test/&unsafe',
+      docs_url: 'https://x.test/<svg>',
+      issues_url: 'https://x.test/\'',
+    });
+    const config = toBrandConfig(row as never);
+    expect(config.logoUrl).toBe('https://x.test/&quot;&gt;&lt;script&gt;');
+    expect(config.supportUrl).toBe('https://x.test/&amp;unsafe');
+    expect(config.docsUrl).toBe('https://x.test/&lt;svg&gt;');
+    expect(config.issuesUrl).toBe('https://x.test/&#39;');
+  });
+
+  it('escapes HTML in DB-backed string fields (fromEmailDisplayName, supportEmail, logoDarkUrl)', () => {
+    const row = makeRow({
+      from_email_display_name: 'Acme <strong>Support</strong>',
+      support_email: 'help@acme.example?bcc=<x>',
+      logo_dark_url: 'https://cdn.x/"<script>',
+    });
+    const config = toBrandConfig(row as never);
+    expect(config.fromEmailDisplayName).toBe('Acme &lt;strong&gt;Support&lt;/strong&gt;');
+    expect(config.supportEmail).toBe('help@acme.example?bcc=&lt;x&gt;');
+    expect(config.logoDarkUrl).toBe('https://cdn.x/&quot;&lt;script&gt;');
+  });
+
+  it('escapes HTML in color tokens (defense-in-depth — colors should be hex but enforce at boundary)', () => {
+    const row = makeRow({ text_primary: '#fff" onload="x()', accent_color: '<svg/onload=y()>' });
+    const config = toBrandConfig(row as never);
+    expect(config.textPrimary).toBe('#fff&quot; onload=&quot;x()');
+    expect(config.accentColor).toBe('&lt;svg/onload=y()&gt;');
+  });
+
+  it('escape is idempotent — already-escaped input stays escaped (no double-escape)', () => {
+    // A future caller that already escaped before write (defensive layering)
+    // should not see double-escaping. The escape function is character-
+    // replacement so '&amp;' becomes '&amp;amp;'. Tests document the
+    // current behavior — escape happens at THIS boundary, not upstream.
+    // This is a CONTRACT test: callers MUST NOT pre-escape; the resolver
+    // is the single point of escape.
+    const row = makeRow({ name: 'A&amp;B' });
+    const config = toBrandConfig(row as never);
+    expect(config.name).toBe('A&amp;amp;B'); // double-escaped — caller error pinned
+  });
+
+  it('passes through NULL fields unchanged (no NULL → empty-string coercion)', () => {
+    // Nullable string fields stay null when DB returns null — keeps the
+    // round-trip honest. consumer-side fallbacks (in buildBrandMergeTags)
+    // handle the null-to-default chain.
+    const row = makeRow({
+      from_email_display_name: null,
+      support_email: null,
+      logo_dark_url: null,
+      text_primary: null,
+      text_secondary: null,
+      bg_primary: null,
+      bg_secondary: null,
+      border_color: null,
+    });
+    const config = toBrandConfig(row as never);
+    expect(config.fromEmailDisplayName).toBeNull();
+    expect(config.supportEmail).toBeNull();
+    expect(config.logoDarkUrl).toBeNull();
+    expect(config.textPrimary).toBeNull();
+  });
+});
+
+describe('toBrandConfig — templateOverrides round-trip + pass-through (RC2 PR-A)', () => {
+  it('round-trips null templateOverrides (the ~95% case)', () => {
+    const row = makeRow({ template_overrides: null });
+    const config = toBrandConfig(row as never);
+    expect(config.templateOverrides).toBeNull();
+  });
+
+  it('round-trips a populated templateOverrides JSONB object verbatim', () => {
+    const overrides = {
+      'trial-converted': 'trial-converted-acme',
+      'dunning-past-due': 'dunning-past-due-acme',
+    };
+    const row = makeRow({ template_overrides: overrides });
+    const config = toBrandConfig(row as never);
+    expect(config.templateOverrides).toEqual(overrides);
+  });
+
+  it('does NOT escape templateOverrides VALUES (slug-identifiers, not rendered HTML)', () => {
+    // Asymmetric-pair counterpoint to the escape-boundary tests above:
+    // every string field that flows into rendered HTML is escaped; the
+    // templateOverrides RECORD's VALUES (slug-names) are NOT escaped
+    // because they flow into Loops's slug-selection logic, not rendered
+    // markup. Future refactor that silently escapes them would corrupt
+    // the slug-name when Loops looks it up. Rot-vector closure.
+    const overrides = { 'trial-converted': 'slug-with-special-chars-<>"' };
+    const row = makeRow({ template_overrides: overrides });
+    const config = toBrandConfig(row as never);
+    expect(config.templateOverrides?.['trial-converted']).toBe('slug-with-special-chars-<>"');
+  });
+
+  it('does NOT escape orgId / parentBrandId identifiers', () => {
+    // Same pass-through axis: identifiers are app-controlled, never
+    // rendered into HTML. Escaping would corrupt the FK round-trip.
+    const row = makeRow({ org_id: 'org-with-special-<chars>', parent_brand_id: 'b-<>' });
+    const config = toBrandConfig(row as never);
+    expect(config.orgId).toBe('org-with-special-<chars>');
+    expect(config.parentBrandId).toBe('b-<>');
   });
 });

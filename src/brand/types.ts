@@ -74,4 +74,23 @@ export interface BrandConfig {
   version?: number;
   /** True for the singleton Wyre fallback brand row. PRD §13 */
   isWyreDefault?: boolean;
+
+  /**
+   * Per-event Loops template-slug overrides. NULL/undefined = no override
+   * for any event = consumer uses the default-slug + merge-tags (the ~95%
+   * case). Non-null = a sparse mapping from event-name → override-slug. A
+   * present key means the consumer should fire the override-slug instead of
+   * the default for that event; an absent key falls through to the default.
+   *
+   * Boss-locked HYBRID strategy at msg-1780673136515: single-slug + merge-
+   * tags is the default path; this field is the opt-in escape-hatch for
+   * resellers who need bespoke copy. Operational-cost grows with override-
+   * COUNT, not reseller-count — most brand_profiles rows have NULL here.
+   *
+   * Trust-on-write: SQL accepts any Record<string, string> (mig 045 CHECK
+   * enforces JSON-object SHAPE only). The EventName-key + SlugName-value
+   * narrowing is consumer-discipline via the LoopsEventName union type in
+   * dev's PR-B at src/email/loops.ts. From mig 045 brand_profiles.template_overrides.
+   */
+  templateOverrides?: Record<string, string> | null;
 }
