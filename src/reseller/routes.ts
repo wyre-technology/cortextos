@@ -18,6 +18,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { config } from "../config.js";
 import type { ResellerService } from "./reseller-service.js";
 import { OrgHierarchyError, type OrgService } from "../org/org-service.js";
+import { runAsSystem } from "../db/context.js";
 import { sendInvitationEmail } from "../email/transactional.js";
 import { validateEmail } from "../signup/routes.js";
 import { sendLoopsEvent } from "../email/loops.js";
@@ -620,8 +621,24 @@ export function resellerRoutes(deps: ResellerRoutesDeps) {
           // self-confirmation loop). If actor is the only admin on the
           // reseller-org -> no fire by-construction.
           try {
-            const resellerMembers = await orgService.getMembersWithProfiles(
-              ctx.resellerId,
+            // 2026-06-13 launch-day fix (boss): wrap in runAsSystem. The
+            // request-pool transaction has just inserted Aaron as the
+            // interim-owner row of the NEW customer org (via createOrg at
+            // step 1 above), but the tx hasn't committed yet (onResponse
+            // settles AFTER this handler returns). Querying
+            // getMembersWithProfiles on the RESELLER org from that
+            // pre-commit-state request-path connection hits the same RLS
+            // hang class PR #373 surfaced for the post-accept path —
+            // verified live 2026-06-13 02:43Z: req-us POST /admin/reseller/
+            // .../customers logged incoming with no completion. Wrapping
+            // in runAsSystem so the lookup runs on the BYPASSRLS system
+            // pool unblocks the Loops-event recipient resolution. The
+            // resolved recipient list is then iterated for sendLoopsEvent
+            // calls (fire-and-forget) AFTER the runAsSystem block — the
+            // notifications fire on the same fire-and-forget shape as the
+            // audit log call above, so they don't block the response.
+            const resellerMembers = await runAsSystem(() =>
+              orgService.getMembersWithProfiles(ctx.resellerId),
             );
             const recipients = resellerMembers.filter(
               (m) =>
