@@ -107,6 +107,10 @@ import {
   RESELLER_BILLING_STYLES,
 } from "./templates/reseller-billing.js";
 import {
+  renderResellerAudit,
+  RESELLER_AUDIT_STYLES,
+} from "./templates/reseller-audit.js";
+import {
   renderResellerCustomerDetail,
   RESELLER_CUSTOMER_DETAIL_STYLES,
   type CustomerSummary,
@@ -1665,9 +1669,64 @@ export function webRoutes(deps: WebRouteDeps) {
       "/org/reseller/api",
       resellerSettingsStub("/org/reseller/api", "API & Webhooks"),
     );
-    app.get(
+    // 2026-06-14 sweep-2 cluster-2 (c) (boss): /org/reseller/audit replaces
+    // the stub with the real Audit Log surface. AdminAuditService.query is
+    // already org-scoped + paginated; this route just plumbs the reseller's
+    // own org_id + URL pagination/filter params into it.
+    app.get<{ Querystring: { page?: string; event_type?: string } }>(
       "/org/reseller/audit",
-      resellerSettingsStub("/org/reseller/audit", "Audit Log"),
+      async (request, reply) => {
+        const ctx = await requireResellerAccess(
+          request,
+          reply,
+          orgService,
+          billingGate,
+        );
+        if (!ctx) return;
+        const { user, org } = ctx;
+
+        const PAGE_SIZE = 50;
+        const pageParam = Number.parseInt(request.query.page ?? "1", 10);
+        const page =
+          Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
+        const eventTypeFilter = request.query.event_type?.trim() || null;
+
+        // Two queries: paginated entries for the current page, and the
+        // distinct event types present in the underlying log (for the
+        // filter dropdown). Sequential not Promise.all on the request's
+        // single reserved-tx connection — same hang-class as the
+        // tools/call site (see shouldCapturePrompt note).
+        const { entries, total } = await adminAuditService.query({
+          orgId: org.id,
+          eventType: eventTypeFilter ?? undefined,
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
+        });
+        const availableEventTypes = await adminAuditService.distinctEventTypes(
+          org.id,
+        );
+
+        const html = renderLayout(
+          {
+            user,
+            org,
+            activePath: "/org/reseller/audit",
+            title: `${org.name} - Audit Log`,
+            navMode: "reseller-settings",
+            pageStyles: RESELLER_AUDIT_STYLES,
+          },
+          renderResellerAudit({
+            org,
+            entries,
+            total,
+            page,
+            pageSize: PAGE_SIZE,
+            eventTypeFilter,
+            availableEventTypes,
+          }),
+        );
+        return reply.type("text/html").send(html);
+      },
     );
 
     // ---------- GET /org/reseller/branding (Track C Surface 5 — White-Label Branding) ----------

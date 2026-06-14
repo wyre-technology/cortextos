@@ -1,54 +1,54 @@
-import type postgres from 'postgres';
-import { getSql, type Sql } from '../db/context.js';
+import type postgres from "postgres";
+import { getSql, type Sql } from "../db/context.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type AdminEventType =
-  | 'member_invited'
-  | 'member_removed'
-  | 'invitation_accepted'
-  | 'invitation_revoked'
-  | 'org_credential_created'
-  | 'org_credential_deleted'
+  | "member_invited"
+  | "member_removed"
+  | "invitation_accepted"
+  | "invitation_revoked"
+  | "org_credential_created"
+  | "org_credential_deleted"
   // Team + service-client credential CRUD audit (ruby VC1 SOC2 audit-
   // trail gap closure 2026-06-05). org_credential_* event-types above
   // already cover org-scoped creds (fired from src/org/routes.ts route
   // layer); these add coverage for team-scoped + service-client-scoped
   // credential CRUD, which were unaudited at the user-action substrate.
-  | 'team_credential_created'
-  | 'team_credential_deleted'
-  | 'service_client_credential_created'
-  | 'service_client_credential_deleted'
+  | "team_credential_created"
+  | "team_credential_deleted"
+  | "service_client_credential_created"
+  | "service_client_credential_deleted"
   // Reseller-channel customer org creation audit (ruby RC3 launch-
   // foundational gap closure 2026-06-05). MSP-side reseller_admin
   // creates a sub-customer org via POST /admin/reseller/:resellerId/
   // customers; this is the first event in the multi-party reseller
   // lifecycle and was previously unaudited.
-  | 'customer_org_created'
-  | 'role_changed'
-  | 'org_updated'
-  | 'org_deleted'
-  | 'billing_plan_changed'
-  | 'server_access_granted'
-  | 'server_access_revoked'
-  | 'server_access_bulk_set'
-  | 'service_client_created'
-  | 'service_client_revoked'
-  | 'team_created'
-  | 'team_renamed'
-  | 'team_deleted'
-  | 'team_member_added'
-  | 'team_member_removed'
-  | 'team_server_access_granted'
-  | 'team_server_access_revoked'
-  | 'log_shipping_destination_created'
-  | 'log_shipping_destination_updated'
-  | 'log_shipping_destination_deleted'
-  | 'scim_connection_created'
-  | 'scim_connection_revoked'
-  | 'admin_comp_credits'
+  | "customer_org_created"
+  | "role_changed"
+  | "org_updated"
+  | "org_deleted"
+  | "billing_plan_changed"
+  | "server_access_granted"
+  | "server_access_revoked"
+  | "server_access_bulk_set"
+  | "service_client_created"
+  | "service_client_revoked"
+  | "team_created"
+  | "team_renamed"
+  | "team_deleted"
+  | "team_member_added"
+  | "team_member_removed"
+  | "team_server_access_granted"
+  | "team_server_access_revoked"
+  | "log_shipping_destination_created"
+  | "log_shipping_destination_updated"
+  | "log_shipping_destination_deleted"
+  | "scim_connection_created"
+  | "scim_connection_revoked"
+  | "admin_comp_credits"
   // WYREAI-98 AI MSA consent recording — org_consent_accepted is the
   // org-scoped binding event (first-accept or re-accept after a material
   // change); user_consent_acknowledged is the per-user informational layer
@@ -56,8 +56,8 @@ export type AdminEventType =
   // document_url + document_version (SHA256) + document_size_bytes for the
   // audit reader; pearl-side ConsentService.recordOrgConsent + recordUserAcknowledgment
   // both fire one log entry per binding/acknowledgment event.
-  | 'org_consent_accepted'
-  | 'user_consent_acknowledged'
+  | "org_consent_accepted"
+  | "user_consent_acknowledged"
   // WYREAI-118 + 119 (E1 admin create-org launch-blocker). Fires when the
   // admin creates an org via POST /admin/orgs with stub-owner placeholder
   // + owner_swap_to_invited invitation. Metadata carries: name, org_type,
@@ -65,7 +65,7 @@ export type AdminEventType =
   // existing 'invitation_accepted' event at the swap-completion moment
   // (when the invited user accepts and the NARROWED-DELETE atomic-swap
   // replaces the stub).
-  | 'org_created_by_admin'
+  | "org_created_by_admin"
   // Multi-IdP foundation slice 6+7 (June 29 launch directive 2026-06-13).
   // Platform-admin pastes SAML metadata XML at the wizard
   // (POST /admin/orgs/:orgId/idp-connections) -> Auth0 createConnection +
@@ -76,8 +76,8 @@ export type AdminEventType =
   // to know the wizard surface lives at /admin/orgs/:orgId/idp-connections.
   // Metadata carries: strategy ('samlp'|'oidc'), entity_id,
   // auth0_connection_id, display_name?
-  | 'idp_connection_created'
-  | 'idp_connection_deleted';
+  | "idp_connection_created"
+  | "idp_connection_deleted";
 
 export interface AdminAuditEntry {
   id: string;
@@ -138,7 +138,10 @@ export class AdminAuditService {
       targetEmail: row.target_email ?? null,
       targetName: row.target_name ?? null,
       eventType: row.event_type as AdminEventType,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
+      metadata:
+        typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : row.metadata,
       createdAt: row.created_at,
     };
   }
@@ -164,7 +167,9 @@ export class AdminAuditService {
     `;
   }
 
-  async query(params: AdminAuditQuery): Promise<{ entries: AdminAuditEntry[]; total: number }> {
+  async query(
+    params: AdminAuditQuery,
+  ): Promise<{ entries: AdminAuditEntry[]; total: number }> {
     const limit = Math.min(params.limit ?? 50, 200);
     const offset = params.offset ?? 0;
 
@@ -185,10 +190,13 @@ export class AdminAuditService {
       conditions.push(this.sql`a.created_at <= ${params.endDate}`);
     }
 
-    const where = this.sql`WHERE ${conditions.reduce((a, b) => this.sql`${a} AND ${b}`)}`;
+    const where = this
+      .sql`WHERE ${conditions.reduce((a, b) => this.sql`${a} AND ${b}`)}`;
 
     const [countResult, rows] = await Promise.all([
-      this.sql<{ count: number }[]>`SELECT COUNT(*)::int AS count FROM admin_audit_log a ${where}`,
+      this.sql<
+        { count: number }[]
+      >`SELECT COUNT(*)::int AS count FROM admin_audit_log a ${where}`,
       this.sql<AdminAuditRow[]>`
         SELECT a.*,
           actor.email AS actor_email, actor.name AS actor_name,
@@ -208,29 +216,52 @@ export class AdminAuditService {
   }
 
   async exportCsv(params: AdminAuditQuery): Promise<string> {
-    const { entries } = await this.query({ ...params, limit: 10000, offset: 0 });
+    const { entries } = await this.query({
+      ...params,
+      limit: 10000,
+      offset: 0,
+    });
 
-    const header = 'timestamp,org_id,actor,actor_email,target,target_email,event_type,metadata';
+    const header =
+      "timestamp,org_id,actor,actor_email,target,target_email,event_type,metadata";
     const rows = entries.map((e) =>
       [
         e.createdAt,
         e.orgId,
         e.actorId,
-        e.actorEmail ?? '',
-        e.targetId ?? '',
-        e.targetEmail ?? '',
+        e.actorEmail ?? "",
+        e.targetId ?? "",
+        e.targetEmail ?? "",
         e.eventType,
-        e.metadata ? JSON.stringify(e.metadata).replace(/,/g, ';') : '',
-      ].join(','),
+        e.metadata ? JSON.stringify(e.metadata).replace(/,/g, ";") : "",
+      ].join(","),
     );
 
-    return [header, ...rows].join('\n');
+    return [header, ...rows].join("\n");
+  }
+
+  /**
+   * Distinct event types present in the org's audit log. Powers the
+   * filter dropdown on /org/reseller/audit (sweep-2 cluster-2 (c),
+   * 2026-06-14). Returned in alphabetical order so the dropdown is
+   * stable across requests + admin sessions.
+   *
+   * Scoped by org_id only — same boundary as query(). Empty array when
+   * the org has no audit log entries yet.
+   */
+  async distinctEventTypes(orgId: string): Promise<string[]> {
+    const rows = await this.sql<{ event_type: string }[]>`
+      SELECT DISTINCT event_type FROM admin_audit_log
+      WHERE org_id = ${orgId}
+      ORDER BY event_type ASC
+    `;
+    return rows.map((r) => r.event_type);
   }
 
   async cleanupAdminAuditLog(retentionDays = 90): Promise<number> {
     const result = await this.sql`
       DELETE FROM admin_audit_log
-      WHERE created_at < NOW() - ${retentionDays + ' days'}::interval
+      WHERE created_at < NOW() - ${retentionDays + " days"}::interval
     `;
     return result.count;
   }
