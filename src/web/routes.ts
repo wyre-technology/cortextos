@@ -96,6 +96,10 @@ import {
   type ResellerBranding,
 } from "./templates/reseller-branding.js";
 import {
+  renderResellerGeneral,
+  RESELLER_GENERAL_STYLES,
+} from "./templates/reseller-general.js";
+import {
   renderResellerHierarchy,
   RESELLER_HIERARCHY_STYLES,
   RESELLER_HIERARCHY_SCRIPT,
@@ -1635,9 +1639,39 @@ export function webRoutes(deps: WebRouteDeps) {
         return reply.type("text/html").send(html);
       };
 
-    app.get(
+    // /org/reseller/general — Reseller-scoped General settings (sweep-3, June 29
+    // launch). Replaces the resellerSettingsStub with the actual form surface.
+    // Per boss dispatch msg-1781452776703: slug stays derived for v1 (reseller-
+    // custom-slug = Aaron-decision-class slice with downstream link-rot
+    // implications). Form POSTs to the existing PATCH /api/orgs/:orgId.
+    app.get<{ Querystring: { flash_ok?: string; flash_err?: string } }>(
       "/org/reseller/general",
-      resellerSettingsStub("/org/reseller/general", "General"),
+      async (request, reply) => {
+        const ctx = await requireResellerAccess(
+          request,
+          reply,
+          orgService,
+          billingGate,
+        );
+        if (!ctx) return;
+        const { user, org } = ctx;
+        const html = renderLayout(
+          {
+            user,
+            org,
+            activePath: "/org/reseller/general",
+            title: `${org.name} - General`,
+            navMode: "reseller-settings",
+            pageStyles: RESELLER_GENERAL_STYLES,
+          },
+          renderResellerGeneral({
+            org,
+            flashOk: request.query.flash_ok,
+            flashErr: request.query.flash_err,
+          }),
+        );
+        return reply.type("text/html").send(html);
+      },
     );
     // 2026-06-13 sweep-2 cluster-1 (3) (boss): /org/reseller/billing replaces
     // the stub with the real Stripe-billing-portal surface. POST
