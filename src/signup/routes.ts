@@ -42,6 +42,12 @@ import { config } from "../config.js";
 import { PAGE_STYLES } from "../web/styles.js";
 import { escapeHtml } from "../web/helpers.js";
 import { getSql, runAsSystem } from "../db/context.js";
+// IdP slice 2 Piece 1 — STATIC imports for drift-resistance per analyst item 3
+// (PR #392 triangle, boss msg-1781452923263). Dynamic imports inside the
+// default resolver would silently rot if OrgDomainService/OrgService method
+// names changed. Static imports surface the rename at tsc time.
+import { OrgDomainService } from "../org/domain-service.js";
+import { OrgService } from "../org/org-service.js";
 import {
   AI_MSA_DOCUMENT_URL,
   ConsentService,
@@ -352,12 +358,139 @@ export function renderSignupPage(opts: RenderSignupPageOptions = {}): string {
 // Auth0 /authorize URL builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Hardenings from PR #392 triangle review (boss msg-1781452923263):
+ *   - LENS (b) silent-bug-swallowing CLOSED: structured warn-log emits on
+ *     every resolver failure with err_class + err_message + anonymized
+ *     email_domain (PII-safe). The optional onResolverFailure hook lets
+ *     production wiring increment a Prom counter for sustained-error-
+ *     rate alerting.
+ *   - LENS (c) timeout-circuit-breaker ADDED: Promise.race with 300ms
+ *     limit. Risk-asymmetric resolution stays PERMISSIVE (signup never
+ *     blocks) but by-construction (slow resolver no longer bricks signup
+ *     despite catch-all).
+ *   - ANALYST item 3 drift-resistance CLOSED: static imports (above) +
+ *     direct class instantiation make findVerifiedByEmail/getOrg renames
+ *     surface at tsc time.
+ */
+const DEFAULT_RESOLVER_TIMEOUT_MS = 300;
+
+/**
+ * PII-safe email anonymization: keep domain (load-bearing for the resolver-
+ * failure surface — the domain IS what the resolver looks up), redact local
+ * part. Used only in failure-path logs.
+ */
+function anonymizeEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 0) return "<no-@>";
+  return `<redacted>@${email.slice(at + 1)}`;
+}
+
+/**
+ * Hook fired on resolver failure (timeout OR throw). Production wiring
+ * increments a Prom counter `signup_resolver_error_total{err_class=...}`
+ * so sustained-error-rate alerting can detect outages. Tests inject a spy.
+ * Optional + no-op default — the lookup itself never depends on this.
+ */
+export type ResolverFailureHook = (info: {
+  errClass: string;
+  errMessage: string;
+  anonymizedEmail: string;
+}) => void;
+
+/**
+ * Default email → auth0_org_id resolver. Multi-IdP foundation slice 4
+ * Piece 1 (pearl-owned routing-decision). Chains:
+ *   1. OrgDomainService.findVerifiedByEmail(email) → OrgDomain | null
+ *   2. OrgService.getOrg(orgDomain.orgId) → Organization
+ *   3. Returns Organization.auth0OrgId
+ *
+ * Returns null on any failure step (no verified domain match, public-email
+ * domain, lookup error, OR timeout). NULL preserves existing default-pool
+ * behavior at /authorize per the risk-asymmetric resolution discipline
+ * (signup must not block on a lookup-side failure — better to miss IdP
+ * routing once than block the funnel).
+ *
+ * System-context: this runs inside the POST /signup request-path. The
+ * lookup uses runAsSystem because the OrgDomainService + OrgService
+ * methods need DB context the request-pool doesn't carry pre-auth.
+ */
+function makeDefaultResolver(
+  onFailure?: ResolverFailureHook,
+): (email: string) => Promise<string | null> {
+  return async function defaultResolveAuth0OrgFromEmail(
+    email: string,
+  ): Promise<string | null> {
+    // LENS (c): timeout-circuit-breaker. The resolver chain is sub-100ms
+    // typically (one verified-domain lookup + one org lookup); 300ms is a
+    // generous bound that catches DB stalls without bricking signup.
+    const timeoutSym = Symbol("resolver-timeout");
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const lookup = runAsSystem(async () => {
+        const orgDomain = await new OrgDomainService().findVerifiedByEmail(email);
+        if (!orgDomain) return null;
+        const org = await new OrgService().getOrg(orgDomain.orgId);
+        return org?.auth0OrgId ?? null;
+      });
+      const timeout = new Promise<typeof timeoutSym>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve(timeoutSym), DEFAULT_RESOLVER_TIMEOUT_MS);
+      });
+      const result = await Promise.race([lookup, timeout]);
+      if (result === timeoutSym) {
+        emitFailure(onFailure, email, "ResolverTimeout", `>${DEFAULT_RESOLVER_TIMEOUT_MS}ms`);
+        return null;
+      }
+      return result;
+    } catch (err) {
+      const errClass = err instanceof Error ? err.constructor.name : typeof err;
+      const errMessage = err instanceof Error ? err.message : String(err);
+      emitFailure(onFailure, email, errClass, errMessage);
+      return null;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  };
+}
+
+function emitFailure(
+  hook: ResolverFailureHook | undefined,
+  email: string,
+  errClass: string,
+  errMessage: string,
+): void {
+  const anonymizedEmail = anonymizeEmail(email);
+  // LENS (b) closure: structured warn-log so resolver failures are no longer
+  // silent. Anonymized email is PII-safe (domain preserved for triage).
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "signup_resolver_failure",
+      err_class: errClass,
+      err_message: errMessage,
+      anonymized_email: anonymizedEmail,
+    }),
+  );
+  hook?.({ errClass, errMessage, anonymizedEmail });
+}
+
 function buildAuthorizeUrl(params: {
   domain: string;
   clientId: string;
   redirectUri: string;
   email: string;
   state: string;
+  /**
+   * Multi-IdP foundation slice 4 — Piece 1 email-domain → org → Auth0 routing
+   * (pearl-owned routing-decision per the comment at src/auth/auth0.ts:212).
+   * When set, threads `organization=<auth0_org_id>` to Auth0's /authorize so
+   * Auth0 routes the user to the org's enabled IdP connections (Okta SAML,
+   * JumpCloud, Google direct, etc.) instead of the WYRE default Universal
+   * Login connection pool. NULL/undefined preserves existing default-pool
+   * behavior — the ~majority of /signup traffic where the email-domain
+   * doesn't claim into a verified org.
+   */
+  auth0OrgId?: string | null;
 }): string {
   const url = new URL(`https://${params.domain}/authorize`);
   url.searchParams.set("response_type", "code");
@@ -367,6 +500,9 @@ function buildAuthorizeUrl(params: {
   url.searchParams.set("login_hint", params.email);
   url.searchParams.set("screen_hint", "signup");
   url.searchParams.set("state", params.state);
+  if (params.auth0OrgId) {
+    url.searchParams.set("organization", params.auth0OrgId);
+  }
   return url.toString();
 }
 
@@ -386,11 +522,46 @@ export interface SignupRoutesDeps {
    * existing tests that don't care about consent keep working unchanged.
    */
   consentService?: ConsentService;
+  /**
+   * Multi-IdP foundation slice 4 — Piece 1 email-domain → org → Auth0 routing
+   * (pearl-owned routing-decision per the comment at src/auth/auth0.ts:212).
+   * Given a submitter's email, returns the Auth0 organization id to thread
+   * into the /authorize redirect, or null if the email-domain doesn't
+   * claim into a verified org with Auth0-IdP routing configured.
+   *
+   * Default implementation chains OrgDomainService.findVerifiedByEmail →
+   * OrgService.getOrg(orgId).auth0OrgId. Optional + default-instantiated;
+   * tests inject a deterministic function to exercise the routing decision
+   * without standing up the DB chain. Same N=3 optional-injection-as-
+   * backward-compat-affordance pattern (banked msg-1781353015514 — RC2 PR-B
+   * BrandResolver + WYREAI-98 ConsentService + now this).
+   *
+   * RESOLVER FAILURE BEHAVIOR: returns null (NOT throws). A lookup failure
+   * MUST NOT block signup — the user falls back to the WYRE default IdP
+   * pool. The risk-asymmetric resolution: blocking signup on a lookup-side
+   * failure is a worse outcome than missing IdP-routing for one signup.
+   *
+   * HARDENINGS (PR #392 triangle): the default resolver wraps in Promise.race
+   * with 300ms timeout (warden lens c) + emits structured warn-log on failure
+   * + invokes onResolverFailure hook for metric-counter increment (warden
+   * lens b). Override resolvers are responsible for their own protections.
+   */
+  resolveAuth0OrgFromEmail?: (email: string) => Promise<string | null>;
+  /**
+   * Optional hook for resolver-failure telemetry. Production wiring
+   * increments a Prom counter `signup_resolver_error_total{err_class=...}`;
+   * tests inject a spy. No-op default — the resolver lookup itself never
+   * depends on this. Only fires when the DEFAULT resolver fails; override
+   * resolvers are responsible for their own telemetry.
+   */
+  onResolverFailure?: ResolverFailureHook;
 }
 
 export function signupRoutes(deps: SignupRoutesDeps) {
   const limiter = deps.limiter ?? new InMemoryRateLimiter();
   const consentService = deps.consentService ?? new ConsentService();
+  const resolveAuth0OrgFromEmail =
+    deps.resolveAuth0OrgFromEmail ?? makeDefaultResolver(deps.onResolverFailure);
 
   return async function plugin(app: FastifyInstance): Promise<void> {
     // Pre-auth signup intents. One row per submitted email + state pair.
@@ -597,12 +768,22 @@ export function signupRoutes(deps: SignupRoutesDeps) {
 
         const redirectUri =
           config.auth0CallbackUrl || `${config.baseUrl}/auth/callback`;
+
+        // Multi-IdP foundation slice 4 — Piece 1 routing-decision (pearl-owned
+        // per the comment at src/auth/auth0.ts:212). Look up the auth0_org_id
+        // for the email-domain's verified org BEFORE building the authorize
+        // URL. Lookup-failure resolves to null + falls through to the WYRE
+        // default IdP pool — risk-asymmetric resolution discipline (signup
+        // funnel must not block on lookup-side failure).
+        const auth0OrgId = await resolveAuth0OrgFromEmail(email);
+
         const authorizeUrl = buildAuthorizeUrl({
           domain: config.auth0Domain,
           clientId: config.auth0ClientId,
           redirectUri,
           email,
           state: intentId,
+          auth0OrgId,
         });
 
         return reply.redirect(authorizeUrl, 302);
