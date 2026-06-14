@@ -1,7 +1,7 @@
-import type { OrgRole } from '../../org/org-service.js';
-import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
-import { escapeHtml } from '../helpers.js';
-import { formatUsd } from './seat-billing-copy.js';
+import type { OrgRole } from "../../org/org-service.js";
+import { PER_SEAT_PRICE_CENTS } from "../../billing/prices.js";
+import { escapeHtml } from "../helpers.js";
+import { formatUsd } from "./seat-billing-copy.js";
 
 export interface TeamMembersData {
   orgId: string;
@@ -18,16 +18,17 @@ export interface TeamMembersData {
 
 export function renderTeamMembers(data: TeamMembersData): string {
   const { orgId, viewerUserId, viewerRole, members } = data;
-  const isViewerOwner = viewerRole === 'owner';
+  const isViewerOwner = viewerRole === "owner";
   // Price comes from the named SoT constant (seat-service.ts), not a
   // per-org view object — single-source price independent of any snapshot.
   const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
 
   const memberRows = members
     .map((m) => {
-      const isOwner = m.role === 'owner';
+      const isOwner = m.role === "owner";
       const isSelf = m.userId === viewerUserId;
-      const canRemove = !isOwner && !isSelf && (isViewerOwner || m.role === 'member');
+      const canRemove =
+        !isOwner && !isSelf && (isViewerOwner || m.role === "member");
       const displayName = m.name || m.email || m.userId;
       // MR3 (ruby 2026-06-05): pass displayName via data-attr so the toast
       // can name the removed/role-changed member (scribe Voice-1 INFOR-
@@ -38,8 +39,11 @@ export function renderTeamMembers(data: TeamMembersData): string {
             data-user-id="${escapeHtml(m.userId)}"
             data-member-name="${escapeHtml(displayName)}"
             onclick="removeMember(this.dataset.userId, this.dataset.memberName)">Remove</button>`
-        : '';
-      const emailLine = m.email && m.name ? `<span class="member-email">${escapeHtml(m.email)}</span>` : '';
+        : "";
+      const emailLine =
+        m.email && m.name
+          ? `<span class="member-email">${escapeHtml(m.email)}</span>`
+          : "";
 
       let roleCell: string;
       if (isViewerOwner && !isOwner && !isSelf) {
@@ -49,8 +53,8 @@ export function renderTeamMembers(data: TeamMembersData): string {
             data-user-id="${escapeHtml(m.userId)}"
             data-member-name="${escapeHtml(displayName)}"
             onchange="changeRole(this.dataset.userId, this.value, this.dataset.memberName)">
-          <option value="member"${m.role === 'member' ? ' selected' : ''}>member</option>
-          <option value="admin"${m.role === 'admin' ? ' selected' : ''}>admin</option>
+          <option value="member"${m.role === "member" ? " selected" : ""}>member</option>
+          <option value="admin"${m.role === "admin" ? " selected" : ""}>admin</option>
         </select>`;
       } else {
         roleCell = `<span class="role-badge ${m.role}">${m.role}</span>`;
@@ -60,14 +64,29 @@ export function renderTeamMembers(data: TeamMembersData): string {
       <tr>
         <td><span class="member-name">${escapeHtml(displayName)}</span>${emailLine}</td>
         <td>${roleCell}</td>
-        <td>${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '—'}</td>
+        <td>${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : "—"}</td>
         <td>${removeBtn}</td>
       </tr>`;
     })
-    .join('');
+    .join("");
+
+  // 2026-06-13 sweep-2 cluster-2 (a) (boss): inline Invite CTA. The
+  // Members page previously had no direct path to inviting a new member —
+  // the invitation create-flow lives at /org/invitations (separate nav
+  // item), so a user wanting to add someone had to discover the nav route.
+  // Show the CTA to owner + admin; member-role users cannot create
+  // invitations (server-side gate is the source of truth, this is just
+  // the discoverability layer).
+  const canInvite = isViewerOwner || viewerRole === "admin";
+  const inviteCta = canInvite
+    ? `<a href="/org/invitations" class="btn-connect" style="width:auto;padding:8px 16px;text-decoration:none;display:inline-block">Invite a member</a>`
+    : "";
 
   return `
-    <h1 style="margin-bottom:4px">Members</h1>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px">
+      <h1 style="margin:0">Members</h1>
+      ${inviteCta}
+    </div>
     <p class="section-desc">Manage who has access to your team's shared vendor connections.
       Each member is a ${escapeHtml(perSeat)}/mo seat — adding or removing one
       prorates your next bill.</p>
