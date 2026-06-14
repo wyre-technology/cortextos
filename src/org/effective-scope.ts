@@ -55,6 +55,53 @@ export interface CallerContext {
   role?: string;
   /** Teams the caller belongs to that hold creds for the vendor AND pass hasServerAccess. */
   matchingTeams: readonly string[];
+
+  /**
+   * IdP slice 2, Piece 2 — MSP-AS-OPERATOR acting-on-behalf-of customer-org.
+   *
+   * When present, indicates the caller (a reseller-admin authenticated via
+   * their reseller's IdP) has activated a "Switch to customer org" session
+   * and is operating in the scope of one of their reseller's customer-orgs.
+   * The audit-trail preserves both axes:
+   *   - onBehalfOfOrgId  = the customer-org being acted-on (the SCOPE)
+   *   - viaResellerOrgId = the reseller-org the caller is authenticated in
+   *                        (the AUTHORITY-SOURCE)
+   *
+   * Distinct from `orgId` (caller's PRIMARY org membership). When actingAs
+   * is set, scope-evaluation should use onBehalfOfOrgId; audit-events log
+   * both axes for accountability.
+   *
+   * SCOPE-EVALUATION input only — NEVER an AUTHORIZATION input (ruby Finding 1,
+   * PR #386 triangle review msg-1781405090611). Two-layer architectural
+   * distinction the ratification commit pins:
+   *
+   *   - AUTHORIZATION LAYER (the gate): "is this actor allowed to perform
+   *     this kind of operation?" Answered by primary-org role/perm checks
+   *     against the actor's home identity. NEVER influenced by actingAs.
+   *   - SCOPE-EVALUATION LAYER (the lens): "WHAT does this operation act
+   *     ON?" Answered by which org's data is visible/queryable. INFLUENCED
+   *     by actingAs when present.
+   *
+   * THE INVARIANT: actingAs rebinds the SCOPE-LENS but NEVER relaxes the
+   * AUTHORIZATION-GATE. Same operation gets same authz decision regardless
+   * of actingAs presence; only the target-data changes. Preserve this
+   * layer-separation on any future scope-evaluation refactor — a future
+   * change that promotes actingAs into the authorization-gate would silently
+   * expand authority (rot vector: removed-from-reseller actor with persistent
+   * session would gain customer-org permissions). The regression-test in
+   * effective-scope.test.ts guards the runtime side; this docstring guards
+   * the design side.
+   *
+   * Refs: boss msg-1781366742659 (slice 2 scoping) + msg-1781369828316
+   * (weekend-write-direction upgrade) + msg-1781439100263 (linchpin-drop
+   * + V4=B transactional security-notice).
+   */
+  actingAs?: {
+    /** Customer-org being acted-on (target of the elevated scope). */
+    onBehalfOfOrgId: string;
+    /** Reseller-org the caller is authenticated in (authority-source). */
+    viaResellerOrgId: string;
+  };
 }
 
 function toScopeSet(list: Allowlist): ScopeSet {
