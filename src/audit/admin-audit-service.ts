@@ -77,7 +77,17 @@ export type AdminEventType =
   // Metadata carries: strategy ('samlp'|'oidc'), entity_id,
   // auth0_connection_id, display_name?
   | "idp_connection_created"
-  | "idp_connection_deleted";
+  | "idp_connection_deleted"
+  // Track C reseller-settings sweep-3 API & Webhooks tab (June 29
+  // launch directive, boss msg-1781452776703 + split-into-substrate-PR-A
+  // per Aaron's UI-Figma-first directive msg-1781453810337). Per-reseller-
+  // org API key CRUD via the JSON endpoints at
+  // POST /api/orgs/:orgId/api-keys + .../revoke. Distinct from the
+  // service_client_* events (those are M2M / customer-org-level OAuth
+  // tokens; these are reseller-org-level admin script tokens for the
+  // Track C management API).
+  | "api_key_created"
+  | "api_key_revoked";
 
 export interface AdminAuditEntry {
   id: string;

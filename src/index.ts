@@ -25,6 +25,7 @@ import { CredentialService } from './credentials/credential-service.js';
 import { TokenStore } from './oauth/token-store.js';
 import Stripe from 'stripe';
 import { OrgService } from './org/org-service.js';
+import { OrgApiKeyService } from './org/org-api-key-service.js';
 import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { Auth0ManagementClient } from './auth/auth0-management.js';
 import { createAuth0OrgProvisioner } from './org/org-auth0-provisioner.js';
@@ -543,12 +544,19 @@ await app.register(webRoutes({
 }));
 
 // Organization management API + invitation routes
+// Track C reseller-settings sweep-3 substrate (June 29 launch).
+// Headless JSON API for org API keys + sign-axis discipline pinned at
+// the service layer. PR-B adds the HTML render layer (/org/reseller/api)
+// after the Aaron-Figma cycle.
+const orgApiKeyService = new OrgApiKeyService();
+
 await app.register(orgRoutes({
   orgService,
   credentialService,
   billingGate,
   adminAuditService,
   vendorMonitor,
+  orgApiKeyService,
 }));
 
 // Domain claim / verify — org-admin domain management + the current-user

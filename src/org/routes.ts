@@ -10,6 +10,7 @@ import type { CredentialService } from "../credentials/credential-service.js";
 import type { BillingGate } from "../billing/gate.js";
 import { isPaidPlan } from "../billing/gate.js";
 import type { AdminAuditService } from "../audit/admin-audit-service.js";
+import type { OrgApiKeyService } from "./org-api-key-service.js";
 import { getVendor } from "../credentials/vendor-config.js";
 import {
   assembleOrgVendorHealth,
@@ -35,6 +36,15 @@ interface OrgRouteDeps {
   billingGate: BillingGate;
   adminAuditService: AdminAuditService;
   vendorMonitor: VendorMonitor;
+  /**
+   * Track C reseller-settings sweep-3 substrate (June 29 launch directive
+   * 2026-06-13). Headless JSON API for org API keys CRUD. Optional for
+   * backward-compat with existing test fixtures + dev/test boots before
+   * mig 048 lands. The HTML render layer ships as a separate PR-B after
+   * the Aaron-Figma cycle per the UI-Figma-first directive
+   * (msg-1781453810337).
+   */
+  orgApiKeyService?: OrgApiKeyService;
 }
 
 /**
@@ -81,6 +91,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
     billingGate,
     adminAuditService,
     vendorMonitor,
+    orgApiKeyService,
   } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -1995,6 +2006,160 @@ export function orgRoutes(deps: OrgRouteDeps) {
             metadata: { clientId, vendor: slug },
           })
           .catch((err) => request.log.error(err, "admin audit log failed"));
+        return reply.code(204).send();
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // Track C reseller-settings sweep-3 — headless JSON API for org API keys.
+    //
+    // Boss split-decision per Aaron's UI-Figma-first directive
+    // (msg-1781453810337): the substrate (mig 048 + service + audit-events
+    // + these JSON endpoints) ships independent of the HTML render layer.
+    // PR-B adds the GET /org/reseller/api HTML wizard surface after the
+    // Aaron-Figma cycle.
+    //
+    // Sign-axis discipline (boss msg-1781452776703 + pearl's sign-axis
+    // sub-pin): plaintext returned ONLY from the create response, never
+    // from list/get/anywhere. Validation-witness lives at
+    // src/org/org-api-key-service.test.ts (5 by-construction tests pin the
+    // contract at the service-substrate).
+    // -----------------------------------------------------------------------
+
+    // POST /api/orgs/:orgId/api-keys — create. Returns plaintext ONCE in
+    // the JSON response body; no other surface ever exposes it.
+    app.post<{ Params: { orgId: string }; Body: { name?: string } }>(
+      "/api/orgs/:orgId/api-keys",
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
+        if (!user) return;
+        if (!orgApiKeyService) {
+          return reply
+            .code(503)
+            .send({ error: "API key service is not configured in this environment" });
+        }
+
+        const name = (request.body?.name ?? "").trim();
+        if (!name || name.length > 60) {
+          return reply
+            .code(400)
+            .send({ error: "name is required and must be 60 chars or fewer" });
+        }
+
+        const { apiKey, plaintextKey } = await orgApiKeyService.create({
+          orgId,
+          name,
+          createdByUserId: user.sub,
+        });
+
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "api_key_created",
+            metadata: {
+              name: apiKey.name,
+              key_prefix: apiKey.keyPrefix,
+              id: apiKey.id,
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+
+        return reply.code(201).send({
+          api_key: {
+            id: apiKey.id,
+            org_id: apiKey.orgId,
+            name: apiKey.name,
+            key_prefix: apiKey.keyPrefix,
+            created_by_user_id: apiKey.createdByUserId,
+            last_used_at: apiKey.lastUsedAt,
+            revoked_at: apiKey.revokedAt,
+            created_at: apiKey.createdAt,
+          },
+          // Plaintext is returned EXACTLY ONCE in this response body —
+          // never persisted, never retrievable from any other endpoint.
+          // Caller must surface to the user + drop.
+          plaintext_key: plaintextKey,
+        });
+      },
+    );
+
+    // GET /api/orgs/:orgId/api-keys — list (no plaintext).
+    app.get<{ Params: { orgId: string } }>(
+      "/api/orgs/:orgId/api-keys",
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "member",
+        );
+        if (!user) return;
+        if (!orgApiKeyService) {
+          return reply.code(503).send({ error: "API key service is not configured" });
+        }
+        const list = await orgApiKeyService.listForOrg(orgId);
+        return reply.send({
+          api_keys: list.map((k) => ({
+            id: k.id,
+            org_id: k.orgId,
+            name: k.name,
+            key_prefix: k.keyPrefix,
+            created_by_user_id: k.createdByUserId,
+            last_used_at: k.lastUsedAt,
+            revoked_at: k.revokedAt,
+            created_at: k.createdAt,
+          })),
+        });
+      },
+    );
+
+    // POST /api/orgs/:orgId/api-keys/:keyId/revoke — soft revoke + audit.
+    app.post<{ Params: { orgId: string; keyId: string } }>(
+      "/api/orgs/:orgId/api-keys/:keyId/revoke",
+      async (request, reply) => {
+        const { orgId, keyId } = request.params;
+        const user = await requireOrgRole(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "owner",
+        );
+        if (!user) return;
+        if (!orgApiKeyService) {
+          return reply.code(503).send({ error: "API key service is not configured" });
+        }
+
+        const existing = await orgApiKeyService.getById(keyId);
+        if (!existing || existing.orgId !== orgId) {
+          return reply.code(404).send({ error: "API key not found" });
+        }
+
+        await orgApiKeyService.revoke(keyId);
+
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "api_key_revoked",
+            metadata: {
+              name: existing.name,
+              key_prefix: existing.keyPrefix,
+              id: existing.id,
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+
         return reply.code(204).send();
       },
     );
