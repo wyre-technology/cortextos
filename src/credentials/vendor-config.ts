@@ -50,7 +50,7 @@ export interface OAuthVendorConfig {
   issuer?: string;
 }
 
-export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace';
+export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace' | 'infrastructure';
 
 export const VENDOR_CATEGORIES: { slug: VendorCategory; label: string }[] = [
   { slug: 'rmm', label: 'Remote Monitoring & Management' },
@@ -65,6 +65,9 @@ export const VENDOR_CATEGORIES: { slug: VendorCategory; label: string }[] = [
   { slug: 'productivity', label: 'Productivity' },
   { slug: 'email-security', label: 'Email Security & Awareness' },
   { slug: 'marketplace', label: 'Marketplace' },
+  // WYREAI-165 (2026-06-15): DigitalOcean is the first vendor in this
+  // category; future cloud providers (AWS, GCP, Azure) slot here too.
+  { slug: 'infrastructure', label: 'Cloud Infrastructure' },
 ];
 
 export interface VendorConfig {
@@ -106,6 +109,80 @@ export interface VendorConfig {
  */
 const ALT_PAYMENTS_VALID_ENVIRONMENTS = ['production', 'demo'] as const;
 type AltPaymentsEnvironment = typeof ALT_PAYMENTS_VALID_ENVIRONMENTS[number];
+
+/**
+ * DigitalOcean MCP slugs share one shape — Bearer-PAT auth against
+ * <subdomain>.mcp.digitalocean.com/mcp with an initialize round-trip
+ * as the validate() witness. See the inline comment at the call site
+ * for the WYREAI-165 (10-slug) scope rationale. Tuple list (slug,
+ * name, subdomain) is the single source of truth; adding a new DO
+ * service = one line in DIGITAL_OCEAN_MCP_SLUGS.
+ */
+const DIGITAL_OCEAN_MCP_SLUGS: ReadonlyArray<readonly [string, string, string]> = [
+  ['digitalocean-apps', 'DigitalOcean Apps', 'apps'],
+  ['digitalocean-databases', 'DigitalOcean Databases', 'databases'],
+  ['digitalocean-docs', 'DigitalOcean Docs', 'docs'],
+  ['digitalocean-doks', 'DigitalOcean Kubernetes (DOKS)', 'doks'],
+  ['digitalocean-droplets', 'DigitalOcean Droplets', 'droplets'],
+  ['digitalocean-functions', 'DigitalOcean Functions', 'functions'],
+  ['digitalocean-gradient-ai', 'DigitalOcean Gradient AI', 'gradient-ai'],
+  ['digitalocean-inference', 'DigitalOcean Inference Model Catalog', 'inference-modelcatalog'],
+  ['digitalocean-networking', 'DigitalOcean Networking', 'networking'],
+  ['digitalocean-spaces', 'DigitalOcean Spaces', 'spaces'],
+];
+
+function digitalOceanMcpEntries(): Record<string, VendorConfig> {
+  const out: Record<string, VendorConfig> = {};
+  for (const [slug, name, subdomain] of DIGITAL_OCEAN_MCP_SLUGS) {
+    const containerUrl = `https://${subdomain}.mcp.digitalocean.com`;
+    out[slug] = {
+      name,
+      slug,
+      category: 'infrastructure',
+      containerUrl,
+      fields: [
+        { key: 'apiToken', label: 'Personal Access Token', required: true, secret: true },
+      ],
+      headerMapping: {},
+      buildHeaders(creds) {
+        return { Authorization: `Bearer ${creds.apiToken}` };
+      },
+      docsUrl: 'https://docs.digitalocean.com/reference/mcp/configure-mcp/',
+      async validate(creds) {
+        const res = await fetch(`${containerUrl}/mcp`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/event-stream',
+            Authorization: `Bearer ${creds.apiToken}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-03-26',
+              capabilities: {},
+              clientInfo: { name: 'mcp-gateway-validator', version: '1.0.0' },
+            },
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            return {
+              valid: false,
+              error: `Invalid DigitalOcean Personal Access Token, or token lacks required ${name} scope.`,
+            };
+          }
+          return { valid: false, error: `${name} MCP returned HTTP ${res.status}.` };
+        }
+        return { valid: true };
+      },
+    };
+  }
+  return out;
+}
 
 export const VENDORS: Record<string, VendorConfig> = {
   'datto-rmm': {
@@ -1039,6 +1116,25 @@ export const VENDORS: Record<string, VendorConfig> = {
       return { valid: true };
     },
   },
+
+  // WYREAI-165 (Aaron + boss msg-1781543433251, 2026-06-15): DigitalOcean
+  // MCP — 10 hosted remote endpoints (NOT sidecar containers), shipped as
+  // sibling slugs per shape (a) [boss-locked, one slug per DO service].
+  //
+  // Auth: uniform Bearer-PAT across all 10 endpoints. Ground-check
+  // 2026-06-15 confirmed even the docs endpoint advertises RFC 9728
+  // oauth-protected-resource metadata at
+  // <subdomain>.mcp.digitalocean.com/.well-known/oauth-protected-resource
+  // (initial scope expected docs to be no-auth; probe disproved). All 10
+  // share one validate() shape -> one factory below, ten dictionary
+  // entries that vary only by slug + subdomain + display-name.
+  //
+  // Token provisioning: user mints a Personal Access Token at
+  // cloud.digitalocean.com/account/api/tokens (read+write scope per the
+  // 401 challenge), pastes into the field below. We send as
+  // `Authorization: Bearer <pat>` on every proxied request. Sibling shape
+  // to PandaDoc / HubSpot hosted-OAuth-MCP vendors.
+  ...digitalOceanMcpEntries(),
 
   hubspot: {
     name: 'HubSpot',

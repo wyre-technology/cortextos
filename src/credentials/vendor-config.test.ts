@@ -315,4 +315,96 @@ describe('vendor-config', () => {
       }
     });
   });
+
+  // WYREAI-165 — 10 DigitalOcean MCP slugs are emitted from one factory
+  // (DIGITAL_OCEAN_MCP_SLUGS tuple list). These checks pin the by-construction
+  // shape so a future refactor cannot silently drop a slug, flip the auth
+  // header, or skew a subdomain mapping.
+  describe('digitalocean MCP slugs', () => {
+    const DO_EXPECTED: Array<[string, string, string]> = [
+      ['digitalocean-apps', 'DigitalOcean Apps', 'apps'],
+      ['digitalocean-databases', 'DigitalOcean Databases', 'databases'],
+      ['digitalocean-docs', 'DigitalOcean Docs', 'docs'],
+      ['digitalocean-doks', 'DigitalOcean Kubernetes (DOKS)', 'doks'],
+      ['digitalocean-droplets', 'DigitalOcean Droplets', 'droplets'],
+      ['digitalocean-functions', 'DigitalOcean Functions', 'functions'],
+      ['digitalocean-gradient-ai', 'DigitalOcean Gradient AI', 'gradient-ai'],
+      ['digitalocean-inference', 'DigitalOcean Inference Model Catalog', 'inference-modelcatalog'],
+      ['digitalocean-networking', 'DigitalOcean Networking', 'networking'],
+      ['digitalocean-spaces', 'DigitalOcean Spaces', 'spaces'],
+    ];
+
+    it('registers all 10 DO slugs in the infrastructure category', () => {
+      const slugs = getVendorSlugs();
+      for (const [slug] of DO_EXPECTED) {
+        expect(slugs, `missing ${slug}`).toContain(slug);
+        expect(getVendor(slug)!.category).toBe('infrastructure');
+      }
+    });
+
+    it.each(DO_EXPECTED)('%s: name=%s, containerUrl=https://%s.mcp.digitalocean.com', (slug, name, subdomain) => {
+      const v = getVendor(slug)!;
+      expect(v.name).toBe(name);
+      expect(v.containerUrl).toBe(`https://${subdomain}.mcp.digitalocean.com`);
+      expect(v.docsUrl).toBe('https://docs.digitalocean.com/reference/mcp/configure-mcp/');
+      expect(v.fields).toHaveLength(1);
+      expect(v.fields[0]).toMatchObject({ key: 'apiToken', required: true, secret: true });
+      expect(v.buildHeaders!({ apiToken: 'pat_abc' })).toEqual({
+        Authorization: 'Bearer pat_abc',
+      });
+    });
+
+    it('droplets validate() maps 401 to invalid-PAT error (no leak of upstream body)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('missing or invalid bearer token', { status: 401 }),
+      );
+      const v = getVendor('digitalocean-droplets')!;
+      const result = await v.validate!({ apiToken: 'bad' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toContain('Invalid DigitalOcean Personal Access Token');
+      expect(result.valid === false && result.error).toContain('DigitalOcean Droplets');
+    });
+
+    it('docs validate() maps 401 to invalid-PAT error (uniform shape, not a no-auth special case)', async () => {
+      // Ground-check 2026-06-15: the docs subdomain also enforces Bearer-PAT
+      // per RFC 9728 oauth-protected-resource. This locks the uniform shape
+      // so future code cannot regress to skipping auth on docs.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('missing or invalid bearer token', { status: 401 }),
+      );
+      const v = getVendor('digitalocean-docs')!;
+      const result = await v.validate!({ apiToken: 'bad' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toContain('Invalid DigitalOcean Personal Access Token');
+      expect(result.valid === false && result.error).toContain('DigitalOcean Docs');
+    });
+
+    it('non-401 HTTP errors surface the raw status (gradient-ai 503)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('upstream down', { status: 503 }),
+      );
+      const v = getVendor('digitalocean-gradient-ai')!;
+      const result = await v.validate!({ apiToken: 'p' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toContain('HTTP 503');
+      expect(result.valid === false && result.error).toContain('Gradient AI');
+    });
+
+    it('validate() targets <subdomain>.mcp.digitalocean.com/mcp with Authorization: Bearer header', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{"jsonrpc":"2.0","id":1,"result":{}}', { status: 200 }));
+      const v = getVendor('digitalocean-spaces')!;
+      const result = await v.validate!({ apiToken: 'pat_xyz' });
+      expect(result).toEqual({ valid: true });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://spaces.mcp.digitalocean.com/mcp');
+      expect((init as RequestInit).method).toBe('POST');
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer pat_xyz');
+      expect(headers['Content-Type']).toBe('application/json');
+      expect(headers.Accept).toContain('text/event-stream');
+    });
+  });
 });
