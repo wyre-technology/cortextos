@@ -1,5 +1,5 @@
 ---
-title: Upstream Sync
+title: Upstream sync
 description: How Conduit periodically pulls changes from the upstream mcp-gateway product repo.
 ---
 
