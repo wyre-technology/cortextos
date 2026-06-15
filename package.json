@@ -2,7 +2,7 @@
   "name": "@wyre-technology/mcp-gateway-platform",
   "version": "0.0.0-semantically-released",
   "private": true,
-  "description": "MCP Gateway Platform — white-label AI tool gateway for managed service providers",
+  "description": "MCP Gateway Platform \u2014 white-label AI tool gateway for managed service providers",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -16,6 +16,8 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage:integration": "vitest run --config vitest.integration.config.ts --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "migrate:from-mcp-gateway": "tsx scripts/migrate-from-mcp-gateway.ts",
     "backfill:invitation-tokens": "tsx scripts/backfill-invitation-tokens.ts"
   },
@@ -50,6 +52,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@testcontainers/postgresql": "^11.14.0",
