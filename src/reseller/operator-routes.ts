@@ -239,24 +239,22 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
 // ═══════════════════════════════════════════════════════════════════════════
 // -----------------------------------------------------------------------------
 
-interface RequestWithCaller extends FastifyRequest {
-  caller?: {
-    userId: string;
-    orgId?: string;
-    role?: string;
-    actingAs?: { onBehalfOfOrgId: string; viaResellerOrgId: string };
-  };
-}
+// Caller shape is module-augmented onto FastifyRequest by
+// src/reseller/acting-as-middleware.ts (slice 3 LIFECYCLE-BIND). The
+// middleware populates request.caller with the revalidated actingAs (or
+// strips it on failure). Reading request.caller here returns the
+// already-revalidated state.
+type Caller = NonNullable<FastifyRequest['caller']>;
 
-function getCallerOrThrow(request: FastifyRequest): NonNullable<RequestWithCaller['caller']> {
-  const caller = (request as RequestWithCaller).caller;
+function getCallerOrThrow(request: FastifyRequest): Caller {
+  const caller = request.caller;
   if (!caller) {
     throw new Error('operator-routes: caller missing from request — auth middleware did not run');
   }
-  // LIFECYCLE-BIND READ-SITE (warden Angle 2): when dev's session-handling
-  // PR extends this function with live-authz revalidation, the 3-check is
-  // documented in the block-comment above this function. The 3-check MUST
-  // fire HERE before returning the caller (or sooner — at the middleware
-  // upstream — dev's call).
+  // LIFECYCLE-BIND READ-SITE (warden Angle 2): the 3-check live-authz
+  // revalidation runs UPSTREAM in src/reseller/acting-as-middleware.ts
+  // (slice 3 LIFECYCLE-BIND substrate). By the time we read here, the
+  // caller's actingAs is EITHER (a) freshly-revalidated this tick or (b)
+  // null because revocation already fired. No third state.
   return caller;
 }
