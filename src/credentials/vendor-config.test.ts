@@ -426,14 +426,35 @@ describe('vendor-config', () => {
       });
     });
 
-    it('region field includes us5 (gateway #258 fold-in)', () => {
+    it('region field includes us5 (gateway #258 fold-in) and lnx (2026-06-15 TLS-probe fold-in)', () => {
       const v = getVendor('auvik')!;
       const regionField = v.fields.find((f) => f.key === 'region');
       expect(regionField).toBeDefined();
       expect(regionField!.required).toBe(false);
       expect(regionField!.options).toEqual([
-        'us1', 'us2', 'us3', 'us4', 'us5', 'eu1', 'eu2', 'au1', 'ca1',
+        'us1', 'us2', 'us3', 'us4', 'us5', 'eu1', 'eu2', 'au1', 'ca1', 'lnx',
       ]);
+    });
+
+    // Allowlist EXPANSION witness — NOT the SSRF-fallback test. Pins
+    // that `region: 'lnx'` reaches its real cluster (auvikapi.lnx.my
+    // .auvik.com) instead of falling back to us1. If a future refactor
+    // accidentally drops lnx from the allowlist, this test fails fast
+    // — distinct from the SSRF-guard rows which witness the opposite
+    // direction (rejected inputs MUST fall back to us1).
+    it('lnx allowlist-expansion witness: validate() targets auvikapi.lnx.my.auvik.com (not us1 fallback)', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({
+        username: 'op@msp.example', apiKey: 'k_lnx', region: 'lnx',
+      });
+      expect(result).toEqual({ valid: true });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://auvikapi.lnx.my.auvik.com/v1/authentication/verify');
+      // Explicit negative: the lnx-bound request did NOT fall back to us1.
+      expect(String(url)).not.toContain('us1');
     });
 
     it('validate() targets the region-aware URL with Basic auth (us5 witness)', async () => {
