@@ -196,10 +196,26 @@ function digitalOceanMcpEntries(): Record<string, VendorConfig> {
  * input path by-construction.
  *
  * us5 = newer US cluster (gateway #258 fold-in 2026-06-15).
+ * lnx = real Auvik cluster missed at codegen-time (auvik-mcp README v1.0
+ *       was incomplete; ground-truth landed 2026-06-15 when an operator
+ *       supplied lnx-bound creds — see Source-citation below).
+ *
+ * Source-citation (ruby's set-boundary-via-external-source discipline):
+ *   - Initial 9 (us1..us5/eu1/eu2/au1/ca1): auvik-mcp README v1.0
+ *     `## API Regions` section, transcribed at PR #402 codegen 2026-06-15
+ *   - lnx (added in this PR): TLS-probe witness
+ *     `HEAD https://auvikapi.lnx.my.auvik.com/v1/authentication/verify`
+ *     → HTTP/2 401 + WWW-Authenticate Bearer at distinct IP 3.129.48.37
+ *     (sanity-checked against 6 sinkhole candidates — ln1/lon/uk1/nz1/
+ *     sg1/jp1 — all of which collapsed onto wildcard IPs, so the lnx
+ *     response is NOT a DNS-wildcard artifact). 2026-06-15 ~20:26Z.
+ *   - Future regions land via the same probe-and-bank pattern when an
+ *     operator surfaces a creds-on-unrecognized-region case.
  */
 const AUVIK_VALID_REGIONS = [
   'us1', 'us2', 'us3', 'us4', 'us5',
   'eu1', 'eu2', 'au1', 'ca1',
+  'lnx',
 ] as const;
 type AuvikRegion = typeof AUVIK_VALID_REGIONS[number];
 
