@@ -138,6 +138,29 @@ CREATE INDEX IF NOT EXISTS idx_user_consent_ack_org
 -- accept (if the org gets created without consent) OR rejects the
 -- callback (if consent is required for callback completion; route-handler
 -- decision).
+--
+-- 2026-06-15 prod-deploy block (boss): signup_intents is LAZY-CREATED by
+-- the signup-routes plugin at boot-time (gated by SIGNUP_ENABLED). On
+-- environments where SIGNUP_ENABLED=false (e.g. prod-before-this-migration-
+-- runs), the table never gets created and this ALTER fails with
+-- "relation 'signup_intents' does not exist". Pre-create the table
+-- defensively here so the migration is composable with either ordering
+-- (migration-first OR plugin-first). Schema MUST match the lazy-create
+-- in src/signup/routes.ts verbatim, or subsequent INSERTs from the plugin
+-- will fail. Architectural debt parent: lazy-create-at-plugin-boot vs
+-- migration-defined-schema duality; long-term fix is to convert all
+-- lazy-creates into proper migrations, but this defensive shim unblocks
+-- the prod-promotion path TODAY without that broader cleanup.
+
+CREATE TABLE IF NOT EXISTS signup_intents (
+  id          TEXT PRIMARY KEY,
+  email       TEXT NOT NULL,
+  funnel      TEXT NOT NULL DEFAULT 'reseller',
+  ip          TEXT,
+  user_agent  TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  consumed_at TIMESTAMPTZ
+);
 
 ALTER TABLE signup_intents
   ADD COLUMN IF NOT EXISTS consent_accepted             BOOLEAN     NOT NULL DEFAULT FALSE,
