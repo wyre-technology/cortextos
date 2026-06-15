@@ -14,6 +14,7 @@
  */
 import type { BillingGate } from '../billing/gate.js';
 import type { OrgService } from '../org/org-service.js';
+import { redactArgs } from '../observability/redact.js';
 
 const SUMMARY_LIMIT_BYTES = 8 * 1024; // 8 KB cap on response_summary
 
@@ -52,14 +53,19 @@ export function summarizeResponse(value: unknown): string | null {
 }
 
 /**
- * JSON-stringify tool arguments. Returns null when arguments are absent or
+ * JSON-stringify tool arguments, with sensitive values redacted in-process
+ * BEFORE serialization. Raw tool-call arguments never reach disk; only the
+ * redacted copy is written to `request_log.tool_arguments`. The vendor still
+ * receives the original args via `body.params.arguments` — only the audit
+ * copy is redacted. See src/observability/redact.ts (mechanism dev-owned;
+ * policy murph-owned). Returns null when arguments are absent or
  * unstringifiable. No truncation — Postgres can hold a multi-MB JSONB
  * value, and arguments are typically small.
  */
 export function captureArguments(args: unknown): string | null {
   if (args == null) return null;
   try {
-    return JSON.stringify(args);
+    return JSON.stringify(redactArgs(args));
   } catch {
     return null;
   }

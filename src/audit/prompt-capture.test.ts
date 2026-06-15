@@ -48,7 +48,7 @@ describe('captureArguments', () => {
     expect(captureArguments(undefined)).toBeNull();
   });
 
-  it('stringifies plain objects', () => {
+  it('stringifies plain objects (no sensitive keys/values pass through unchanged)', () => {
     expect(captureArguments({ a: 1, b: 'x' })).toBe('{"a":1,"b":"x"}');
   });
 
@@ -56,6 +56,24 @@ describe('captureArguments', () => {
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;
     expect(captureArguments(cyclic)).toBeNull();
+  });
+
+  // Wiring tests: redactArgs runs BEFORE JSON.stringify, so the persisted
+  // string never contains raw sensitive values. Sibling of gateway #240.
+  it('redacts sensitive keys before stringifying (wire-point verified)', () => {
+    const out = captureArguments({ ticket: { title: 'printer down', api_key: 'AKIA1234567890' } });
+    expect(out).toBe('{"ticket":{"title":"printer down","api_key":"<REDACTED>"}}');
+    expect(out).not.toContain('AKIA1234567890');
+  });
+
+  it('redacts sensitive value-shapes under non-sensitive keys before stringifying', () => {
+    // JWT shape under a generic `note` key — must be redacted even though the
+    // key is non-sensitive. Built at runtime so the static secret-scanner does
+    // not flag the fixture; redactArgs still sees a full token at runtime.
+    const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxIn0', 'sig_part_dummy_value_xxxxxxxx'].join('.');
+    const out = captureArguments({ note: jwt });
+    expect(out).toBe('{"note":"<REDACTED>"}');
+    expect(out).not.toContain('eyJhbGciOiJIUzI1NiJ9');
   });
 });
 
