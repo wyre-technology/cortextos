@@ -37,3 +37,9 @@ dev-debug.log
 # tasks/ 
 /screenshots/
 graphify-out/
+
+# Playwright (E2E harness) artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
