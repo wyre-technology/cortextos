@@ -92,6 +92,21 @@ export interface VendorConfig {
   mcpPath?: string;
 }
 
+/**
+ * Alternative Payments environments — single source of truth used by both
+ * the fields[].options dropdown (render-substrate) AND validate()'s
+ * allowlist gate (server-substrate).
+ *
+ * The current validate() ternary is already SSRF-safe by equality-compare
+ * (no URL interpolation of creds.environment) — but the const-extraction
+ * applies the warden discipline (sibling #402: client dropdown is render-
+ * substrate, not enforcement) PRE-EMPTIVELY: if a future refactor switches
+ * to URL interpolation, the allowlist gate is already in place.
+ * By-construction-with-self-dissolving-mechanism shape carried forward.
+ */
+const ALT_PAYMENTS_VALID_ENVIRONMENTS = ['production', 'demo'] as const;
+type AltPaymentsEnvironment = typeof ALT_PAYMENTS_VALID_ENVIRONMENTS[number];
+
 export const VENDORS: Record<string, VendorConfig> = {
   'datto-rmm': {
     name: 'Datto RMM',
@@ -901,6 +916,90 @@ export const VENDORS: Record<string, VendorConfig> = {
       clientIdEnv: 'QBO_CLIENT_ID',
       clientSecretEnv: 'QBO_CLIENT_SECRET',
       extraFields: ['realmId'],
+    },
+  },
+
+  // WYREAI-164 (Aaron + boss msg-1781546951084, 2026-06-15): Alternative
+  // Payments MCP — LAUNCH-CRITICAL (target 6/29) wire-in. 1:1 mirror of
+  // gateway-side entry. Production-ready sidecar
+  // (wyre-technology/alternative-payments-mcp); 3 destructive tools require
+  // interactive confirmation, handled sidecar-side.
+  //
+  // Auth: OAuth 2.0 client-credentials. The sidecar manages token mint +
+  // refresh internally; conduit just passes the raw client_id /
+  // client_secret / environment headers through. validate() exercises the
+  // /oauth/token endpoint directly with Basic auth as the credential
+  // witness (sidecar-internal token cache is opaque to conduit at
+  // validate time).
+  //
+  // Warden discipline (sibling lesson from #402 SSRF on auvik region):
+  // ALT_PAYMENTS_VALID_ENVIRONMENTS is the single-source-of-truth across
+  // render-substrate (fields[].options) and server-substrate (validate
+  // allowlist). The current ternary is already SSRF-safe but the
+  // allowlist gate is pre-emptive — a future refactor that turns the
+  // ternary into URL interpolation inherits the allowlist by-construction.
+  'alternative-payments': {
+    name: 'Alternative Payments',
+    slug: 'alternative-payments',
+    category: 'accounting',
+    containerUrl: 'http://alternative-payments-mcp:8080',
+    fields: [
+      { key: 'clientId', label: 'Client ID', required: true, secret: true },
+      { key: 'clientSecret', label: 'Client Secret', required: true, secret: true },
+      {
+        key: 'environment',
+        label: 'Environment',
+        required: false,
+        options: [...ALT_PAYMENTS_VALID_ENVIRONMENTS],
+        placeholder: 'production',
+      },
+    ],
+    headerMapping: {
+      clientId: 'X-Alternative-Payments-Client-Id',
+      clientSecret: 'X-Alternative-Payments-Client-Secret',
+      environment: 'X-Alternative-Payments-Environment',
+    },
+    docsUrl: 'https://docs.alternativepayments.io/',
+    async validate(creds) {
+      // SECURITY: server-side allowlist gate, single-source-of-truth with
+      // the dropdown options[]. Unknown values fall back to 'production'
+      // (the safer default — demo is a non-prod sandbox; defaulting to
+      // demo on a misconfigured input would mask the bad input). See
+      // sibling discipline on auvik (#402, warden HARD-REQ).
+      const env: AltPaymentsEnvironment =
+        (ALT_PAYMENTS_VALID_ENVIRONMENTS as readonly string[]).includes(creds.environment ?? '')
+          ? (creds.environment as AltPaymentsEnvironment)
+          : 'production';
+      const baseUrl =
+        env === 'demo'
+          ? 'https://public-api.demo.alternativepayments.io'
+          : 'https://public-api.alternativepayments.io';
+      const basic = Buffer.from(
+        `${creds.clientId}:${creds.clientSecret}`,
+      ).toString('base64');
+      const res = await fetch(`${baseUrl}/oauth/token`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          return {
+            valid: false,
+            error: 'Invalid Alternative Payments client credentials.',
+          };
+        }
+        return {
+          valid: false,
+          error: `Alternative Payments returned HTTP ${res.status}.`,
+        };
+      }
+      return { valid: true };
     },
   },
 
