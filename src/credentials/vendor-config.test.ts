@@ -184,4 +184,135 @@ describe('vendor-config', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
+
+  // WYREAI-164 — alternative-payments wire-in (LAUNCH-CRITICAL).
+  // 1:1 mirror of gateway-side entry with warden discipline (sibling
+  // lesson from #402): client-side dropdown is render-substrate;
+  // validate() allowlists creds.environment before host selection so a
+  // future refactor that switches the ternary to URL interpolation
+  // inherits SSRF protection by-construction.
+  describe('alternative-payments wire-in', () => {
+    it('registers alternative-payments in the accounting category', () => {
+      expect(getVendorSlugs()).toContain('alternative-payments');
+      const v = getVendor('alternative-payments')!;
+      expect(v.name).toBe('Alternative Payments');
+      expect(v.category).toBe('accounting');
+      expect(v.containerUrl).toBe('http://alternative-payments-mcp:8080');
+      expect(v.headerMapping).toEqual({
+        clientId: 'X-Alternative-Payments-Client-Id',
+        clientSecret: 'X-Alternative-Payments-Client-Secret',
+        environment: 'X-Alternative-Payments-Environment',
+      });
+    });
+
+    it('environment field options[] are exactly [production, demo] (no extra slop)', () => {
+      const v = getVendor('alternative-payments')!;
+      const envField = v.fields.find((f) => f.key === 'environment');
+      expect(envField).toBeDefined();
+      expect(envField!.required).toBe(false);
+      expect(envField!.options).toEqual(['production', 'demo']);
+    });
+
+    it('clientId + clientSecret are both required + secret-flagged', () => {
+      const v = getVendor('alternative-payments')!;
+      expect(v.fields.find((f) => f.key === 'clientId')).toMatchObject({
+        required: true, secret: true,
+      });
+      expect(v.fields.find((f) => f.key === 'clientSecret')).toMatchObject({
+        required: true, secret: true,
+      });
+    });
+
+    it('validate() production happy-path: Basic auth + client-credentials grant', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{"access_token":"tok"}', { status: 200 }));
+      const v = getVendor('alternative-payments')!;
+      const result = await v.validate!({
+        clientId: 'cid_abc', clientSecret: 'sek_xyz', environment: 'production',
+      });
+      expect(result).toEqual({ valid: true });
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://public-api.alternativepayments.io/oauth/token');
+      expect((init as RequestInit).method).toBe('POST');
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      const expectedAuth = `Basic ${Buffer.from('cid_abc:sek_xyz').toString('base64')}`;
+      expect(headers.Authorization).toBe(expectedAuth);
+      expect(headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+      expect((init as RequestInit).body).toBe('grant_type=client_credentials');
+    });
+
+    it('validate() demo environment routes to demo base URL', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('alternative-payments')!;
+      await v.validate!({
+        clientId: 'c', clientSecret: 's', environment: 'demo',
+      });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://public-api.demo.alternativepayments.io/oauth/token');
+    });
+
+    it('validate() defaults to production when environment omitted', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('alternative-payments')!;
+      await v.validate!({ clientId: 'c', clientSecret: 's' });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://public-api.alternativepayments.io/oauth/token');
+    });
+
+    it('validate() 401 -> invalid-creds error (no upstream body leak)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('upstream-body-with-PII', { status: 401 }),
+      );
+      const v = getVendor('alternative-payments')!;
+      const result = await v.validate!({ clientId: 'c', clientSecret: 'bad' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toBe(
+        'Invalid Alternative Payments client credentials.',
+      );
+      expect(result.valid === false && result.error).not.toContain('upstream-body');
+    });
+
+    it('validate() non-401 -> raw HTTP status surfaced', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('upstream down', { status: 503 }),
+      );
+      const v = getVendor('alternative-payments')!;
+      const result = await v.validate!({ clientId: 'c', clientSecret: 's' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toContain('HTTP 503');
+    });
+
+    // SSRF allowlist-fallback (warden discipline pre-applied — sibling
+    // lesson from #402). The current ternary is already SSRF-safe by
+    // equality-compare, but the allowlist gate fires FIRST and forces a
+    // sanitised environment value into the ternary so any future refactor
+    // to URL interpolation inherits the protection by-construction.
+    //
+    // 5 rows (one less than auvik's 6 — path-injection is not applicable
+    // to equality-compare). Each row pins (1) fetch URL is exactly the
+    // production base, (2) the malicious value never appears in URL.
+    it.each([
+      ['fragment injection', 'demo#evil'],
+      ['unknown environment', 'staging'],
+      ['empty string', ''],
+      ['whitespace-padded demo', 'demo '],
+      ['casing mismatch (case-sensitive allowlist)', 'DEMO'],
+    ])('validate() SSRF guard: rejects %s and falls back to production', async (_label, badEnv) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('alternative-payments')!;
+      await v.validate!({ clientId: 'c', clientSecret: 's', environment: badEnv });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://public-api.alternativepayments.io/oauth/token');
+      if (badEnv !== '') {
+        expect(String(url)).not.toContain(badEnv);
+      }
+    });
+  });
 });
