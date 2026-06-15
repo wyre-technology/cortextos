@@ -184,6 +184,25 @@ function digitalOceanMcpEntries(): Record<string, VendorConfig> {
   return out;
 }
 
+/**
+ * Auvik supported regions — single source of truth used by BOTH the
+ * fields[].options dropdown (render-substrate) AND validate()'s
+ * allowlist gate (server-substrate). The render-side restriction is
+ * client-controlled and CANNOT be relied on for security — without the
+ * validate-side allowlist, a crafted `region="evil.com#"` would interp
+ * into the upstream URL and exfil the operator's Basic-auth header to
+ * an attacker-controlled host (warden PR #402 SSRF surface
+ * 2026-06-15 msg-1781546697098). Allowlist-then-interpolate closes the
+ * input path by-construction.
+ *
+ * us5 = newer US cluster (gateway #258 fold-in 2026-06-15).
+ */
+const AUVIK_VALID_REGIONS = [
+  'us1', 'us2', 'us3', 'us4', 'us5',
+  'eu1', 'eu2', 'au1', 'ca1',
+] as const;
+type AuvikRegion = typeof AUVIK_VALID_REGIONS[number];
+
 export const VENDORS: Record<string, VendorConfig> = {
   'datto-rmm': {
     name: 'Datto RMM',
@@ -859,7 +878,7 @@ export const VENDORS: Record<string, VendorConfig> = {
         key: 'region',
         label: 'Region',
         required: false,
-        options: ['us1', 'us2', 'us3', 'us4', 'us5', 'eu1', 'eu2', 'au1', 'ca1'],
+        options: [...AUVIK_VALID_REGIONS],
       },
     ],
     headerMapping: {
@@ -868,7 +887,16 @@ export const VENDORS: Record<string, VendorConfig> = {
       region: 'x-auvik-region',
     },
     async validate(creds) {
-      const region = creds.region || 'us1';
+      // SECURITY: server-side allowlist before URL interpolation. A
+      // crafted `region` like "evil.com#" would otherwise fragment-strip
+      // through fetch and exfil the Basic-auth header to an attacker
+      // host. AUVIK_VALID_REGIONS is single-source-of-truth with the
+      // dropdown options[]; unknown values fall back to us1 (the
+      // sidecar's own default).
+      const region: AuvikRegion = (AUVIK_VALID_REGIONS as readonly string[])
+        .includes(creds.region ?? '')
+        ? (creds.region as AuvikRegion)
+        : 'us1';
       const auth = Buffer.from(`${creds.username}:${creds.apiKey}`).toString('base64');
       const res = await fetch(
         `https://auvikapi.${region}.my.auvik.com/v1/authentication/verify`,

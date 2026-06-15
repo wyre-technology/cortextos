@@ -497,5 +497,36 @@ describe('vendor-config', () => {
       expect(result.valid === false && result.error).toContain('HTTP 404');
       expect(result.valid === false && result.error).toContain('region selection');
     });
+
+    // SSRF regression-guard (warden HARD-REQ msg-1781546697098):
+    // client-side dropdown CANNOT be trusted; validate() must allowlist
+    // before URL interpolation. A crafted region like "evil.com#" would
+    // otherwise hit https://auvikapi.evil.com#.my.auvik.com -> fragment
+    // strip -> fetch auvikapi.evil.com with the Basic-auth header.
+    // Allowlist-then-interpolate closes by-construction: any unknown
+    // region falls back to us1 and the attacker domain is never reached.
+    it.each([
+      ['fragment injection', 'evil.com#'],
+      ['path injection', 'us1/../evil'],
+      ['double-dot subdomain', 'evil.com.'],
+      ['empty string', ''],
+      ['unknown region', 'mars1'],
+      ['us1 with whitespace', 'us1 '],
+    ])('validate() SSRF guard: rejects %s and falls back to us1 (no fetch to attacker domain)', async (_label, badRegion) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      await v.validate!({ username: 'op@msp.example', apiKey: 'k', region: badRegion });
+      const [url] = fetchSpy.mock.calls[0]!;
+      // The ONLY accepted destination after fallback is the us1 cluster.
+      expect(url).toBe('https://auvikapi.us1.my.auvik.com/v1/authentication/verify');
+      // Negative-assertion: the attacker fragment never reached fetch().
+      // Skipped for the empty-string row — `not.toContain('')` is vacuously
+      // false; the URL equality above already pins that branch.
+      if (badRegion !== '') {
+        expect(String(url)).not.toContain(badRegion);
+      }
+    });
   });
 });
