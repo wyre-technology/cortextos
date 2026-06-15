@@ -73,23 +73,16 @@ test.describe('FLOW 1 — TENANT (pearl spec §1)', () => {
 
   // pearl §1.7 — Connect auvik (DEPENDS on #402 merge — landed 20:16:19Z)
   test.skip('1.7 connect auvik (POST /api/orgs/:orgId/credentials/auvik)', async () => {
-    /* PR-2: username + apiKey + region (us5 incl). #402 merged so unblocked. */
+    /* PR-2: username + apiKey + region (us5 + lnx incl). #402 + lnx allowlist landed. */
   });
 
-  // pearl §1.8 — validate() round-trips for each connected vendor
-  test.skip('1.8 each connected vendor validate() returns valid=true', async () => {
-    /* PR-2: assert valid=true response shape + no upstream body leakage */
-  });
-
-  // pearl §1.9 — tools list reflects the 3 connected vendors
-  test.skip('1.9 GET /v1/mcp tools-list surfaces all 3 vendors', async () => {
-    /* PR-2: tools[] count matches connected, slug-prefix matches vendor */
-  });
-
-  // pearl §1.10 — round-trip a trivial tool call
-  test.skip('1.10 trivial tool-call round-trips successfully', async () => {
-    /* PR-2: tool-call latency + audit-event + redact-args witness */
-  });
+  // pearl §1.8/1.9/1.10 — gateway-behavior witnesses (initialize, tools/list,
+  // tools/call). LANDED in mcp-gateway.spec.ts (PR-2a-mcp). Per the substrate-
+  // boundary finding (boss msg-1781555620246): /v1/mcp accepts the mcp-scope SA
+  // bearer end-to-end, so these tests ship NOW against the SA-attached staging
+  // org (which is a real production-like fixture with itglue / datto-rmm /
+  // domotz / autotask / halopsa connected). The vendor-specific connect-step
+  // tests (1.5–1.7 above) remain skip-gated on the user-session test-account.
 });
 
 test.describe('FLOW 2 — SUBTENANT actingAs (pearl spec §2)', () => {
