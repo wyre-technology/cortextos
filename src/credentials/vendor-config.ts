@@ -184,6 +184,25 @@ function digitalOceanMcpEntries(): Record<string, VendorConfig> {
   return out;
 }
 
+/**
+ * Auvik supported regions — single source of truth used by BOTH the
+ * fields[].options dropdown (render-substrate) AND validate()'s
+ * allowlist gate (server-substrate). The render-side restriction is
+ * client-controlled and CANNOT be relied on for security — without the
+ * validate-side allowlist, a crafted `region="evil.com#"` would interp
+ * into the upstream URL and exfil the operator's Basic-auth header to
+ * an attacker-controlled host (warden PR #402 SSRF surface
+ * 2026-06-15 msg-1781546697098). Allowlist-then-interpolate closes the
+ * input path by-construction.
+ *
+ * us5 = newer US cluster (gateway #258 fold-in 2026-06-15).
+ */
+const AUVIK_VALID_REGIONS = [
+  'us1', 'us2', 'us3', 'us4', 'us5',
+  'eu1', 'eu2', 'au1', 'ca1',
+] as const;
+type AuvikRegion = typeof AUVIK_VALID_REGIONS[number];
+
 export const VENDORS: Record<string, VendorConfig> = {
   'datto-rmm': {
     name: 'Datto RMM',
@@ -829,6 +848,71 @@ export const VENDORS: Record<string, VendorConfig> = {
         };
       // Entra returns 400 for bad client credentials — a real credential rejection.
       return { valid: false, error: 'Azure service principal rejected. Check the tenant ID, client ID, and secret.' };
+    },
+  },
+
+  // WYREAI-151 (Aaron + boss msg-1781545837795, 2026-06-15): Auvik MCP
+  // wire-in — production-ready sidecar (wyre-technology/auvik-mcp) with
+  // 25+ tools that was missing its conduit entry per fleet report
+  // 2026-06-08 (44/51 wired, auvik one of 7 unwired + only production-
+  // ready + genuinely missing). 1:1 mirror of the gateway-side entry
+  // (mcp-gateway PR #258 included us5 in the region options); cross-repo
+  // parity gate doesn't cover auvik (not in BATCH_1_SLUGS).
+  //
+  // Auth: Basic — `Authorization: Basic base64(username:apiKey)` —
+  // username is the operator's Auvik account email. Region is optional
+  // (sidecar defaults to us1); when present it both selects the upstream
+  // host (`auvikapi.${region}.my.auvik.com`) AND travels through to the
+  // sidecar via `x-auvik-region` so the sidecar's own routing matches.
+  // us5 is the newer US cluster (gateway #258 fold-in 2026-06-15).
+  auvik: {
+    name: 'Auvik',
+    slug: 'auvik',
+    category: 'network',
+    containerUrl: 'http://auvik-mcp',
+    docsUrl: 'https://support.auvik.com/hc/en-us/sections/360002960071-Auvik-APIs',
+    fields: [
+      { key: 'username', label: 'Auvik Username (email)', required: true },
+      { key: 'apiKey', label: 'API Key', required: true, secret: true },
+      {
+        key: 'region',
+        label: 'Region',
+        required: false,
+        options: [...AUVIK_VALID_REGIONS],
+      },
+    ],
+    headerMapping: {
+      username: 'x-auvik-username',
+      apiKey: 'x-auvik-api-key',
+      region: 'x-auvik-region',
+    },
+    async validate(creds) {
+      // SECURITY: server-side allowlist before URL interpolation. A
+      // crafted `region` like "evil.com#" would otherwise fragment-strip
+      // through fetch and exfil the Basic-auth header to an attacker
+      // host. AUVIK_VALID_REGIONS is single-source-of-truth with the
+      // dropdown options[]; unknown values fall back to us1 (the
+      // sidecar's own default).
+      const region: AuvikRegion = (AUVIK_VALID_REGIONS as readonly string[])
+        .includes(creds.region ?? '')
+        ? (creds.region as AuvikRegion)
+        : 'us1';
+      const auth = Buffer.from(`${creds.username}:${creds.apiKey}`).toString('base64');
+      const res = await fetch(
+        `https://auvikapi.${region}.my.auvik.com/v1/authentication/verify`,
+        {
+          headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (res.ok) return { valid: true };
+      if (res.status === 401) {
+        return { valid: false, error: 'Invalid Auvik username or API key.' };
+      }
+      return {
+        valid: false,
+        error: `Auvik returned HTTP ${res.status}. Check your region selection.`,
+      };
     },
   },
 

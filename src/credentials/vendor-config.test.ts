@@ -407,4 +407,126 @@ describe('vendor-config', () => {
       expect(headers.Accept).toContain('text/event-stream');
     });
   });
+
+  // WYREAI-151 — auvik wire-in. Mirrors the gateway-side entry (gateway PR
+  // #258 added us5 to the region options); these checks pin the load-bearing
+  // axes so a future region-add or auth-flip can't silently regress us5
+  // routing or leak upstream body on 401.
+  describe('auvik wire-in', () => {
+    it('registers auvik in the network category', () => {
+      expect(getVendorSlugs()).toContain('auvik');
+      const v = getVendor('auvik')!;
+      expect(v.name).toBe('Auvik');
+      expect(v.category).toBe('network');
+      expect(v.containerUrl).toBe('http://auvik-mcp');
+      expect(v.headerMapping).toEqual({
+        username: 'x-auvik-username',
+        apiKey: 'x-auvik-api-key',
+        region: 'x-auvik-region',
+      });
+    });
+
+    it('region field includes us5 (gateway #258 fold-in)', () => {
+      const v = getVendor('auvik')!;
+      const regionField = v.fields.find((f) => f.key === 'region');
+      expect(regionField).toBeDefined();
+      expect(regionField!.required).toBe(false);
+      expect(regionField!.options).toEqual([
+        'us1', 'us2', 'us3', 'us4', 'us5', 'eu1', 'eu2', 'au1', 'ca1',
+      ]);
+    });
+
+    it('validate() targets the region-aware URL with Basic auth (us5 witness)', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({ username: 'op@msp.example', apiKey: 'k_us5', region: 'us5' });
+      expect(result).toEqual({ valid: true });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://auvikapi.us5.my.auvik.com/v1/authentication/verify');
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      // Basic header is the SHA of (username:apiKey) base64-encoded — pin the
+      // exact prefix so a future flip to Bearer-PAT can't slide in silently.
+      const expectedAuth = `Basic ${Buffer.from('op@msp.example:k_us5').toString('base64')}`;
+      expect(headers.Authorization).toBe(expectedAuth);
+      expect(headers.Accept).toBe('application/json');
+    });
+
+    it('validate() defaults to us1 when region is omitted', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({ username: 'op@msp.example', apiKey: 'k' });
+      expect(result).toEqual({ valid: true });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://auvikapi.us1.my.auvik.com/v1/authentication/verify');
+    });
+
+    it('validate() honors a non-us region (eu1 witness — the URL substrate is fully parameterized)', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      await v.validate!({ username: 'op@msp.example', apiKey: 'k', region: 'eu1' });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://auvikapi.eu1.my.auvik.com/v1/authentication/verify');
+    });
+
+    it('validate() 401 -> invalid creds error (no upstream body leak)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('upstream-body-with-PII', { status: 401 }),
+      );
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({ username: 'op@msp.example', apiKey: 'bad' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toBe('Invalid Auvik username or API key.');
+      // Witness: error does NOT contain the upstream body fragment.
+      expect(result.valid === false && result.error).not.toContain('upstream-body');
+    });
+
+    it('validate() non-401 -> raw HTTP status with region-selection hint', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('region misroute', { status: 404 }),
+      );
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({ username: 'op@msp.example', apiKey: 'k', region: 'us3' });
+      expect(result.valid).toBe(false);
+      expect(result.valid === false && result.error).toContain('HTTP 404');
+      expect(result.valid === false && result.error).toContain('region selection');
+    });
+
+    // SSRF regression-guard (warden HARD-REQ msg-1781546697098):
+    // client-side dropdown CANNOT be trusted; validate() must allowlist
+    // before URL interpolation. A crafted region like "evil.com#" would
+    // otherwise hit https://auvikapi.evil.com#.my.auvik.com -> fragment
+    // strip -> fetch auvikapi.evil.com with the Basic-auth header.
+    // Allowlist-then-interpolate closes by-construction: any unknown
+    // region falls back to us1 and the attacker domain is never reached.
+    it.each([
+      ['fragment injection', 'evil.com#'],
+      ['path injection', 'us1/../evil'],
+      ['double-dot subdomain', 'evil.com.'],
+      ['empty string', ''],
+      ['unknown region', 'mars1'],
+      ['us1 with whitespace', 'us1 '],
+    ])('validate() SSRF guard: rejects %s and falls back to us1 (no fetch to attacker domain)', async (_label, badRegion) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      await v.validate!({ username: 'op@msp.example', apiKey: 'k', region: badRegion });
+      const [url] = fetchSpy.mock.calls[0]!;
+      // The ONLY accepted destination after fallback is the us1 cluster.
+      expect(url).toBe('https://auvikapi.us1.my.auvik.com/v1/authentication/verify');
+      // Negative-assertion: the attacker fragment never reached fetch().
+      // Skipped for the empty-string row — `not.toContain('')` is vacuously
+      // false; the URL equality above already pins that branch.
+      if (badRegion !== '') {
+        expect(String(url)).not.toContain(badRegion);
+      }
+    });
+  });
 });
