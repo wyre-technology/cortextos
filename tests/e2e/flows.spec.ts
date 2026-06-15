@@ -72,9 +72,13 @@ test.describe('FLOW 1 — TENANT (pearl spec §1)', () => {
   });
 
   // pearl §1.7 — Connect auvik (DEPENDS on #402 merge — landed 20:16:19Z)
-  test.skip('1.7 connect auvik (POST /api/orgs/:orgId/credentials/auvik)', async () => {
-    /* PR-2: username + apiKey + region (us5 + lnx incl). #402 + lnx allowlist landed. */
-  });
+  // pearl §1.7 — connect auvik (POST /api/orgs/:orgId/credentials/auvik).
+  // SUPERSEDED by auvik.spec.ts (PR-2c). The connect-step still requires
+  // user-session auth (cred-write is 302'd for the mcp-scope SA bearer),
+  // but the gateway-behavior witnesses ship via the auto-skip-gated
+  // approach in auvik.spec.ts: harness checks tools/list for the auvik
+  // prefix and either runs tool-call witnesses against the connected
+  // vendor OR skips with a clear "Aaron one-time-connect needed" hint.
 
   // pearl §1.8/1.9/1.10 — gateway-behavior witnesses (initialize, tools/list,
   // tools/call). LANDED in mcp-gateway.spec.ts (PR-2a-mcp). Per the substrate-
@@ -82,7 +86,8 @@ test.describe('FLOW 1 — TENANT (pearl spec §1)', () => {
   // bearer end-to-end, so these tests ship NOW against the SA-attached staging
   // org (which is a real production-like fixture with itglue / datto-rmm /
   // domotz / autotask / halopsa connected). The vendor-specific connect-step
-  // tests (1.5–1.7 above) remain skip-gated on the user-session test-account.
+  // tests (1.5/1.6 above) remain skip-gated on the user-session test-account;
+  // 1.7 auvik is now sibling-handled in auvik.spec.ts (auto-skip-gated).
 });
 
 test.describe('FLOW 2 — SUBTENANT actingAs (pearl spec §2)', () => {
