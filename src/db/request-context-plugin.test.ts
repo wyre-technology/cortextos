@@ -9,15 +9,27 @@ import { RequestPoolBusyError } from './context.js';
 // during the reserve() acquire window must still release the late-arriving
 // handle (close-listener-ordering fix), and (b) a RequestPoolBusyError from
 // openRequestContext must surface as HTTP 503, not a hang or 500.
+// `sqlTag` stands in for the tagged-template returned by getSql() — it records
+// the values interpolated into `set_config('conduit.current_user_id', <sub>)`.
+const { sqlTag } = vi.hoisted(() => ({ sqlTag: vi.fn().mockResolvedValue([]) }));
+
 vi.mock('./context.js', async (importActual) => {
   const actual = await importActual<typeof import('./context.js')>();
   return {
     ...actual,
     openRequestContext: vi.fn(),
     closeRequestContext: vi.fn().mockResolvedValue(undefined),
+    getSql: vi.fn(() => sqlTag),
   };
 });
 const ctx = await import('./context.js');
+
+// Bearer-token identity resolver — mocked so the GUC-identity test does not
+// need a real gateway JWT / signing key.
+vi.mock('../auth/bearer-identity.js', () => ({
+  resolveBearerUserId: vi.fn(),
+}));
+const { resolveBearerUserId } = await import('../auth/bearer-identity.js');
 
 describe('isExempt — request-context exemption matcher', () => {
   it('matches an exact exempt prefix, any method', () => {
@@ -75,6 +87,9 @@ describe('requestContextPlugin — onRequest lifecycle', () => {
   beforeEach(async () => {
     vi.mocked(ctx.openRequestContext).mockReset();
     vi.mocked(ctx.closeRequestContext).mockReset().mockResolvedValue(undefined);
+    // Default: no Bearer identity. The GUC-identity tests override per-case.
+    vi.mocked(resolveBearerUserId).mockReset().mockResolvedValue(null);
+    sqlTag.mockClear();
 
     app = Fastify({ logger: false });
     capturedRequest = null;
@@ -130,6 +145,43 @@ describe('requestContextPlugin — onRequest lifecycle', () => {
     await responsePromise.catch(() => undefined);
 
     expect(ctx.closeRequestContext).toHaveBeenNthCalledWith(1, fakeHandle, 'rollback');
+  });
+
+  // WYREAI-141 — the RLS GUC (conduit.current_user_id) must be established
+  // from the Bearer-verified subject for MCP/API requests, which carry no
+  // session cookie. The Bearer subject must be applied AFTER openRequestContext
+  // (via an in-transaction set_config), never awaited before it — awaiting
+  // before openRequestContext detaches the ALS context from the handler (the
+  // "c2" enterWith-after-await bug).
+  it('re-asserts the GUC to the Bearer subject (after openRequestContext) when there is no cookie session', async () => {
+    vi.mocked(ctx.openRequestContext).mockResolvedValue({ reserved: {}, settled: false } as never);
+    vi.mocked(resolveBearerUserId).mockResolvedValue('user-from-token');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/echo',
+      headers: { authorization: 'Bearer mcp-token' },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Context opens with the (empty) cookie identity FIRST — Bearer is NOT
+    // passed into openRequestContext...
+    expect(ctx.openRequestContext).toHaveBeenCalledWith('');
+    // ...it is interpolated into a set_config() on the established transaction.
+    expect(sqlTag).toHaveBeenCalled();
+    expect(sqlTag.mock.calls[0]).toContain('user-from-token');
+  });
+
+  it('leaves the GUC at the empty identity (no Bearer set_config) when neither cookie nor a valid Bearer is present', async () => {
+    vi.mocked(ctx.openRequestContext).mockResolvedValue({ reserved: {}, settled: false } as never);
+    vi.mocked(resolveBearerUserId).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'POST', url: '/api/echo', payload: {} });
+
+    expect(res.statusCode).toBe(200);
+    expect(ctx.openRequestContext).toHaveBeenCalledWith('');
+    expect(sqlTag).not.toHaveBeenCalled();
   });
 
   it('returns HTTP 503 when openRequestContext rejects with RequestPoolBusyError', async () => {

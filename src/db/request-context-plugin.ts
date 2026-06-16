@@ -50,9 +50,11 @@ import type { FastifyInstance } from 'fastify';
 import {
   openRequestContext,
   closeRequestContext,
+  getSql,
   RequestPoolBusyError,
   type RequestContextHandle,
 } from './context.js';
+import { resolveBearerUserId } from '../auth/bearer-identity.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -99,10 +101,11 @@ export const requestContextPlugin = () =>
     app.addHook('onRequest', async (request, reply) => {
       if (isExempt(request.method, request.url)) return;
 
-      // users.id === the session `sub` (auth0.ts inserts users with id = sub).
-      // '' for an unauthenticated request — RLS predicates then match no
-      // user-scoped rows, the correct posture for a request with no user.
-      const userId = request.auth0User?.sub ?? '';
+      // Cookie identity (synchronous): browser/session routes carry the
+      // gateway_session cookie, decoded into request.auth0User by the auth
+      // plugin (users.id === session `sub`; auth0.ts inserts users with id =
+      // sub). MUST stay synchronous — see the Bearer note below.
+      const cookieUserId = request.auth0User?.sub ?? '';
 
       // The raw-socket-close handler MUST be registered BEFORE awaiting
       // openRequestContext. Otherwise, a client disconnect during the
@@ -126,7 +129,7 @@ export const requestContextPlugin = () =>
       request.raw.on('close', onClose);
 
       try {
-        handle = await openRequestContext(userId);
+        handle = await openRequestContext(cookieUserId);
       } catch (err) {
         // Failed acquire: no handle is owed a close, but the listener we
         // registered above must come off or it lives for the life of the raw
@@ -153,6 +156,29 @@ export const requestContextPlugin = () =>
         // The client gave up while we were acquiring. Release immediately so
         // the slot is reusable; onResponse will not run on this request.
         void closeRequestContext(handle, 'rollback');
+        return;
+      }
+
+      // Bearer identity (WYREAI-141): MCP / API clients (mcp-remote, service
+      // clients) carry NO cookie — they authenticate with a Bearer access
+      // token, so cookieUserId is '' and the GUC openRequestContext just set is
+      // ''. Under the NOBYPASSRLS request role that makes every RLS-scoped read
+      // (credentials_select) and write (request_log_insert WITH CHECK) silently
+      // fail — the request_log "middleware not firing" prod gap.
+      //
+      // Resolve the server-verified Bearer subject and RE-ASSERT the GUC inside
+      // the now-established request transaction. This MUST happen AFTER
+      // openRequestContext, never before: openRequestContext's als.enterWith()
+      // only propagates the context to the handler if it runs before the hook's
+      // first await (the "c2" enterWith-after-await bug). An await placed ahead
+      // of openRequestContext detaches the context and the handler's getSql()
+      // throws (500). set_config(..., is_local => true) is transaction-scoped,
+      // matching how openRequestContext sets it initially.
+      if (!cookieUserId) {
+        const bearerUserId = await resolveBearerUserId(request.headers.authorization);
+        if (bearerUserId) {
+          await getSql()`SELECT set_config('conduit.current_user_id', ${bearerUserId}, true)`;
+        }
       }
     });
 
