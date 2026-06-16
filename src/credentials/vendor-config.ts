@@ -199,21 +199,35 @@ function digitalOceanMcpEntries(): Record<string, VendorConfig> {
  * lnx = real Auvik cluster missed at codegen-time (auvik-mcp README v1.0
  *       was incomplete; ground-truth landed 2026-06-15 when an operator
  *       supplied lnx-bound creds — see Source-citation below).
+ * us6 = newer US cluster shipped alongside lnx in the gateway's PR #260
+ *       fold-in; missed by the original lnx-probe candidate set (PR #405
+ *       surveyed lnx + ln1/lon/uk1/nz1/sg1/jp1, didn't include us6).
+ *       Drift surfaced when forge cross-checked gateway vs conduit
+ *       2026-06-16; ground-truth re-probed before this allowlist add.
  *
  * Source-citation (ruby's set-boundary-via-external-source discipline):
  *   - Initial 9 (us1..us5/eu1/eu2/au1/ca1): auvik-mcp README v1.0
  *     `## API Regions` section, transcribed at PR #402 codegen 2026-06-15
- *   - lnx (added in this PR): TLS-probe witness
+ *   - lnx (added in PR #405): TLS-probe witness
  *     `HEAD https://auvikapi.lnx.my.auvik.com/v1/authentication/verify`
  *     → HTTP/2 401 + WWW-Authenticate Bearer at distinct IP 3.129.48.37
  *     (sanity-checked against 6 sinkhole candidates — ln1/lon/uk1/nz1/
- *     sg1/jp1 — all of which collapsed onto wildcard IPs, so the lnx
- *     response is NOT a DNS-wildcard artifact). 2026-06-15 ~20:26Z.
- *   - Future regions land via the same probe-and-bank pattern when an
- *     operator surfaces a creds-on-unrecognized-region case.
+ *     sg1/jp1 — all of which collapsed onto wildcard IPs). 2026-06-15
+ *     ~20:26Z.
+ *   - us6 (added in this PR): TLS-probe witness
+ *     `HEAD https://auvikapi.us6.my.auvik.com/v1/authentication/verify`
+ *     → HTTP/2 401 + WWW-Authenticate Bearer at distinct IPs
+ *     3.149.122.75 + 3.150.243.107 (sanity-checked against 4 sinkhole
+ *     candidates — us7/us8/us9/lnx-fake — all collapsed onto wildcard
+ *     IPs 54.225.246.188 / 34.206.250.182 / 54.84.131.208).
+ *     2026-06-16 ~05:21Z.
+ *   - Future regions land via the same probe-and-bank pattern. The
+ *     pattern is now operationally-load-bearing across N=2 events
+ *     (lnx + us6) at the same substrate — drift-recovery substrate
+ *     proven by repetition, not just by codegen-time assertion.
  */
 const AUVIK_VALID_REGIONS = [
-  'us1', 'us2', 'us3', 'us4', 'us5',
+  'us1', 'us2', 'us3', 'us4', 'us5', 'us6',
   'eu1', 'eu2', 'au1', 'ca1',
   'lnx',
 ] as const;
