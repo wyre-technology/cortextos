@@ -3,6 +3,10 @@ title: Vendor connections
 description: Connect MSP vendor tools to Conduit — the 50+ vendor catalog (RMM, PSA, docs, security), credential scopes, and how to connect, rotate, and troubleshoot.
 ---
 
+import FaqSchema from '../../../components/FaqSchema.astro';
+
+<FaqSchema slug="guides/vendor-connections" />
+
 A **vendor connection** is a set of stored credentials that lets Conduit broker an AI agent's tool calls to a vendor's API — ConnectWise, Autotask, Microsoft 365, IT Glue, and the rest. This guide covers what vendors are available, where credentials live, and how to connect, rotate, and troubleshoot them.
 
 For the step-by-step place in the onboarding flow, see [MSP Onboarding § Connect vendor credentials](/docs/guides/msp-onboarding/#3-connect-vendor-credentials). For how credentials are encrypted and resolved, see the [Security guide](/docs/reference/security/#credential-security).
@@ -111,3 +115,25 @@ Conduit encrypts the new credential and uses it immediately; the old one is over
 | A tool is missing for a connected vendor | A tool allowlist may be restricting it for the user's role — see [`/org/tool-access`](/docs/guides/msp-onboarding/#6-configure-tool-allowlists-optional). |
 
 If a vendor is reachable but a specific call misbehaves, the [audit log](/docs/reference/api/#audit) records every tool call with its status code — a fast way to confirm whether the failure is auth, the vendor, or the tool itself.
+
+## Frequently asked questions
+
+### Which vendors can I connect to Conduit?
+
+Conduit ships with a catalog spanning RMM, PSA, documentation, security, email security, network, BCDR, productivity, sales, accounting, CRM, and marketplace tools — ConnectWise, Autotask, Datto RMM, IT Glue, Microsoft 365, and many more. No vendors are pre-configured; the ones enabled in a deployment depend on the MSP's tool stack, decided during discovery.
+
+### Where are vendor credentials stored, and at what scope?
+
+A vendor credential can be stored at one of four scopes — personal, team, organization, or a machine-to-machine service client. Most MSPs configure vendors at the organization scope so every technician shares one vendor account, with personal credentials as the per-technician override.
+
+### How do I rotate a vendor API key?
+
+Re-connect the vendor at the matching scope — org-level at `/org/connections`, team-level under `/org/teams`, or personal at `/settings/profile`. Conduit encrypts the new credential and uses it immediately, overwriting the old one; there is no separate rotate action.
+
+### Why do my tool calls return "no credentials for vendor"?
+
+No credential is configured at any scope the user can resolve. Connect the vendor at the organization scope, or check that the user is in a team that has one. The audit log records every tool call with its status code, which helps confirm whether a failure is auth, the vendor, or the tool.
+
+### How do OAuth vendors like Microsoft 365 stay connected?
+
+For OAuth vendors (Xero, QuickBooks Online, HubSpot, Microsoft 365), Conduit stores the access and refresh tokens, encrypted, and refreshes them automatically when they expire. If an OAuth vendor stops working, the refresh token was likely revoked by a password change, app uninstall, or withdrawn consent — re-run the OAuth connect flow.

@@ -3,6 +3,10 @@ title: Billing & Plans
 description: Conduit's pricing — one flat plan, everything included. A base organization fee plus a per-seat price, with a 14-day trial as the on-ramp, no usage tiers, no credits, and no per-call metering.
 ---
 
+import FaqSchema from '../../../components/FaqSchema.astro';
+
+<FaqSchema slug="guides/billing" />
+
 This guide covers Conduit's **subscription billing** — what an MSP organization pays for Conduit and how that subscription is managed.
 
 :::note
@@ -82,3 +86,25 @@ When a failed payment is recovered (the customer updates their card and Stripe s
 ## Cancellation
 
 Cancelling a subscription through the Stripe Customer Portal ends the subscription at the end of the current billing period. After that, the organization's platform access is suspended — the data is preserved per the dunning model, so the organization can resume by re-subscribing.
+
+## Frequently asked questions
+
+### How is Conduit priced?
+
+Conduit is one flat plan — everything is included. There are no feature tiers, no usage credits, and no per-call metering. You pay a base organization fee plus a per-seat price, and every feature is on from day one.
+
+### What does a Conduit subscription cost?
+
+A base organization fee of $399 per month, plus $39 per month for each human seat and for each agent (service-client) seat beyond the two included with the base fee. The price is the same for every organization; a self-hosted or white-label deployment can override pricing via the `PLAN_CATALOG` environment variable.
+
+### How do I start — is there a trial?
+
+Yes. Start a free 14-day trial of the full platform from the billing page at `/org/billing`; it converts to a paid subscription when you add a payment method through Stripe Checkout, or closes automatically at the end of the 14 days if you do nothing. An alpha invite code activates the subscription immediately, without the trial.
+
+### What happens if a payment fails?
+
+The organization moves through a dunning lifecycle rather than being cut off immediately — the payment-failing, past-due, and final-warning states all keep full access while a configurable grace window (7 days by default) runs. Only after the grace window expires is platform access gated, and recovering the payment restores it.
+
+### What happens if I cancel?
+
+Cancelling through the Stripe Customer Portal ends the subscription at the end of the current billing period, after which platform access is suspended. Your data is preserved, so the organization can resume by re-subscribing.
