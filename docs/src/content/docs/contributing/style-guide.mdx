@@ -142,6 +142,14 @@ upstream: mcp-gateway/docs/<file>.md
 upstream_sha: <git sha at fork time>
 ```
 
+Pages under `internal/` add `pagefind: false` so they stay out of the
+search index, the same way they are kept out of the sitemap, `llms.txt`,
+and robots. This is required and enforced by `search-exclusion.test.ts`:
+
+```yaml
+pagefind: false
+```
+
 ### Images
 
 - Store under `docs/src/assets/` and reference with Astro's asset
