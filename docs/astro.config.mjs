@@ -1,13 +1,91 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import sitemap from '@astrojs/sitemap';
+
+// schema.org structured data injected into every docs page <head> for
+// SEO/AEO/GEO. Claims are grounded + minimal — name/category/description/url/
+// publisher only. NO aggregateRating/offers/reviewCount: search + AI engines
+// ingest structured data as fact, so unbacked claims are a trust breach, not
+// a marketing flourish. Per-page FAQPage schema is added separately (content-
+// owned) once the docs-content lane supplies the Q/A pairs.
+const ORG_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'WYRE Technology',
+  url: 'https://wyre.ai',
+  description:
+    'WYRE Technology builds Conduit, the white-label MSP channel gateway connecting AI agents to vendor MCP servers.',
+};
+const SOFTWARE_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Conduit',
+  applicationCategory: 'BusinessApplication',
+  operatingSystem: 'Web',
+  url: 'https://conduit.wyre.ai',
+  description:
+    'Conduit is the white-label MSP channel gateway that connects AI agents to the vendor MCP servers MSPs already rely on.',
+  publisher: {
+    '@type': 'Organization',
+    name: 'WYRE Technology',
+    url: 'https://wyre.ai',
+  },
+};
+
+// Google Analytics (GA4), PROD-GATED client-side. The docs are built ONCE into
+// the gateway image and served by BOTH the staging and prod gateways
+// (single-image-both-envs), so a baked head tag ships identically to both — a
+// build-time gate can't distinguish them. The guard below is the runtime
+// equivalent of the `computeDocsNoindex` prod-apex-host discriminator, enforced
+// in the browser: it injects the gtag.js <script> AND runs init ONLY when the
+// page is served from the prod apex (GA_PROD_HOST). Off-prod (staging, preview,
+// local) it makes ZERO request to googletagmanager.com and fires nothing —
+// keeping the GA property clean of pre-launch/internal traffic. The measurement
+// ID is a public client-side identifier (ships in HTML by design, not a secret).
+const GA_PROD_HOST = 'conduit.wyre.ai';
+const GA_MEASUREMENT_ID = 'G-V3W6M1YEHL';
+const GA_GUARD = `if (location.hostname === ${JSON.stringify(GA_PROD_HOST)}) {
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}';
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', ${JSON.stringify(GA_MEASUREMENT_ID)});
+}`;
 
 // https://astro.build/config
 export default defineConfig({
   site: 'https://conduit.wyre.ai',
   base: '/docs',
   integrations: [
+    // Emits /docs/sitemap-index.xml (the URL the prod robots.txt already
+    // advertises). The filter excludes internal/ — the per-agent system-prompt
+    // docs must not be discoverable via the sitemap channel any more than via
+    // the page-serve, robots, or llms.txt channels (Finding A: exclude across
+    // ALL crawler-discovery channels, not just the page).
+    sitemap({
+      filter: (page) => !page.includes('/internal/'),
+    }),
     starlight({
+      head: [
+        {
+          tag: 'script',
+          attrs: { type: 'application/ld+json' },
+          content: JSON.stringify(ORG_SCHEMA),
+        },
+        {
+          tag: 'script',
+          attrs: { type: 'application/ld+json' },
+          content: JSON.stringify(SOFTWARE_SCHEMA),
+        },
+        {
+          tag: 'script',
+          content: GA_GUARD,
+        },
+      ],
       title: 'Conduit Docs',
       description:
         'Conduit is the white-label MSP channel gateway that connects AI agents to the vendor MCP servers MSPs already rely on.',
@@ -43,12 +121,23 @@ export default defineConfig({
             { label: 'Billing & Plans', slug: 'guides/billing' },
             { label: 'Monitoring Your Tenant', slug: 'guides/monitoring' },
             { label: 'SCIM Provisioning', slug: 'guides/scim' },
+            {
+              label: 'On-prem Gateway',
+              items: [
+                { label: 'Overview', slug: 'guides/onprem' },
+                { label: 'Quickstart', slug: 'guides/onprem/quickstart' },
+                { label: 'Architecture Context', slug: 'guides/onprem/architecture' },
+                { label: 'Reference', slug: 'guides/onprem/reference' },
+                { label: 'Troubleshooting', slug: 'guides/onprem/troubleshooting' },
+              ],
+            },
           ],
         },
         {
           label: 'Reference',
           items: [
             { label: 'Architecture', slug: 'reference/architecture' },
+            { label: 'Supported Clients', slug: 'reference/supported-clients' },
             { label: 'API', slug: 'reference/api' },
             { label: 'CLI Wrapper', slug: 'reference/cli' },
             { label: 'Permissions', slug: 'reference/permissions' },
