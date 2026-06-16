@@ -22,6 +22,67 @@ describe('vendor-config', () => {
     expect(slugs).toContain('huntress');
     expect(slugs).toContain('blumira');
     expect(slugs).toContain('m365');
+    // Launch-critical additions (PR #401 DO 10-slug, PR #402 auvik,
+    // PR #403 alt-payments). Backfilled here so the catalog-level
+    // test ratchets when a future change accidentally drops one of
+    // the launch-critical vendors. Closes analyst's ALL-ZERO-COVERAGE
+    // finding on the new-vendor catalog axis.
+    expect(slugs).toContain('alternative-payments');
+    expect(slugs).toContain('auvik');
+    // Representative DO slug — the factory emits all 10 from
+    // DIGITAL_OCEAN_MCP_SLUGS, so any one slug surfacing proves the
+    // factory ran. Per-slug coverage is in the digitalocean MCP
+    // slugs describe block farther down.
+    expect(slugs).toContain('digitalocean-droplets');
+  });
+
+  // Catalog-level shape backfill for the 3 launch-critical new
+  // vendors (PR #401 DO 10-slug, PR #402 auvik, PR #403 alt-payments).
+  // Defense-in-depth alongside the per-vendor describe blocks farther
+  // down: this guards the category + headerMapping contracts at the
+  // catalog layer so a refactor that touches one vendor entry has TWO
+  // assertion surfaces to update. Closes the analyst NIT on #401 +
+  // the ALL-ZERO-COVERAGE catalog gap for the new vendors.
+  it('catalog backfill: alternative-payments shape (category + headerMapping)', () => {
+    const v = getVendor('alternative-payments')!;
+    expect(v).toBeDefined();
+    expect(v.category).toBe('accounting');
+    expect(v.containerUrl).toBe('http://alternative-payments-mcp:8080');
+    expect(v.headerMapping).toEqual({
+      clientId: 'X-Alternative-Payments-Client-Id',
+      clientSecret: 'X-Alternative-Payments-Client-Secret',
+      environment: 'X-Alternative-Payments-Environment',
+    });
+  });
+
+  it('catalog backfill: auvik shape (category + headerMapping)', () => {
+    const v = getVendor('auvik')!;
+    expect(v).toBeDefined();
+    expect(v.category).toBe('network');
+    expect(v.containerUrl).toBe('http://auvik-mcp');
+    expect(v.headerMapping).toEqual({
+      username: 'x-auvik-username',
+      apiKey: 'x-auvik-api-key',
+      region: 'x-auvik-region',
+    });
+  });
+
+  it('catalog backfill: digitalocean-droplets shape (representative DO slug — infrastructure category)', () => {
+    const v = getVendor('digitalocean-droplets')!;
+    expect(v).toBeDefined();
+    expect(v.category).toBe('infrastructure');
+    expect(v.containerUrl).toBe('https://droplets.mcp.digitalocean.com');
+    // DO factory uses buildHeaders rather than headerMapping; the
+    // dict is empty by design (Bearer construction is in buildHeaders).
+    expect(v.headerMapping).toEqual({});
+    expect(v.buildHeaders).toBeDefined();
+  });
+
+  it('catalog backfill: infrastructure category exists (first introduced by PR #401 DO 10-slug)', () => {
+    const categories = VENDOR_CATEGORIES.map((c) => c.slug);
+    expect(categories).toContain('infrastructure');
+    const infrastructure = VENDOR_CATEGORIES.find((c) => c.slug === 'infrastructure');
+    expect(infrastructure?.label).toBe('Cloud Infrastructure');
   });
 
   it('returns undefined for unknown vendor', () => {
