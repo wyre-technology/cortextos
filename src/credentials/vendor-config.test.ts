@@ -426,13 +426,13 @@ describe('vendor-config', () => {
       });
     });
 
-    it('region field includes us5 (gateway #258 fold-in) and lnx (2026-06-15 TLS-probe fold-in)', () => {
+    it('region field includes us5 (gateway #258), lnx (PR #405), and us6 (gateway #260 / this PR fold-in)', () => {
       const v = getVendor('auvik')!;
       const regionField = v.fields.find((f) => f.key === 'region');
       expect(regionField).toBeDefined();
       expect(regionField!.required).toBe(false);
       expect(regionField!.options).toEqual([
-        'us1', 'us2', 'us3', 'us4', 'us5', 'eu1', 'eu2', 'au1', 'ca1', 'lnx',
+        'us1', 'us2', 'us3', 'us4', 'us5', 'us6', 'eu1', 'eu2', 'au1', 'ca1', 'lnx',
       ]);
     });
 
@@ -454,6 +454,29 @@ describe('vendor-config', () => {
       const [url] = fetchSpy.mock.calls[0]!;
       expect(url).toBe('https://auvikapi.lnx.my.auvik.com/v1/authentication/verify');
       // Explicit negative: the lnx-bound request did NOT fall back to us1.
+      expect(String(url)).not.toContain('us1');
+    });
+
+    // Sibling expansion witness for us6 — same shape as lnx, second
+    // N=2 occurrence of the drift-recovery pattern. Confirms ruby's
+    // set-boundary-via-external-source-citation discipline is now
+    // operationally-load-bearing across multiple events at this
+    // substrate, not just at codegen-time assertion.
+    it('us6 allowlist-expansion witness: validate() targets auvikapi.us6.my.auvik.com (not us1 fallback)', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('auvik')!;
+      const result = await v.validate!({
+        username: 'op@msp.example', apiKey: 'k_us6', region: 'us6',
+      });
+      expect(result).toEqual({ valid: true });
+      const [url] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://auvikapi.us6.my.auvik.com/v1/authentication/verify');
+      // Explicit negative: the us6-bound request did NOT fall back to us1.
+      // Equality against `us1` substring is intentional — if the allowlist
+      // drops us6, the fallback writes `us1` into the URL and this check
+      // catches it.
       expect(String(url)).not.toContain('us1');
     });
 
