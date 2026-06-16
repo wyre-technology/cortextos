@@ -487,7 +487,16 @@ if (existsSync(publicDir)) {
   await app.register(fastifyStatic, {
     root: publicDir,
     prefix: '/',
-    wildcard: false,
+    // wildcard:true — a single `GET /*` catch-all that resolves any file under
+    // root at request time. wildcard:false enumerated files at STARTUP and
+    // registered a route per file, but in prod that didn't serve the nested
+    // `public/docs/**` tree (sitemap-*.xml, /docs/_astro/*, /docs/<subpage>,
+    // /docs/index.html) — only the `/docs/` index served, everything else 404'd
+    // (WYREAI-107, verified live by wh-infra against a fresh no-cache image).
+    // Explicit Fastify routes (the MCP/oauth/scim/landing/etc. paths) still win
+    // over `/*` by radix-tree specificity regardless of registration order, and
+    // there is no global GET notFoundHandler for the catch-all to shadow.
+    wildcard: true,
     decorateReply: false,
     // redirect: a directory requested WITHOUT a trailing slash (e.g. `/docs`,
     // `/docs/getting-started`) 301s to the slashed form that serves the
@@ -495,10 +504,8 @@ if (existsSync(publicDir)) {
     // (the natural URL a customer types) while `/docs/` serves 200 — the docs
     // site is live but its entry URL appears broken. Only DIRECTORY requests
     // redirect; file requests (`/docs/_astro/*.css`) serve directly, never
-    // redirected. Valid with wildcard:false ONLY because this Fastify instance
-    // does not set ignoreTrailingSlash (defaults false) — @fastify/static
-    // forbids redirect:true when wildcard:false AND ignoreTrailingSlash:true.
-    // Do not enable ignoreTrailingSlash on the app without revisiting this.
+    // redirected. redirect:true is unconditionally valid under wildcard:true
+    // (the wildcard:false + ignoreTrailingSlash:true prohibition does not apply).
     redirect: true,
   });
 } else {

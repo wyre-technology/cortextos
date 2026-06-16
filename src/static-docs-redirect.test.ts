@@ -29,15 +29,17 @@ describe('static docs trailing-slash redirect', () => {
     writeFileSync(path.join(root, 'docs', 'index.html'), '<!doctype html><title>Conduit Docs</title>');
     writeFileSync(path.join(root, 'docs', 'getting-started', 'index.html'), '<!doctype html><title>Getting Started</title>');
     writeFileSync(path.join(root, 'docs', '_astro', 'index.css'), 'body{}');
+    writeFileSync(path.join(root, 'docs', 'sitemap-index.xml'), '<?xml version="1.0"?><sitemapindex/>');
 
-    // ignoreTrailingSlash defaults false — same as the gateway's Fastify
-    // instance — which is the precondition that makes redirect:true valid
-    // with wildcard:false.
+    // Mirror the gateway's prod config exactly: wildcard:true (a single `/*`
+    // catch-all that serves the whole nested tree — WYREAI-107; wildcard:false
+    // didn't serve nested public/docs/** in prod) + redirect:true for the
+    // directory trailing-slash UX.
     app = Fastify();
     await app.register(fastifyStatic, {
       root,
       prefix: '/',
-      wildcard: false,
+      wildcard: true,
       decorateReply: false,
       redirect: true,
     });
@@ -71,5 +73,14 @@ describe('static docs trailing-slash redirect', () => {
     const res = await app.inject({ method: 'GET', url: '/docs/_astro/index.css' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('body{}');
+  });
+
+  // WYREAI-107: the prod symptom was nested public/docs/** files (sitemap-*.xml,
+  // /docs/_astro/*, subpages) 404ing under wildcard:false while only /docs/
+  // served. wildcard:true must serve a nested non-HTML file like the sitemap.
+  it('serves a nested non-HTML file (sitemap) directly — WYREAI-107 regression', async () => {
+    const res = await app.inject({ method: 'GET', url: '/docs/sitemap-index.xml' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<sitemapindex');
   });
 });
