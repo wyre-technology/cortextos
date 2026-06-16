@@ -3,6 +3,10 @@ title: SCIM provisioning
 description: Connect an identity provider (Entra ID, Okta, JumpCloud, Google Workspace) to Conduit via SCIM 2.0 to automatically provision users and teams.
 ---
 
+import FaqSchema from '../../../components/FaqSchema.astro';
+
+<FaqSchema slug="guides/scim" />
+
 SCIM 2.0 lets an identity provider (IdP) automatically create, update, and deactivate Conduit users — and optionally materialize IdP groups as Conduit teams — so you do not manage membership by hand.
 
 This guide covers the four IdPs Conduit supports: **Microsoft Entra ID**, **Okta**, **JumpCloud**, and **Google Workspace**. The first step — generating a SCIM token — is the same for all of them; the rest is IdP-specific.
@@ -172,3 +176,25 @@ Google Workspace's SCIM support is materially less polished than Entra, Okta, or
 ## Revoking access
 
 For any IdP: in Conduit, go to **Provisioning** (`/org/scim`) and click **Revoke** on the connection. This invalidates the token immediately — the IdP will receive a 401 on its next sync. Teams and users the connection created remain in place until removed manually.
+
+## Frequently asked questions
+
+### Which identity providers does Conduit support for SCIM?
+
+Conduit supports SCIM 2.0 with four identity providers: Microsoft Entra ID, Okta, JumpCloud, and Google Workspace. Generating a SCIM token in Conduit, under Provisioning at `/org/scim`, is the same for all of them; the rest of the setup is IdP-specific.
+
+### What does SCIM provision in Conduit?
+
+A user assignment creates a Conduit user and an org membership at the connection's default role; a group assignment or push materializes a Conduit team and its members; and deactivating or unassigning a user removes the org membership and marks the user inactive (re-activatable). A provisioned user still logs in through Conduit's existing SSO, which binds the shadow record on first login.
+
+### What role do SCIM-provisioned users get?
+
+You choose the default role when generating the SCIM token, and every user that connection provisions receives it. `member` is the safe default.
+
+### Why aren't group memberships syncing?
+
+Most IdPs only send memberships for groups explicitly assigned or pushed to the application, so assign the group itself rather than just its members; on JumpCloud, also make sure Group Management was on when the app was activated. Each IdP's troubleshooting section covers the provider-specific cause.
+
+### Is Google Workspace SCIM as capable as the others?
+
+No. Google Workspace's SCIM is materially less polished — no on-demand sync, limited PATCH support, and nested groups are flattened — and it requires a plan that includes Cloud Identity Premium. If another supported IdP is available, prefer it.

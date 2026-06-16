@@ -3,6 +3,10 @@ title: Security
 description: How Conduit protects vendor credentials, defends against prompt injection, and enforces multi-tenant isolation — plus the honest trust model.
 ---
 
+import FaqSchema from '../../../components/FaqSchema.astro';
+
+<FaqSchema slug="reference/security" />
+
 This page covers how Conduit protects vendor credentials, how it defends against prompt injection attacks, how multi-tenant and subtenant isolation are enforced, and what security properties you should understand when deploying Conduit for your MSP.
 
 :::note[Document status]
@@ -267,3 +271,25 @@ Owners and admins can export logs as CSV from the dashboard.
 
 1. Export audit logs to your SIEM or long-term storage on a scheduled basis — Conduit's retention may not satisfy your regulatory retention requirements.
 2. Configure tool allowlists to prevent credential access tools from being called in automated workflows where they are not needed.
+
+## Frequently asked questions
+
+### How are my vendor credentials protected?
+
+All vendor credentials are encrypted with AES-256-GCM using per-record key derivation, at the application layer before they reach the database, so a database breach exposes ciphertext rather than plaintext. Credentials are never sent to the AI model or the user's workstation — Conduit decrypts them server-side only to make the upstream vendor call.
+
+### If whoever operates Conduit is compromised, what is my exposure?
+
+Conduit decrypts secrets in-process to proxy your API calls, so the operator of the deployment — you if self-hosted, WYRE if WYRE-managed — holds the trust dependency. With production access plus a database export, an operator could in principle decrypt credentials offline, as is true of any tool that handles your secrets to make API calls on your behalf. What makes that dependency bounded, observable, and reversible is detailed in the Trust Model section above.
+
+### Can Conduit staff read my credentials, and is Conduit certified?
+
+We will not claim that staff cannot decrypt your data, that the master key is hardware-secured, that Conduit is zero-knowledge, or that it is SOC 2 / ISO 27001 / CMMC certified — none of those are true today. The master key currently lives in a cloud secret; moving it to an HSM-backed key with no extract permission, via envelope encryption, is the planned next step.
+
+### How does Conduit keep one organization's data isolated from another?
+
+Every record is scoped to an organization ID and protected by Postgres Row-Level Security, which is evaluated for every query regardless of how it is constructed, so a user from one organization cannot retrieve another's credentials, audit logs, or members. Credentials are additionally encrypted under organization-scoped derived keys, so blobs are not decryptable across organizations.
+
+### How does Conduit defend against prompt injection?
+
+Conduit returns tool responses as structured `tool_result` objects rather than raw text, tags responses by content type, and namespaces privileged credential-retrieval tools so they can be restricted by role through tool allowlists — all of which reduce the blast radius of an injection. MSP teams should pair these with least-privilege allowlists and periodic audit-log review.

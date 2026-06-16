@@ -3,6 +3,10 @@ title: MSP onboarding
 description: End-to-end flow for onboarding a Managed Service Provider onto Conduit — discovery, build-out, go-live, and ongoing support.
 ---
 
+import FaqSchema from '../../../components/FaqSchema.astro';
+
+<FaqSchema slug="guides/msp-onboarding" />
+
 This guide describes the end-to-end flow for onboarding a new Managed Service Provider (MSP) onto Conduit. It is written for the person standing up the MSP tenant — whether that is the MSP owner self-serving or a WYRE operator running a managed onboarding.
 
 Most build-out steps can be done through the dashboard (paths below) or the API. The dashboard is the recommended path for first-time onboarding; the API endpoints are noted for teams automating provisioning. For exact API request/response shapes, see the [API reference](/docs/reference/api/).
@@ -233,3 +237,25 @@ Conduit encrypts the new credential and begins using it immediately. The old cre
 The steps above stand up the MSP's own organization. Onboarding the MSP's *customers* as sub-organizations — and the reseller hierarchy that governs them — is covered separately:
 
 - [Subtenant Model](/docs/reference/subtenants/) — how the reseller → customer → sub-customer hierarchy works
+
+## Frequently asked questions
+
+### Who is Conduit onboarding for — can I self-serve?
+
+The flow works whether the MSP owner is self-serving or a WYRE operator is running a managed onboarding. Most build-out steps can be done through the dashboard, the recommended path for first-time onboarding, or via the API for teams automating provisioning.
+
+### What should I gather before onboarding?
+
+During discovery, inventory the MSP's tool stack (which vendor integrations to enable), the team size, the role structure, the credential model (shared org-level keys versus per-team or per-user keys), compliance needs such as audit export or SIEM integration, and the MCP client preference — Claude Desktop, Claude Code, or service-client automation.
+
+### How does billing start during onboarding?
+
+A new organization begins with a free 14-day trial of the full platform; it converts to a paid subscription when a payment method is added through Stripe Checkout, or closes at the end of the 14 days. An alpha invite code activates the paid subscription immediately. Conduit is one flat plan — see the Billing & Plans guide for the pricing detail.
+
+### How do I control which vendors and tools a member can use?
+
+Set each member's vendor access from `/org/server-access` — a deny-by-default posture, starting from a `defaultServerAccess` of `none`, is recommended — and restrict which tools a role can call per vendor with tool allowlists at `/org/tool-access`. Owners always have full access.
+
+### How do I connect an MCP client once the tenant is built?
+
+Point Claude Desktop or Claude Code at the Conduit server URL (`https://conduit.wyre.ai/v1/mcp`). On first use an OAuth flow opens a browser for authentication; after sign-in and credential connection, the token is cached and refreshed automatically.
