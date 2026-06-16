@@ -254,6 +254,11 @@ async function applyRlsMigrations(): Promise<void> {
     '018_rls_security_definer_helpers.sql',
     '020_rls_helper_context_fix_and_update_using.sql',
     '022_bug_b_update_using_sweep.sql',
+    // 050/051 tighten org_tool_allowlist writes to the administrative tier
+    // (conduit_is_org_admin) and add the missing DELETE policy. Applied last
+    // so their DROP/CREATE supersedes the any-member 014/022 policies.
+    '050_org_tool_allowlist_admin_write.sql',
+    '051_org_tool_allowlist_delete_policy.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -788,6 +793,118 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
           // path under a member should produce exactly this code.
           expect(code).toBe('23502');
         }
+      } finally {
+        conn.release();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // org_tool_allowlist — admin-only writes (migrations 050/051)
+  //
+  // 036 replaces the any-member INSERT/UPDATE branch with conduit_is_org_admin
+  // (role IN ('owner','admin')); 037 adds the previously-missing DELETE policy
+  // with the same gate. These assert the administrative tier can write and a
+  // plain 'member' cannot — INSERT rejects with 42501 (WITH CHECK), while
+  // UPDATE/DELETE simply match 0 rows for a non-admin (USING filters them out),
+  // the same asymmetry the admin_audit_log cases above rely on.
+  // -------------------------------------------------------------------------
+  describe('org_tool_allowlist admin-only writes (migrations 050/051)', () => {
+    beforeAll(async () => {
+      // Seed an admin + a plain member in org-alice and a baseline allowlist
+      // row. RESET ROLE inside the txn so a connection left in SET ROLE by an
+      // earlier asUser() test seeds as the (superuser) owner, bypassing RLS.
+      await sql.begin(async (tx) => {
+        await tx.unsafe('RESET ROLE');
+        await tx`INSERT INTO users (id, email) VALUES
+          ('dave', 'dave@example.com'),
+          ('mallory', 'mallory@example.com')`;
+        await tx`INSERT INTO org_members (id, org_id, user_id, role) VALUES
+          ('m-dave', 'org-alice', 'dave', 'admin'),
+          ('m-mallory', 'org-alice', 'mallory', 'member')`;
+        await tx`INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, tool_name) VALUES
+          ('ota-base', 'org-alice', 'vendor-x', 'tool-base')`;
+      });
+    });
+
+    it('an org admin CAN insert an allowlist row', async () => {
+      const conn = await asUser('dave');
+      try {
+        const r = await conn.query`INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, tool_name)
+          VALUES ('ota-admin', 'org-alice', 'vendor-x', 'tool-admin')`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally {
+        conn.release();
+      }
+    });
+
+    it('a plain member CANNOT insert an allowlist row (WITH CHECK rejects 42501)', async () => {
+      const conn = await asUser('mallory');
+      try {
+        await conn.query`INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, tool_name)
+          VALUES ('ota-mallory', 'org-alice', 'vendor-x', 'tool-mallory')`;
+        throw new Error('expected RLS WITH CHECK rejection; INSERT succeeded');
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
+      } finally {
+        conn.release();
+      }
+    });
+
+    it('a plain member UPDATE matches 0 rows (USING filters non-admins)', async () => {
+      const conn = await asUser('mallory');
+      try {
+        const r = await conn.query`UPDATE org_tool_allowlist SET tool_name = 'hijacked' WHERE id = 'ota-base'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally {
+        conn.release();
+      }
+      const [row] = await sql<{ tool_name: string }[]>`SELECT tool_name FROM org_tool_allowlist WHERE id = 'ota-base'`;
+      expect(row.tool_name).toBe('tool-base');
+    });
+
+    it('an org admin CAN update an allowlist row', async () => {
+      const conn = await asUser('dave');
+      try {
+        const r = await conn.query`UPDATE org_tool_allowlist SET tool_name = 'tool-updated' WHERE id = 'ota-base'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally {
+        conn.release();
+      }
+    });
+
+    it('a plain member DELETE matches 0 rows (no DELETE policy grant)', async () => {
+      const conn = await asUser('mallory');
+      try {
+        const r = await conn.query`DELETE FROM org_tool_allowlist WHERE id = 'ota-base'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally {
+        conn.release();
+      }
+    });
+
+    it('an org admin CAN delete an allowlist row (037 DELETE policy)', async () => {
+      const conn = await asUser('dave');
+      try {
+        const r = await conn.query`DELETE FROM org_tool_allowlist WHERE id = 'ota-admin'`;
+        expect((r as unknown as { count: number }).count).toBe(1);
+      } finally {
+        conn.release();
+      }
+    });
+
+    it('reseller_admin of the parent CAN insert an allowlist row for a customer org', async () => {
+      // Customer org under reseller-rco; reseller-rita is reseller_admin there.
+      await sql.begin(async (tx) => {
+        await tx.unsafe('RESET ROLE');
+        await tx`INSERT INTO organizations (id, name, type, parent_org_id) VALUES
+          ('cust-66', 'Customer 66', 'customer', 'reseller-rco')`;
+      });
+      const conn = await asUser('reseller-rita');
+      try {
+        const r = await conn.query`INSERT INTO org_tool_allowlist (id, org_id, vendor_slug, tool_name)
+          VALUES ('ota-reseller', 'cust-66', 'vendor-x', 'tool-reseller')`;
+        expect((r as unknown as { count: number }).count).toBe(1);
       } finally {
         conn.release();
       }
