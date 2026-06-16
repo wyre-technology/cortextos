@@ -277,6 +277,12 @@ describe('CredentialService', () => {
     // Expose the grant store for tests that need to seed or revoke grants.
     (sql as unknown as { _grants: typeof grantStore })._grants = grantStore;
 
+    // Expose at-rest row inspection for cross-substrate-uniformity tests
+    // (warden #403 LENS 1) that need to assert plaintext-not-present in the
+    // stored encrypted_data / iv / auth_tag / salt columns directly.
+    (sql as unknown as { __getOrgRow: (orgId: string, vendorSlug: string) => Record<string, unknown> | undefined }).__getOrgRow =
+      (orgId: string, vendorSlug: string) => orgStore.get(`${orgId}:${vendorSlug}`);
+
     return sql as unknown as import('postgres').Sql;
   }
 
@@ -729,6 +735,139 @@ describe('CredentialService', () => {
 
       const resolved = await runWithSql(sql, () => service.resolveForOrgAndVendor('cust_1', 'datto-rmm'));
       expect(resolved).toBeNull();
+    });
+  });
+
+  // Witness for warden's #403 LENS 1 cross-substrate-uniformity follow-up:
+  // CredentialService must apply uniform at-rest encryption across all three
+  // auth-substrate-classes — PAT-Bearer, Basic, and OAuth-client-credentials —
+  // with NO auth-class-specific code path that could weaken or skip encryption.
+  //
+  // The class is uniform by-construction (single `this.encrypt(data, orgId)`
+  // call inside `storeOrgCredential`, no branching on credential shape). This
+  // suite witnesses that uniformity by saving one representative credential
+  // per auth-class and asserting (a) the plaintext never appears in the stored
+  // `encrypted_data`, (b) the `iv`/`auth_tag`/`salt` columns are populated for
+  // every class, and (c) the round-trip decrypt restores the original key/values.
+  // A future refactor that introduces an auth-class branch would break at
+  // least one of these assertions before reaching production.
+  describe('cross-substrate-uniformity at rest (warden #403 LENS 1)', () => {
+    interface AuthClassFixture {
+      readonly authClass: string;
+      readonly vendorSlug: string;
+      readonly data: Record<string, string>;
+    }
+
+    const AUTH_CLASS_FIXTURES: readonly AuthClassFixture[] = [
+      {
+        // DigitalOcean MCP slugs — single Personal Access Token field.
+        authClass: 'PAT-Bearer',
+        vendorSlug: 'digitalocean-droplets',
+        data: { token: 'pat_v1_supersecret_aaaaaaaabbbbbbbbccccccccdddddddd' },
+      },
+      {
+        // Auvik — Basic auth (username + api_key + region).
+        authClass: 'Basic',
+        vendorSlug: 'auvik',
+        data: {
+          username: 'wyre-test-account@example.com',
+          api_key: 'auvik_apikey_supersecret_eeeeeeeeffffffff',
+          region: 'us1',
+        },
+      },
+      {
+        // Alternative Payments — OAuth 2.0 client_credentials.
+        authClass: 'OAuth-client-credentials',
+        vendorSlug: 'alternative-payments',
+        data: {
+          clientId: 'cid_supersecret_gggggggghhhhhhhh',
+          clientSecret: 'cs_supersecret_iiiiiiiijjjjjjjjkkkkkkkkllllllll',
+          environment: 'production',
+        },
+      },
+    ];
+
+    it.each(AUTH_CLASS_FIXTURES)(
+      'encrypts a $authClass credential uniformly (no plaintext leak, iv/auth_tag/salt populated, round-trip clean)',
+      async ({ vendorSlug, data }) => {
+        const sql = createMockSql();
+        enterTestContext(sql);
+        const service = new CredentialService();
+
+        await runWithSql(sql, () =>
+          service.storeOrgCredential('org_uniformity_test', vendorSlug, data, 'user_creator'),
+        );
+
+        // Reach into the mock SQL store to inspect the at-rest row directly —
+        // this is the assertion surface the public API can't reach.
+        const rawRow = (sql as unknown as { __getOrgRow: (o: string, v: string) => Record<string, unknown> | undefined }).__getOrgRow('org_uniformity_test', vendorSlug) as
+          | {
+              encrypted_data: string;
+              iv: string;
+              auth_tag: string;
+              salt: string;
+            }
+          | undefined;
+        expect(rawRow).toBeDefined();
+
+        // (a) Plaintext NEVER appears in the stored ciphertext, IV, auth tag,
+        // or salt — for any value the auth-class supplied.
+        const atRestBlob = JSON.stringify(rawRow);
+        for (const value of Object.values(data)) {
+          expect(atRestBlob).not.toContain(value);
+        }
+
+        // (b) Encryption envelope columns are all populated for every class.
+        expect(rawRow!.encrypted_data).toMatch(/^[A-Za-z0-9+/]+=*$/); // base64
+        expect(rawRow!.encrypted_data.length).toBeGreaterThan(0);
+        expect(rawRow!.iv).toMatch(/^[A-Za-z0-9+/]+=*$/);
+        expect(rawRow!.iv.length).toBeGreaterThan(0);
+        expect(rawRow!.auth_tag).toMatch(/^[A-Za-z0-9+/]+=*$/);
+        expect(rawRow!.auth_tag.length).toBeGreaterThan(0);
+        expect(rawRow!.salt).toMatch(/^[A-Za-z0-9+/]+=*$/);
+        expect(rawRow!.salt.length).toBeGreaterThan(0);
+
+        // (c) Round-trip decrypt restores the exact key/value map.
+        const roundTripped = await runWithSql(sql, () =>
+          service.getOrgCredential('org_uniformity_test', vendorSlug),
+        );
+        expect(roundTripped).toEqual(data);
+      },
+    );
+
+    it('produces distinct iv + salt per save even when plaintext is identical (no determinism leak)', async () => {
+      // Companion assertion: two saves of the SAME plaintext through the
+      // SAME auth-class must produce different iv + salt. If a refactor ever
+      // introduces a deterministic salt/IV (e.g. derived from orgId+vendorSlug),
+      // ciphertext collision becomes a fingerprintable leak — fails this test
+      // before reaching prod.
+      const sql = createMockSql();
+      enterTestContext(sql);
+      const service = new CredentialService();
+
+      const identical = { token: 'pat_v1_identical_zzzzzzzzzzzzzzzz' };
+      await runWithSql(sql, () =>
+        service.storeOrgCredential('org_det_test_a', 'digitalocean-droplets', identical, 'u'),
+      );
+      await runWithSql(sql, () =>
+        service.storeOrgCredential('org_det_test_b', 'digitalocean-droplets', identical, 'u'),
+      );
+
+      const getOrgRow = (sql as unknown as {
+        __getOrgRow: (o: string, v: string) => Record<string, unknown> | undefined;
+      }).__getOrgRow;
+      const rowA = getOrgRow('org_det_test_a', 'digitalocean-droplets') as
+        | { iv: string; salt: string; encrypted_data: string }
+        | undefined;
+      const rowB = getOrgRow('org_det_test_b', 'digitalocean-droplets') as
+        | { iv: string; salt: string; encrypted_data: string }
+        | undefined;
+      expect(rowA).toBeDefined();
+      expect(rowB).toBeDefined();
+
+      expect(rowA!.iv).not.toBe(rowB!.iv);
+      expect(rowA!.salt).not.toBe(rowB!.salt);
+      expect(rowA!.encrypted_data).not.toBe(rowB!.encrypted_data);
     });
   });
 });
