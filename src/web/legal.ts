@@ -47,7 +47,7 @@ function legalPage(title: string, content: string): string {
   <div class="brand"><a href="/">WYRE Technology &middot; MCP Gateway</a></div>
   ${content}
   <div class="footer">
-    <a href="/terms">Terms of Service</a> &middot; <a href="/privacy">Privacy Policy</a> &middot; <a href="/msa">AI Services Attachment</a> &middot; <a href="/">Home</a>
+    <a href="/terms">Terms of Service</a> &middot; <a href="/privacy">Privacy Policy</a> &middot; <a href="/msa">AI Services Attachment</a> &middot; <a href="/sla">Service Level Agreement</a> &middot; <a href="/">Home</a>
   </div>
 </body>
 </html>`;
@@ -410,6 +410,69 @@ const MSA_CONTENT = `
 `;
 
 // ---------------------------------------------------------------------------
+// Service Level Agreement
+// ---------------------------------------------------------------------------
+
+const SLA_CONTENT = `
+<p class="updated">Last updated: June 16, 2026</p>
+<h1>Service Level Agreement</h1>
+<p>This Service Level Agreement ("SLA") describes the availability commitment, support response targets, and service credits that WYRE Technology, LLC ("WYRE", "we", "us") provides for MCP Gateway. It applies to your paid subscription and forms part of our <a href="/terms">Terms of Service</a>. During the 14-day free trial, the Service is provided "as is" and this SLA does not apply.</p>
+
+<h2>1. Definitions</h2>
+<ul>
+  <li><strong>Service:</strong> the MCP Gateway proxy and management plane operated by WYRE at your account's gateway endpoint.</li>
+  <li><strong>Monthly Uptime Percentage:</strong> the total minutes in a calendar month, minus Downtime minutes, divided by the total minutes in that month.</li>
+  <li><strong>Downtime:</strong> sustained periods during which the Service returns errors for, or fails to respond to, valid authenticated requests, as measured by our monitoring. Downtime excludes the events listed in Section 4.</li>
+  <li><strong>Vendor API:</strong> a third-party system (for example ConnectWise, Autotask, Hudu, or Datto RMM) that the Service proxies requests to on your behalf.</li>
+</ul>
+
+<h2>2. Availability Commitment</h2>
+<p>We will use commercially reasonable efforts to make the Service available with a Monthly Uptime Percentage of at least <strong>99.5%</strong> during each calendar month. This commitment is grounded in a measured baseline of the Service’s availability and will be raised as the operating history lengthens.</p>
+
+<h2>3. Support and Response Targets</h2>
+<p>Support is available during business hours, Monday through Friday, 8:00 AM to 6:00 PM Eastern Time, excluding U.S. public holidays. Submit requests to <a href="mailto:support@wyretechnology.com">support@wyretechnology.com</a>. We will use commercially reasonable efforts to acknowledge requests within the following targets, based on severity:</p>
+<ul>
+  <li><strong>Severity 1 — Critical:</strong> the Service is unavailable or proxying fails for all connected tools. Target response: <strong>1 business hour</strong>.</li>
+  <li><strong>Severity 2 — Major:</strong> significant degradation, or a single Vendor API integration is unusable through the Service. Target response: <strong>4 business hours</strong>.</li>
+  <li><strong>Severity 3 — Minor:</strong> partial or cosmetic issue with a reasonable workaround available. Target response: <strong>1 business day</strong>.</li>
+  <li><strong>Severity 4 — Question or request:</strong> general questions, documentation, or feature requests. Target response: <strong>2 business days</strong>.</li>
+</ul>
+<p>Response targets describe our goal for first response, not time to resolution. We assign initial severity in good faith and may adjust it as we learn more.</p>
+
+<h2>4. Exclusions</h2>
+<p>Downtime does not include, and this SLA does not apply to, unavailability caused by:</p>
+<ul>
+  <li>Scheduled maintenance announced in advance (see Section 5).</li>
+  <li>Failures, outages, rate limits, or changes in any Vendor API or other third-party service the Service depends on. We are not responsible for the availability or behavior of third-party services.</li>
+  <li>Factors outside our reasonable control, including force majeure events, internet or network failures outside our infrastructure, or attacks such as denial-of-service.</li>
+  <li>Your acts or omissions, including misconfiguration, invalid or revoked vendor credentials, or use that violates the Terms of Service.</li>
+  <li>Features identified as beta, preview, or early access.</li>
+  <li>Suspension or termination of your account in accordance with the Terms of Service.</li>
+</ul>
+
+<h2>5. Scheduled Maintenance</h2>
+<p>We may perform scheduled maintenance that briefly interrupts the Service. We will provide at least 48 hours' notice for planned maintenance and aim to schedule it outside of standard U.S. business hours. Time spent in announced scheduled maintenance is excluded from Downtime. In rare cases we may perform emergency maintenance with shorter or no notice to protect the security or integrity of the Service.</p>
+
+<h2>6. Service Credits</h2>
+<p>If the Monthly Uptime Percentage falls below our commitment in a given calendar month, you may request a service credit calculated as a percentage of the fees you paid for the Service for that month:</p>
+<ul>
+  <li>99.0% to less than 99.5%: <strong>10%</strong> credit</li>
+  <li>95.0% to less than 99.0%: <strong>25%</strong> credit</li>
+  <li>Less than 95.0%: <strong>50%</strong> credit</li>
+</ul>
+<p>To claim a credit, contact <a href="mailto:support@wyretechnology.com">support@wyretechnology.com</a> within 30 days of the end of the affected month, with the dates and times of the unavailability you observed. Credits are applied to a future invoice, are not refundable for cash, and may not exceed 50% of the monthly fee for the affected month. Service credits are your sole and exclusive remedy for any failure to meet the commitments in this SLA.</p>
+
+<h2>7. Status and Incident Communication</h2>
+<p>We monitor the Service continuously and will make reasonable efforts to keep you informed of incidents affecting availability through our status page and, for significant incidents, by email to your account contacts.</p>
+
+<h2>8. Changes to This SLA</h2>
+<p>We may update this SLA from time to time. When we make material changes that reduce the commitments described here, we will notify paid-plan customers at least 30 days in advance. The "Last updated" date above reflects the most recent revision.</p>
+
+<h2>9. Contact</h2>
+<p>WYRE Technology, LLC<br>Chattanooga, TN<br><a href="mailto:support@wyretechnology.com">support@wyretechnology.com</a></p>
+`;
+
+// ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
 
@@ -425,6 +488,10 @@ export function legalRoutes() {
 
     app.get('/msa', async (_request, reply) => {
       return reply.type('text/html').send(legalPage('AI Services — Service Attachment', MSA_CONTENT));
+    });
+
+    app.get('/sla', async (_request, reply) => {
+      return reply.type('text/html').send(legalPage('Service Level Agreement', SLA_CONTENT));
     });
   };
 }
