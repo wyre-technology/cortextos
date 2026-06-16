@@ -157,13 +157,17 @@ export default defineConfig({
             { label: 'Security Notice', slug: 'templates/security-notice' },
           ],
         },
-        {
-          label: 'Internal',
-          collapsed: true,
-          items: [
-            { label: 'Agents — Implementation', slug: 'internal/agents-impl' },
-          ],
-        },
+        // Internal docs section removed 2026-06-16 — internal/agents-impl.mdx
+        // moved out of the Starlight content collection to docs/internal/
+        // (engineer-facing repo file, not a built route). Sidebar entry deleted
+        // to close the discovery channel that even the collapsed-by-default
+        // entry left open: the section LABEL was visible in nav HTML on every
+        // page that rendered the sidebar.
+        //
+        // Defense-in-depth belts (robots.ts X-Robots-Tag noindex prefix on
+        // /docs/internal, sitemap /internal/ filter, llms.txt internal-
+        // exclusion-by-curation) stay as regression-window guards per
+        // src/robots.ts header comment.
         {
           label: 'Operations',
           items: [
