@@ -77,22 +77,23 @@
 <div class="issue-block">
 <h4>Issue: Users Cannot Log In (Auth0)</h4>
 <p><strong>Symptoms:</strong> Redirect to Auth0 fails, callback returns error, "invalid_grant" or "unauthorized_client" errors.</p>
+<p class="note"><em>Tenant-aware note (clarified 2026-06-16):</em> Conduit-staging and conduit-prod use <strong>separate Auth0 tenants</strong>, each with its own application, client credentials, allowed-URL list, and Key Vault. The diagnosis + resolution steps below name the prod Key Vault and prod callback URL because this runbook covers production incidents; for a staging-Auth0 incident, swap in the staging tenant's Key Vault (<code>mcpgw-staging-kv</code>) and staging callback URL (<code>https://staging.conduit.wyre.ai/auth/callback</code>). See <a href="../operations/staging-environment-setup.md">staging-environment-setup.md §4</a> for the per-tenant model.</p>
 <p><strong>Diagnosis:</strong></p>
 <ol>
-  <li>Check Auth0 status page: <a href="https://status.auth0.com">https://status.auth0.com</a></li>
-  <li>Verify Auth0 secrets in Key Vault are current:
+  <li>Check Auth0 status page: <a href="https://status.auth0.com">https://status.auth0.com</a> (Auth0 status applies to both tenants — outages are global)</li>
+  <li>Verify Auth0 secrets in the affected environment's Key Vault are current (the example below uses the prod Key Vault; swap for <code>mcpgw-staging-kv</code> on a staging incident):
 <pre><code>az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-domain
 az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-client-id
 az keyvault secret show --vault-name mcpgw-prod-kv --name auth0-client-secret</code></pre>
   </li>
-  <li>Verify <code>AUTH0_CALLBACK_URL</code> matches the callback URL configured in Auth0 dashboard</li>
+  <li>Verify <code>AUTH0_CALLBACK_URL</code> on the affected gateway matches the callback URL configured in <strong>that environment's</strong> Auth0 tenant dashboard (prod tenant for the prod gateway; staging tenant for the staging gateway)</li>
   <li>Check gateway logs for Auth0-related errors (see <a href="#logs">Log Locations</a>)</li>
 </ol>
 <p><strong>Resolution:</strong></p>
 <ul>
-  <li>If Auth0 secrets rotated: update Key Vault secrets and restart the gateway container to pick up new values</li>
-  <li>If callback URL mismatch: update either the <code>AUTH0_CALLBACK_URL</code> env var or the Auth0 application settings</li>
-  <li>If Auth0 is down: wait for Auth0 to recover; existing JWT tokens will continue to work until they expire</li>
+  <li>If Auth0 secrets rotated: update the affected environment's Key Vault secrets and restart its gateway container to pick up new values (staging incidents → <code>mcpgw-staging-kv</code> + staging container; prod incidents → <code>mcpgw-prod-kv</code> + prod container)</li>
+  <li>If callback URL mismatch: update either the <code>AUTH0_CALLBACK_URL</code> env var on the affected gateway, or the application settings in <strong>that environment's</strong> Auth0 tenant (do NOT edit the other environment's tenant — they are independent and edits do not cross over)</li>
+  <li>If Auth0 is down: wait for Auth0 to recover; existing JWT tokens will continue to work until they expire (applies to both tenants since the outage is upstream of both)</li>
 </ul>
 </div>
 
