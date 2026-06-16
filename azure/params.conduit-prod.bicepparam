@@ -58,6 +58,15 @@ param alertEmail = 'engineering@wyretechnology.com'
 // observed.
 param monthlyBudget = 1200
 
+// Manage the RG budget OUT-OF-BAND, not on every deploy. A Consumption budget's
+// startDate is immutable; observability.bicep's default budgetStartDate =
+// utcNow('yyyy-MM-01') therefore breaks every conduit-prod redeploy in a month
+// later than the budget was created ("400 Start date of budgets cannot be
+// updated" — WYREAI-174). The budget is (re)created once via
+// azure/conduit-prod-budget.bicep. monthlyBudget above is retained as the
+// single source for that one-time deploy's default.
+param deployCostBudget = false
+
 // First deploy of a brand-new stack: no custom domains or vendor env to
 // preserve yet. The deploy workflow normally reads these off the live
 // gateway; on a first-ever deploy they are empty.
