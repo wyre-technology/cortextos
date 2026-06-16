@@ -1,0 +1,126 @@
+---
+title: Integration walkthrough standard
+description: The assumption-stripped, screenshot-annotated format every Conduit integration walkthrough follows — template, checklist, and screenshot conventions.
+---
+
+This page defines how we write **integration walkthroughs** — the step-by-step
+guides for connecting a specific vendor or AI client to Conduit. Every
+walkthrough follows the same **assumption-stripped** standard: each step is
+explicit, names the exact thing to click, and assumes **zero implied prior
+knowledge**. A first-time MSP technician should be able to follow it without
+guessing.
+
+:::note[Authoring note — keep it portable]
+Write walkthroughs **content-first**: plain Markdown (numbered lists, tables,
+links) plus screenshot references. Use callouts (`:::note` / `:::caution`)
+only for genuine prerequisites and pitfalls. Avoid framework-specific
+components so the content survives the docs-stack migration tracked in
+WYREAI-101.
+:::
+
+## The assumption-stripped standard
+
+1. **State prerequisites first.** Open every walkthrough with what the reader
+   must already have: the role required, the accounts and permissions, and what
+   to have open. Never assume the reader completed a prior guide unless you
+   link it.
+2. **One action per step, in the imperative.** "Click **Settings → API Keys →
+   + New key**", not "navigate to the keys area". Name the exact menu path,
+   button label, and field.
+3. **Every step has an expected result.** End each step with what the reader
+   should see ("You should see **Key created** and a one-time secret"). This
+   lets them self-verify before moving on.
+4. **No implied knowledge.** Define every term and acronym on first use. Never
+   write "as usual", "the normal way", "simply", "just", or "obviously" — they
+   lie to a reader who is stuck.
+5. **Put gotchas where they bite.** Use a `:::caution` at the exact step where
+   a mistake happens ("The secret is shown **once** — copy it now").
+6. **End with Verify + Troubleshooting.** A "Verify it worked" section and a
+   symptom → cause table, matching the [SCIM](/docs/guides/scim/) and
+   [on-prem](/docs/guides/onprem/quickstart/) guides.
+
+## Page template
+
+Every walkthrough uses this skeleton:
+
+```mdx
+---
+title: Connect <Vendor> to Conduit
+description: Step-by-step: get a <Vendor> API credential and connect it to Conduit. One sentence, <=160 chars.
+---
+
+One-sentence summary of what this connects and why.
+
+## Before you start
+
+You need:
+
+- A Conduit role that can manage connections (**owner** or **admin**).
+- A <Vendor> account with permission to create API credentials.
+- (anything else, explicitly)
+
+## Step 1 — <get the credential in the vendor's portal>
+
+1. Imperative action naming the exact UI element. *Expected: …*
+2. …
+
+## Step 2 — Connect it in Conduit
+
+1. …
+
+## Verify it worked
+
+- A read-only check the reader can run.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| … | … |
+```
+
+## Authoring checklist
+
+Before opening the PR, confirm:
+
+- [ ] A **Before you start** block lists role + accounts + permissions.
+- [ ] Every step is one imperative action naming the exact UI element.
+- [ ] Every step states its **expected result**.
+- [ ] No `simply` / `just` / `obviously` / "as usual" / undefined terms.
+- [ ] Gotchas are `:::caution` callouts at the step where they apply.
+- [ ] **Verify it worked** + **Troubleshooting** sections present.
+- [ ] Internal links use the `/docs/...` base + trailing slash.
+- [ ] Screenshots follow the convention below (or are marked as pending).
+
+## Screenshots and annotation
+
+Screenshots are **aids, not the source of truth** — the numbered text steps are
+authoritative, so a walkthrough still works if a screenshot goes stale.
+
+- **What to capture.** Conduit-side screenshots come from a seeded staging org;
+  vendor-side screenshots come from the vendor's own admin portal. Capture only
+  the screen the step refers to.
+- **Annotation.** Add a numbered marker (①②③) and a highlight box for each
+  action, mapping 1:1 to the numbered text steps. Until the brand palette is
+  decided (WYREAI-178), use a **neutral high-contrast placeholder**: a solid
+  marker in a dark-neutral (`#1f2937`) with a high-contrast outline
+  (`#f59e0b`). Swap to brand colors when 178 lands.
+- **Storage.** Annotated images live under `docs/src/assets/<guide-slug>/` and
+  are referenced with Astro's asset import. Always include **action-oriented
+  alt text** ("IT Glue Settings → API Keys with the New API Key button
+  highlighted"), never pixel description.
+- **Pending captures.** Before a screenshot is captured (e.g. staging or
+  vendor-portal access isn't available yet), mark the spot with a placeholder
+  so the format is reviewable and the build stays green:
+
+  ```mdx
+  :::note[Screenshot pending]
+  IT Glue **Settings → API Keys**, the **+ New API Key** button highlighted (①).
+  :::
+  ```
+
+## Reference exemplar
+
+[Connect IT Glue to Conduit](/docs/guides/integrations/it-glue/) is the
+reference implementation of this standard. Match its shape when adding a new
+walkthrough.

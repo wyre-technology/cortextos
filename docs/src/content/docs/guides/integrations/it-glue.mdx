@@ -1,0 +1,90 @@
+---
+title: Connect IT Glue to Conduit
+description: Step-by-step — create an IT Glue API key and connect it to Conduit so your AI client can use IT Glue documentation tools.
+---
+
+This walkthrough connects **IT Glue** (MSP documentation) to Conduit. You
+create an API key in IT Glue, then add it as an organization connection in
+Conduit. Once connected, any MCP client your organization uses can call IT
+Glue tools through Conduit's gateway.
+
+:::note[Verify against the live portal before publishing]
+The IT Glue-portal steps below reflect IT Glue's API-key flow at time of
+writing; menu labels can change between IT Glue releases. Confirm them against
+the live portal (and capture the screenshots) before this page ships — see the
+[walkthrough standard](/docs/contributing/integration-walkthroughs/).
+:::
+
+## Before you start
+
+You need:
+
+- A Conduit role that can manage connections — **owner** or **admin** on your
+  organization.
+- An **IT Glue** account with permission to create API keys (an IT Glue
+  **Manager** or **Administrator**). If you don't have it, ask your IT Glue
+  administrator to do Step 1 and hand you the key.
+
+## Step 1 — Create an API key in IT Glue
+
+1. Sign in to IT Glue as a Manager or Administrator. *Expected: the IT Glue
+   dashboard.*
+2. Open the account menu (top right) and click **Account → Settings**.
+   *Expected: the Account settings page.*
+3. In the settings navigation, click **API Keys**. *Expected: the list of
+   existing API keys (empty if you've never made one).*
+4. Click **+ New API Key** (or **Generate API Key**). *Expected: a new-key
+   form.*
+5. Give the key a recognizable **name** — for example, `Conduit` — so you can
+   identify and revoke it later. Leave the default access unless your policy
+   requires read-only.
+6. Click **Generate** (or **Save**). *Expected: the key value is displayed.*
+
+:::caution
+Copy the key now and store it somewhere safe. IT Glue shows the full key value
+at creation; treat it like a password — anyone with it can read your IT Glue
+data through the API.
+:::
+
+## Step 2 — Connect IT Glue in Conduit
+
+1. In Conduit, go to **Connections** (`/org/connections`). *Expected: the
+   vendor catalog.*
+2. Find **IT Glue** in the catalog and click **Connect**. *Expected: a
+   credential form with a single **API Key** field.*
+3. Paste the IT Glue API key from Step 1 into the **API Key** field.
+4. Click **Connect**. *Expected: Conduit validates the key against IT Glue
+   immediately and shows a green **Connected** status. A bad key is rejected
+   here, not on the first tool call.*
+
+The credential is stored at the **organization** scope, so every technician in
+your org shares this IT Glue connection. (For per-technician keys, connect at
+the personal scope instead — see [Vendor connections](/docs/guides/vendor-connections/#credential-scopes).)
+
+:::note[Screenshot pending]
+IT Glue **Settings → API Keys**, the **+ New API Key** button highlighted (①);
+and Conduit **Connections → IT Glue**, the **API Key** field with **Connect**
+highlighted (②). Captured in a later phase once staging + portal access land.
+:::
+
+## Verify it worked
+
+Connect an MCP client to Conduit — Claude Desktop, Claude Code, Cursor, or any
+MCP-compatible client (see [Connecting an AI client](/docs/guides/connecting-a-client/)) —
+and ask it to run a read-only IT Glue tool, such as listing your IT Glue
+organizations. You should get real data back, and the call appears in your
+[audit log](/docs/reference/api/#audit) with a 200 status.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Connect fails immediately in Conduit | The key is wrong or was revoked in IT Glue, or the IT Glue account lacks API access. Re-check Step 1 and paste the key again. |
+| Tool calls return 403 "no credentials for vendor" | IT Glue isn't connected at a scope this user can resolve. Connect it at the **organization** scope, or confirm the user's team has a key. |
+| Tool calls fail with an upstream auth error after working | The IT Glue key was rotated or revoked on the IT Glue side. Re-connect at `/org/connections` with a fresh key. |
+| IT Glue tools don't appear for a user | A tool allowlist may restrict them for that role — see [tool allowlists](/docs/guides/msp-onboarding/#6-configure-tool-allowlists-optional). |
+
+## Related
+
+- [Vendor connections](/docs/guides/vendor-connections/) — credential scopes, rotation, and the full vendor catalog.
+- [Security](/docs/reference/security/#credential-security) — how Conduit encrypts and resolves the credential you just stored.
