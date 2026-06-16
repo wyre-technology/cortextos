@@ -51,14 +51,30 @@ Replace `<region>.azurecontainerapps.io` with the FQDN that Bicep emits as
 `gatewayFqdn` after the first deploy. Set proxy status to **DNS only** (grey
 cloud); Container Apps handles TLS via the managed cert.
 
-### 4. Auth0 callback URL
+### 4. Auth0 tenant
 
-Auth0 dashboard → Applications → Conduit app → Settings → **Allowed Callback
-URLs**: append `https://staging.conduit.wyre.ai/auth/callback`. Same for
-**Allowed Logout URLs** if you use them.
+**Staging and production use SEPARATE Auth0 tenants** (corrected 2026-06-16).
+Earlier revisions of this doc described a single-tenant shared-application
+pattern; that reflected an older substrate state and is no longer accurate.
 
-You can share the Auth0 application between staging and production — the
-allowed-URL list is what scopes the redirects.
+- **conduit-staging** has its own Auth0 tenant. The `AUTH0_DOMAIN`,
+  `AUTH0_CLIENT_ID`, and `AUTH0_CLIENT_SECRET` configured under the `staging`
+  GitHub environment must point at the staging tenant.
+- **conduit-prod** has its own Auth0 tenant with a separate application,
+  separate client credentials, and an independent allowed-URL list. The
+  `production` GitHub environment carries the production-tenant credentials.
+
+Per-tenant setup (do this once per environment in each tenant):
+
+1. Auth0 dashboard → Applications → Conduit app → Settings → **Allowed Callback
+   URLs**: add the environment's callback (`https://staging.conduit.wyre.ai/auth/callback`
+   in the staging tenant; `https://conduit.wyre.ai/auth/callback` in the production tenant).
+2. Same for **Allowed Logout URLs** if you use them.
+3. Copy the tenant's `AUTH0_DOMAIN` + `AUTH0_CLIENT_ID` + `AUTH0_CLIENT_SECRET`
+   into the matching GitHub environment's secrets.
+
+Tenant separation gives staging its own user pool, application config, and
+rule/action surface — changes there cannot reach production users.
 
 ## First deploy
 
