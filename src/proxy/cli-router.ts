@@ -314,6 +314,7 @@ export function cliRoutes(deps: CliRouterDeps) {
             vendorSlug,
             vendorConfig.containerUrl,
             injection.headers,
+            vendorConfig.mcpPath ?? '/mcp',
           );
 
           // Apply allowlist filtering via composeToolScope (WYREAI-61).

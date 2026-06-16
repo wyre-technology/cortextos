@@ -39,6 +39,10 @@ export class ToolCache {
     vendorSlug: string,
     containerUrl: string,
     headers: Record<string, string>,
+    // Per-vendor MCP path. Defaults to '/mcp' (Streamable HTTP); hosted-remote
+    // vendors with a non-default transport set it (e.g. rootly = '/sse').
+    // Callers pass `vendorConfig.mcpPath ?? '/mcp'`, matching the proxy routers.
+    mcpPath: string = '/mcp',
   ): Promise<McpTool[]> {
     // Check cache first
     const cached = this.cache.get(vendorSlug);
@@ -50,7 +54,7 @@ export class ToolCache {
     const existing = this.inflight.get(vendorSlug);
     if (existing) return existing;
 
-    const promise = this.fetchTools(vendorSlug, containerUrl, headers);
+    const promise = this.fetchTools(vendorSlug, containerUrl, headers, mcpPath);
     this.inflight.set(vendorSlug, promise);
 
     try {
@@ -72,8 +76,14 @@ export class ToolCache {
     vendorSlug: string,
     containerUrl: string,
     headers: Record<string, string>,
+    mcpPath: string = '/mcp',
   ): Promise<McpTool[]> {
-    const url = `${containerUrl}/mcp`;
+    // Honor the vendor's mcpPath — hardcoding '/mcp' hit the wrong upstream
+    // path for hosted-remote vendors whose transport lives elsewhere (rootly =
+    // '/sse'), so tool enumeration 404'd while the proxy routers (which already
+    // use mcpPath) worked (WYREAI-177). SSE responses are handled below via the
+    // text/event-stream content-type branch; the Accept header requests both.
+    const url = `${containerUrl}${mcpPath}`;
     const baseHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',

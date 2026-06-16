@@ -254,4 +254,27 @@ describe('ToolCache', () => {
 
     vi.useRealTimers();
   });
+
+  // WYREAI-177: the upstream URL was hardcoded to `${containerUrl}/mcp`, so
+  // hosted-remote vendors with a non-default transport (rootly = '/sse') had
+  // their tool enumeration sent to the wrong path and 404'd. Every handshake
+  // request must honor the vendor's mcpPath.
+  it('honors a non-default mcpPath for every handshake request', async () => {
+    mockSequentialResponse();
+
+    await cache.getTools('rootly', 'https://mcp.rootly.com', {}, '/sse');
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    for (const call of vi.mocked(fetch).mock.calls) {
+      expect(call[0]).toBe('https://mcp.rootly.com/sse');
+    }
+  });
+
+  it('defaults to /mcp when no mcpPath is supplied', async () => {
+    mockSequentialResponse();
+
+    await cache.getTools('datto-rmm', 'http://datto:8080', {});
+
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('http://datto:8080/mcp');
+  });
 });

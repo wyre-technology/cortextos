@@ -109,7 +109,7 @@ export function toolAccessRoutes(deps: ToolAccessRouteDeps) {
 
         let tools: Awaited<ReturnType<typeof toolCache.getTools>>;
         try {
-          tools = await toolCache.getTools(vendorSlug, vendor.containerUrl, headers);
+          tools = await toolCache.getTools(vendorSlug, vendor.containerUrl, headers, vendor.mcpPath ?? '/mcp');
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           request.log.warn({ vendor: vendorSlug, err: message }, 'tool discovery failed');

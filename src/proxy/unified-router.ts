@@ -649,6 +649,7 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
               slug,
               vendorConfig.containerUrl,
               injection.headers,
+              vendorConfig.mcpPath ?? '/mcp',
             );
             return { slug, vendorConfig, injection, tools };
           } catch (err) {
