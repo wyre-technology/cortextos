@@ -43,7 +43,7 @@ The table lists examples — the vendors available in a given deployment are con
 - **Role structure** — who needs access to which vendors?
 - **Credential model** — shared org-level API keys, or per-team / per-user keys?
 - **Compliance needs** — do they require audit log export or SIEM integration?
-- **MCP client preference** — Claude Desktop, Claude Code, or custom automation via service clients?
+- **MCP client preference** — which MCP-compatible client the technicians use (any works — Claude Desktop, Claude Code, Cursor, and others), or custom automation via service clients?
 
 ---
 
@@ -172,7 +172,7 @@ For compliance or monitoring, ship audit logs to an external SIEM from **`/org/l
 - [ ] Server access grants configured for each member
 - [ ] Tool allowlists set for restricted roles (if needed)
 - [ ] Team members invited and accepted
-- [ ] An MCP client (Claude Desktop or Claude Code) configured with the Conduit server URL
+- [ ] An MCP client (Claude Desktop, Claude Code, Cursor, or any MCP-compatible client) configured with the Conduit server URL
 - [ ] Service clients created for any automation workflows
 - [ ] Audit log verified — make a test tool call and check **`/org/audit`**
 - [ ] Log shipping tested (if configured)
@@ -246,7 +246,7 @@ The flow works whether the MSP owner is self-serving or a WYRE operator is runni
 
 ### What should I gather before onboarding?
 
-During discovery, inventory the MSP's tool stack (which vendor integrations to enable), the team size, the role structure, the credential model (shared org-level keys versus per-team or per-user keys), compliance needs such as audit export or SIEM integration, and the MCP client preference — Claude Desktop, Claude Code, or service-client automation.
+During discovery, inventory the MSP's tool stack (which vendor integrations to enable), the team size, the role structure, the credential model (shared org-level keys versus per-team or per-user keys), compliance needs such as audit export or SIEM integration, and the MCP client preference — any MCP-compatible client works (Claude Desktop, Claude Code, Cursor, and others), or service-client automation.
 
 ### How does billing start during onboarding?
 
@@ -258,4 +258,4 @@ Set each member's vendor access from `/org/server-access` — a deny-by-default 
 
 ### How do I connect an MCP client once the tenant is built?
 
-Point Claude Desktop or Claude Code at the Conduit server URL (`https://conduit.wyre.ai/v1/mcp`). On first use an OAuth flow opens a browser for authentication; after sign-in and credential connection, the token is cached and refreshed automatically.
+Point your MCP client — Claude Desktop, Claude Code, Cursor, or any MCP-compatible client — at the Conduit server URL (`https://conduit.wyre.ai/v1/mcp`). On first use an OAuth flow opens a browser for authentication; after sign-in and credential connection, the token is cached and refreshed automatically.
