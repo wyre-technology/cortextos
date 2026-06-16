@@ -1,0 +1,189 @@
+---
+title: SEO setup and operations
+description: How Conduit's docs SEO, AEO, and GEO surfaces work, and how to operate them — indexing model, analytics, meta, structured data, and the llms.txt map.
+pagefind: false
+---
+
+This page is the operator's guide to Conduit's documentation SEO. It explains
+every search-discovery surface the docs ship, how indexing is gated to
+production, and what to change when you tune a page. It is an internal page
+and is not indexed (see [The internal/ exclusion rule](#the-internal-exclusion-rule)).
+
+Audience: whoever owns search performance for the docs. You do not need to be
+able to build the site to operate most of this, but the per-page meta and the
+llms.txt map live in the repo and ship through the normal deploy.
+
+## The surfaces at a glance
+
+Conduit optimizes for three overlapping channels:
+
+- **SEO** — classic search engines (Google, Bing). Driven by page titles,
+  meta descriptions, headings, internal links, the sitemap, and `robots.txt`.
+- **AEO** — answer engines and rich results. Driven by structured data
+  (schema.org JSON-LD), especially the per-page `FAQPage` schema.
+- **GEO** — generative engines (AI assistants and their crawlers). Driven by
+  `llms.txt`, the curated machine-readable map at the site root.
+
+Every surface is built into the docs and served from the gateway. There is no
+separate SEO platform to log into except Google Search Console and Google
+Analytics.
+
+## The production-only indexing model
+
+Only the production docs host is indexable. Everything else — staging, the
+pre-cutover gateway hostname, local builds, and previews — returns a
+noindex `robots.txt` and suppresses `llms.txt`. This keeps pre-launch and
+internal traffic out of the search index and out of AI training crawls.
+
+- The production docs host is **`conduit.wyre.ai`**.
+- The decision is computed at runtime (`computeDocsNoindex` in
+  `src/robots.ts`): index only when the served host is the production host.
+- The flip happens automatically at the production DNS cutover. There is also
+  an explicit override env var, **`DOCS_NOINDEX`** — set it to exactly
+  `false` to force indexing, or any other value to force noindex. The override
+  is hardened to fail safe: a typo defaults to noindex, never to indexed.
+
+:::caution
+Do not point Search Console or a backlink at a non-production host. Those
+hosts intentionally serve `Disallow: /` and will not index. Submit only
+`conduit.wyre.ai`.
+:::
+
+## Search Console and the sitemap
+
+1. Verify the **`conduit.wyre.ai`** property in Google Search Console (and
+   Bing Webmaster Tools if used). Prefer DNS verification so it survives
+   redeploys.
+2. Submit the sitemap at **`https://conduit.wyre.ai/docs/sitemap-index.xml`**.
+   The production `robots.txt` already advertises this URL, so search engines
+   discover it on their own; submitting it speeds up the first crawl.
+3. The sitemap is generated from the page tree at build time and **excludes
+   the `internal/` subtree**. New pages appear automatically on the next
+   deploy — there is nothing to edit by hand.
+
+## Analytics (GA4)
+
+- The property is GA4, measurement ID **`G-V3W6M1YEHL`**.
+- The tag is injected client-side and **prod-gated**: it loads and fires only
+  when the page is served from `conduit.wyre.ai`. On staging, previews, and
+  local builds it makes zero requests to Google and records nothing, so the
+  property stays clean of internal traffic.
+- The measurement ID is a public client-side identifier and ships in the HTML
+  by design. It is not a secret.
+- To change the property or ID, edit `GA_MEASUREMENT_ID` in
+  `docs/astro.config.mjs`. It ships on the next deploy.
+
+## Per-page meta: titles and descriptions
+
+Each page's `<title>` and meta description come from its front-matter. This is
+the surface you tune most often.
+
+```yaml
+---
+title: Page title in sentence case
+description: One-sentence summary used in search results and social cards.
+---
+```
+
+Rules, enforced by the [Style guide](/docs/contributing/style-guide/):
+
+- **Title** — sentence case (capitalize the first word and proper nouns only;
+  keep acronyms like MSP, MCP, SCIM, API uppercase). Aim for roughly 60
+  characters so it does not truncate in results.
+- **Description** — one sentence, **160 characters or fewer**, so it does not
+  truncate in search results or social cards. Lead with the value and the
+  primary keyword.
+
+To retune a page's search snippet, edit only its `description`. No build
+knowledge is required; the change ships on the next deploy.
+
+## Structured data (schema.org JSON-LD)
+
+Two layers, both grounded — we never assert a claim a search or answer engine
+would ingest as fact unless it is true. **No `aggregateRating`, `offers`, or
+`reviewCount`** appears anywhere; unbacked claims are a trust breach, not a
+marketing flourish.
+
+- **Site-wide** — `Organization` and `SoftwareApplication` schema is injected
+  into every page `<head>` from `docs/astro.config.mjs`. It carries
+  name, category, description, URL, and publisher only.
+- **Per-page** — `FAQPage` schema is added to pages that have a
+  `## Frequently asked questions` section. The JSON-LD is **derived from the
+  visible Q/A**, not authored separately: a test asserts the schema matches
+  the rendered text byte-for-byte, because Google rejects (and can penalize)
+  FAQ schema whose answers differ from what users see. It runs on every
+  page that has a `## Frequently asked questions` section. To add it to a new
+  page, add the FAQ section to the MDX and register the Q/A in
+  `docs/src/lib/faq.ts` — the test will fail until they match.
+
+## The llms.txt map (GEO)
+
+`llms.txt` is the curated map that points AI crawlers at the highest-value
+pages, served at the site root (`/llms.txt`) on production only.
+
+- It is **hand-maintained content**, not generated from the sidebar. The
+  curation — the citable one-liner, the provider-neutral framing, the
+  per-link editorial summary — is the value.
+- It lives in **`src/llms.ts`** (`LLMS_TXT`).
+- **Every link must resolve to a built page** before it ships; a test
+  enforces this so the map never points a crawler at a 404.
+- **No `internal/` page appears** (see below).
+
+When you add or substantially reframe a customer-facing page, decide whether
+it belongs in the map and, if so, add a one-line editorial summary in the same
+voice as the existing entries.
+
+## The internal/ exclusion rule
+
+Internal pages (this one included) must stay out of **every** crawler-discovery
+channel, not just one. The rule:
+
+- **Page serve** — pages under `/docs/internal` get a noindex `X-Robots-Tag`
+  header on every surface, including production. The matcher normalizes the
+  path the way the file server does, so encoded or doubled-slash variants
+  cannot dodge it.
+- **Sitemap** — the `internal/` subtree is filtered out.
+- **llms.txt** — no `internal/` page is listed.
+- **robots.txt** — the internal path is *not* named in a `Disallow:` line,
+  on purpose: a `Disallow` on the indexed production `robots.txt` would
+  advertise the hidden path. The noindex header carries the policy instead.
+
+If you add an internal-only page, put it under `internal/` and it inherits all
+four exclusions automatically.
+
+## robots.txt behavior
+
+- **Noindex surfaces** (staging, pre-cutover, local): `User-agent: * /
+  Disallow: /`, plus an explicit `Disallow: /` for each named AI crawler
+  (GPTBot, ClaudeBot, Google-Extended, PerplexityBot, CCBot, and others).
+- **Production**: `Disallow:` (allow all) plus the `Sitemap:` line pointing at
+  the docs sitemap index.
+
+## How changes ship
+
+The docs are built once into the gateway Docker image and the same image runs
+in staging and production. So:
+
+- There is no separate docs deploy. SEO and content changes ride the normal
+  gateway release through CI. Do not bypass it.
+- Because one image serves both environments, the staging-versus-production
+  difference is enforced at **runtime** (the host check), not at build time.
+
+## Checklist: making a new page SEO-complete
+
+- [ ] Sentence-case `title` (~60 characters, acronyms uppercase).
+- [ ] One-sentence `description`, 160 characters or fewer, keyword-led.
+- [ ] Page added to the sidebar in `docs/astro.config.mjs`.
+- [ ] Internal links use the `/docs/...` base prefix with a trailing slash.
+- [ ] If it is internal-only, it lives under `internal/`.
+- [ ] If it is a high-value customer page, consider adding it to `llms.txt`.
+- [ ] If it has common questions, add a FAQ section and register it in
+      `faq.ts` for `FAQPage` schema.
+
+## Who owns what
+
+- **Page meta, FAQ content, llms.txt curation** — the docs-content lane (this
+  is where SEO tuning happens day to day).
+- **Indexing model, robots, sitemap, GA gating, structured-data infra** — the
+  gateway/platform lane (`src/robots.ts`, `src/llms.ts`, `astro.config.mjs`).
+- **Search Console / Analytics accounts and access** — operations.
