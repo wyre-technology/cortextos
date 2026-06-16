@@ -44,6 +44,9 @@ param monthlyBudget int = 1200
 @description('Budget period start date — must be the first of a month. Defaults to the current month.')
 param budgetStartDate string = utcNow('yyyy-MM-01')
 
+@description('Whether the per-deploy path manages the RG cost budget. Default true preserves existing behavior (staging/production). Set false for stacks whose budget is managed out-of-band by a one-time deploy (azure/conduit-prod-budget.bicep) — Azure forbids changing a budget startDate in place, so a budgetStartDate that defaults to utcNow() breaks EVERY redeploy in a month later than the budget was created (WYREAI-174). conduit-prod sets this false.')
+param deployCostBudget bool = true
+
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
   name: '${prefix}-alerts'
   location: 'global'
@@ -788,7 +791,14 @@ resource alertAuthFailuresSlowBurn 'Microsoft.Insights/scheduledQueryRules@2023-
   }
 }
 
-resource costBudget 'Microsoft.Consumption/budgets@2023-11-01' = {
+// Gated by deployCostBudget. A Microsoft.Consumption/budgets startDate is
+// IMMUTABLE in Azure, so re-deploying this with the default budgetStartDate =
+// utcNow('yyyy-MM-01') fails ("400 Start date of budgets cannot be updated")
+// on the first redeploy of any month after the budget was created. Stacks that
+// redeploy across month boundaries (conduit-prod) set deployCostBudget=false
+// and manage the budget out-of-band via azure/conduit-prod-budget.bicep, the
+// same one-time-deploy pattern as the subscription budget (WYREAI-174).
+resource costBudget 'Microsoft.Consumption/budgets@2023-11-01' = if (deployCostBudget) {
   name: '${prefix}-monthly-budget'
   properties: {
     category: 'Cost'

@@ -88,6 +88,9 @@ param rootlyWebhookUrl string = ''
 @description('Resource-group monthly cost budget in USD')
 param monthlyBudget int = 1200
 
+@description('Whether the per-deploy path manages the RG cost budget (passed to the observability module). Default true preserves staging/production behavior; conduit-prod sets false and manages its budget out-of-band (azure/conduit-prod-budget.bicep) so monthly redeploys do not break on the immutable budget startDate — see WYREAI-174.')
+param deployCostBudget bool = true
+
 @description('Whether to deploy the Key Vault role assignment (set false if it already exists)')
 param deployRoleAssignment bool = false
 
@@ -143,6 +146,7 @@ module observability './modules/observability.bicep' = {
     keyVaultId: keyvault.outputs.id
     rootlyWebhookUrl: rootlyWebhookUrl
     monthlyBudget: monthlyBudget
+    deployCostBudget: deployCostBudget
   }
 }
 
