@@ -3,6 +3,8 @@ title: On-prem gateway
 description: When to use the WYRE on-prem gateway, what it is, and where to go next — overview and routing page for the on-prem deploy.
 ---
 
+import Related from '../../../../components/Related.astro';
+
 The **on-prem gateway** is a small container an MSP deploys on a customer's own infrastructure so the customer's on-prem MCP capabilities are reachable through Conduit — without opening any inbound port on the customer's network. Conduit only proxies the request; the credentials and the MCP servers stay inside the customer's network.
 
 This page orients you. The deeper docs are linked below by goal.
@@ -41,5 +43,7 @@ For the full security model — data flow, the six load-bearing security propert
 
 ## Related
 
-- [Onboarding a customer](/docs/guides/customer-provisioning/) — where the on-prem gateway fits in the customer-onboarding flow (the Self-hosted wiring pattern in the Onboard-MCP wizard).
-- [Subtenant Model](/docs/reference/subtenants/) — the multi-tenant security model the on-prem gateway extends.
+<Related links={[
+  { slug: 'guides/customer-provisioning', note: 'where the on-prem gateway fits in the customer-onboarding flow (the Self-hosted wiring pattern in the Onboard-MCP wizard).' },
+  { slug: 'reference/subtenants', note: 'the multi-tenant security model the on-prem gateway extends.' },
+]} />

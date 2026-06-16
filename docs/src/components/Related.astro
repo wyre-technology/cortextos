@@ -1,0 +1,72 @@
+---
+/**
+ * Cross-reference list for a docs page.
+ *
+ * Resolves each slug to the live target page's title at BUILD TIME, so the
+ * link text always matches the target's current title (no hand-typed drift),
+ * and a renamed or removed page FAILS THE BUILD instead of shipping a dead
+ * link. This is the cross-ref drift guard — the reason this is a component and
+ * not a hand-maintained markdown list.
+ *
+ * Usage in an MDX page, beneath a `## Related` heading (kept in MDX so it
+ * appears in the on-page table of contents):
+ *
+ *   import Related from '../../../components/Related.astro';
+ *
+ *   ## Related
+ *
+ *   <Related links={[
+ *     { slug: 'reference/security', note: 'the credential-encryption model.' },
+ *     { slug: 'guides/scim' },
+ *   ]} />
+ *
+ * - `slug`  — the docs collection id: the path under `src/content/docs`
+ *             without the extension (e.g. `reference/security`,
+ *             `guides/onprem/quickstart`). Matches the `slug` used in the
+ *             sidebar config.
+ * - `note`  — optional one-line gloss rendered after the link.
+ * - `label` — optional link-text override. Defaults to the target page's
+ *             title; set this only when editorial phrasing must differ from
+ *             the canonical title.
+ *
+ * Renders a plain list inside the Starlight markdown wrapper, so it inherits
+ * the same list/link styling (and light/dark theming) as authored prose.
+ */
+import { getEntry } from 'astro:content';
+
+interface RelatedLink {
+  slug: string;
+  note?: string;
+  label?: string;
+}
+
+interface Props {
+  links: RelatedLink[];
+}
+
+const { links } = Astro.props;
+
+const resolved = await Promise.all(
+  links.map(async ({ slug, note, label }) => {
+    const entry = await getEntry('docs', slug);
+    if (!entry) {
+      throw new Error(
+        `<Related>: no docs page for slug "${slug}". A cross-reference must ` +
+          `resolve to a real docs page — fix the slug or the link (cross-ref drift guard).`,
+      );
+    }
+    return { title: label ?? entry.data.title, href: `/docs/${slug}/`, note };
+  }),
+);
+---
+
+<ul>
+  {
+    resolved.map(({ title, href, note }) => (
+      <li>
+        <a href={href}>{title}</a>
+        {note ? <> — {note}</> : null}
+      </li>
+    ))
+  }
+</ul>

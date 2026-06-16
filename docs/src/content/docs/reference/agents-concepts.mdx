@@ -5,6 +5,8 @@ upstream: mcp-gateway/docs/agents.md
 upstream_sha: ad19acd090540765cffc3cc21b57d6fb8555207c
 ---
 
+import Related from '../../../components/Related.astro';
+
 Conduit ships with a library of pre-built **agents** — named,
 opinionated Claude configurations that encode a specific MSP workflow.
 Agents appear in Claude Desktop's prompt picker once your MSP org is
@@ -114,7 +116,7 @@ and prompt-structure checklist there.
 
 ## Related
 
-- [Permissions reference](/docs/reference/permissions/) — how agent
-  authorization resolves.
-- [API reference](/docs/reference/api/) — every agent is also addressable
-  by prompt ID through the MCP prompt listing endpoint.
+<Related links={[
+  { slug: 'reference/permissions', note: 'how agent authorization resolves.' },
+  { slug: 'reference/api', note: 'every agent is also addressable by prompt ID through the MCP prompt listing endpoint.' },
+]} />

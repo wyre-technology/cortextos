@@ -3,6 +3,8 @@ title: Onboarding a customer
 description: How an MSP onboards a new customer organization in Conduit — the wizard, what happens after, and the surfaces an MSP admin uses to manage the customer day-to-day.
 ---
 
+import Related from '../../../components/Related.astro';
+
 Conduit is built for **MSPs serving their own customers**. Each customer the MSP onboards is a separate organization underneath the MSP — fully isolated from every other customer, with its own users, vendor connections, and audit log, but administered by the MSP.
 
 This guide walks through the customer-onboarding flow: how to create a customer, what happens immediately after, and where you go to manage the customer once it's live.
@@ -119,8 +121,10 @@ Before handing the customer off to steady-state:
 
 ## Related
 
-- [Subtenant Model](/docs/reference/subtenants/) — the reseller → customer hierarchy and transitive admin.
-- [Permissions reference](/docs/reference/permissions/) — the role model.
-- [Vendor connections](/docs/guides/vendor-connections/) — vendor catalog and credential-scoping detail.
-- [On-prem gateway quickstart](/docs/guides/onprem/quickstart) — the self-hosted wiring pattern, end to end.
-- [Connecting an AI client](/docs/guides/connecting-a-client/) — what the customer's users do to connect Claude to Conduit.
+<Related links={[
+  { slug: 'reference/subtenants', note: 'the reseller → customer hierarchy and transitive admin.' },
+  { slug: 'reference/permissions', note: 'the role model.' },
+  { slug: 'guides/vendor-connections', note: 'vendor catalog and credential-scoping detail.' },
+  { slug: 'guides/onprem/quickstart', note: 'the self-hosted wiring pattern, end to end.' },
+  { slug: 'guides/connecting-a-client', note: "what the customer's users do to connect Claude to Conduit." },
+]} />

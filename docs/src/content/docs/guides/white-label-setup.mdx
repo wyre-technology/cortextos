@@ -3,6 +3,8 @@ title: White-label setup
 description: How Conduit's white-label branding is configured today — deployment-level environment variables that theme the customer-facing surfaces.
 ---
 
+import Related from '../../../components/Related.astro';
+
 Conduit can be presented under a custom brand: the name, logo, colors, and fonts customers see on the landing, sign-in, and consent surfaces are configurable.
 
 This guide describes how white-label branding works **today**. It is honest about the current shape of the feature: branding is configured at the **deployment level**, by whoever operates the Conduit deployment — there is not yet a self-service branding UI or API.
@@ -53,5 +55,7 @@ Conduit's docs include four customer-facing message templates you can adapt as r
 
 ## Related
 
-- [Getting Started](/docs/getting-started/) — where branding fits in the onboarding flow.
-- [Architecture](/docs/reference/architecture/) — how the deployment is configured.
+<Related links={[
+  { slug: 'getting-started', note: 'where branding fits in the onboarding flow.' },
+  { slug: 'reference/architecture', note: 'how the deployment is configured.' },
+]} />

@@ -4,6 +4,7 @@ description: Which AI clients work with Conduit. Conduit speaks the standard Mod
 ---
 
 import FaqSchema from '../../../components/FaqSchema.astro';
+import Related from '../../../components/Related.astro';
 
 <FaqSchema slug="reference/supported-clients" />
 
@@ -81,6 +82,8 @@ Some platforms do tool-calling without native MCP — for example, an app built 
 
 ## Related
 
-- [Connecting an AI client](/docs/guides/connecting-a-client/) — the step-by-step connect path.
-- [Architecture](/docs/reference/architecture/) — why the gateway is MCP-native and provider-neutral.
-- [Security](/docs/reference/security/) — the OAuth 2.1 + PKCE client-authentication model.
+<Related links={[
+  { slug: 'guides/connecting-a-client', note: 'the step-by-step connect path.' },
+  { slug: 'reference/architecture', note: 'why the gateway is MCP-native and provider-neutral.' },
+  { slug: 'reference/security', note: 'the OAuth 2.1 + PKCE client-authentication model.' },
+]} />
