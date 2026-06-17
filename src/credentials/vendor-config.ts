@@ -43,11 +43,18 @@ export interface OAuthVendorConfig {
   extraFields?: string[];
   /**
    * Expected `iss` value on the OAuth callback for RFC 9207 issuer
-   * identification (mix-up attack defense). Opt-in: when undefined,
-   * callback issuer validation is skipped. When set, the callback handler
-   * fails closed on missing or mismatched `iss`. See WYREAI-75 PR B.
+   * identification (mix-up attack defense). REQUIRED — the callback handler
+   * fails closed on a missing or mismatched `iss`. Making this mandatory (vs
+   * the old optional field that silently skipped validation when omitted)
+   * closes warden Finding C (#300 / WYREAI-92): an OAuth vendor can no longer
+   * ship with `iss` validation disabled by leaving the field off.
+   *
+   * Tenant-templated providers (Microsoft Entra returns a tenant-specific
+   * issuer `https://login.microsoftonline.com/{tenantid}/v2.0`) use the literal
+   * `{tenantid}` placeholder; validateCallbackIssuer() matches it against the
+   * GUID in the actual `iss`. See WYREAI-75 PR B + WYREAI-92.
    */
-  issuer?: string;
+  issuer: string;
 }
 
 export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace' | 'infrastructure';
@@ -1082,6 +1089,7 @@ export const VENDORS: Record<string, VendorConfig> = {
     oauthConfig: {
       authorizeUrl: 'https://login.xero.com/identity/connect/authorize',
       tokenUrl: 'https://identity.xero.com/connect/token',
+      issuer: 'https://identity.xero.com',
       scopes: ['openid', 'profile', 'email', 'accounting.transactions', 'accounting.contacts', 'accounting.reports.read', 'accounting.settings', 'offline_access'],
       clientIdEnv: 'XERO_CLIENT_ID',
       clientSecretEnv: 'XERO_CLIENT_SECRET',
@@ -1103,6 +1111,9 @@ export const VENDORS: Record<string, VendorConfig> = {
     oauthConfig: {
       authorizeUrl: 'https://appcenter.intuit.com/connect/oauth2',
       tokenUrl: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
+      // Intuit OpenID issuer. NOTE: verify Intuit returns RFC 9207 `iss` on the
+      // authorization callback before relying on fail-closed (WYREAI-92 review).
+      issuer: 'https://oauth.platform.intuit.com/op/v1',
       scopes: ['com.intuit.quickbooks.accounting'],
       clientIdEnv: 'QBO_CLIENT_ID',
       clientSecretEnv: 'QBO_CLIENT_SECRET',
@@ -1266,6 +1277,9 @@ export const VENDORS: Record<string, VendorConfig> = {
     oauthConfig: {
       authorizeUrl: 'https://app.hubspot.com/oauth/authorize',
       tokenUrl: 'https://api.hubapi.com/oauth/v1/token',
+      // HubSpot OAuth2 is not full OIDC and may not emit an RFC 9207 `iss` on
+      // the callback. NOTE: verify before relying on fail-closed (WYREAI-92).
+      issuer: 'https://api.hubapi.com',
       scopes: ['oauth', 'crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read'],
       clientIdEnv: 'HUBSPOT_CLIENT_ID',
       clientSecretEnv: 'HUBSPOT_CLIENT_SECRET',
@@ -1527,6 +1541,9 @@ export const VENDORS: Record<string, VendorConfig> = {
     oauthConfig: {
       authorizeUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
       tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      // Entra returns a tenant-specific issuer; {tenantid} is matched against
+      // the GUID in the callback `iss` (see validateCallbackIssuer).
+      issuer: 'https://login.microsoftonline.com/{tenantid}/v2.0',
       scopes: ['https://graph.microsoft.com/.default', 'offline_access', 'openid', 'profile'],
       clientIdEnv: 'MICROSOFT_CLIENT_ID',
       clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
@@ -1590,6 +1607,9 @@ export const VENDORS: Record<string, VendorConfig> = {
     oauthConfig: {
       authorizeUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize',
       tokenUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token',
+      // Entra returns a tenant-specific issuer; {tenantid} is matched against
+      // the GUID in the callback `iss` (see validateCallbackIssuer).
+      issuer: 'https://login.microsoftonline.com/{tenantid}/v2.0',
       scopes: ['api://e8c77dc2-69b3-43f4-bc51-3213c9d915b4/.default', 'offline_access', 'openid', 'profile'],
       clientIdEnv: 'MICROSOFT_CLIENT_ID',
       clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
@@ -2648,6 +2668,27 @@ export const VENDORS: Record<string, VendorConfig> = {
     },
   },
 };
+
+/**
+ * Enforce at construction (WYREAI-92, warden Finding C): every vendor that
+ * declares `oauthConfig` MUST carry a non-empty `issuer`, so RFC 9207 callback
+ * `iss` validation can never be silently skipped. `issuer` is already required
+ * by the type; this module-load guard is the runtime belt for any config that
+ * reaches `VENDORS` without the compiler's check (e.g. a future DB-backed
+ * registry hydrating entries). A missing issuer is a config bug — fail fast at
+ * boot rather than silently disabling a security control at request time.
+ */
+export function assertOAuthVendorsHaveIssuer(vendors: Record<string, VendorConfig> = VENDORS): void {
+  for (const [slug, vendor] of Object.entries(vendors)) {
+    if (vendor.oauthConfig && !vendor.oauthConfig.issuer?.trim()) {
+      throw new Error(
+        `OAuth vendor "${slug}" is missing oauthConfig.issuer — RFC 9207 issuer ` +
+          `validation cannot be skipped (WYREAI-92).`,
+      );
+    }
+  }
+}
+assertOAuthVendorsHaveIssuer();
 
 /**
  * Look up vendor config by slug, returns undefined if not found.

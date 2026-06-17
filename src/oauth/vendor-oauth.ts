@@ -255,11 +255,17 @@ export function buildCredentialData(
  * expected issuer (RFC 9207 — OAuth 2.0 Authorization Server Issuer
  * Identification). Returns null on success, or a string error reason.
  *
- * - If `expectedIssuer` is undefined, validation is skipped (returns null;
- *   opt-in per vendor via OAuthVendorConfig.issuer).
- * - If `expectedIssuer` is set and `actualIss` is missing → 'missing_iss'.
- * - If both are set and they don't match → 'iss_mismatch'.
- * - If both match → null.
+ * `expectedIssuer` is REQUIRED (WYREAI-92): every OAuth vendor declares one,
+ * so validation can never be silently skipped. There is no opt-out path.
+ * - `actualIss` missing → 'missing_iss' (fail closed).
+ * - mismatch → 'iss_mismatch'.
+ * - match → null.
+ *
+ * Tenant-templated issuers: when `expectedIssuer` contains the literal
+ * `{tenantid}` placeholder (Microsoft Entra returns a tenant-specific issuer
+ * `https://login.microsoftonline.com/<guid>/v2.0` from the /common and
+ * /organizations endpoints), the placeholder matches a single GUID/tenant
+ * segment in `actualIss`. Non-templated issuers are matched exactly.
  *
  * Mitigates the OAuth mix-up attack class: an attacker controls a callback
  * URL that points to a different authorization server than the one the
@@ -271,11 +277,20 @@ export function buildCredentialData(
  * (WYREAI-75 PR B). Wired into src/web/routes.ts /connect/oauth/callback.
  */
 export function validateCallbackIssuer(
-  expectedIssuer: string | undefined,
+  expectedIssuer: string,
   actualIss: string | undefined,
 ): null | 'missing_iss' | 'iss_mismatch' {
-  if (!expectedIssuer) return null;
   if (!actualIss) return 'missing_iss';
+  if (expectedIssuer.includes('{tenantid}')) {
+    // Escape regex metachars in the literal parts, then swap the placeholder
+    // for a single non-slash tenant segment (GUID or domain). Anchored so a
+    // crafted iss can't match by embedding the expected issuer as a substring.
+    const pattern = expectedIssuer
+      .split('{tenantid}')
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^/]+');
+    return new RegExp(`^${pattern}$`).test(actualIss) ? null : 'iss_mismatch';
+  }
   if (actualIss !== expectedIssuer) return 'iss_mismatch';
   return null;
 }
