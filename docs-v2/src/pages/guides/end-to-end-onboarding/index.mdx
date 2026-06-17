@@ -1,0 +1,387 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: End-to-end onboarding walkthrough
+description: A single-page walkthrough from new MSP signup through your first customer's first successful tool call. Every step is grounded in the shipped Conduit flow — no inventions, no skipped substrate, with links to per-step depth where you'll want more detail.
+---
+
+{/* Authored 2026-06-17 for WYREAI-181 per boss msg 1781733707959.
+    Substrate-grounded against:
+      - conduit/src/web/routes.ts (the real route paths used in steps below)
+      - docs-v2/getting-started + launch-onboarding + customer-provisioning + msp-onboarding
+      - src/billing/prices.ts (canonical flat-pricing constants)
+    Every UI label, URL path, and wizard-step name matches the running product.
+    Product gaps surfaced at the end (workspace concept + entity-mapping). */}
+
+This page walks an MSP from "I just signed up" to "my first customer's first agent
+is making real tool calls" — in one ordered pass. It is the **launch-day reading**:
+do these steps in order and your tenant is live by the bottom.
+
+Each step has a one-line summary plus the link to the in-depth guide for that
+step. If you only have 30 minutes, this page is enough; if you want the depth,
+follow the links as you go.
+
+## Before you start
+
+You need:
+
+- An **Auth0-backed login** for the email you'll use as the MSP owner (Conduit
+  uses Auth0 for authentication; you'll set the password during sign-in).
+- An **alpha invite code** OR the willingness to start a **14-day free trial of
+  the full platform** from the billing page after sign-up.
+- **API credentials for at least one vendor** you want to connect — the credential
+  is whatever the vendor's portal calls an "API key," "personal access token,"
+  or "client credentials" pair. The per-vendor walkthroughs (linked below) tell
+  you exactly where to get them.
+- (If you'll onboard a customer in this same session) **The customer's name and
+  the email of their owner** — the person who will administer the customer
+  organization once it's set up.
+
+**Time to complete:** ~30–60 minutes the first time. Subsequent customer
+onboardings take 5–15 minutes once the MSP-side setup is done.
+
+---
+
+## Part 1 — Stand up your MSP organization
+
+### 1. Sign up and create your MSP organization
+
+Go to your Conduit endpoint (`https://conduit.wyre.ai` for the hosted gateway)
+and click **Sign in**. Conduit redirects you to Auth0; finish the sign-in flow
+with the email you'll use as the MSP owner. On first sign-in, Conduit creates
+the MSP organization and lands you on the dashboard.
+
+You're now the **owner** of the MSP organization. There's nothing to install —
+Conduit is a hosted gateway.
+
+> See [MSP onboarding](/docs/guides/msp-onboarding/) for the discovery questions
+> (vendor inventory, customer profile, identity provider) you'll want answered
+> before adding teammates.
+
+### 2. Activate your subscription
+
+Visit **Billing** (`/org/billing`). Conduit ships on a single flat plan:
+
+- **$399/month base** per MSP organization
+- **+ $39/month per billable seat**
+- **The first two service-client (agent) seats are free** with the base; humans
+  always bill from seat 1
+
+Two ways to activate:
+
+- **14-day free trial of the full platform.** Click **Start trial**. No payment
+  method required to start; you can add one any time before the trial ends to
+  convert to a paid subscription.
+- **Alpha invite code.** If your Conduit onboarding contact gave you an invite
+  code, enter it on the Billing page. The invite code converts your organization
+  directly to a paid subscription.
+
+> See [Billing & plans](/docs/guides/billing/) for the rate-change notice
+> policy, payment-method updates, and dunning/recovery behavior if a payment
+> fails.
+
+### 3. Connect your first vendor (MSP-organization level)
+
+Vendors connected at the **MSP-organization level** are usable by your own
+technicians. (Vendors connected for an individual customer come later, in
+Part 2.)
+
+1. Open **Connections** (`/org/connections`).
+2. Pick the vendor. **API-key vendors** show a credential form; you paste the
+   key and click **Connect**. **OAuth vendors** (Xero, QuickBooks, HubSpot,
+   Microsoft 365) redirect you to the vendor's consent screen; you authorize
+   and the vendor sends you back to Conduit with the token.
+3. Conduit encrypts the credential at rest and runs a health check. A **green
+   status** on the Connections page means the connection is ready.
+
+Where the per-vendor credential comes from (Atera "Admin → API", HaloPSA
+"Configuration → Integrations → HaloPSA API," etc.) is documented in the
+per-vendor walkthroughs linked from the [Vendor connections guide](/docs/guides/vendor-connections/).
+
+### 4. Connect an AI client to your MSP organization
+
+Conduit speaks the **Model Context Protocol** — any MCP-capable AI client
+connects. Most common are Claude Desktop and Claude Code; the same pattern
+works for Cursor, Cline, Continue, and others.
+
+**Claude Desktop** (edit `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "conduit": {
+      "url": "https://conduit.wyre.ai/v1/mcp"
+    }
+  }
+}
+```
+
+**Claude Code** (one CLI command):
+
+```bash
+claude mcp add conduit https://conduit.wyre.ai/v1/mcp
+```
+
+First use opens your browser for Auth0 sign-in. After sign-in, the JWT is cached
+locally and refreshed automatically — you sign in once per device.
+
+> See [Connecting an AI client](/docs/guides/connecting-a-client/) for the
+> client-by-client setup (including [Microsoft Copilot Studio](/docs/guides/connecting-copilot-studio/))
+> and [Supported clients](/docs/reference/supported-clients/) for the full list.
+
+### 5. Verify your MSP-side setup works end-to-end
+
+Before moving to customer onboarding, prove that the MSP-organization-level
+setup actually works. From your AI client:
+
+- Make **one test tool call** against the vendor you connected in Step 3
+  ("List my active Atera alerts," "Show me my open HaloPSA tickets," "Pull
+  this week's RocketCyber incidents," etc.).
+- Open the **Audit log** (`/org/audit`). The call you just made should appear
+  with the correct user, vendor, tool name, and timestamp.
+- Open the **vendor health** view on the Connections page. The vendor you
+  connected should show **green**.
+
+If any of those three doesn't land, fix it now before continuing — the
+customer-onboarding steps below assume a working MSP-side setup.
+
+> See [Monitoring your tenant](/docs/guides/monitoring/) for the usage
+> dashboard, vendor-health detail, and audit-log filters.
+
+---
+
+## Part 2 — Onboard your first customer
+
+Conduit is built for **MSPs serving their own customers**. Each customer the
+MSP onboards is a **separate organization underneath the MSP** — fully isolated
+from every other customer, with its own users, vendor connections, and audit
+log, but administered by the MSP.
+
+### 6. Create the customer organization
+
+From the dashboard:
+
+1. Open **Customers** (`/org/customers`) and click **+ Add Customer**. The New
+   Customer wizard opens.
+2. **Step 1 — Customer.** Enter the customer's organization name. Conduit
+   generates a URL slug from the name; adjust if you prefer a different one.
+   The slug becomes the customer's MCP endpoint URL:
+   `conduit.wyre.ai/v1/mcp/<your-slug>/<customer-slug>`.
+3. **Step 2 — Admin.** Enter the email of the person who will own the customer
+   organization. They'll receive an invitation by email and set their own
+   password via the link.
+4. **Step 3 — Review.** By default the customer inherits your white-label
+   branding (name, logo, colors, email sender). Toggle inheritance off and
+   pick an accent if they need their own. Confirm the summary and click
+   **Create customer**.
+
+Conduit creates the customer organization, sets you as the **interim owner**
+until the invitee accepts, and sends the owner invitation email.
+
+> See [Onboarding a customer](/docs/guides/customer-provisioning/) for the
+> per-field detail of the wizard plus what happens immediately after creation.
+
+### 7. Wire up the customer's vendor access (Onboard MCP wizard)
+
+The customer organization is live but **no vendor tools are exposed yet**. To
+make any vendor available to the customer's users, run the **Onboard MCP**
+wizard per vendor.
+
+From `/org/customers/<id>`, click **+ Onboard MCP**. The wizard has four steps:
+
+1. **Catalog** — pick a vendor from the catalog.
+2. **Wire Up** — choose how the customer's users will reach the vendor's API.
+   Three patterns:
+   - **Bring Your Own Credentials (BYOC)** — each user supplies their own
+     API key. The vendor's audit log shows real names; per-user revocation
+     is clean. Best for compliance-sensitive customers and per-seat-billed
+     vendors.
+   - **Shared credentials** — you supply one set of credentials; all the
+     customer's users go through it. Fastest setup; the vendor sees one
+     identity for every user's actions.
+   - **Self-hosted (on-prem gateway)** — the customer runs the vendor's MCP
+     server on their own infrastructure, reached through a small WYRE on-prem
+     gateway container. Credentials never leave their network. Best for
+     strict data-residency requirements. See the
+     [on-prem gateway quickstart](/docs/guides/onprem/quickstart/) for the
+     deploy steps.
+3. **Config** — for BYOC, pick which of the customer's users get a seat. Each
+   seated user receives a setup email asking them to add their own API key.
+   For Shared, you enter the credentials once.
+4. **Allowlist** — choose which of the vendor's tools the customer's users
+   are allowed to invoke. Off by default; check the boxes to grant. Allowlists
+   can be scoped per department or per role group.
+
+Finishing the wizard creates an audit-log entry and provisions the chosen
+wiring pattern for the customer.
+
+> :::caution[Pending: launch wiring-pattern decision]
+> Which wiring patterns are **available at launch** is pending Aaron's
+> launch-scope decision (BYOC-only vs. Shared vs. Self-hosted at launch).
+> Patterns described above reflect the architectural reality of the wizard;
+> the at-launch availability subset will be filled in here once that decision
+> lands.
+> :::
+
+### 8. Invite the customer's first users
+
+The customer's owner (the person you invited in Step 6 above) signs into the
+customer organization via the email-link, sets their password, and lands on the
+customer dashboard. From there they invite their own team:
+
+- **From the customer's perspective** (the customer admin signs in to
+  `conduit.wyre.ai/v1/mcp/<your-slug>/<customer-slug>`): open **Users**
+  (`/org/users`) → **+ Invite** → enter the team-member's email and role
+  (`admin` or `member`) → send. The teammate receives an email link.
+
+Alternatively, **as the MSP**, you can administer the customer's users on the
+customer's behalf via the customer-detail page tabs (`/org/customers/<id>/users`).
+
+> See [Permissions](/docs/reference/permissions/) for the role model and
+> what each role can do.
+
+### 9. The customer's first agent session
+
+The customer's users connect their own AI client to the **customer's** MCP
+endpoint (note: this URL is different from the MSP's MCP endpoint — it's the
+customer-specific one from Step 6):
+
+**Claude Desktop:**
+
+```json
+{
+  "mcpServers": {
+    "conduit": {
+      "url": "https://conduit.wyre.ai/v1/mcp/<your-slug>/<customer-slug>"
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add conduit https://conduit.wyre.ai/v1/mcp/<your-slug>/<customer-slug>
+```
+
+On first use, the customer's user signs into Auth0 with their own credentials
+(set in Step 8). After sign-in, they can ask Claude (or any MCP-capable client)
+to perform vendor actions: *"What tickets did Acme submit this week?"* or
+*"Run the threshold-monitor script on Acme's primary server,"* — and the call
+flows through Conduit's gateway, with the customer's per-tool allowlist (Step 7,
+Allowlist) enforced.
+
+### 10. Verify the customer is live
+
+- The customer's user makes one tool call from their AI client.
+- The MSP opens the customer's **Audit Log** tab
+  (`/org/customers/<id>/audit`) and confirms the call appears with the
+  correct user, vendor, tool, and timestamp.
+- The customer's **Usage** tab (`/org/customers/<id>/usage`) shows tool-call
+  volume against the customer's allowlisted vendors.
+- The MSP-organization's billing increments by one billable seat per the
+  customer-user who's now active (per the flat-pricing model in Step 2).
+
+If all four land, the customer is **live**.
+
+---
+
+## Part 3 — Where to go after launch
+
+Once one customer is live, the same pattern repeats per customer:
+
+- **Repeat Steps 6–10** for each subsequent customer. The MSP-side setup
+  (Parts 1) only runs once; each new customer is ~10–15 minutes of wizard time.
+- **Set up identity provider auto-provisioning (optional)** —
+  [SCIM provisioning](/docs/guides/scim/) connects Entra ID / Okta / JumpCloud /
+  Google Workspace to Conduit so new MSP team members are provisioned and
+  deprovisioned automatically.
+- **Apply white-label branding (optional)** — see the
+  [white-label setup guide](/docs/guides/white-label-setup/).
+- **Watch the dashboards** — the
+  [Monitoring guide](/docs/guides/monitoring/) covers the usage dashboard,
+  vendor-health alerts, and audit-log filtering.
+
+The full ordered map (MSP → customer → ongoing administration) lives in the
+[Launch onboarding](/docs/guides/launch-onboarding/) guide; this walkthrough is
+the single-page version of that journey.
+
+---
+
+## Go-live checklist
+
+For the launch-day eyeball: every box ticked = your MSP and your first customer
+are live.
+
+**MSP-organization side:**
+
+- [ ] MSP organization created (Step 1).
+- [ ] Subscription active — trial OR paid (Step 2).
+- [ ] At least one MSP-org-level vendor connected and green (Step 3).
+- [ ] At least one AI client connected to the MSP-org MCP endpoint (Step 4).
+- [ ] One MSP-side tool call succeeded and appeared in the audit log (Step 5).
+
+**Customer side (per customer):**
+
+- [ ] Customer organization created (Step 6).
+- [ ] At least one vendor onboarded via Onboard-MCP wizard (Step 7).
+- [ ] Customer owner invited and accepted (Step 6 + Step 8).
+- [ ] At least one customer-side user with role (Step 8).
+- [ ] First customer-side AI tool call succeeded and appeared in the
+  customer's audit log (Steps 9 + 10).
+
+---
+
+## Product gaps surfaced during this walkthrough
+
+The dispatch for this walkthrough named two concepts that **do not currently
+exist as first-class Conduit terms**. Documenting both here for product-team
+visibility:
+
+### "Workspace" — not a Conduit concept
+
+The dispatch named "workspace concept" as a walkthrough step. The substrate-grep
+returns ZERO references to a `workspace` abstraction in the Conduit codebase
+(the only matches are: "Workspace-wide settings" used generically in
+`reseller-general.ts`, and the vendor name "Google Workspace" in `team-scim.ts`).
+
+The canonical Conduit term for what a single MSP or customer occupies is
+**organization**. This walkthrough uses **organization** throughout.
+
+If "workspace" was meant to introduce a sub-organization or team abstraction
+(e.g., grouping users within a customer organization), that's a product-design
+question. Routed to dev via boss for the product-vs-doc determination.
+
+### "Entity mapping basics" — feature not built
+
+The dispatch named "entity mapping basics" as a walkthrough step.
+Substrate-grep returns ZERO references to entity-mapping in the Conduit
+codebase. The only past mention was in `pricing.astro` PR #28's tier-feature
+list (which Aaron subsequently flagged as needing to align with the single
+flat-pricing plan — that PR's tier-list is being replaced).
+
+This walkthrough does NOT include a step for entity mapping, because the
+feature does not currently exist. Routed to dev via boss to determine:
+(a) deferred-capability for post-launch, in which case the walkthrough adds
+the step when it ships, OR (b) speculative marketing-copy that should be
+removed from any remaining mentions.
+
+---
+
+## Where to go deeper
+
+- [Launch onboarding](/docs/guides/launch-onboarding/) — the ordered map with
+  optional steps and SCIM/branding/handoff coverage.
+- [MSP onboarding](/docs/guides/msp-onboarding/) — discovery questions,
+  vendor inventory, and the team-roles model.
+- [Onboarding a customer](/docs/guides/customer-provisioning/) — per-field
+  detail on the New-Customer wizard and the customer-detail tabs.
+- [Vendor connections](/docs/guides/vendor-connections/) — per-vendor catalog
+  with the per-credential walkthroughs as they land.
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — client-by-client
+  setup for Claude Desktop, Claude Code, Cursor, Cline, Continue, and others.
+- [Permissions](/docs/reference/permissions/) — the role model (`owner` /
+  `admin` / `member`) and what each role can do.
+- [Subtenant Model](/docs/reference/subtenants/) — the underlying reseller →
+  customer → sub-customer hierarchy + transitive admin.
+- [API reference](/docs/reference/api/) — every step above has an API
+  equivalent for teams automating provisioning.
