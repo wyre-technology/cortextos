@@ -37,7 +37,16 @@ const canonicalUrl = canonical || new URL(Astro.url.pathname, Astro.site ?? 'htt
     <meta name="description" content={description} />
     {noindex && <meta name="robots" content="noindex,follow" />}
     <link rel="canonical" href={canonicalUrl} />
+    {/* Favicon set (replaced placeholder cyan-diamond 2026-06-17 with WyreAI brand logo).
+        Variant: WyreAI-Logo_Transparent.svg — transparent background adapts to
+        light/dark browser-tab themes. Sourced from orgs/wyre/shared-assets/.
+        Belt order matters: modern browsers prefer SVG; older fall back to PNG
+        then ICO. apple-touch-icon serves iOS home-screen adds. */}
     <link rel="icon" type="image/svg+xml" href={`${baseUrl}favicon.svg`} />
+    <link rel="icon" type="image/png" sizes="32x32" href={`${baseUrl}favicon-32x32.png`} />
+    <link rel="icon" type="image/png" sizes="16x16" href={`${baseUrl}favicon-16x16.png`} />
+    <link rel="apple-touch-icon" sizes="180x180" href={`${baseUrl}apple-touch-icon.png`} />
+    <link rel="icon" type="image/x-icon" href={`${baseUrl}favicon.ico`} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

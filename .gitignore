@@ -1,6 +1,11 @@
 node_modules/
 dist/
 public/
+# But docs-v2/public/ is the Astro static-assets dir; its files MUST be
+# tracked so they survive the build pipeline (Astro copies public/ → dist/
+# unmodified). Negated 2026-06-17 alongside the favicon-brand swap.
+!docs-v2/public/
+!docs-v2/public/**
 *.db
 *.sqlite
 .env
