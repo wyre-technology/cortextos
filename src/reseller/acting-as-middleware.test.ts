@@ -189,6 +189,11 @@ describe('actingAs middleware — LIFECYCLE-BIND 3-check', () => {
       viaResellerOrgId: 'org_reseller',
       sessionId: session.sessionId,
       startedAt: session.startedAt,
+      // Warden HARD-REQ 1 (boss msg-1781725403477): effectiveRole is
+      // applied at the binding-decoration site via
+      // mapResellerRoleToCustomerRole. The reseller-admin role used in
+      // this happy-path fixture maps to 'admin' on the customer-side.
+      effectiveRole: 'admin',
     });
     await app.close();
   });

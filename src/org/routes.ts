@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
-import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { nanoid } from "nanoid";
 import { brand } from "../brand/index.js";
 import { requireAuth0 } from "../auth/auth0.js";
-import type { Auth0User } from "../auth/auth0.js";
 import type { OrgService, OrgRole } from "./org-service.js";
 import { ROLE_LEVEL, isAcceptInvitationError } from "./org-service.js";
+import {
+  requireOrgRole,
+  requireOrgRoleForWrite,
+  actingAsAuditTriplet,
+} from "./org-route-helpers.js";
 import type { CredentialService } from "../credentials/credential-service.js";
 import type { BillingGate } from "../billing/gate.js";
 import { isPaidPlan } from "../billing/gate.js";
@@ -47,33 +51,12 @@ interface OrgRouteDeps {
   orgApiKeyService?: OrgApiKeyService;
 }
 
-/**
- * Require that the authenticated user is a member of the org with at least the given role.
- * Returns the Auth0User if authorized, sends 403 and returns null otherwise.
- */
-async function requireOrgRole(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  orgService: OrgService,
-  orgId: string,
-  minRole: OrgRole,
-): Promise<Auth0User | null> {
-  const user = requireAuth0(request, reply);
-  if (!user) return null;
-
-  const membership = await orgService.getMembership(orgId, user.sub);
-  if (
-    !membership ||
-    ROLE_LEVEL[membership.role as OrgRole] < ROLE_LEVEL[minRole]
-  ) {
-    reply
-      .code(403)
-      .send({ error: "You do not have permission to perform this action" });
-    return null;
-  }
-
-  return user;
-}
+// requireOrgRole + requireOrgRoleForWrite live in org-route-helpers.ts so the
+// actingAs-binding consumption (WYREAI-171 Phase-3 close, boss
+// msg-1781725198971 + warden HARD-REQ 2) lands in ONE site for both this
+// route file and src/org/domain-routes.ts. See the helper docstring for
+// the read-vs-write substrate-discrimination + per-write revalidation
+// rationale.
 
 /** Resolve a user's email by id, or null if unknown. The users table has no
  *  RLS, so the row survives org_members removal — safe to call post-mutation. */
@@ -1195,6 +1178,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // -----------------------------------------------------------------------
 
     // POST /api/orgs/:orgId/credentials/:vendor — store org credential
+    //
+    // WRITE-PATH AUTHORITY (WYREAI-171 Phase-3 close, msg-1781725198971 +
+    // warden HARD-REQ 2): uses requireOrgRoleForWrite so an actingAs
+    // operator's binding is RE-VERIFIED against current DB state before
+    // the write proceeds. A revoked operator with a still-valid cookie
+    // session is rejected with 401 (binding-invalid), NOT a stale 200.
     app.post<{
       Params: { orgId: string; vendor: string };
       Body: Record<string, string>;
@@ -1205,7 +1194,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       },
       async (request, reply) => {
         const { orgId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1271,12 +1260,34 @@ export function orgRoutes(deps: OrgRouteDeps) {
           credData,
           user.sub,
         );
+        // Warden HARD-REQ 4 (boss msg-1781726477131): emit the
+        // actingAsAuditTriplet INDEPENDENTLY of authorization input —
+        // (actor, viaResellerOrgId, onBehalfOfOrgId) are SCOPE/FORENSICS
+        // record, not authz-eval, and must never be conflated (ruby
+        // Finding 1 from PR #386).
+        //
+        // First-class columns on admin_audit_log are (org_id, actor_id,
+        // event_type, ...). For actingAs writes, org_id IS the
+        // onBehalfOfOrgId by route shape — but we ALSO embed the full
+        // triplet in metadata so a future audit-log schema-migration
+        // (adding dedicated via_reseller_org_id / on_behalf_of columns)
+        // can backfill from JSON without reading the route URL. Direct
+        // writes (no actingAs) emit the triplet with null acting-fields
+        // so forensics queries are uniform across paths.
+        const triplet = actingAsAuditTriplet(request, user);
         void adminAuditService
           .log({
             orgId,
             actorId: user.sub,
             eventType: "org_credential_created",
-            metadata: { vendor: vendorSlug },
+            metadata: {
+              vendor: vendorSlug,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
           })
           .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(201).send({ id, vendor: vendorSlug });

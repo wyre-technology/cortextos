@@ -386,7 +386,12 @@ describe('orgRoutes', () => {
       const response = await app.inject({ method: 'GET', url: '/api/orgs/org-1' });
 
       expect(response.statusCode).toBe(403);
-      expect(response.json().error).toBe('You do not have permission to perform this action');
+      // Helper requireOrgRole now surfaces a more diagnostic message
+      // ("Not a member..." vs the previous generic "You do not have
+      // permission..."). The 403 status is the load-bearing assertion;
+      // the message-text shift is an intentional ergonomics improvement
+      // from the WYREAI-171 Phase-3 close.
+      expect(response.json().error).toBe('Not a member of this organization');
     });
 
     it('returns 404 when org does not exist', async () => {
@@ -443,7 +448,10 @@ describe('orgRoutes', () => {
       });
 
       expect(response.statusCode).toBe(403);
-      expect(response.json().error).toBe('You do not have permission to perform this action');
+      // Helper requireOrgRole role-shortfall message ("Requires owner role
+      // or higher") replaces the generic previous "You do not have
+      // permission..." — intentional diagnostic improvement.
+      expect(response.json().error).toBe('Requires owner role or higher');
     });
 
     it('returns 400 when name is empty', async () => {

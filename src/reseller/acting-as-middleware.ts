@@ -45,6 +45,7 @@ import type {
 import type { OrgService } from '../org/org-service.js';
 import type { ActingAsAuditEvent } from '../audit/acting-as-audit-types.js';
 import { verifyResellerActingAuthority } from './reseller-acting-authority.js';
+import { mapResellerRoleToCustomerRole } from '../org/org-route-helpers.js';
 
 export const ACTING_AS_COOKIE = 'acting_as_session';
 
@@ -72,6 +73,19 @@ declare module 'fastify' {
         sessionId: string;
         /** start time from acting_as_sessions; preserved for audit-emit at /exit. */
         startedAt: string;
+        /**
+         * Operator's role-on-customer per `mapResellerRoleToCustomerRole`
+         * (src/org/org-route-helpers.ts). Read by requireOrgRole +
+         * requireOrgRoleForWrite to enforce the role-threshold check that
+         * closes warden HARD-REQ 1 (msg-1781725403477). MONOTONIC: never
+         * exceeds the operator's reseller-side role at binding-time.
+         *
+         * Today the closed-set mapping returns 'admin' for reseller-
+         * owner/admin and `null` (binding rejected) for all other reseller-
+         * side roles. A future policy change is a pure data update to the
+         * mapping helper; this type stays the same.
+         */
+        effectiveRole: 'owner' | 'admin' | 'member';
       };
     };
   }
@@ -93,14 +107,31 @@ declare module 'fastify' {
 async function revalidate(
   session: ActingAsSession,
   deps: Pick<ActingAsMiddlewareDeps, 'orgService'>,
-): Promise<ActingAsRevokeReason | null> {
+): Promise<
+  | { ok: true; effectiveRole: 'owner' | 'admin' | 'member' }
+  | { ok: false; reason: ActingAsRevokeReason }
+> {
   const result = await verifyResellerActingAuthority(
     deps.orgService,
     session.userId,
     session.viaResellerOrgId,
     session.onBehalfOfOrgId,
   );
-  return result.ok ? null : result.reason;
+  if (!result.ok) return { ok: false, reason: result.reason };
+
+  // Warden HARD-REQ 1 (boss msg-1781725403477) — apply the closed-set
+  // reseller→customer role mapping at the binding-decoration site (NOT
+  // at gate-time). If the mapping returns null the operator's reseller-
+  // role is below the launch policy threshold (today the 3-check already
+  // enforces admin, but the mapping is the single source of truth so
+  // future policy tightening flows through ONE site). Treat as a
+  // role_demoted_below_admin revocation — same semantic as a mid-session
+  // role demotion.
+  const effectiveRole = mapResellerRoleToCustomerRole(result.role);
+  if (effectiveRole === null) {
+    return { ok: false, reason: 'role_demoted_below_admin' };
+  }
+  return { ok: true, effectiveRole };
 }
 
 /**
@@ -167,8 +198,9 @@ export function actingAsMiddleware(deps: ActingAsMiddlewareDeps) {
         return;
       }
 
-      const revokeReason = await revalidate(session, deps);
-      if (revokeReason) {
+      const verdict = await revalidate(session, deps);
+      if (!verdict.ok) {
+        const revokeReason = verdict.reason;
         const revoked = await deps.actingAsSessionService.revoke(
           session.sessionId,
           revokeReason,
@@ -197,9 +229,11 @@ export function actingAsMiddleware(deps: ActingAsMiddlewareDeps) {
         return;
       }
 
-      // All 3 checks passed — decorate the caller with the revalidated
-      // actingAs. Downstream handlers (effective-scope.ts consumers,
-      // operator-routes.ts /exit) read this off request.caller.
+      // All 3 checks passed + role-mapping resolved — decorate the
+      // caller with the revalidated actingAs. Downstream handlers
+      // (effective-scope.ts consumers, operator-routes.ts /exit,
+      // requireOrgRole + requireOrgRoleForWrite gates in
+      // src/org/org-route-helpers.ts) read this off request.caller.
       request.caller = {
         ...(request.caller ?? { userId: auth0User.sub }),
         userId: auth0User.sub,
@@ -208,6 +242,7 @@ export function actingAsMiddleware(deps: ActingAsMiddlewareDeps) {
           viaResellerOrgId: session.viaResellerOrgId,
           sessionId: session.sessionId,
           startedAt: session.startedAt,
+          effectiveRole: verdict.effectiveRole,
         },
       };
     });
