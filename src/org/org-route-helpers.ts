@@ -154,6 +154,24 @@ function readActingAs(request: FastifyRequest): DecoratedActingAs | null {
  * runs (the binding is null on the request if any check failed). Reads
  * inherit a per-request revalidation cadence by-construction.
  *
+ * ARCHITECTURE-OF-RECORD — evolution from PR #386 Finding 1 (ruby
+ * triangle-leg review of #441, msg-1781726391199):
+ *
+ *   PR #386 Finding 1 ratified that `actingAs` is SCOPE-EVALUATION input
+ *   only — never AUTHORIZATION input. WYREAI-171 Phase-3 (this PR)
+ *   DELIBERATELY bridges that boundary in a single bounded direction:
+ *   the binding is consumed as an authority source ONLY for routes
+ *   targeting `actingAs.onBehalfOfOrgId`, gated by a closed-set role
+ *   mapping (`mapResellerRoleToCustomerRole`) that enforces monotonicity
+ *   from the operator's reseller-side role. The compensating discipline
+ *   for forensics-separation is `actingAsAuditTriplet`: every consuming
+ *   handler emits the (actor, viaReseller, onBehalfOf) triplet
+ *   INDEPENDENTLY in its audit_log row, preserving the
+ *   scope-vs-authority separation at the audit layer even where the
+ *   gate-layer collapses them. The evolution is intentional + bounded;
+ *   the audit triplet is the falsifiable witness that we did not
+ *   silently re-conflate the two.
+ *
  * WRITE-side handlers MUST call `requireOrgRoleForWrite` instead — it
  * additionally re-verifies the 3-check against the DB INSIDE the gate so a
  * mid-flight revocation can't be masked by stale session state.
@@ -224,6 +242,19 @@ export async function requireOrgRole(
  * Same two paths as `requireOrgRole`, but PATH B additionally re-runs
  * `verifyResellerActingAuthority` against CURRENT DB state. A revoked
  * operator with a still-valid cookie session WILL be rejected.
+ *
+ * REACHABILITY NOTE (analyst FIND-2 closure at the artifact, ruby leg
+ * triangle-aggregate msg-1781726391199): non-admin reseller-roles
+ * NEVER establish an actingAs binding — `mapResellerRoleToCustomerRole`
+ * is a closed-set policy that rejects every reseller-role except
+ * owner/admin at /switch + at acting-as-middleware revalidate. So a
+ * reseller-member (or any future lower-privilege role) never reaches
+ * PATH B in this gate AT ALL; LAYER-B (RLS reseller-clause) widening
+ * over those roles is moot. The role-threshold compare on PATH B
+ * (effectiveRole ≥ minRole) is then an ESCALATION guard for the
+ * subset that does establish a binding (admin/owner → admin-on-
+ * customer): it stops an admin-binding from authorizing a
+ * route-requiring-owner.
  *
  * Failure mapping (warden HARD-REQ 2):
  *   - PATH A absent + PATH B never satisfied                 → 403
