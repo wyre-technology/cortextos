@@ -71,6 +71,83 @@ Restart the client. `mcp-remote` runs on demand (via `npx`), handles the sign-in
 Use the `claude mcp add --transport http` form above wherever your client natively supports remote MCP servers. The `mcp-remote` bridge is for clients — Claude Desktop among them — that connect only to local programs.
 :::
 
+## Connect Cursor, Cline, or Continue
+
+These editors are MCP clients and connect to Conduit the same two ways as the
+clients above — natively by URL where the client supports remote MCP with
+OAuth, or through the `mcp-remote` bridge otherwise. In every example below,
+replace `<your-conduit-host>` with the host your MSP gave you; the first
+connection then runs the [OAuth sign-in](#first-connection).
+
+:::caution[Conduit is OAuth-only — no API key to paste]
+Conduit authenticates clients with OAuth 2.1 (a browser sign-in), not a static
+token. If a client's native remote connection expects you to paste an API key
+or bearer token and never opens the sign-in browser, use the
+[`mcp-remote` bridge](#connect-claude-desktop-and-other-clients-via-the-mcp-remote-bridge)
+instead — it performs the OAuth flow for any client. Client config formats and
+remote-OAuth support change between releases; confirm these against your
+installed version.
+:::
+
+### Cursor
+
+Cursor connects to a remote MCP server by URL with OAuth — no bridge needed.
+
+1. Create or open `~/.cursor/mcp.json` (available in every project) or
+   `.cursor/mcp.json` (one project). *Expected: the MCP config file, or a new
+   empty file.*
+2. Add Conduit under `mcpServers`:
+
+   ```json
+   {
+     "mcpServers": {
+       "conduit": {
+         "url": "https://<your-conduit-host>/v1/mcp"
+       }
+     }
+   }
+   ```
+
+3. Save the file and reload Cursor. *Expected: Cursor lists the **conduit**
+   server; the first time you use it, a browser opens for the
+   [OAuth sign-in](#first-connection).*
+
+You can also add it from **Settings → MCP → Add new MCP server** instead of
+editing the file by hand.
+
+### Cline (VS Code)
+
+Cline adds remote MCP servers from its **MCP Servers** panel.
+
+1. In VS Code, open the **Cline** panel and click the **MCP Servers** icon.
+   *Expected: the MCP Servers view.*
+2. Open the **Remote Servers** tab. Enter a **Server Name** (`conduit`), the
+   **Server URL** (`https://<your-conduit-host>/v1/mcp`), and choose
+   **Streamable HTTP** as the transport. Click **Add Server**. *Expected: the
+   server appears in the list.*
+3. The first time you use a Conduit tool, the [OAuth sign-in](#first-connection)
+   runs. *Expected: Conduit's tools appear once connected* — if it expects a
+   token instead, use the `mcp-remote` bridge per the caution above.
+
+### Continue (VS Code / JetBrains)
+
+Continue configures MCP servers in its `config.yaml`.
+
+1. Open your Continue config at `~/.continue/config.yaml`. *Expected: the YAML
+   config.*
+2. Add Conduit under `mcpServers`:
+
+   ```yaml
+   mcpServers:
+     - name: Conduit
+       type: streamable-http
+       url: https://<your-conduit-host>/v1/mcp
+   ```
+
+3. Save the file; Continue reloads the config. *Expected: on first use the
+   [OAuth sign-in](#first-connection) runs and Conduit's tools appear* — if not,
+   use the `mcp-remote` bridge per the caution above.
+
 ## First connection
 
 The first time a client connects, Conduit runs a standard OAuth 2.1 sign-in — your client (or the `mcp-remote` bridge) does this for you:
