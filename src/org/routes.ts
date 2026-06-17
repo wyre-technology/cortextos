@@ -175,7 +175,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -210,7 +210,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -248,7 +248,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -280,7 +280,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -382,7 +382,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/invitations/:id",
       async (request, reply) => {
         const { orgId, id } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -438,7 +438,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/members/:userId",
       async (request, reply) => {
         const { orgId, userId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -498,7 +498,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Body: { role: string };
     }>("/api/orgs/:orgId/members/:userId/role", async (request, reply) => {
       const { orgId, userId } = request.params;
-      const user = await requireOrgRole(
+      const user = await requireOrgRoleForWrite(
         request,
         reply,
         orgService,
@@ -653,7 +653,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/members/:userId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -727,7 +727,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/members/:userId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -799,7 +799,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/members/:userId/server-access",
       async (request, reply) => {
         const { orgId, userId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -844,7 +844,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Body: { defaultServerAccess?: string };
     }>("/api/orgs/:orgId/settings", async (request, reply) => {
       const { orgId } = request.params;
-      const user = await requireOrgRole(
+      const user = await requireOrgRoleForWrite(
         request,
         reply,
         orgService,
@@ -887,7 +887,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -962,7 +962,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Body: { name: string };
     }>("/api/orgs/:orgId/teams/:teamId", async (request, reply) => {
       const { orgId, teamId } = request.params;
-      const user = await requireOrgRole(
+      const user = await requireOrgRoleForWrite(
         request,
         reply,
         orgService,
@@ -998,7 +998,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId",
       async (request, reply) => {
         const { orgId, teamId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1030,7 +1030,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/members/:userId",
       async (request, reply) => {
         const { orgId, teamId, userId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1076,7 +1076,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/members/:userId",
       async (request, reply) => {
         const { orgId, teamId, userId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1109,7 +1109,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, teamId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1146,7 +1146,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/server-access/:vendor",
       async (request, reply) => {
         const { orgId, teamId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1318,7 +1318,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/credentials/:vendor",
       async (request, reply) => {
         const { orgId, vendor: vendorSlug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1534,7 +1534,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Params: { orgId: string };
       Body: { name: string; expires_in_days?: number };
     }>("/api/orgs/:orgId/service-clients", async (request, reply) => {
-      const user = await requireOrgRole(
+      const user = await requireOrgRoleForWrite(
         request,
         reply,
         orgService,
@@ -1640,7 +1640,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
     app.delete<{ Params: { orgId: string; clientId: string } }>(
       "/api/orgs/:orgId/service-clients/:clientId",
       async (request, reply) => {
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1679,7 +1679,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Params: { orgId: string };
       Body: { idp_type: string; default_role: string };
     }>("/api/orgs/:orgId/scim/connections", async (request, reply) => {
-      const user = await requireOrgRole(
+      const user = await requireOrgRoleForWrite(
         request,
         reply,
         orgService,
@@ -1784,7 +1784,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
     app.delete<{ Params: { orgId: string; id: string } }>(
       "/api/orgs/:orgId/scim/connections/:id",
       async (request, reply) => {
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1855,7 +1855,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/credentials/:slug",
       async (request, reply) => {
         const { orgId, teamId, slug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1899,7 +1899,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/teams/:teamId/credentials/:slug",
       async (request, reply) => {
         const { orgId, teamId, slug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1959,7 +1959,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/service-clients/:clientId/credentials/:slug",
       async (request, reply) => {
         const { orgId, clientId, slug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -1998,7 +1998,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/service-clients/:clientId/credentials/:slug",
       async (request, reply) => {
         const { orgId, clientId, slug } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -2043,7 +2043,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/api-keys",
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,
@@ -2139,7 +2139,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
       "/api/orgs/:orgId/api-keys/:keyId/revoke",
       async (request, reply) => {
         const { orgId, keyId } = request.params;
-        const user = await requireOrgRole(
+        const user = await requireOrgRoleForWrite(
           request,
           reply,
           orgService,

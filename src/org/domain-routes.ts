@@ -27,7 +27,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAuth0 } from '../auth/auth0.js';
 import type { OrgService } from './org-service.js';
-import { requireOrgRole } from './org-route-helpers.js';
+import { requireOrgRole, requireOrgRoleForWrite } from './org-route-helpers.js';
 import { OrgDomainService, OrgDomainError } from './domain-service.js';
 import type { OrgDomainRole } from './domain-service.js';
 import { domainFromEmail } from './public-email-domains.js';
@@ -96,7 +96,7 @@ export function domainRoutes(deps: DomainRouteDeps) {
       '/api/orgs/:orgId/domains',
       async (request, reply) => {
         const { orgId } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRoleForWrite(request, reply, orgService, orgId, 'admin');
         if (!user) return;
 
         const { domain, auto_join_role: autoJoinRole } = request.body ?? {};
@@ -123,7 +123,7 @@ export function domainRoutes(deps: DomainRouteDeps) {
       '/api/orgs/:orgId/domains/:id/verify',
       async (request, reply) => {
         const { orgId, id } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRoleForWrite(request, reply, orgService, orgId, 'admin');
         if (!user) return;
         try {
           const record = await domainService.verify(id, orgId, user.sub, request.log);
@@ -259,7 +259,7 @@ export function domainRoutes(deps: DomainRouteDeps) {
       '/api/orgs/:orgId/domains/:id',
       async (request, reply) => {
         const { orgId, id } = request.params;
-        const user = await requireOrgRole(request, reply, orgService, orgId, 'admin');
+        const user = await requireOrgRoleForWrite(request, reply, orgService, orgId, 'admin');
         if (!user) return;
         const ok = await domainService.delete(id, orgId);
         if (!ok) return reply.code(404).send({ error: 'Domain claim not found' });
