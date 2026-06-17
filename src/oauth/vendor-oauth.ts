@@ -99,12 +99,27 @@ export async function exchangeCodeForTokens(
   codeVerifier: string,
 ): Promise<VendorTokenResponse> {
   const clientId = process.env[oauthCfg.clientIdEnv];
-  const clientSecret = process.env[oauthCfg.clientSecretEnv];
+  if (!clientId) {
+    throw new Error(`Missing environment variable: ${oauthCfg.clientIdEnv}`);
+  }
 
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      `Missing environment variables: ${oauthCfg.clientIdEnv} and/or ${oauthCfg.clientSecretEnv}`,
-    );
+  // Public-client + PKCE (WYREAI-Calendly substrate: token_endpoint_auth_methods=["none"]).
+  // When publicClient is true, the PKCE code_verifier replaces the
+  // client_secret on the token-exchange. Confidential clients still
+  // require both the secret and the verifier.
+  let clientSecret: string | undefined;
+  if (!oauthCfg.publicClient) {
+    if (!oauthCfg.clientSecretEnv) {
+      throw new Error(
+        `Vendor oauthConfig is missing clientSecretEnv (and publicClient is not set). ` +
+          `Either set publicClient=true (RFC 8414 token_endpoint_auth_methods=["none"]) ` +
+          `or supply clientSecretEnv.`,
+      );
+    }
+    clientSecret = process.env[oauthCfg.clientSecretEnv];
+    if (!clientSecret) {
+      throw new Error(`Missing environment variable: ${oauthCfg.clientSecretEnv}`);
+    }
   }
 
   const callbackUrl = `${config.baseUrl}/connect/oauth/callback`;
@@ -115,7 +130,7 @@ export async function exchangeCodeForTokens(
     redirect_uri: callbackUrl,
     code_verifier: codeVerifier,
     client_id: clientId,
-    client_secret: clientSecret,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
     ...oauthCfg.extraTokenParams,
   };
 
@@ -154,19 +169,32 @@ export async function refreshAccessToken(
   refreshToken: string,
 ): Promise<VendorTokenResponse> {
   const clientId = process.env[oauthCfg.clientIdEnv];
-  const clientSecret = process.env[oauthCfg.clientSecretEnv];
+  if (!clientId) {
+    throw new Error(`Missing environment variable: ${oauthCfg.clientIdEnv}`);
+  }
 
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      `Missing environment variables: ${oauthCfg.clientIdEnv} and/or ${oauthCfg.clientSecretEnv}`,
-    );
+  // Public-client refresh path mirrors the exchange path: when publicClient
+  // is true, omit client_secret. The vendor binds the refresh to the
+  // original public-client + PKCE flow.
+  let clientSecret: string | undefined;
+  if (!oauthCfg.publicClient) {
+    if (!oauthCfg.clientSecretEnv) {
+      throw new Error(
+        `Vendor oauthConfig is missing clientSecretEnv (and publicClient is not set). ` +
+          `Either set publicClient=true or supply clientSecretEnv.`,
+      );
+    }
+    clientSecret = process.env[oauthCfg.clientSecretEnv];
+    if (!clientSecret) {
+      throw new Error(`Missing environment variable: ${oauthCfg.clientSecretEnv}`);
+    }
   }
 
   const body: Record<string, string> = {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: clientId,
-    client_secret: clientSecret,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
     ...oauthCfg.extraTokenParams,
   };
 

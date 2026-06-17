@@ -104,6 +104,7 @@ export const DEFERRED_FROM_BATCH_1_SLUGS: Readonly<Record<string, string>> = {
   'azure-mcp': 'post-batch1-add',
   'betterstack': 'build-headers-not-headerMapping',
   'blumira': 'build-headers-not-headerMapping',
+  'calendly': 'oauth-config-not-headerMapping',
   'connectwise-psa': 'post-batch1-add',
   'digitalocean-apps': 'factory-emitted-do-slug',
   'digitalocean-databases': 'factory-emitted-do-slug',

@@ -676,3 +676,56 @@ describe('OAuthVendorConfig.issuer mandate', () => {
     expect(() => assertOAuthVendorsHaveIssuer({ 'datto-rmm': datto })).not.toThrow();
   });
 });
+
+// Calendly wire-in (Aaron + boss msg-1781709824601, 2026-06-17). The
+// three substrate divergences below are by-construction witnessed:
+// any future refactor that drops the root mcpPath, the publicClient
+// flag, OR the new scheduling category breaks these tests rather
+// than silently degrading. Sibling shape to PR #401 / #402 / #406
+// vendor wire-in regression-guards.
+describe('calendly wire-in', () => {
+  it('registers calendly in the new scheduling category', () => {
+    expect(getVendorSlugs()).toContain('calendly');
+    const v = getVendor('calendly')!;
+    expect(v.name).toBe('Calendly');
+    expect(v.category).toBe('scheduling');
+    expect(v.containerUrl).toBe('https://mcp.calendly.com');
+  });
+
+  it('mcpPath is root (substrate-grounded divergence from default)', () => {
+    const v = getVendor('calendly')!;
+    expect(v.mcpPath).toBe('/');
+  });
+
+  it('oauthConfig declares public-client + PKCE substrate', () => {
+    const v = getVendor('calendly')!;
+    expect(v.oauthConfig).toBeDefined();
+    const oc = v.oauthConfig!;
+    expect(oc.authorizeUrl).toBe('https://calendly.com/oauth/authorize');
+    expect(oc.tokenUrl).toBe('https://calendly.com/oauth/token');
+    expect(oc.issuer).toBe('https://calendly.com');
+    expect(oc.publicClient).toBe(true);
+    // No clientSecretEnv on the public-client + PKCE flow.
+    expect(oc.clientSecretEnv).toBeUndefined();
+    expect(oc.clientIdEnv).toBe('CALENDLY_CLIENT_ID');
+    expect(oc.scopes).toEqual([
+      'mcp:scheduling:read',
+      'mcp:scheduling:write',
+    ]);
+  });
+
+  it('buildHeaders emits Authorization: Bearer from credential access token', () => {
+    const v = getVendor('calendly')!;
+    expect(v.buildHeaders).toBeDefined();
+    expect(v.buildHeaders!({ accessToken: 'tok_abc' })).toEqual({
+      Authorization: 'Bearer tok_abc',
+    });
+  });
+
+  it('scheduling category is registered and labeled', () => {
+    const slugs = VENDOR_CATEGORIES.map((c) => c.slug);
+    expect(slugs).toContain('scheduling');
+    const scheduling = VENDOR_CATEGORIES.find((c) => c.slug === 'scheduling');
+    expect(scheduling?.label).toBe('Scheduling');
+  });
+});

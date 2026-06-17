@@ -38,7 +38,28 @@ export interface OAuthVendorConfig {
   tokenUrl: string;
   scopes: string[];
   clientIdEnv: string;
-  clientSecretEnv: string;
+  /**
+   * Env-var name holding the OAuth client_secret. Optional for vendors
+   * whose authorization server returns `token_endpoint_auth_methods:
+   * ["none"]` in its RFC 8414 discovery doc — i.e. public-client + PKCE
+   * flows (Calendly being the first; see WYREAI-Calendly probe
+   * 2026-06-17 in vendor-config docstring at the entry site). The
+   * callback handler MUST gate on `publicClient` before reading.
+   */
+  clientSecretEnv?: string;
+  /**
+   * Public-client + PKCE flag (sibling discipline to ruby's set-boundary-
+   * via-external-source-citation pattern from PR #405/#422). When true,
+   * the vendor's authorization server advertises
+   * `token_endpoint_auth_methods: ["none"]` + a `code_challenge_methods_
+   * supported` value in its RFC 8414 discovery doc — the client_secret is
+   * replaced by the PKCE code_verifier. Calendly is the first
+   * (probed 2026-06-17:
+   * https://calendly.com/.well-known/oauth-authorization-server). Default
+   * false (confidential client). The token-exchange path must check this
+   * flag and SKIP reading clientSecretEnv when it is true.
+   */
+  publicClient?: boolean;
   extraTokenParams?: Record<string, string>;
   extraFields?: string[];
   /**
@@ -57,7 +78,7 @@ export interface OAuthVendorConfig {
   issuer: string;
 }
 
-export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace' | 'infrastructure';
+export type VendorCategory = 'rmm' | 'psa' | 'documentation' | 'security' | 'bcdr' | 'network' | 'sales' | 'accounting' | 'crm' | 'productivity' | 'email-security' | 'marketplace' | 'infrastructure' | 'scheduling';
 
 export const VENDOR_CATEGORIES: { slug: VendorCategory; label: string }[] = [
   { slug: 'rmm', label: 'Remote Monitoring & Management' },
@@ -75,6 +96,13 @@ export const VENDOR_CATEGORIES: { slug: VendorCategory; label: string }[] = [
   // WYREAI-165 (2026-06-15): DigitalOcean is the first vendor in this
   // category; future cloud providers (AWS, GCP, Azure) slot here too.
   { slug: 'infrastructure', label: 'Cloud Infrastructure' },
+  // Calendly wire-in (2026-06-17, boss msg-1781709824601): Calendly is
+  // the first vendor in this category; future scheduling vendors (Acuity,
+  // SavvyCal, Cal.com) slot here too. Sibling shape to the infrastructure
+  // category add — when an entry doesn't fit existing categories, add the
+  // category rather than over-stuff an adjacent one. WYREAI-167 catalog UX
+  // benefits from semantic-categorization vs over-stuffed buckets.
+  { slug: 'scheduling', label: 'Scheduling' },
 ];
 
 export interface VendorConfig {
@@ -1260,6 +1288,83 @@ export const VENDORS: Record<string, VendorConfig> = {
   // `Authorization: Bearer <pat>` on every proxied request. Sibling shape
   // to PandaDoc / HubSpot hosted-OAuth-MCP vendors.
   ...digitalOceanMcpEntries(),
+
+  // Calendly wire-in (Aaron + boss msg-1781709824601, 2026-06-17).
+  //
+  // Architecture-of-record (sibling discipline to PR #401 / #402 / #406):
+  // Calendly's MCP endpoint diverges from the gateway's default vendor
+  // shape on THREE axes; each divergence is grounded in a probe of the
+  // vendor's RFC 9728 + RFC 8414 well-known metadata, not in our judgment.
+  //
+  //   (1) ROOT mcpPath ("/", not "/mcp"). The MCP endpoint lives at the
+  //       container root + responds POST/DELETE only:
+  //         $ curl -sI https://mcp.calendly.com/
+  //         HTTP/2 405 ; allow: POST, DELETE
+  //       The `/mcp` suffix returns 404. Conduit's default `/mcp` mcpPath
+  //       would never reach the protocol surface; root override is
+  //       substrate-required, not aesthetic.
+  //
+  //   (2) PUBLIC CLIENT + PKCE (no clientSecretEnv). The authorization
+  //       server discovery doc declares no-secret + S256 mandatory:
+  //         $ curl -s https://calendly.com/.well-known/oauth-authorization-server
+  //         {
+  //           ...
+  //           "token_endpoint_auth_methods_supported": ["none"],
+  //           "code_challenge_methods_supported": ["S256"]
+  //         }
+  //       This is sibling-shape to ruby's set-boundary-via-external-source
+  //       citation discipline: the authoritative source is the vendor's
+  //       own discovery doc at probe-time, not a README. The new
+  //       `publicClient: true` flag on OAuthVendorConfig (this PR) signals
+  //       the token-exchange path to skip clientSecretEnv. Dynamic Client
+  //       Registration is also supported (/oauth/register) — future-PR
+  //       work, NOT scaffold scope.
+  //
+  //   (3) NEW `scheduling` VendorCategory (sibling shape to PR #401's
+  //       `infrastructure` add). Calendly is genuinely scheduling-class;
+  //       the existing 13 categories don't fit. Adding the category is
+  //       cheaper than over-stuffing `productivity`. Future scheduling
+  //       vendors (Acuity, SavvyCal, Cal.com) slot here by-construction.
+  //
+  // Credential loading (Aaron cortex-secret directive from boss msg-
+  // 1781639450495): CALENDLY_CLIENT_ID is the env-var NAME the OAuth
+  // dispatcher reads at runtime. The VALUE must be sourced via the
+  // `cortex-secret` CLI (canonical Infisical path) in production. Local-
+  // dev fallback stays ~/.cortextos/default/secrets/. NEVER commit the
+  // value to .env files in the repo.
+  //
+  // Stateful surface: Calendly's MCP responds with an `mcp-session-id`
+  // header (Streamable HTTP with sessions), but conduit's session-pool
+  // shape per WYREAI-116 stateless-core readiness already supports both
+  // stateful + stateless upstreams — no isStateful field needed.
+  calendly: {
+    name: 'Calendly',
+    slug: 'calendly',
+    category: 'scheduling',
+    containerUrl: 'https://mcp.calendly.com',
+    mcpPath: '/',
+    fields: [],
+    headerMapping: {
+      accessToken: 'Authorization',
+    },
+    buildHeaders(creds) {
+      return { Authorization: `Bearer ${creds.accessToken}` };
+    },
+    docsUrl: 'https://developer.calendly.com/calendly-mcp-server',
+    oauthConfig: {
+      authorizeUrl: 'https://calendly.com/oauth/authorize',
+      tokenUrl: 'https://calendly.com/oauth/token',
+      // RFC 9207 iss — Calendly's authz server issuer per its
+      // /.well-known/oauth-authorization-server "issuer" claim (probed
+      // 2026-06-17). Mandatory per WYREAI-92.
+      issuer: 'https://calendly.com',
+      scopes: ['mcp:scheduling:read', 'mcp:scheduling:write'],
+      clientIdEnv: 'CALENDLY_CLIENT_ID',
+      // NO clientSecretEnv — public-client + PKCE flow. See `publicClient`
+      // below + the architecture-of-record comment above.
+      publicClient: true,
+    },
+  },
 
   hubspot: {
     name: 'HubSpot',
