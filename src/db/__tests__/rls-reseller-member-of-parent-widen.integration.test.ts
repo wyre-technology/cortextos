@@ -40,6 +40,16 @@ const REQUEST_ROLE_PW = 'testpw';
  * detail read OR write that goes through the request-path RLS connection.
  * If a future PR adds a customer-detail handler that queries a NEW table,
  * THAT table MUST be added here + a new clause added to the migration.
+ *
+ * SOURCE-OF-TRUTH cross-link (analyst NIT-1, #440 fold-in): the table-set is
+ * derived from the customer-detail handler-map enumerated at
+ * `pearl/deliverables/subtenant-write-buildscope.md`. When LAYER-C handler-
+ * growth adds a customer-detail handler that queries a NEW table (e.g.,
+ * `org_consents` for an MSA-display tab, `subscriptions` for a billing-detail
+ * tab, etc.), update BOTH this array AND the corresponding migration clause
+ * SIMULTANEOUSLY. A programmatic handler-SQL-introspection test (auto-detect
+ * orphan tables by grepping handler sources) is the next-iteration
+ * automation, banked as analyst defer-future per #440 triangle.
  */
 const CUSTOMER_FACING_TABLES = [
   'organizations',          // mig 052
@@ -274,6 +284,37 @@ describe('mig 052 — POSITIVE: reseller-of-parent (any role) reads + writes cus
     await asUser('op-a-admin', (tx) => tx`DELETE FROM org_credentials WHERE id = 'cred-c1-okta'`);
     const rows = await admin<{ id: string }[]>`SELECT id FROM org_credentials WHERE id = 'cred-c1-okta'`;
     expect(rows.length).toBe(0);
+  });
+
+  it('reseller_support_agent CAN insert at the RLS layer (widening is uniform — analyst FIND-1)', async () => {
+    // ANALYST FIND-1 fold-in (#440 triangle, boss msg-1781726347940):
+    //
+    // The RLS-layer widening in mig 052 is UNIFORM across all member-of-parent
+    // roles (any role: reseller_owner / reseller_admin / reseller_support_agent
+    // / reseller_billing_viewer). At the RLS substrate, support_agent CAN
+    // insert into customer-org tables.
+    //
+    // CONTRACT CROSS-LAYER (documented here for reviewer clarity):
+    // LAYER-A (app-layer actingAs binding via mapResellerRoleToCustomerRole)
+    // intentionally NARROWS the write-path to reseller_admin-only — only
+    // reseller_admin can establish a /switch binding; non-admin roles
+    // (support_agent / billing_viewer) get null/reject from the closed-set
+    // mapper and never reach the write-path in production. Per boss msg-
+    // 1781726347940, that NARROWING is a deliberate app-layer policy on top
+    // of the BROAD RLS defense-in-depth. The two layers cooperate by
+    // RLS-widen + app-narrow: defense-in-depth at the substrate + policy-
+    // tightening at the surface.
+    //
+    // This test asserts the BROAD RLS layer is uniform (support_agent CAN
+    // insert at the RLS substrate). The NARROW app-layer block is verified
+    // separately by the reseller-routes test suite (src/reseller/routes.test.ts
+    // requireResellerRole('reseller_admin') gates) — not in scope here.
+    await asUser('op-a-support', (tx) => tx`
+      INSERT INTO org_credentials (id, org_id, vendor_slug, payload)
+      VALUES ('cred-by-support-rls-only', 'customer-A-1', 'auvik', '{}')
+    `);
+    const rows = await admin<{ id: string }[]>`SELECT id FROM org_credentials WHERE id = 'cred-by-support-rls-only'`;
+    expect(rows.length).toBe(1);
   });
 });
 
