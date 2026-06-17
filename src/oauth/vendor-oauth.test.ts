@@ -20,12 +20,9 @@ import { validateCallbackIssuer } from './vendor-oauth.js';
  * WYREAI-75 PR B (RFC 9207 issuer-validation wire-in).
  */
 describe('validateCallbackIssuer (RFC 9207)', () => {
-  it('returns null when no expected issuer is configured (opt-in)', () => {
-    expect(validateCallbackIssuer(undefined, undefined)).toBeNull();
-    expect(validateCallbackIssuer(undefined, 'https://example.com')).toBeNull();
-  });
-
-  it('returns missing_iss when expected is set but actual is missing', () => {
+  // WYREAI-92: issuer is now mandatory — there is no opt-in/skip path. A
+  // missing actual `iss` always fails closed.
+  it('returns missing_iss when actual iss is absent (no skip path)', () => {
     expect(validateCallbackIssuer('https://example.com', undefined)).toBe('missing_iss');
   });
 
@@ -35,5 +32,39 @@ describe('validateCallbackIssuer (RFC 9207)', () => {
 
   it('returns null when expected and actual match exactly', () => {
     expect(validateCallbackIssuer('https://oauth.platform.intuit.com/op/v1', 'https://oauth.platform.intuit.com/op/v1')).toBeNull();
+  });
+
+  // Tenant-templated issuers (Microsoft Entra): {tenantid} matches the GUID
+  // in the actual iss, but only a single non-slash segment, anchored.
+  describe('{tenantid} template (Microsoft Entra)', () => {
+    const tmpl = 'https://login.microsoftonline.com/{tenantid}/v2.0';
+
+    it('matches a real tenant-specific issuer', () => {
+      expect(
+        validateCallbackIssuer(tmpl, 'https://login.microsoftonline.com/12345678-90ab-cdef-1234-567890abcdef/v2.0'),
+      ).toBeNull();
+    });
+
+    it('still fails closed on a missing iss', () => {
+      expect(validateCallbackIssuer(tmpl, undefined)).toBe('missing_iss');
+    });
+
+    it('rejects a different host even with a tenant-shaped segment', () => {
+      expect(
+        validateCallbackIssuer(tmpl, 'https://login.evil.com/12345678-90ab-cdef-1234-567890abcdef/v2.0'),
+      ).toBe('iss_mismatch');
+    });
+
+    it('rejects an iss with an extra path segment (placeholder is single-segment, anchored)', () => {
+      expect(
+        validateCallbackIssuer(tmpl, 'https://login.microsoftonline.com/tenant/evil/v2.0'),
+      ).toBe('iss_mismatch');
+    });
+
+    it('rejects a suffix-embedding attempt (anchored match)', () => {
+      expect(
+        validateCallbackIssuer(tmpl, 'https://login.microsoftonline.com/tenant/v2.0.evil.com'),
+      ).toBe('iss_mismatch');
+    });
   });
 });

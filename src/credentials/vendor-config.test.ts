@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getVendor, getVendorSlugs, getVendorsByCategory, VENDORS, VENDOR_CATEGORIES } from './vendor-config.js';
+import {
+  getVendor,
+  getVendorSlugs,
+  getVendorsByCategory,
+  VENDORS,
+  VENDOR_CATEGORIES,
+  assertOAuthVendorsHaveIssuer,
+  type VendorConfig,
+} from './vendor-config.js';
 
 describe('vendor-config', () => {
   afterEach(() => {
@@ -633,5 +641,38 @@ describe('vendor-config', () => {
         expect(String(url)).not.toContain(badRegion);
       }
     });
+  });
+});
+
+// WYREAI-92 (warden Finding C): issuer mandate on OAuth vendors.
+describe('OAuthVendorConfig.issuer mandate', () => {
+  it('every vendor with oauthConfig declares a non-empty issuer', () => {
+    for (const [slug, vendor] of Object.entries(VENDORS)) {
+      if (vendor.oauthConfig) {
+        expect(vendor.oauthConfig.issuer?.trim(), `${slug}: missing oauthConfig.issuer`).toBeTruthy();
+      }
+    }
+  });
+
+  it('assertOAuthVendorsHaveIssuer() passes for the real catalog (ran at module load)', () => {
+    expect(() => assertOAuthVendorsHaveIssuer()).not.toThrow();
+  });
+
+  it('assertOAuthVendorsHaveIssuer() throws when an OAuth vendor has no issuer', () => {
+    const real = getVendor('xero')!;
+    const broken: Record<string, VendorConfig> = {
+      bad: {
+        ...real,
+        slug: 'bad',
+        // oauthConfig present but issuer blanked — the Finding C gap.
+        oauthConfig: { ...real.oauthConfig!, issuer: '' },
+      },
+    };
+    expect(() => assertOAuthVendorsHaveIssuer(broken)).toThrow(/missing oauthConfig.issuer/);
+  });
+
+  it('a non-OAuth vendor without oauthConfig is unaffected', () => {
+    const datto = getVendor('datto-rmm')!;
+    expect(() => assertOAuthVendorsHaveIssuer({ 'datto-rmm': datto })).not.toThrow();
   });
 });

@@ -71,6 +71,7 @@ describe('canonicalVendorBehavior — golden-vector pin (must match the gateway 
         scopes: ['read', 'admin'],
         clientIdEnv: 'X_CLIENT_ID',
         clientSecretEnv: 'X_CLIENT_SECRET',
+        issuer: 'https://auth.example.com',
       },
     };
     const out = canonicalVendorBehavior(oauthVendor);
