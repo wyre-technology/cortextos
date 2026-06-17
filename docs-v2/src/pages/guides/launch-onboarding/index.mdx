@@ -1,0 +1,99 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Launch onboarding
+description: The ordered path to get your MSP live on Conduit — from sign-up to your first customer making tool calls — with a link to the detail for each step.
+---
+
+This is the **ordered journey** to get a Managed Service Provider (MSP) live on
+Conduit: from signing up to having your first customer's users calling vendor
+tools through the gateway. It is the map, not the detail — each step links to
+its own guide.
+
+If you just want to see Conduit work end to end as fast as possible, the
+[Getting Started](/docs/guides/msp-onboarding/) quickstart is the shortest
+path. Use **this** guide when you are taking an MSP all the way to launch and
+want the full sequence and a go-live checklist.
+
+## How to use this guide
+
+Work the steps in order. Each step is a short description plus a link to the
+guide that walks it in detail. Steps marked **optional** can be skipped for a
+minimal launch and added later.
+
+## The path to launch
+
+### 1. Create your MSP organization
+
+Sign up and create your MSP organization. You authenticate through your
+identity provider; there is nothing to install. See
+[MSP onboarding](/docs/guides/msp-onboarding/) for the build-out detail.
+
+### 2. Activate your subscription
+
+Start a free 14-day trial of the full platform, or activate immediately with an
+alpha invite code. Conduit is one flat plan — every feature is included. See
+[Billing & plans](/docs/guides/billing/).
+
+### 3. Connect your vendor tools
+
+Connect the vendor tools your MSP uses (RMM, PSA, documentation, security, and
+more) so their capabilities are available through Conduit. Most vendors take an
+API key; a few use OAuth. See [Vendor connections](/docs/guides/vendor-connections/)
+for the catalog, credential scopes, and how to connect each one.
+
+### 4. Connect an AI client
+
+Point an MCP client at your Conduit endpoint and sign in once. Conduit works
+with **any MCP-compatible client** — Claude Desktop, Claude Code, Cursor, Cline,
+Continue, and more. See [Connecting an AI client](/docs/guides/connecting-a-client/).
+
+### 5. Set up your team and access
+
+Invite your technicians, assign roles, and scope which vendors and tools each
+role can reach (deny-by-default is recommended). See
+[MSP onboarding](/docs/guides/msp-onboarding/) for team setup and tool
+allowlists, and [Permissions](/docs/reference/permissions/) for the role model.
+
+### 6. Auto-provision users with SCIM (optional)
+
+If you manage identity centrally, connect your identity provider (Entra ID,
+Okta, JumpCloud, or Google Workspace) to provision users and teams
+automatically. See [SCIM provisioning](/docs/guides/scim/).
+
+### 7. Onboard your first customer
+
+Create your first customer organization underneath your MSP, wire up the
+customer's vendor access, and invite the customer's owner. See
+[Onboarding a customer](/docs/guides/customer-provisioning/).
+
+### 8. Apply your branding (optional)
+
+Present Conduit under your own brand for the surfaces your customers see. See
+[White-label setup](/docs/guides/white-label-setup/).
+
+### 9. Verify you are live
+
+Make a test tool call from your AI client against a connected vendor, confirm
+real data comes back, and check that the call appears in your audit log. See
+[Monitoring your tenant](/docs/guides/monitoring/) for the usage dashboard,
+vendor health, and audit log.
+
+## Go-live checklist
+
+- [ ] MSP organization created and subscription active (trial or paid).
+- [ ] Required vendor tools connected and validated.
+- [ ] At least one AI client connected and signing in.
+- [ ] Team invited; roles and tool allowlists set.
+- [ ] (optional) SCIM provisioning connected.
+- [ ] First customer organization created and its vendor access wired.
+- [ ] (optional) Branding applied.
+- [ ] A test tool call returns real data and appears in the audit log.
+
+## Where to go deeper
+
+- [MSP onboarding](/docs/guides/msp-onboarding/) — the comprehensive build-out
+  reference for every step above.
+- **Per-integration walkthroughs** — assumption-stripped, step-by-step guides
+  for connecting a specific vendor or AI client (getting the credential from the
+  vendor's own portal, screen by screen). These are the detail this journey
+  links into; see the per-vendor and per-client walkthroughs as they land.
