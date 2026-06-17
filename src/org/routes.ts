@@ -8,6 +8,7 @@ import { ROLE_LEVEL, isAcceptInvitationError } from "./org-service.js";
 import {
   requireOrgRole,
   requireOrgRoleForWrite,
+  actingAsAuditTriplet,
 } from "./org-route-helpers.js";
 import type { CredentialService } from "../credentials/credential-service.js";
 import type { BillingGate } from "../billing/gate.js";
@@ -1259,12 +1260,34 @@ export function orgRoutes(deps: OrgRouteDeps) {
           credData,
           user.sub,
         );
+        // Warden HARD-REQ 4 (boss msg-1781726477131): emit the
+        // actingAsAuditTriplet INDEPENDENTLY of authorization input —
+        // (actor, viaResellerOrgId, onBehalfOfOrgId) are SCOPE/FORENSICS
+        // record, not authz-eval, and must never be conflated (ruby
+        // Finding 1 from PR #386).
+        //
+        // First-class columns on admin_audit_log are (org_id, actor_id,
+        // event_type, ...). For actingAs writes, org_id IS the
+        // onBehalfOfOrgId by route shape — but we ALSO embed the full
+        // triplet in metadata so a future audit-log schema-migration
+        // (adding dedicated via_reseller_org_id / on_behalf_of columns)
+        // can backfill from JSON without reading the route URL. Direct
+        // writes (no actingAs) emit the triplet with null acting-fields
+        // so forensics queries are uniform across paths.
+        const triplet = actingAsAuditTriplet(request, user);
         void adminAuditService
           .log({
             orgId,
             actorId: user.sub,
             eventType: "org_credential_created",
-            metadata: { vendor: vendorSlug },
+            metadata: {
+              vendor: vendorSlug,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
           })
           .catch((err) => request.log.error(err, "admin audit log failed"));
         return reply.code(201).send({ id, vendor: vendorSlug });

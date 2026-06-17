@@ -91,6 +91,16 @@ export function mapResellerRoleToCustomerRole(
       return 'admin';
     case 'member':
       return null;
+    default: {
+      // Exhaustiveness assertion (warden NIT-1, msg-1781726477131): if a
+      // future commit widens OrgRole with a new tier, this line stops
+      // compiling — forcing the policy author to make a deliberate
+      // mapping decision rather than silently widening (or silently
+      // rejecting via implicit-fall-through).
+      const _exhaustive: never = resellerRole;
+      void _exhaustive;
+      return null;
+    }
   }
 }
 
