@@ -134,6 +134,12 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Integration walkthroughs',
+          items: [
+            { label: 'IT Glue', slug: 'guides/integrations/it-glue' },
+          ],
+        },
+        {
           label: 'Reference',
           items: [
             { label: 'Architecture', slug: 'reference/architecture' },
@@ -179,6 +185,7 @@ export default defineConfig({
           items: [
             { label: 'Contributing to the Docs', slug: 'contributing/contributing' },
             { label: 'Style Guide', slug: 'contributing/style-guide' },
+            { label: 'Integration Walkthrough Standard', slug: 'contributing/integration-walkthroughs' },
           ],
         },
       ],
