@@ -51,6 +51,9 @@ vi.mock("../credentials/vendor-config.js", () => ({
 vi.mock("../config.js", () => ({
   config: {
     baseUrl: "https://mcp.example.com",
+    features: {
+      permissionTiers: false,
+    },
   },
 }));
 

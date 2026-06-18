@@ -26,6 +26,7 @@ import { getVendor } from '../credentials/vendor-config.js';
 import { composeToolScope, scopeAllows, filterToolsByScope } from '../org/scope-enforcement.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { getSql } from '../db/context.js';
+import { tierGate, tierDeniedRpcMessage } from '../auth/tier-gate.js';
 
 interface CliRouterDeps {
   credentialService: CredentialService;
@@ -144,6 +145,43 @@ export function cliRoutes(deps: CliRouterDeps) {
             return reply.code(403).send({
               error: `Tool "${toolName}" is not permitted for your scope`,
             });
+          }
+
+          // --------------- Permission-tier runtime gate (Phase-2) ---------------
+          // Flag-off = provable-no-effect (tierGate short-circuits when
+          // config.permissionTiers is false). Sits AFTER scope-allows (which is
+          // org+role+allowlist) and BEFORE tool-invoke. Both checks are
+          // independent intersections; tier-deny short-circuits before the cache+
+          // session+vendor-fetch path.
+          //
+          // CARVE-OUT: this branch only fires when `injection.orgId` is set
+          // (org-scoped credentials). Personal credentials (BYOC user-scope)
+          // pass through unchanged — tier is an ORG concept; personal-cred is
+          // a STRUCTURAL non-org-context, not a silent-fail-open. The
+          // injection.orgId-vs-userId split is set by the credential-injector
+          // based on the cred-record itself, NOT by caller request input —
+          // an org-scoped tool-call cannot be coerced into the no-orgId path
+          // by the caller. (Warden DEEP review: verify this property at the
+          // credential-injector seam.)
+          //
+          // FAIL-CLOSED on membership-null: pass raw `membership?.role ?? null`
+          // (NOT `?? 'member'` — that would write-tier an unresolvable caller,
+          // a silent fail-open). null → tierGate DENY via `unresolvable-caller`.
+          if (injection.orgId) {
+            const membership = await orgService.getMembership(injection.orgId, injection.userId);
+            const role = membership?.role ?? null;
+            const tierResult = tierGate({
+              effectiveRole: role,
+              vendorSlug,
+              toolName,
+              orgId: injection.orgId,
+              actorId: injection.userId,
+            });
+            if (!tierResult.allowed) {
+              return reply.code(403).send({
+                error: tierDeniedRpcMessage(tierResult.reason, toolName),
+              });
+            }
           }
 
           // --------------- Cache scope (matches MCP routes) ---------------

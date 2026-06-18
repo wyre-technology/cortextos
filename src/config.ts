@@ -254,5 +254,36 @@ export const config = {
     // — security-fix-on-feature-flag is anti-pattern; close-always +
     // feature-flag-feature-layer-only is the cleaner shape.
     teamScoping: process.env.CONDUIT_TEAM_SCOPING === 'true',
+
+    // Permission-tier runtime enforcement (Phase-2). When true, every tools/call
+    // is gated by callerCanInvoke (src/auth/tier-check.ts + src/auth/caller-tier.ts):
+    // an unclassified tool, an unresolvable caller-tier, or a caller-tier below
+    // the tool's required-tier all DENY with a tier_denied audit-event.
+    //
+    // Default OFF — Phase-1 + Phase-1b shipped the data foundation (29+4
+    // vendors, 652 tools classified, per-tool ratchet via #366 baseline)
+    // dormant; this flag is the runtime ENABLE.
+    //
+    // Enforcement-by-construction prerequisites:
+    //   - per-tool ratchet test (src/auth/staging-coverage.test.ts) — all
+    //     staging-deployed tools classified (no FAIL-CLOSED-deny surprise)
+    //   - arbitrary-execution-sweep test (src/auth/arbitrary-execution-sweep.test.ts)
+    //     — every execution-verb tool is admin-or-allowlisted
+    permissionTiers: process.env.PERMISSION_TIERS_ENABLED === 'true',
   },
 };
+
+// Boot-time invariant — if the operator set PERMISSION_TIERS_ENABLED=true in
+// the environment, the config-load MUST have populated config.features.permissionTiers
+// to a truthy boolean. This catches the flag-LEVEL fail-open seam: if a future
+// config-load refactor ever drops the `features` block or this field, the
+// runtime gate (src/auth/tier-gate.ts) would silently no-op via the
+// `config.features?.permissionTiers` optional-chain. Fail-fast at boot so
+// "I flipped the flag but enforcement is off" can never happen silently in
+// prod. (Warden DEEP review: this assertion + the optional-chain together
+// guarantee no flag-set-but-config-malformed silent-disable path.)
+if (process.env.PERMISSION_TIERS_ENABLED === 'true' && config.features?.permissionTiers !== true) {
+  throw new Error(
+    'config: PERMISSION_TIERS_ENABLED=true but config.features.permissionTiers is not loaded — config malformed; the runtime tier-gate would silently no-op',
+  );
+}
