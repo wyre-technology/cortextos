@@ -2,20 +2,22 @@
  * Flat-pricing constants — single source of truth.
  *
  * Per Aaron's 2026-05-26 FLAT-PRICING decision (boss msg 1779800509151,
- * params locked through 1779803148807):
+ * params locked through 1779803148807) + 2026-06-17 AGENTS-BILLABLE
+ * decision (boss msg-1781747082415, WYREAI-25):
  *
  *   FLAT model — no tiers, no credits, no call-gating, everything-included.
  *   monthlyTotalCents = ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats
  *
- *   billableSeats keeps the Shape-A agent inclusion: the first
- *   INCLUDED_AGENT_SEATS agent seats are free, humans always bill.
- *   (Aaron "keep it" — agent #1/#2 free, #3+ = a seat; humans = a seat.)
+ *   billableSeats = humans + agents. Every team member is a billable seat;
+ *   agents and humans bill at the same per-seat rate. There is NO free-
+ *   agent carve-out (the earlier Shape-A "first 2 agents free" inclusion
+ *   was removed at Aaron's 2026-06-17 GO).
  *
  * The OLD Layer-1 model ($600 base + $20/seat + credit pool + free/pro/
- * business tiers) is removed in this change: tiers, credits, and the
- * per-tier rate-limit differential all go. The per-user rate-limit
- * MECHANISM stays (flattened — see ANTI_ABUSE_RATE_PER_HOUR); dunning and
- * request_log analytics are untouched.
+ * business tiers) is removed: tiers, credits, and the per-tier rate-limit
+ * differential all go. The per-user rate-limit MECHANISM stays (flattened
+ * — see ANTI_ABUSE_RATE_PER_HOUR); dunning and request_log analytics are
+ * untouched.
  *
  * Constants are imported by plan-catalog (the single flat plan), seat-
  * service (the composed billing snapshot), and the Stripe-config call
@@ -24,15 +26,17 @@
 
 /** $399/org flat monthly base. */
 export const ORG_FEE_CENTS = 39_900;
-/** $39 per billable seat. */
+/** $39 per billable seat. Applies uniformly to humans AND agents. */
 export const PER_SEAT_PRICE_CENTS = 3_900;
 /**
- * Agent seats included in the org fee (Shape-A inclusion). The first
- * INCLUDED_AGENT_SEATS service-client (agent) seats bill at $0; agent
- * #(INCLUDED_AGENT_SEATS + 1) and beyond each cost PER_SEAT_PRICE_CENTS.
- * Human (member) seats always bill from seat 1.
+ * Agent seats included in the org fee. Per Aaron's 2026-06-17 AGENTS-
+ * BILLABLE decision (boss msg-1781747082415, WYREAI-25): zero free agents.
+ * Every agent bills from seat 1, identical to a human. The constant is
+ * kept (rather than inlined) so future Shape-A or promotional-inclusion
+ * variants land here without touching seat-service.ts. Today's value is
+ * 0 — strictly agents-billable.
  */
-export const INCLUDED_AGENT_SEATS = 2;
+export const INCLUDED_AGENT_SEATS = 0;
 export const TRIAL_PERIOD_DAYS = 14;
 
 /**

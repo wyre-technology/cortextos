@@ -12,9 +12,11 @@
 // — the named SoT) rather than from the view object, so the price source-of-
 // truth lives in exactly one place independent of any per-org snapshot.
 //
-// Flat-pricing (Aaron 2026-05-26): $399 org fee + $39/billable-seat, no
-// tiers, no credits. The Shape-A agent inclusion is kept (first 2 agent
-// seats free).
+// Flat-pricing (Aaron 2026-05-26) + AGENTS-BILLABLE (Aaron 2026-06-17, boss
+// msg-1781747082415, WYREAI-25): $399 org fee + $39/billable-seat, no
+// tiers, no credits. Every seat bills from seat 1 — humans and agents at
+// the same per-seat rate. The Shape-A "first 2 agents free" inclusion is
+// removed at INCLUDED_AGENT_SEATS = 0.
 //
 // Pure functions, no escaping — callers escapeHtml at the interpolation
 // site. No surface here renders a number that can disagree with the real
@@ -68,45 +70,36 @@ export function composedBillLine(sb: SeatBilling): string {
 }
 
 /**
- * The inclusion-explicit seat line — the headline seat number (all
- * functional seats = humans + agents) composed from members + agents, with
- * the agent inclusion split made legible:
- *   "7 seats — 5 members + 2 agents (2 of 2 agent seats included)"
- *   "9 seats — 5 members + 4 agents (2 included, 2 billed)"
+ * The seat breakdown line — the headline seat number (all functional seats
+ * = humans + agents) composed from members + agents. Under AGENTS-BILLABLE
+ * (no free-agent tier), there's no inclusion split to show; the breakdown
+ * reads as a clean comma-list:
+ *   "7 seats. 5 members, 2 agents."
+ *   "9 seats. 5 members, 4 agents."
+ *   "1 seat. 1 member."   (agents=0 → drop the agents suffix)
  */
 export function seatBreakdownLine(sb: SeatBilling): string {
   const { humans, agents } = sb.counts;
   const totalSeats = humans + agents;
-  const head = `${plural(totalSeats, 'seat')} — ${plural(humans, 'member')}`;
-  if (agents === 0) return head;
-  const agentPart = `${plural(agents, 'agent')}`;
-  const split = sb.billedAgents === 0
-    ? `(${sb.includedAgents} of ${sb.includedAgents} agent seat`
-      + `${sb.includedAgents === 1 ? '' : 's'} included)`
-    : `(${sb.includedAgents} included, ${sb.billedAgents} billed)`;
-  return `${head} + ${agentPart} ${split}`;
+  const head = `${plural(totalSeats, 'seat')}. ${plural(humans, 'member')}`;
+  if (agents === 0) return `${head}.`;
+  return `${head}, ${plural(agents, 'agent')}.`;
 }
 
 /**
  * The billing consequence of adding ONE more agent (service client), shown
- * at the create-confirm. Truthful per the inclusion: agent #1/#2 is $0,
- * agent #3+ adds a $39 line. During a trial the charge is framed as
+ * at the create-confirm. Under AGENTS-BILLABLE (no free-agent tier), every
+ * agent seat adds a $39 line. During a trial the charge is framed as
  * starting when the trial ends; proration is plain-language only.
  */
 export function agentSeatConsentCopy(
-  sb: SeatBilling,
+  _sb: SeatBilling,
   opts: { trialing: boolean },
 ): string {
-  // The agent being added is the (agents + 1)-th. It is included while the
-  // current agent count is still below the 2-seat allowance.
-  const willBeIncluded = sb.counts.agents < 2;
-  if (willBeIncluded) {
-    return 'Adds 1 agent seat — included in your plan, $0.';
-  }
   const price = formatUsd(PER_SEAT_PRICE_CENTS);
   return opts.trialing
-    ? `Adds 1 agent seat — ${price}/mo, applied when your trial ends.`
-    : `Adds 1 agent seat — ${price}/mo, prorated for the remainder of this cycle.`;
+    ? `Adds 1 agent seat. ${price}/mo, applied when your trial ends.`
+    : `Adds 1 agent seat. ${price}/mo, prorated for the remainder of this cycle.`;
 }
 
 /**
@@ -119,6 +112,6 @@ export function memberSeatConsentCopy(
 ): string {
   const price = formatUsd(PER_SEAT_PRICE_CENTS);
   return opts.trialing
-    ? `Adds 1 member seat — ${price}/mo, applied when your trial ends.`
-    : `Adds 1 member seat — ${price}/mo, prorated for the remainder of this cycle.`;
+    ? `Adds 1 member seat. ${price}/mo, applied when your trial ends.`
+    : `Adds 1 member seat. ${price}/mo, prorated for the remainder of this cycle.`;
 }

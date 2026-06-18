@@ -36,15 +36,16 @@ describe('formatUsdExact', () => {
 });
 
 describe('composedBillLine reads monthlyTotalCents off the snapshot', () => {
-  // decision-of-record §5: 5 humans, 2 agents → $594/mo.
-  it('reconciles base + perSeat × billableSeats', () => {
+  // AGENTS-BILLABLE (Aaron 2026-06-17, WYREAI-25, boss msg-1781747082415):
+  // INCLUDED_AGENT_SEATS=0 → billableSeats = humans + agents. Every seat bills.
+  it('reconciles base + perSeat × billableSeats (5h/2a → $672)', () => {
     const sb = makeSeatBilling(5, 2);
-    expect(sb.monthlyTotalCents).toBe(59_400);
-    expect(composedBillLine(sb)).toBe('$399 base + 5 seats × $39 = $594/mo');
+    expect(sb.monthlyTotalCents).toBe(67_200);
+    expect(composedBillLine(sb)).toBe('$399 base + 7 seats × $39 = $672/mo');
   });
-  it('agent-heavy org — billed agents add to the line (5h/4a → $672)', () => {
+  it('agent-heavy org — every agent adds to the line (5h/4a → $750)', () => {
     expect(composedBillLine(makeSeatBilling(5, 4)))
-      .toBe('$399 base + 7 seats × $39 = $672/mo');
+      .toBe('$399 base + 9 seats × $39 = $750/mo');
   });
   it('smallest paid org — 1 human, 0 agents → $438', () => {
     expect(composedBillLine(makeSeatBilling(1, 0)))
@@ -52,43 +53,44 @@ describe('composedBillLine reads monthlyTotalCents off the snapshot', () => {
   });
 });
 
-describe('seatBreakdownLine — the inclusion-explicit seat line', () => {
-  it('all agents within the inclusion — "N of 2 included"', () => {
+describe('seatBreakdownLine — the seat breakdown line', () => {
+  // No free-agent tier — the breakdown is a clean comma-list, no inclusion split.
+  it('humans + agents — period-comma format (5h/2a)', () => {
     expect(seatBreakdownLine(makeSeatBilling(5, 2)))
-      .toBe('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
+      .toBe('7 seats. 5 members, 2 agents.');
   });
-  it('over the inclusion — "2 included, M billed"', () => {
+  it('agent-heavy (5h/4a)', () => {
     expect(seatBreakdownLine(makeSeatBilling(5, 4)))
-      .toBe('9 seats — 5 members + 4 agents (2 included, 2 billed)');
+      .toBe('9 seats. 5 members, 4 agents.');
   });
-  it('one agent — singular agent-seat copy', () => {
+  it('one agent — singular agent noun', () => {
     expect(seatBreakdownLine(makeSeatBilling(5, 1)))
-      .toBe('6 seats — 5 members + 1 agent (1 of 1 agent seat included)');
+      .toBe('6 seats. 5 members, 1 agent.');
   });
-  it('zero agents — no agent clause', () => {
-    expect(seatBreakdownLine(makeSeatBilling(5, 0))).toBe('5 seats — 5 members');
+  it('zero agents — drop the agents clause for a cleaner read', () => {
+    expect(seatBreakdownLine(makeSeatBilling(5, 0))).toBe('5 seats. 5 members.');
   });
   it('singular member', () => {
-    expect(seatBreakdownLine(makeSeatBilling(1, 0))).toBe('1 seat — 1 member');
+    expect(seatBreakdownLine(makeSeatBilling(1, 0))).toBe('1 seat. 1 member.');
   });
 });
 
-describe('agentSeatConsentCopy — truthful per the inclusion', () => {
-  it('adding agent #1 (0 agents now) — included, $0', () => {
+describe('agentSeatConsentCopy — every agent is a billable $39 line', () => {
+  it('adding agent #1 (0 agents now) — $39, plain proration', () => {
     expect(agentSeatConsentCopy(makeSeatBilling(5, 0), { trialing: false }))
-      .toBe('Adds 1 agent seat — included in your plan, $0.');
+      .toBe('Adds 1 agent seat. $39/mo, prorated for the remainder of this cycle.');
   });
-  it('adding agent #2 (1 agent now) — still included', () => {
+  it('adding agent #2 (1 agent now) — still $39 (no inclusion tier)', () => {
     expect(agentSeatConsentCopy(makeSeatBilling(5, 1), { trialing: false }))
-      .toContain('included in your plan, $0');
+      .toBe('Adds 1 agent seat. $39/mo, prorated for the remainder of this cycle.');
   });
-  it('adding agent #3 (2 agents now) — first billed agent, plain proration', () => {
+  it('adding agent #3 (2 agents now) — unchanged copy, all agents bill identically', () => {
     expect(agentSeatConsentCopy(makeSeatBilling(5, 2), { trialing: false }))
-      .toBe('Adds 1 agent seat — $39/mo, prorated for the remainder of this cycle.');
+      .toBe('Adds 1 agent seat. $39/mo, prorated for the remainder of this cycle.');
   });
   it('adding a billed agent during a trial — charge framed at trial end', () => {
     expect(agentSeatConsentCopy(makeSeatBilling(5, 2), { trialing: true }))
-      .toBe('Adds 1 agent seat — $39/mo, applied when your trial ends.');
+      .toBe('Adds 1 agent seat. $39/mo, applied when your trial ends.');
   });
   it('never shows a computed dollar proration figure', () => {
     const copy = agentSeatConsentCopy(makeSeatBilling(5, 5), { trialing: false });
@@ -99,10 +101,10 @@ describe('agentSeatConsentCopy — truthful per the inclusion', () => {
 describe('memberSeatConsentCopy — a human seat is always $39', () => {
   it('plain proration off-trial', () => {
     expect(memberSeatConsentCopy(makeSeatBilling(5, 0), { trialing: false }))
-      .toBe('Adds 1 member seat — $39/mo, prorated for the remainder of this cycle.');
+      .toBe('Adds 1 member seat. $39/mo, prorated for the remainder of this cycle.');
   });
   it('trial framing on-trial', () => {
     expect(memberSeatConsentCopy(makeSeatBilling(5, 0), { trialing: true }))
-      .toBe('Adds 1 member seat — $39/mo, applied when your trial ends.');
+      .toBe('Adds 1 member seat. $39/mo, applied when your trial ends.');
   });
 });

@@ -2,14 +2,19 @@
  * SeatService — single source of truth for Layer 1 seat counts and the
  * composed monthly billing snapshot.
  *
- * Per LOCKED DOR (2026-05-20) + PR-A spec (2026-05-22):
+ * Per LOCKED DOR (2026-05-20) + PR-A spec (2026-05-22) + AGENTS-BILLABLE
+ * decision (boss msg-1781747082415, 2026-06-17, WYREAI-25):
  *
  *   billableSeats     = humans + max(0, agents − INCLUDED_AGENT_SEATS)
  *   monthlyTotalCents = ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats
  *
  * Flat-pricing (Aaron 2026-05-26): no tiers, no credits, no call-gating.
- * The credit pool / monthlyCreditAllocation is removed; the Shape-A agent
- * inclusion (first INCLUDED_AGENT_SEATS agents free) is kept.
+ * The credit pool / monthlyCreditAllocation is removed. The Shape-A agent
+ * inclusion (first INCLUDED_AGENT_SEATS agents free) is REMOVED at Aaron's
+ * 2026-06-17 GO: INCLUDED_AGENT_SEATS = 0. Every agent bills from seat 1,
+ * identical to a human. The formula structure is unchanged for shape-
+ * stability; the inclusion-mechanic stays at 0 so a future promotional
+ * inclusion lands by bumping the const without re-wiring this function.
  *
  * TRIAL-END CHARGE CONTRACT (ruby 2026-05-22, amplified by boss):
  *   getSeatBilling is a deterministic function of {humans, agents}. At
@@ -32,17 +37,17 @@ import {
 export interface SeatCounts {
   /** Active org_members rows. Each human bills at PER_SEAT_PRICE_CENTS from seat 1. */
   readonly humans: number;
-  /** Active service_clients rows. First INCLUDED_AGENT_SEATS included in base; rest bill. */
+  /** Active service_clients rows. Each agent bills at PER_SEAT_PRICE_CENTS from seat 1 (identical to humans; no free-agent tier). */
   readonly agents: number;
 }
 
 export interface SeatBilling {
   readonly counts: SeatCounts;
-  /** humans + max(0, agents − INCLUDED_AGENT_SEATS) — Stripe per-unit quantity. */
+  /** humans + max(0, agents − INCLUDED_AGENT_SEATS) — Stripe per-unit quantity. With INCLUDED_AGENT_SEATS=0, this reduces to humans + agents. */
   readonly billableSeats: number;
-  /** Of agents present, how many fall inside the inclusion (0..INCLUDED_AGENT_SEATS). */
+  /** Of agents present, how many fall inside the inclusion (0..INCLUDED_AGENT_SEATS). Today INCLUDED_AGENT_SEATS=0, so this is always 0. Kept for shape-stability. */
   readonly includedAgents: number;
-  /** Of agents present, how many are billed (agents − includedAgents). */
+  /** Of agents present, how many are billed (agents − includedAgents). With includedAgents=0, this is always = agents. */
   readonly billedAgents: number;
   /** ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats. */
   readonly monthlyTotalCents: number;
