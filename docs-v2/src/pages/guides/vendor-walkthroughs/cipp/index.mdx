@@ -1,0 +1,207 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Connect CIPP to Conduit
+description: Step-by-step walkthrough — get a CIPP API credential (bearer token OR OAuth client credentials) from your CIPP instance, paste it into Conduit, verify the connection, and troubleshoot common failures including the Function-App-vs-SWA URL gotcha. About 10 minutes start to finish.
+---
+
+{/* Authored 2026-06-18 for WYREAI-181 per boss msg 1781747182759 (launch-docs push).
+    Cred-procurement steps grounded in msp-claude-plugins/cipp/cipp/README.md
+    ("Setup" + "Authentication options" sections). Conduit-side grounded in
+    /org/connections + customer-provisioning. Customer-facing: NO cortex-secret. */}
+
+This page is the launch-day walkthrough for connecting **CIPP** (the open-
+source Microsoft 365 management platform for MSPs) to Conduit. Four sections
+— get a CIPP API credential, connect it to Conduit, verify the connection,
+and troubleshoot common failures (including the **Function-App-URL gotcha**
+that trips up most CIPP integrations on the first try).
+
+**Time to complete:** about 10 minutes the first time.
+
+## Before you start
+
+You need:
+
+- A **CIPP deployment** running in your Azure tenant. Conduit talks to your
+  CIPP **API** (a Function App), not the CIPP web UI. If you haven't deployed
+  CIPP yet, the [official CIPP docs](https://docs.cipp.app) cover the Azure
+  deploy. Note both URLs when you finish:
+  - The **Static Web App (SWA) URL** — the UI you sign into in a browser.
+    Looks like `https://your-cipp-name.azurestaticapps.net` or a custom
+    domain.
+  - The **Function App URL** — the API host. Looks like
+    `https://<function-app-name>.azurewebsites.net` (the function app
+    name is typically `cippXXXXX` in your CIPP resource group).
+- An **Administrator account** in CIPP (you need permission to create API
+  clients under Settings → API Client Management).
+- A **Conduit MSP organization** that you administer with `owner` or `admin`
+  role.
+
+> ⚠️ **The URL gotcha** (most common CIPP-integration mistake): Conduit's
+> `CIPP_BASE_URL` must be the **Function App URL** (`*.azurewebsites.net`,
+> typically `cipp` + 5 random characters). The SWA URL redirects API requests
+> to its interactive sign-in page, so any Bearer-token call against the SWA
+> URL fails with an HTML login response instead of JSON. Use the Function App
+> URL.
+
+---
+
+## Section 1 — Get your CIPP API credential
+
+CIPP exposes **two auth modes**. Pick one:
+
+- **Bearer token** — simplest. Good for dev, single-tenant use, or a pinned
+  automation key.
+- **OAuth client-credentials** — the production path. CIPP's API-Clients
+  integration registers a service principal in your CIPP tenant with scoped
+  roles (`editor`, `admin`, `readonly`). Use this for shared deployments.
+
+### Option A — Bearer token
+
+1. **Sign into CIPP** (the SWA URL) as an Administrator.
+2. Open **Settings → API Client Management**.
+3. Click **Generate Bearer Token** (or **New API Key** in some CIPP
+   versions).
+4. Pick the **role** the token should carry — `readonly` if you only want
+   read access for the AI, `editor` for read+write, `admin` only when
+   genuinely needed (admin can change CIPP tenant settings).
+5. Copy the token shown — CIPP displays it **only once**.
+
+### Option B — OAuth client-credentials
+
+1. **Sign into CIPP** (the SWA URL) as an Administrator.
+2. Open **Settings → API Client Management**.
+3. Click **Register API Client**. CIPP creates an Entra ID service principal
+   in your CIPP tenant.
+4. Pick the **role** for the client (`readonly`/`editor`/`admin`).
+5. Copy the three values CIPP shows after registration:
+   - **Tenant ID** — the Entra tenant ID where CIPP is deployed.
+   - **Client ID** — the service principal's application ID.
+   - **Client Secret** — the service principal's secret. Shown **only once**.
+
+> **Hold the credentials briefly.** Don't paste into chat, email, or shared
+> documents. The next section moves them directly into Conduit, which
+> encrypts them at rest. If exposed, regenerate (CIPP Settings → API Client
+> Management) — the exposed value becomes useless.
+
+---
+
+## Section 2 — Connect CIPP to Conduit
+
+1. **Open Conduit Connections** and pick **CIPP** from the catalog (under
+   the **Security** category — CIPP is M365 security/management for MSPs).
+2. **Fill in the base URL.** This field is **CIPP_BASE_URL** and **MUST be
+   the Function App URL** (`https://<function-app-name>.azurewebsites.net`,
+   not the SWA URL). See the URL-gotcha warning at the top.
+3. **Pick your auth mode + fill in credentials.**
+
+   **If Bearer token (Option A from Section 1):**
+   - Paste the token into the `CIPP_API_KEY` field.
+
+   **If OAuth client-credentials (Option B from Section 1):**
+   - Tenant ID → `CIPP_TENANT_ID`
+   - Client ID → `CIPP_CLIENT_ID`
+   - Client Secret → `CIPP_CLIENT_SECRET`
+
+4. Click **Connect**. Conduit encrypts the credential at rest
+   (AES-256-GCM, per-record key) and runs a health check by calling
+   `/api/Heartbeat` (or equivalent) on the Function App URL. Green
+   status = credential authenticated against CIPP. Red or yellow = see
+   Troubleshooting below.
+
+---
+
+## Section 3 — Verify it works
+
+From any MCP-capable AI client connected to your Conduit MSP endpoint:
+
+- **Make one tool call.** Examples:
+  - *"List CIPP tenants."*
+  - *"Show MFA-disabled users across all my CIPP tenants."*
+  - *"Pull a compliance-drift report for tenant `Acme Corp` from CIPP."*
+- **Check Conduit's audit log** (`/org/audit`). The call should appear
+  with the correct user, vendor (`cipp`), tool name, and timestamp.
+- **Check CIPP's vendor-health view** on the Connections page — should
+  show **green**.
+
+---
+
+## Section 4 — Troubleshooting
+
+### "HTML response instead of JSON" / "Login redirect"
+
+The **single most common CIPP-integration error.** Symptom: the credential
+seems right but every call returns an HTML page instead of JSON, or the
+health check times out.
+
+**Cause:** `CIPP_BASE_URL` is pointing at the **Static Web App (SWA) URL**
+instead of the Function App URL. The SWA enforces interactive sign-in and
+returns its login HTML to any Bearer-token call.
+
+**Fix:** Update the connection in Conduit Connections — change
+`CIPP_BASE_URL` to the Function App URL (`https://<function-app-name>.azurewebsites.net`).
+Find the right function-app name in your Azure portal under the CIPP resource
+group; it's typically `cippXXXXX`.
+
+### "401 Unauthorized" with the right URL
+
+The URL is right; the credential isn't. Most common:
+
+- **Bearer token regenerated** in CIPP after Conduit stored it — Conduit's
+  copy is stale. Regenerate in CIPP (Settings → API Client Management),
+  then **Update credential** in Conduit Connections.
+- **OAuth Client Secret regenerated** — same flow, but only the Client
+  Secret field needs to change (Tenant ID + Client ID stay).
+- **API client disabled or deleted** in CIPP — recreate it in Settings →
+  API Client Management.
+
+### "403 Forbidden" on specific actions
+
+The credential authenticates but the role doesn't allow the action:
+
+- `readonly` can list and read but cannot mutate.
+- `editor` can list, read, create, and update.
+- `admin` can do everything `editor` can plus modify CIPP itself (tenant
+  settings, role definitions).
+
+Upgrade the role in CIPP (Settings → API Client Management → your client →
+Role) and retry — Conduit picks up the new role on the next call without
+needing the credential re-entered.
+
+### "Function App cold start" / "First call after idle takes 30+ seconds"
+
+CIPP's Function App is hosted on Azure Functions Consumption plan by default,
+which **cold-starts** after a period of idleness. First call after idle can
+take 20-40 seconds; subsequent calls are fast. This is normal.
+
+If cold-start latency is a problem for your AI use, upgrade the Function App
+to the **Premium** or **Always-On** plan in Azure. CIPP runs identically on
+Premium; only the Azure Functions tier changes.
+
+### Vendor-health yellow ("degraded")
+
+Either Azure Functions is mid-cold-start (above) or CIPP itself is slow.
+Check the CIPP UI directly — if it's responsive, the API will recover on
+the next call.
+
+### Need to rotate credentials
+
+1. **Bearer token:** Settings → API Client Management → **Regenerate** for
+   your client. Update in Conduit Connections.
+2. **OAuth Client Secret:** Settings → API Client Management → your client
+   → **Regenerate Secret**. Update only the secret in Conduit; Tenant ID +
+   Client ID stay the same.
+
+---
+
+## Where to go next
+
+- [Onboarding a customer](/docs/guides/customer-provisioning/) — connect
+  CIPP at the customer level via the Onboard-MCP wizard so a customer's
+  team can use CIPP through the customer's AI client (typical pattern: one
+  CIPP instance serves many MSP customers; you wire each customer to
+  read-scoped credentials for their own tenant).
+- [Connecting an AI client](/docs/guides/connecting-a-client/).
+- [Vendor connections](/docs/guides/vendor-connections/) — full vendor
+  catalog + general rotation guidance.
+- [CIPP project docs](https://docs.cipp.app) — for CIPP-itself questions
+  (deploy, tenant management, role configuration).

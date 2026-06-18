@@ -1,0 +1,158 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Connect Atera to Conduit
+description: Step-by-step walkthrough — get an Atera API key from the Atera portal, paste it into Conduit, verify the connection, and troubleshoot common failures. About 5 minutes start to finish.
+---
+
+{/* Authored 2026-06-18 for WYREAI-181 per boss msg 1781747182759 (launch-docs push).
+    Cred-procurement steps grounded in msp-claude-plugins/atera/atera/README.md
+    ("Obtaining API Credentials" section). Conduit-side steps grounded in
+    docs-v2/getting-started + customer-provisioning + conduit/src/web/routes.ts
+    (/org/connections at line 1101 etc).
+    Customer-facing: NO cortex-secret references (internal-agent tool only). */}
+
+This page is the launch-day walkthrough for connecting **Atera** (RMM/PSA)
+to Conduit. Four sections — Get the credential from Atera, connect it to
+Conduit, verify the connection works, and troubleshoot if it doesn't.
+
+**Time to complete:** about 5 minutes the first time.
+
+## Before you start
+
+You need:
+- An **Atera login** with **Admin role** (the API key inherits the permissions
+  of the user who creates it, so the role needs to cover what you want the
+  AI to do).
+- A **Conduit MSP organization** that you administer with `owner` or `admin`
+  role. If you don't have one yet, start with the
+  [end-to-end onboarding walkthrough](/docs/guides/end-to-end-onboarding/)
+  first.
+
+---
+
+## Section 1 — Get your Atera API key
+
+1. **Sign into Atera.** Open [https://app.atera.com](https://app.atera.com)
+   and sign in with an account that has the Admin role.
+2. **Go to API settings.** From the left sidebar, click **Admin → API**.
+3. **Generate the API key.** Click **Generate API Key**. Copy the key
+   immediately and save it somewhere safe — Atera shows it **only once**.
+   If you lose it, you'll need to regenerate (the old key stops working).
+4. **Confirm scope.** The key inherits the permissions of the user who
+   created it. If you want the AI to read tickets, the user needs ticket-
+   read permission. If you want it to create or update tickets, the user
+   needs write permission. Adjust the Atera role first if needed.
+
+> **Hold the key briefly.** Don't paste it into chat, email, or a shared
+> document. The next section moves it directly into Conduit, which encrypts
+> it at rest. If you accidentally exposed the key, regenerate it in Atera
+> first (Admin → API → Regenerate) — the exposed key becomes useless.
+
+---
+
+## Section 2 — Connect Atera to Conduit
+
+1. **Open Conduit Connections.** Sign into your Conduit MSP organization
+   and open **Connections** (`/org/connections`).
+2. **Pick Atera from the catalog.** Atera appears under the **RMM** category.
+   Click it.
+3. **Paste the API key.** Atera is an **API-key vendor**, so Conduit shows
+   a single credential field. Paste the key you copied from Atera (Section 1,
+   Step 3) and click **Connect**.
+4. **Conduit encrypts and stores the key.** The credential is encrypted at
+   rest (AES-256-GCM, per-record key) — Conduit never logs, displays, or
+   exports the raw key after this point.
+5. **Conduit runs a health check.** A **green status** on the Connections
+   page means the credential authenticated successfully against Atera's API.
+   A red or yellow status means the credential, the user's permissions, or
+   the Atera tenant is misconfigured — see Troubleshooting below.
+
+---
+
+## Section 3 — Verify it works
+
+From any MCP-capable AI client connected to your Conduit MSP endpoint
+(see the [Connecting an AI client](/docs/guides/connecting-a-client/) guide
+if you haven't set one up yet):
+
+- **Make one tool call.** Examples:
+  - *"List my active Atera alerts."*
+  - *"Show me Atera tickets opened in the last 24 hours."*
+  - *"Search Atera customers by name 'Acme'."*
+- **Check Conduit's audit log.** Open `/org/audit`. The call you just made
+  should appear with the correct user, vendor (`atera`), tool name, and
+  timestamp.
+- **Check Atera's vendor-health view.** Open the Connections page; the
+  Atera row should still show **green**.
+
+If all three land, the Atera connection is **live**.
+
+---
+
+## Section 4 — Troubleshooting
+
+### "Invalid API key" or "401 Unauthorized"
+
+The key Conduit has doesn't authenticate against Atera. Most common causes:
+
+- The key was **regenerated in Atera** after Conduit stored it — Conduit's
+  copy is now stale. Generate a new key in Atera (Section 1) and re-connect
+  in Conduit (Section 2).
+- The key was **copied incompletely** (often a trailing character was
+  missed) — regenerate and paste the full string.
+- The Atera **user that created the key was disabled or deleted** — the key
+  dies with the user. Create the key under an active user.
+
+### "403 Forbidden" or "Permission denied" on specific calls
+
+The key authenticates but doesn't have permission for the specific action.
+Atera API keys inherit user-role permissions:
+
+- For **read-only AI use** (list tickets, list alerts, list customers),
+  any user role with read permission for those areas is enough.
+- For **write actions** (create/update tickets, resolve alerts, run
+  PowerShell on agents), the user needs the matching write permission in
+  Atera's role-based-access system.
+
+Adjust the Atera user's role (Admin → Users → edit the user's role)
+**before** regenerating the key.
+
+### "Connection timeout" or "Atera unreachable"
+
+Atera's API is up (check [https://status.atera.com](https://status.atera.com))
+but Conduit can't reach it. Usually transient — Atera retries automatically.
+If it persists more than 5 minutes:
+
+- Confirm your Atera account is on a paid plan with API access enabled
+  (free tiers don't expose the API).
+- Confirm your Atera region (US / EU / other) — Conduit auto-detects from
+  the key, but a regional outage on Atera's side will surface as a timeout.
+
+### Vendor-health shows yellow ("degraded")
+
+The credential authenticates but Conduit's health check sees Atera responding
+slowly (>2 seconds for the test call). Usually a transient Atera-side load
+spike. Recovers automatically — no action needed unless it persists.
+
+### Need to rotate the API key
+
+1. In Atera (Admin → API), click **Regenerate**. The old key stops working
+   immediately.
+2. In Conduit Connections, click the Atera connection → **Update credential**
+   and paste the new key.
+3. Conduit re-runs the health check; green = rotation done.
+
+The audit log records both events.
+
+---
+
+## Where to go next
+
+- [Onboarding a customer](/docs/guides/customer-provisioning/) — connect
+  Atera at the **customer** level (not just MSP-org level) via the
+  Onboard-MCP wizard so a customer's users can call Atera tools.
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — point
+  Claude Desktop / Claude Code / Cursor / Cline at your Conduit endpoint.
+- [Vendor connections](/docs/guides/vendor-connections/) — the full vendor
+  catalog + general credential rotation, scoping, and OAuth-vs-API-key
+  patterns.

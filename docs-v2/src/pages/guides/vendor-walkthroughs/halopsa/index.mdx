@@ -1,0 +1,175 @@
+---
+layout: '@/layouts/templates/GuideTemplate.astro'
+title: Connect HaloPSA to Conduit
+description: Step-by-step walkthrough — create a HaloPSA API application (OAuth Client Credentials), paste the client ID, client secret, and tenant name into Conduit, verify the connection, and troubleshoot common failures. About 10 minutes start to finish.
+---
+
+{/* Authored 2026-06-18 for WYREAI-181 per boss msg 1781747182759 (launch-docs push).
+    Cred-procurement steps grounded in msp-claude-plugins/halopsa/halopsa/README.md
+    ("Obtaining API Credentials" + "OAuth Token Retrieval" sections).
+    Conduit-side grounded in /org/connections + customer-provisioning.
+    Customer-facing: NO cortex-secret references. */}
+
+This page is the launch-day walkthrough for connecting **HaloPSA** (PSA) to
+Conduit. Four sections — create an HaloPSA API application, connect the
+client credentials to Conduit, verify the connection, and troubleshoot
+common failures.
+
+**Time to complete:** about 10 minutes the first time (HaloPSA's API app
+creation is a few clicks more than a simple API key).
+
+## Before you start
+
+You need:
+- A **HaloPSA login** with **Administrator role** (you need permission to
+  create new API applications under Configuration → Integrations).
+- Your **HaloPSA tenant name** — the first part of your HaloPSA URL. Example:
+  if your URL is `https://acmemsp.halopsa.com`, your tenant is `acmemsp`.
+- A **Conduit MSP organization** that you administer with `owner` or `admin`
+  role. If you don't have one yet, start with the
+  [end-to-end onboarding walkthrough](/docs/guides/end-to-end-onboarding/).
+
+---
+
+## Section 1 — Create a HaloPSA API application
+
+HaloPSA uses **OAuth 2.0 Client Credentials** — you don't get a single API
+key; you create an API application that issues a Client ID and Client Secret
+pair, then Conduit exchanges those for short-lived access tokens automatically.
+
+1. **Sign into HaloPSA.** Open `https://<your-tenant>.halopsa.com` and sign
+   in with an Administrator account.
+2. **Open API settings.** Click **Configuration → Integrations → HaloPSA API**.
+3. **Open the Applications view.** Click **View Applications**.
+4. **Create a new application.** Click **New** and fill in:
+   - **Name:** `Conduit MCP Gateway` (or any name that makes its purpose
+     clear when you audit the list later).
+   - **Grant Type:** `Client Credentials` (this is the OAuth flow Conduit uses).
+   - **Permissions:** select the permission scopes the AI needs. Common
+     picks:
+     - `read:tickets` and `edit:tickets` for ticket workflows.
+     - `read:clients` for customer lookups.
+     - `read:assets` for asset queries.
+     - `read:reports` if you want the AI to surface report data.
+     Grant only what the AI actually needs — narrower scope is safer.
+5. **Save and copy the credentials.** HaloPSA shows you a **Client ID** and
+   a **Client Secret**. Copy both immediately:
+   - The Client ID is stable (you can re-view it later).
+   - The Client Secret is shown **only once**. If you lose it, you'll need
+     to regenerate from the application's detail page.
+
+> **Hold both credentials briefly.** Don't paste into chat, email, or shared
+> documents. The next section moves them directly into Conduit, which
+> encrypts them at rest. If exposed, regenerate the Client Secret in HaloPSA
+> first (the exposed secret becomes useless).
+
+---
+
+## Section 2 — Connect HaloPSA to Conduit
+
+1. **Open Conduit Connections.** Sign into your Conduit MSP organization
+   and open **Connections** (`/org/connections`).
+2. **Pick HaloPSA from the catalog.** HaloPSA appears under the **PSA**
+   category. Click it.
+3. **Fill in three fields.** HaloPSA is an **OAuth-Client-Credentials
+   vendor**, so Conduit shows three credential fields:
+   - **Tenant name** — the value you noted in "Before you start" (e.g.
+     `acmemsp` from `https://acmemsp.halopsa.com`).
+   - **Client ID** — from Section 1, Step 5.
+   - **Client Secret** — from Section 1, Step 5.
+   Click **Connect**.
+4. **Conduit encrypts and stores the credentials.** Both the Client ID and
+   Client Secret are encrypted at rest (AES-256-GCM, per-record key).
+5. **Conduit runs a health check.** Conduit exchanges the Client ID +
+   Client Secret for an access token from HaloPSA's `/auth/token` endpoint,
+   then makes one API call to verify the token works. **Green status** =
+   credential pair authenticated successfully. Red or yellow = see
+   Troubleshooting below.
+
+Conduit refreshes the access token automatically as it expires — you don't
+need to renew anything from this point.
+
+---
+
+## Section 3 — Verify it works
+
+From any MCP-capable AI client connected to your Conduit MSP endpoint:
+
+- **Make one tool call.** Examples:
+  - *"Show me HaloPSA tickets opened today."*
+  - *"List my HaloPSA clients ordered by ticket volume."*
+  - *"Find the HaloPSA ticket with subject containing 'backup failure'."*
+- **Check Conduit's audit log** (`/org/audit`). The call should appear
+  with the correct user, vendor (`halopsa`), tool name, and timestamp.
+- **Check HaloPSA's vendor-health view** on the Connections page — should
+  show **green**.
+
+---
+
+## Section 4 — Troubleshooting
+
+### "Invalid client" or "OAuth token request failed"
+
+Conduit can't get an access token from HaloPSA's `/auth/token` endpoint.
+Most common causes:
+
+- **Tenant name typo.** Conduit calls `https://<tenant>.halopsa.com/auth/token`
+  — if the tenant is wrong, the URL itself doesn't resolve. Confirm the
+  tenant name matches the first part of your HaloPSA URL exactly (lowercase,
+  no `.halopsa.com` suffix).
+- **Client Secret was regenerated** in HaloPSA after Conduit stored it —
+  Conduit's copy is now stale. Open the application in HaloPSA, regenerate
+  the secret, then **Update credential** in Conduit Connections.
+- **Application disabled** in HaloPSA — go to Configuration → Integrations →
+  HaloPSA API → Applications and confirm the application status is
+  **Enabled**.
+
+### "403 Forbidden" or "Insufficient permissions" on specific calls
+
+The token authenticates but doesn't have permission for the specific scope.
+HaloPSA enforces per-scope checks:
+
+- For **read** actions: confirm the application has `read:<resource>` scopes
+  (e.g. `read:tickets`).
+- For **write** actions: confirm the application has `edit:<resource>` or
+  similar write-scope.
+
+Edit the application in HaloPSA (Configuration → Integrations → HaloPSA API
+→ Applications → your app → Permissions) to add the missing scope, then
+re-test — Conduit picks up the new permissions on the next token-refresh
+without needing the credentials re-entered.
+
+### "Tenant not found" / DNS-resolution errors
+
+The tenant subdomain doesn't resolve. Confirm:
+
+- You can actually reach `https://<your-tenant>.halopsa.com` in a browser.
+- The tenant name doesn't include `https://` or `.halopsa.com` (Conduit
+  adds those).
+
+### Vendor-health flips yellow during a healthy use
+
+HaloPSA tokens expire on a rolling basis. If Conduit happens to be checking
+health right when a token is mid-refresh, you may see a brief yellow. It
+clears within seconds. If it stays yellow more than 5 minutes, treat it as
+an Invalid-client issue above.
+
+### Need to rotate Client Secret
+
+1. In HaloPSA, open Configuration → Integrations → HaloPSA API →
+   Applications → your app → **Regenerate Client Secret**.
+2. In Conduit Connections, click the HaloPSA connection → **Update
+   credential** and paste the new secret. The Client ID and tenant name
+   stay the same.
+3. Conduit re-runs the health check; green = rotation done.
+
+---
+
+## Where to go next
+
+- [Onboarding a customer](/docs/guides/customer-provisioning/) — connect
+  HaloPSA at the customer level via the Onboard-MCP wizard.
+- [Connecting an AI client](/docs/guides/connecting-a-client/) — point your
+  MCP client at the Conduit endpoint.
+- [Vendor connections](/docs/guides/vendor-connections/) — the full vendor
+  catalog + general credential rotation guidance.
