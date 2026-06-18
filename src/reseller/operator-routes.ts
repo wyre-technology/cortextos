@@ -36,6 +36,8 @@
 // =============================================================================
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { ACTING_AS_COOKIE } from './acting-as-middleware.js';
+import type { ActingAsSessionService } from './acting-as-session-service.js';
 
 // Schema ratified by linchpin-drop commit (boss msg-1781439100263, V4=B
 // resolved). Discriminated union of three event variants:
@@ -45,6 +47,16 @@ import type {
   ActingAsSessionStartedEvent,
   ActingAsSessionEndedEvent,
 } from '../audit/acting-as-audit-types.js';
+
+/**
+ * Acting-as session cookie TTL. Warden encode-from-start (boss
+ * msg-1781784272248): impersonation is a user-input security surface;
+ * the bound session must auto-decay so a left-the-laptop-open
+ * operator can't act-as forever. 4h is the upper bound; the
+ * acting-as-middleware revalidates on every request so revocation
+ * latency is < 1 tick even within the window.
+ */
+const ACTING_AS_COOKIE_MAX_AGE_SECONDS = 4 * 60 * 60;
 
 export interface OperatorRoutesDeps {
   /**
@@ -87,6 +99,22 @@ export interface OperatorRoutesDeps {
    * (likely src/org/org-service.ts extension).
    */
   getCustomerOrgOwnerEmail: (customerOrgId: string) => Promise<string>;
+
+  /**
+   * Acting-as session persistence + revoke surface. Mints session_id at
+   * /switch (becomes the signed-cookie value) and ends the row at /exit.
+   *
+   * Required for the WYREAI-172 actingAs-UI-flow foundation (boss
+   * msg-1781784272248). Before this PR the operator-routes scaffold
+   * emitted the audit event without persisting a session row + setting
+   * the cookie — the middleware then had nothing to revalidate against,
+   * so `request.caller.actingAs` was never populated end-to-end.
+   *
+   * This service + the cookie set/clear close the substrate loop:
+   *   /switch → start() → setCookie → middleware reads → caller.actingAs
+   *   /exit  → end()   → clearCookie → middleware sees nothing → no caller.actingAs
+   */
+  actingAsSessionService: ActingAsSessionService;
 }
 
 export type AuthzActAsResult =
@@ -106,9 +134,30 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
       return { customers };
     });
 
-    // POST /api/reseller/me/customers/:customerOrgId/switch — start acting-as session
+    // POST /api/reseller/me/customers/:customerOrgId/switch — start
+    // acting-as session.
+    //
+    // WYREAI-172 PR-1 (boss msg-1781784272248) — end-to-end actingAs
+    // wiring. Pre-PR the scaffold authorized + emitted audit but never
+    // persisted the session row or set the cookie, so the middleware
+    // had nothing to revalidate and `request.caller.actingAs` was
+    // never populated downstream. This handler now closes the loop:
+    //   1. Authorize (verifyResellerActingAuthority via authorizeActAs)
+    //   2. Mint session via actingAsSessionService.start() — returns
+    //      the session_id used as the signed-cookie value
+    //   3. Set the signed cookie (HttpOnly + Secure + SameSite=Lax +
+    //      maxAge ≤ 4h per warden encode-from-start)
+    //   4. Emit msp_operator_session_started audit-event with the
+    //      session's startedAt (NOT new Date() — the row's value is
+    //      the source of truth for downstream session_ended duration
+    //      reconstruction)
+    //
+    // Rate-limit: 30/hr per IP. A legitimate MSP onboarding flow has
+    // an operator hopping between a handful of customers; 30/hr is
+    // ample headroom while a brute-forced /switch storm caps fast.
     app.post<{ Params: { customerOrgId: string } }>(
       '/api/reseller/me/customers/:customerOrgId/switch',
+      { config: { rateLimit: { max: 30, timeWindow: '1 hour' } } },
       async (request, reply) => {
         const caller = getCallerOrThrow(request);
         const authz = await deps.authorizeActAs(
@@ -120,10 +169,38 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
           return reply.code(403).send({ error: authz.reason });
         }
 
+        // Persist the acting-as session row + mint session_id. The row
+        // is the cookie's referent — the middleware's
+        // sessionService.getActive() lookup is what closes the cookie
+        // → caller.actingAs decoration loop.
+        const session = await deps.actingAsSessionService.start({
+          userId: caller.userId,
+          viaResellerOrgId: caller.orgId ?? '',
+          onBehalfOfOrgId: request.params.customerOrgId,
+          ip: request.ip ?? null,
+          userAgent: request.headers['user-agent'] ?? null,
+        });
+
+        // Set the signed cookie. The middleware reads + unsigns this
+        // via request.unsignCookie(); the cookie plugin's secret is
+        // the same one that signed it (src/index.ts cookie plugin
+        // register-time). Path '/' so the cookie travels to every
+        // subsequent request; HttpOnly so client JS can't read it
+        // (XSS-defense); Secure so it never leaks over plain HTTP;
+        // SameSite=Lax so cross-origin POST attempts don't carry it.
+        reply.setCookie(ACTING_AS_COOKIE, session.sessionId, {
+          signed: true,
+          httpOnly: true,
+          secure: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: ACTING_AS_COOKIE_MAX_AGE_SECONDS,
+        });
+
         // Linchpin-drop commit (boss msg-1781439100263, V4=B locked):
-        // ratified schema payload + at-fire-time customer-org-owner-email
-        // lookup. Notification fires by-construction at the emit boundary
-        // (see OperatorRoutesDeps.emitActingAsAuditEvent docstring).
+        // ratified schema payload + at-fire-time customer-org-owner-
+        // email lookup. Notification fires by-construction at the emit
+        // boundary (see OperatorRoutesDeps.emitActingAsAuditEvent docstring).
         const customerOrgOwnerEmail = await deps.getCustomerOrgOwnerEmail(
           request.params.customerOrgId,
         );
@@ -132,15 +209,17 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
           resellerOrgId: caller.orgId ?? '',
           customerOrgId: request.params.customerOrgId,
           actorUserId: caller.userId,
-          sessionStartedAt: new Date().toISOString(),
+          // sessionStartedAt comes from the persisted row — single
+          // source of truth for the downstream session_ended duration
+          // calculation. Using `new Date()` here would risk a sub-ms
+          // drift that breaks the duration invariant on the next event.
+          sessionStartedAt: session.startedAt,
           ip: request.ip ?? null,
           userAgent: request.headers['user-agent'] ?? null,
           customerOrgOwnerEmail,
         };
         await deps.emitActingAsAuditEvent(event);
 
-        // Session-mutation also pending (dev's PR-1 extends session-handling).
-        // For now, return acknowledgment shape only.
         return reply.code(200).send({
           actingAs: {
             onBehalfOfOrgId: request.params.customerOrgId,
@@ -151,37 +230,78 @@ export function operatorRoutes(deps: OperatorRoutesDeps) {
     );
 
     // POST /api/reseller/me/customers/exit — end acting-as session
-    app.post('/api/reseller/me/customers/exit', async (request, reply) => {
-      const caller = getCallerOrThrow(request);
+    //
+    // WYREAI-172 PR-1 (boss msg-1781784272248): closes the loop opened
+    // by /switch. The middleware decorated `caller.actingAs` from the
+    // session row via the signed cookie; here we end the row +
+    // clearCookie so future requests have nothing to revalidate.
+    //
+    // Defense-in-depth: even if the cookie clear fails on the wire
+    // (network, client bug), the session row's ended_at is set, so
+    // the middleware's getActive() returns null on the next tick and
+    // strips caller.actingAs. The cookie clear is the fast path; the
+    // row's ended_at is the source of truth.
+    //
+    // sessionStartedAt now flows from the middleware-decorated
+    // `caller.actingAs.startedAt` (slice 3 LIFECYCLE-BIND added this
+    // field, mig 049). Duration = sessionEndedAt - sessionStartedAt
+    // is now meaningful on the audit-stream (was duration-0 in the
+    // scaffold placeholder).
+    app.post(
+      '/api/reseller/me/customers/exit',
+      { config: { rateLimit: { max: 30, timeWindow: '1 hour' } } },
+      async (request, reply) => {
+        const caller = getCallerOrThrow(request);
+        if (!caller.actingAs) {
+          return reply.code(400).send({ error: 'NO_ACTIVE_SESSION' });
+        }
 
-      // Linchpin-drop commit (boss msg-1781439100263). Session-handling
-      // integration lands in dev's PR-1 (slice 3 foundation); for the
-      // scaffold skeleton, we read actingAs from the upstream middleware
-      // and emit the session_ended event. sessionStartedAt comes from the
-      // middleware-populated session-state in dev's PR-1; in this skeleton
-      // we use a placeholder (caller.actingAs read carries no start-time,
-      // which is the gap dev's session-handling closes — documented at
-      // operator-routes.ts L153 LIFECYCLE-BIND block).
-      if (!caller.actingAs) {
-        return reply.code(400).send({ error: 'NO_ACTIVE_SESSION' });
-      }
-      const event: ActingAsSessionEndedEvent = {
-        type: 'msp_operator_session_ended',
-        resellerOrgId: caller.actingAs.viaResellerOrgId,
-        customerOrgId: caller.actingAs.onBehalfOfOrgId,
-        actorUserId: caller.userId,
-        // sessionStartedAt placeholder — dev's session-handling PR replaces
-        // with the actual session-state value. Currently NOW (effectively
-        // duration-0 audit-event, but compiles + emits well-formed shape).
-        sessionStartedAt: new Date().toISOString(),
-        sessionEndedAt: new Date().toISOString(),
-        ip: request.ip ?? null,
-        userAgent: request.headers['user-agent'] ?? null,
-      };
-      await deps.emitActingAsAuditEvent(event);
+        // Terminal-state-end: the session row's ended_at is the
+        // canonical "this session is over" signal. Idempotent — a
+        // second /exit call on an already-ended row returns the row
+        // unchanged (see ActingAsSessionService.end() docstring).
+        await deps.actingAsSessionService.end(caller.actingAs.sessionId);
 
-      return reply.code(200).send({ actingAs: null });
-    });
+        // Clear the signed cookie. Warden review NIT (boss
+        // msg-1781785916384): re-pass the FULL flag set that the
+        // set-site used, not just {path}. Different browsers' cookie-
+        // jar clear semantics depend on flag-attribute parity — Chrome
+        // and Firefox key the cookie identity on (name, domain, path)
+        // and the clear succeeds with just path, but Safari + the
+        // WebKit cookie-jar match on path + sameSite + secure + signed
+        // for the clear directive. Without flag parity Safari can
+        // leave an orphan cookie in place; the middleware then re-
+        // evaluates it on the next request to NO-OP (the row's
+        // ended_at is set, defense-in-depth catches it) but logs a
+        // noisy "stale_or_missing_session" warn line per tick until
+        // the cookie expires. Passing the full set eliminates the
+        // edge case by-construction.
+        reply.clearCookie(ACTING_AS_COOKIE, {
+          path: '/',
+          httpOnly: true,
+          secure: true,
+          sameSite: 'lax',
+          signed: true,
+        });
+
+        const event: ActingAsSessionEndedEvent = {
+          type: 'msp_operator_session_ended',
+          resellerOrgId: caller.actingAs.viaResellerOrgId,
+          customerOrgId: caller.actingAs.onBehalfOfOrgId,
+          actorUserId: caller.userId,
+          // sessionStartedAt now flows from the middleware-decorated
+          // session state — duration is meaningful on the audit stream
+          // (was duration-0 in the scaffold).
+          sessionStartedAt: caller.actingAs.startedAt,
+          sessionEndedAt: new Date().toISOString(),
+          ip: request.ip ?? null,
+          userAgent: request.headers['user-agent'] ?? null,
+        };
+        await deps.emitActingAsAuditEvent(event);
+
+        return reply.code(200).send({ actingAs: null });
+      },
+    );
   };
 }
 

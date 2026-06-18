@@ -1,5 +1,6 @@
+import type { FastifyRequest } from 'fastify';
 import type { Auth0User } from '../auth/auth0.js';
-import type { Organization } from '../org/org-service.js';
+import type { Organization, OrgService } from '../org/org-service.js';
 import { isPaidPlan } from '../billing/gate.js';
 import { brand } from '../brand/index.js';
 import { PAGE_STYLES } from './styles.js';
@@ -45,6 +46,83 @@ export interface LayoutContext {
   navMode?: NavMode;
   /** Required when navMode is 'customer-detail'. */
   customerContext?: CustomerContext;
+  /**
+   * WYREAI-172 actingAs-UI-flow foundation (boss msg-1781784272248).
+   * When the request carries an active acting-as session (the operator
+   * has entered customer-context via /api/reseller/me/customers/
+   * :customerOrgId/switch), this field populates the always-visible
+   * badge above the page chrome. Renders the customer name + an Exit
+   * button that POSTs to /api/reseller/me/customers/exit.
+   *
+   * SECURITY-SUBSTRATE: This is the visible signal that the operator
+   * is in impersonation mode — closes the warden-flagged audit-clarity
+   * gap (msg-1781747987840-dev-10lbd, "actingAs binding is INVISIBLE
+   * in UI"). Without this signal, a reseller-MSP-admin could be in
+   * customer-context without realizing it + accidentally mutate the
+   * customer's org when they meant to mutate their own.
+   *
+   * Read-only from the caller's perspective; populated by a helper
+   * (`actingAsBadgeFromRequest`) that reads `request.caller.actingAs`
+   * + looks up the customer name. Omit/undefined → no badge.
+   */
+  actingAsBadge?: ActingAsBadge;
+}
+
+/**
+ * Acting-as badge payload for the layout chrome. The customerName is
+ * a server-rendered display value (already escaped at the template
+ * boundary); the exitFormAction is the POST URL the Exit button
+ * submits to (always /api/reseller/me/customers/exit but exposed as
+ * a field so the template doesn't hard-code an endpoint string).
+ */
+export interface ActingAsBadge {
+  customerName: string;
+  /** POST target for the Exit button. */
+  exitFormAction: string;
+}
+
+/**
+ * Build the acting-as badge payload for the current request, or
+ * `undefined` if the operator isn't in customer-context. Single helper
+ * called from every page handler that renders a layout — keeps the
+ * badge-population logic + the "what URL does Exit post to" string
+ * in one place so future changes don't fan out to 30+ call sites.
+ *
+ * Reads `request.caller.actingAs` (populated by the acting-as-
+ * middleware on every authenticated request) and looks up the
+ * customer-org's name via the OrgService. The name is the only
+ * server-side data the badge needs; the exit URL is a constant
+ * exposed as a field so the template doesn't hard-code the
+ * endpoint string.
+ *
+ * Returns `undefined` when:
+ *   - request.caller is missing (no auth)
+ *   - request.caller.actingAs is undefined (no active session)
+ *   - the customer-org lookup fails (deleted mid-session — extreme
+ *     edge; the middleware revalidate would catch this on the next
+ *     tick and strip the binding, but defense-in-depth at the
+ *     render-side too)
+ *
+ * Page handlers wire it as:
+ *   const actingAsBadge = await actingAsBadgeFromRequest(request, orgService);
+ *   return reply.send(renderLayout({ ..., actingAsBadge }, body));
+ */
+export async function actingAsBadgeFromRequest(
+  request: FastifyRequest,
+  orgService: Pick<OrgService, 'getOrg'>,
+): Promise<ActingAsBadge | undefined> {
+  const actingAs = request.caller?.actingAs;
+  if (!actingAs) return undefined;
+  try {
+    const customer = await orgService.getOrg(actingAs.onBehalfOfOrgId);
+    if (!customer) return undefined;
+    return {
+      customerName: customer.name,
+      exitFormAction: '/api/reseller/me/customers/exit',
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 interface NavItem {
@@ -451,6 +529,65 @@ const LAYOUT_STYLES = `
       padding-right: 16px;
     }
   }
+
+  /* WYREAI-172 acting-as badge — always visible chrome when the
+     operator is in customer-context. Sticky-top so it stays in view
+     as the page scrolls (the impersonation signal must not be lost
+     in long pages). Yellow-tinted background so it reads as
+     "system-state-changed" without being alarming-red. */
+  .acting-as-badge {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: -16px -16px 16px;
+    padding: 10px 24px;
+    background: var(--bg-acting-as, #5a4a00);
+    color: var(--text-on-acting-as, #fffdf0);
+    border-bottom: 1px solid rgba(255, 220, 71, 0.45);
+    font-size: 13px;
+  }
+  .acting-as-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .acting-as-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffdc47;
+    box-shadow: 0 0 0 2px rgba(255, 220, 71, 0.25);
+  }
+  .acting-as-text strong {
+    font-weight: 600;
+    color: #ffdc47;
+  }
+  .acting-as-exit-form {
+    margin: 0;
+  }
+  .acting-as-exit-btn {
+    padding: 5px 12px;
+    background: rgba(255, 220, 71, 0.18);
+    color: #ffdc47;
+    border: 1px solid rgba(255, 220, 71, 0.5);
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .acting-as-exit-btn:hover {
+    background: rgba(255, 220, 71, 0.32);
+  }
+  .acting-as-exit-btn:focus {
+    outline: 2px solid #ffdc47;
+    outline-offset: 1px;
+  }
 `;
 
 function renderNavItem(item: NavItem, activePath: string): string {
@@ -551,8 +688,35 @@ function renderCustomerDetailNav(
     </div>`;
 }
 
+/**
+ * Render the WYREAI-172 acting-as badge that appears above the page
+ * chrome whenever the operator is in customer-context. The Exit form
+ * POSTs to /api/reseller/me/customers/exit; on success the route's
+ * 303 redirect sends the operator back to /org/customers and the
+ * middleware's next-tick read sees no cookie → no badge.
+ *
+ * a11y: `role="status"` + `aria-live="polite"` so screen-readers
+ * announce the impersonation context when it changes. The Exit button
+ * is a real submit (not a JS click) so the flow is link-bookmarkable
+ * + works with JS disabled.
+ */
+function renderActingAsBadge(badge: ActingAsBadge): string {
+  const name = escapeHtml(badge.customerName);
+  const action = escapeHtml(badge.exitFormAction);
+  return `
+    <div class="acting-as-badge" role="status" aria-live="polite">
+      <div class="acting-as-label">
+        <span class="acting-as-dot" aria-hidden="true"></span>
+        <span class="acting-as-text">Acting as <strong>${name}</strong></span>
+      </div>
+      <form class="acting-as-exit-form" method="POST" action="${action}">
+        <button type="submit" class="acting-as-exit-btn">Exit customer context</button>
+      </form>
+    </div>`;
+}
+
 export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
-  const { user, org, activePath, title, pageStyles, pageScripts, customerContext } = ctx;
+  const { user, org, activePath, title, pageStyles, pageScripts, customerContext, actingAsBadge } = ctx;
   const navMode: NavMode = ctx.navMode ?? 'default';
   const userEmail = escapeHtml(user.email || user.sub);
   const orgName = org ? escapeHtml(org.name) : '';
@@ -680,6 +844,7 @@ export function renderLayout(ctx: LayoutContext, bodyContent: string): string {
     <!-- Main content -->
     <main class="content">
       <div class="content-inner">
+        ${actingAsBadge ? renderActingAsBadge(actingAsBadge) : ''}
         ${bodyContent}
       </div>
     </main>

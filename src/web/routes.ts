@@ -22,7 +22,7 @@ import {
   validateCallbackIssuer,
 } from "../oauth/vendor-oauth.js";
 import { nanoid } from "nanoid";
-import { renderLayout } from "./layout.js";
+import { renderLayout, actingAsBadgeFromRequest } from "./layout.js";
 import { renderSuccessPage, escapeHtml } from "./helpers.js";
 import { renderPersonalConnections } from "./templates/personal-connections.js";
 import {
@@ -823,6 +823,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/settings",
             title: "Settings",
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             pageStyles: connectionsPageStyles,
             pageScripts: connectionsPageScripts,
           },
@@ -879,6 +880,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/settings/profile",
           title: "Profile",
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: PROFILE_SETTINGS_STYLES,
         },
         bodyContent,
@@ -972,6 +974,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/billing",
           title: `${org.name} - Billing`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_BILLING_STYLES,
           pageScripts,
         },
@@ -1135,6 +1138,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/customers",
           title: `${org.name} - Customers`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: RESELLER_CUSTOMERS_STYLES,
           pageScripts: RESELLER_CUSTOMERS_SCRIPT,
         },
@@ -1199,6 +1203,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/customers",
           title: `${org.name} - New customer`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: NEW_CUSTOMER_STYLES,
           pageScripts,
         },
@@ -1265,6 +1270,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: `/org/customers/${customerId}`,
           title: `${org.name} - ${customer.name}`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           navMode: "customer-detail",
           customerContext: { id: customer.id, name: customer.name, siblings },
           pageStyles: RESELLER_CUSTOMER_DETAIL_STYLES,
@@ -1324,6 +1330,7 @@ export function webRoutes(deps: WebRouteDeps) {
     // Shared render+send for a customer-detail tab page. Siblings roster is
     // the REAL reseller-scoped customer list (getCustomersOfReseller).
     async function sendCustomerTab(
+      request: FastifyRequest,
       reply: FastifyReply,
       user: NonNullable<
         Awaited<ReturnType<typeof requireResellerAccess>>
@@ -1342,6 +1349,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: `/org/customers/${customerId}/${data.tab}`,
           title: `${org.name} - ${data.customer.name}`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           navMode: "customer-detail",
           customerContext: {
             id: customerId,
@@ -1381,8 +1389,7 @@ export function webRoutes(deps: WebRouteDeps) {
           orgService,
         );
         if (!owned) return;
-        return sendCustomerTab(
-          reply,
+        return sendCustomerTab(request, reply,
           ctx.user,
           ctx.org,
           customerId,
@@ -1428,7 +1435,7 @@ export function webRoutes(deps: WebRouteDeps) {
         customerSummaryOf(owned),
         "users",
       );
-      return sendCustomerTab(reply, ctx.user, ctx.org, customerId, {
+      return sendCustomerTab(request, reply, ctx.user, ctx.org, customerId, {
         ...data,
         members,
         memberTotal: members.length,
@@ -1474,7 +1481,7 @@ export function webRoutes(deps: WebRouteDeps) {
         customerSummaryOf(owned),
         "mcps",
       );
-      return sendCustomerTab(reply, ctx.user, ctx.org, customerId, {
+      return sendCustomerTab(request, reply, ctx.user, ctx.org, customerId, {
         ...data,
         mcps,
       });
@@ -1512,7 +1519,7 @@ export function webRoutes(deps: WebRouteDeps) {
         customerSummaryOf(customer),
         "audit",
       );
-      return sendCustomerTab(reply, ctx.user, ctx.org, customerId, data);
+      return sendCustomerTab(request, reply, ctx.user, ctx.org, customerId, data);
     });
 
     // ---------- GET /org/customers/:id/onboard-mcp (Track C Surface 3 — Onboard wizard) ----------
@@ -1551,6 +1558,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/customers",
           title: `${org.name} - Onboard MCP`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           navMode: "customer-detail",
           customerContext: {
             id: owned.id,
@@ -1601,6 +1609,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/hierarchy",
           title: `${org.name} - Hierarchy`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: RESELLER_HIERARCHY_STYLES,
           pageScripts: RESELLER_HIERARCHY_SCRIPT,
         },
@@ -1632,6 +1641,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: path,
             title: `${org.name} - ${label}`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             navMode: "reseller-settings",
           },
           resellerStubBody(label),
@@ -1661,6 +1671,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/org/reseller/general",
             title: `${org.name} - General`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             navMode: "reseller-settings",
             pageStyles: RESELLER_GENERAL_STYLES,
           },
@@ -1692,6 +1703,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/reseller/billing",
           title: `${org.name} - Billing & Plans`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           navMode: "reseller-settings",
           pageStyles: RESELLER_BILLING_STYLES,
         },
@@ -1746,6 +1758,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/org/reseller/audit",
             title: `${org.name} - Audit Log`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             navMode: "reseller-settings",
             pageStyles: RESELLER_AUDIT_STYLES,
           },
@@ -1807,6 +1820,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/reseller/branding",
           title: `${org.name} - Branding`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           navMode: "reseller-settings",
           pageStyles: RESELLER_BRANDING_STYLES,
         },
@@ -1854,6 +1868,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org",
           title: `${org.name} - Overview`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_OVERVIEW_STYLES,
         },
         renderTeamOverview({ org, memberCount: members.length, customerCount }),
@@ -1882,6 +1897,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/members",
           title: `${org.name} - Members`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_MEMBERS_STYLES,
         },
         renderTeamMembers({
@@ -1921,6 +1937,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/invitations",
           title: `${org.name} - Invitations`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_INVITATIONS_STYLES,
         },
         renderTeamInvitations({
@@ -1973,6 +1990,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/connections",
           title: `${org.name} - Connections`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_CONNECTIONS_STYLES,
         },
         renderTeamConnections({ orgId: org.id, orgVendors, vendorHealth }),
@@ -1999,6 +2017,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/tool-access",
           title: `${org.name} - Tool Access`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_TOOL_ACCESS_STYLES,
         },
         renderTeamToolAccess({ orgId: org.id, orgVendors }),
@@ -2028,6 +2047,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/server-access",
           title: `${org.name} - Server Access`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_SERVER_ACCESS_STYLES,
         },
         renderTeamServerAccess({
@@ -2072,6 +2092,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/teams",
           title: `${org.name} - Teams`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_TEAMS_STYLES,
         },
         renderTeamTeams({
@@ -2122,6 +2143,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/service-clients",
           title: `${org.name} - Service Clients`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_SERVICE_CLIENTS_STYLES,
         },
         renderTeamServiceClients({
@@ -2163,6 +2185,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/scim",
           title: `${org.name} - Provisioning`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_SCIM_STYLES,
         },
         renderTeamScim({
@@ -2205,6 +2228,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/domains",
           title: `${org.name} - Domains`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_DOMAINS_STYLES,
         },
         renderTeamDomains({
@@ -2248,6 +2272,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/org/teams",
             title: `${team.name} - Connections`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             pageStyles: TEAM_TEAM_CONNECTIONS_STYLES,
           },
           renderTeamTeamConnections({
@@ -2302,6 +2327,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/org/teams",
             title: `${team.name} - ${vendorConfig.name} tool access`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             pageStyles: TEAM_SCOPE_TOOL_ACCESS_STYLES,
           },
           renderTeamScopeToolAccess({
@@ -2345,6 +2371,7 @@ export function webRoutes(deps: WebRouteDeps) {
             org,
             activePath: "/org/service-clients",
             title: `${serviceClient.name} - Connections`,
+            actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
             pageStyles: TEAM_SERVICE_CLIENT_CONNECTIONS_STYLES,
           },
           renderTeamServiceClientConnections({
@@ -2377,6 +2404,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/log-shipping",
           title: `${org.name} - Log Shipping`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_LOG_SHIPPING_STYLES,
         },
         renderTeamLogShipping({
@@ -2416,6 +2444,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/dashboard",
           title: `${org.name} - Dashboard`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles,
           pageScripts,
         },
@@ -2450,6 +2479,7 @@ export function webRoutes(deps: WebRouteDeps) {
           org,
           activePath: "/org/audit",
           title: `${org.name} - Audit Log`,
+          actingAsBadge: await actingAsBadgeFromRequest(request, orgService),
           pageStyles: TEAM_AUDIT_STYLES,
         },
         renderTeamAudit({

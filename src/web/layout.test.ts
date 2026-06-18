@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALL_NAV_HREFS, renderLayout } from './layout.js';
+import {
+  ALL_NAV_HREFS,
+  renderLayout,
+  actingAsBadgeFromRequest,
+} from './layout.js';
 import type { Organization } from '../org/org-service.js';
 import type { Auth0User } from '../auth/auth0.js';
+import type { FastifyRequest } from 'fastify';
 
 // ---------------------------------------------------------------------------
 // Lock-step regression guard: every sidebar nav href (top-level + sub-nav)
@@ -207,5 +212,165 @@ describe('customer-detail nav mode + tenant switcher (Track C Area 3)', () => {
     const html = customerDetail([{ id: 'c1', name: 'AM3 Technology' }]);
     expect(html).not.toContain('<details class="ts-switcher"');
     expect(html).toContain('AM3 Technology');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WYREAI-172 acting-as badge tests (boss msg-1781784272248).
+//
+// The badge is the visible impersonation signal — closes the warden-flagged
+// audit-clarity gap (msg-1781747987840-dev-10lbd, "actingAs binding is
+// INVISIBLE in UI"). These tests lock the contract that:
+//   1. No badge renders when actingAsBadge is undefined (normal use)
+//   2. Badge renders + announces customer name + has working Exit form
+//      when actingAsBadge is set
+//   3. The helper actingAsBadgeFromRequest correctly populates / nulls
+//      based on request.caller.actingAs
+// ---------------------------------------------------------------------------
+
+describe('acting-as badge (WYREAI-172)', () => {
+  function render(badge?: { customerName: string; exitFormAction: string }) {
+    return renderLayout(
+      {
+        user: mockUser,
+        org: orgOfType('reseller'),
+        activePath: '/org',
+        title: 'Test',
+        actingAsBadge: badge,
+      },
+      '<p>body</p>',
+    );
+  }
+
+  it('does NOT render the badge when actingAsBadge is undefined', () => {
+    const html = render();
+    // CSS class definition lives in LAYOUT_STYLES regardless; the
+    // distinguishing signal is the rendered HTML element + its content.
+    expect(html).not.toContain('class="acting-as-badge"');
+    expect(html).not.toContain('Acting as <strong>');
+    expect(html).not.toContain('Exit customer context');
+  });
+
+  it('renders the badge when actingAsBadge is set', () => {
+    const html = render({
+      customerName: 'AM3 Technology',
+      exitFormAction: '/api/reseller/me/customers/exit',
+    });
+    // Visible context — "Acting as <name>".
+    expect(html).toContain('class="acting-as-badge"');
+    expect(html).toContain('Acting as <strong>');
+    expect(html).toContain('AM3 Technology');
+    // Exit form POSTs to the operator-routes exit endpoint.
+    expect(html).toContain('action="/api/reseller/me/customers/exit"');
+    expect(html).toContain('method="POST"');
+    expect(html).toContain('Exit customer context');
+    // a11y: role=status + aria-live=polite so screen-readers announce
+    // the context change on render.
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+  });
+
+  it('escapes the customer name (no HTML injection)', () => {
+    const html = render({
+      customerName: "<script>alert('xss')</script>",
+      exitFormAction: '/api/reseller/me/customers/exit',
+    });
+    expect(html).not.toContain("<script>alert('xss')</script>");
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('actingAsBadgeFromRequest helper', () => {
+  function fakeRequest(actingAs?: {
+    onBehalfOfOrgId: string;
+    viaResellerOrgId: string;
+    sessionId: string;
+    startedAt: string;
+    effectiveRole: 'owner' | 'admin' | 'member';
+  }) {
+    return {
+      caller: actingAs
+        ? {
+            userId: 'auth0|operator',
+            actingAs,
+          }
+        : undefined,
+    } as unknown as FastifyRequest;
+  }
+
+  it('returns undefined when no caller', async () => {
+    const orgService = { getOrg: vi.fn() };
+    const result = await actingAsBadgeFromRequest(
+      fakeRequest(undefined),
+      orgService,
+    );
+    expect(result).toBeUndefined();
+    expect(orgService.getOrg).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined when caller has no actingAs', async () => {
+    const orgService = { getOrg: vi.fn() };
+    const result = await actingAsBadgeFromRequest(
+      { caller: { userId: 'auth0|operator' } } as unknown as FastifyRequest,
+      orgService,
+    );
+    expect(result).toBeUndefined();
+    expect(orgService.getOrg).not.toHaveBeenCalled();
+  });
+
+  it('returns the badge populated from the customer-org lookup', async () => {
+    const orgService = {
+      getOrg: vi.fn().mockResolvedValue({
+        id: 'org_customer',
+        name: 'AM3 Technology',
+        ownerId: 'auth0|owner',
+      }),
+    };
+    const result = await actingAsBadgeFromRequest(
+      fakeRequest({
+        onBehalfOfOrgId: 'org_customer',
+        viaResellerOrgId: 'org_reseller',
+        sessionId: 'aas_x',
+        startedAt: '2026-06-18T12:00:00Z',
+        effectiveRole: 'admin',
+      }),
+      orgService,
+    );
+    expect(result).toEqual({
+      customerName: 'AM3 Technology',
+      exitFormAction: '/api/reseller/me/customers/exit',
+    });
+  });
+
+  it('returns undefined when customer-org lookup returns null (deleted mid-session)', async () => {
+    const orgService = { getOrg: vi.fn().mockResolvedValue(null) };
+    const result = await actingAsBadgeFromRequest(
+      fakeRequest({
+        onBehalfOfOrgId: 'org_customer_gone',
+        viaResellerOrgId: 'org_reseller',
+        sessionId: 'aas_x',
+        startedAt: '2026-06-18T12:00:00Z',
+        effectiveRole: 'admin',
+      }),
+      orgService,
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when customer-org lookup throws (defensive)', async () => {
+    const orgService = {
+      getOrg: vi.fn().mockRejectedValue(new Error('db down')),
+    };
+    const result = await actingAsBadgeFromRequest(
+      fakeRequest({
+        onBehalfOfOrgId: 'org_customer',
+        viaResellerOrgId: 'org_reseller',
+        sessionId: 'aas_x',
+        startedAt: '2026-06-18T12:00:00Z',
+        effectiveRole: 'admin',
+      }),
+      orgService,
+    );
+    expect(result).toBeUndefined();
   });
 });
