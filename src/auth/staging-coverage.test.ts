@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { beforeAll } from 'vitest';
 import { VENDOR_TOOL_CONFIG } from '../proxy/result-cache.js';
 import { tierForToolConfig } from './tier-check.js';
 
@@ -54,5 +55,63 @@ describe('staging-deployed coverage invariant (Phase-1 launch-blocking)', () => 
     // discipline: source-of-truth lives in ONE place per the warden single-
     // source-of-truth pin family.
     expect(STAGING_DEPLOYED_VENDORS.length).toBe(8);
+  });
+});
+
+// Per-TOOL ratchet (Phase-1b, ruby finding 2026-06-18) — the launch-critical
+// invariant. The per-vendor test above checks ≥1 tool per vendor; this checks
+// every staging-deployed tool. Source-of-truth: tests/mcp/baselines/staging-tools.json.
+// Without this ratchet, a future deploy of an unclassified tool would FAIL-CLOSED-
+// deny at the Phase-2 runtime gate.
+describe('per-tool staging coverage ratchet (#366 baseline, Phase-1b)', () => {
+  // Slug mapping: baseline indexes by vendor object; we extract per-vendor tool
+  // lists by tool-name-prefix. NOTE this list is the SAME 8 vendors as above —
+  // the per-tool check is the stricter sibling-invariant on the same set.
+  const SLUG_MAP: Record<string, string> = {
+    autotask: 'autotask',
+    cipp: 'cipp',
+    datto: 'datto-rmm',
+    domotz: 'domotz',
+    halopsa: 'halopsa-official',
+    archive: 'itglue',
+    liongard: 'liongard',
+    attach: 'rootly',
+  };
+
+  let baseline: { vendors: Array<{ tools: string[] }> };
+
+  beforeAll(async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    // tests/mcp/baselines/staging-tools.json — relative to repo root.
+    const baselinePath = path.resolve(__dirname, '../../tests/mcp/baselines/staging-tools.json');
+    baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+  });
+
+  it('every staging-deployed tool is classified in VENDOR_TOOL_CONFIG', () => {
+    const missing: string[] = [];
+    for (const v of baseline.vendors) {
+      const prefix = v.tools[0]?.split('_')[0];
+      const conduitSlug = SLUG_MAP[prefix];
+      if (!conduitSlug) {
+        missing.push(`[unmapped-prefix:${prefix}] all ${v.tools.length} tools`);
+        continue;
+      }
+      const classifiedSet = new Set(Object.keys(VENDOR_TOOL_CONFIG[conduitSlug] ?? {}));
+      for (const tool of v.tools) {
+        if (!classifiedSet.has(tool)) {
+          missing.push(`${conduitSlug}.${tool}`);
+        }
+      }
+    }
+    expect(
+      missing,
+      `${missing.length} staging-deployed tool(s) UNCLASSIFIED in VENDOR_TOOL_CONFIG ` +
+        `— Phase-2 runtime gate would FAIL-CLOSED-deny these. ` +
+        `Source-of-truth: tests/mcp/baselines/staging-tools.json (#366). ` +
+        `Add classifications under the appropriate vendor block in src/proxy/result-cache.ts. ` +
+        `Missing (first 20):\n  ${missing.slice(0, 20).join('\n  ')}` +
+        (missing.length > 20 ? `\n  ... and ${missing.length - 20} more` : ''),
+    ).toEqual([]);
   });
 });
