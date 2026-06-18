@@ -400,13 +400,21 @@ export const VENDOR_TOOL_CONFIG: Record<string, Record<string, ToolConfig>> = {
     // PR-C1 re-key: block was DEAD (unprefixed keys matched no tool). Re-keyed to the #275 pinned
     // schema names + classified (verb-heuristic isWrite; tranche-1 candidate tiers verbatim). ttlMs:0 (dormant; no caching flip — PR-C2).
     datto_get_device: { entityType: 'generic', ttlMs: 0, isWrite: false },
-    datto_get_device_audit: { entityType: 'generic', ttlMs: 0, isWrite: false },
+    // SECURITY: device audit log read = forensics-class sensitive data per warden
+    // 6-class criterion (v) reads SENSITIVE data → ADMIN (#453 re-push 2026-06-18).
+    datto_get_device_audit: { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
     datto_get_site: { entityType: 'generic', ttlMs: 0, isWrite: false },
     datto_list_alerts: { entityType: 'generic', ttlMs: 0, isWrite: false },
     datto_list_devices: { entityType: 'generic', ttlMs: 0, isWrite: false },
     datto_list_sites: { entityType: 'generic', ttlMs: 0, isWrite: false },
     datto_resolve_alert: { entityType: 'generic', ttlMs: 0, isWrite: true },
-    datto_run_quickjob: { entityType: 'generic', ttlMs: 0, isWrite: true },
+    // SECURITY: QuickJob fires operator-supplied scripts on customer endpoints =
+    // arbitrary RCE blast-radius (ransomware / exfil / backdoor surface). Sibling
+    // classification with autotask_execute_tool + cipp_run_standards_check (both
+    // admin). Verb-heuristic caught execute_/run_standards_ but missed bare run_*
+    // pattern in initial port (warden #453 finding 2026-06-18). Per warden criterion:
+    // blast-radius-bounded-by-EXECUTION-SCOPE, not verb-string; arbitrary-RCE = admin.
+    datto_run_quickjob: { entityType: 'generic', ttlMs: 0, isWrite: true, isAdmin: true },
   },
 
   // ===========================================================================
@@ -425,11 +433,14 @@ export const VENDOR_TOOL_CONFIG: Record<string, Record<string, ToolConfig>> = {
     cipp_list_tenants:                     { entityType: 'generic', ttlMs: 0, isWrite: false },
     cipp_list_domain_health:               { entityType: 'generic', ttlMs: 0, isWrite: false },
     cipp_list_licenses:                    { entityType: 'generic', ttlMs: 0, isWrite: false },
-    cipp_list_bpa:                         { entityType: 'generic', ttlMs: 0, isWrite: false },
+    // SECURITY: Best Practices Analyzer findings = tenant security-assessment data per
+    // warden 6-class criterion (v) reads SENSITIVE data → ADMIN (#453 re-push 2026-06-18).
+    cipp_list_bpa:                         { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
     cipp_list_standards:                   { entityType: 'generic', ttlMs: 0, isWrite: false },
     cipp_list_mfa_users:                   { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
-    cipp_get_tenant_drift:                 { entityType: 'generic', ttlMs: 0, isWrite: false },
-    cipp_get_tenant_alignment:             { entityType: 'generic', ttlMs: 0, isWrite: false },
+    // SECURITY: tenant security-assessment data per warden 6-class criterion (v) → ADMIN.
+    cipp_get_tenant_drift:                 { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
+    cipp_get_tenant_alignment:             { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
     cipp_ping:                             { entityType: 'generic', ttlMs: 0, isWrite: false },
     cipp_list_audit_logs:                  { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
     cipp_list_groups:                      { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
@@ -519,7 +530,11 @@ export const VENDOR_TOOL_CONFIG: Record<string, Record<string, ToolConfig>> = {
     liongard_environments_create: { entityType: 'generic', ttlMs: 0, isWrite: true },
     liongard_environments_related: { entityType: 'generic', ttlMs: 0, isWrite: false },
     liongard_inspections_create_launchpoint: { entityType: 'generic', ttlMs: 0, isWrite: true },
-    liongard_inspections_run: { entityType: 'generic', ttlMs: 0, isWrite: true },
+    // SECURITY: Liongard inspections execute infra-discovery probes on customer
+    // infrastructure = unbounded tenant-side-effect process (class ii per warden
+    // 6-class criterion). Same blast-radius as liongard_agents_delete (already
+    // admin) and cipp_run_standards_check. Warden #453 finding 2026-06-18.
+    liongard_inspections_run: { entityType: 'generic', ttlMs: 0, isWrite: true, isAdmin: true },
     liongard_inventory_device_get: { entityType: 'generic', ttlMs: 0, isWrite: false },
     liongard_inventory_identity_get: { entityType: 'generic', ttlMs: 0, isWrite: false },
     liongard_metrics_evaluate: { entityType: 'generic', ttlMs: 0, isWrite: true },
@@ -534,7 +549,9 @@ export const VENDOR_TOOL_CONFIG: Record<string, Record<string, ToolConfig>> = {
     auvik_interfaces_list:      { entityType: 'generic', ttlMs: 0, isWrite: false },
     auvik_tenants_detail:       { entityType: 'generic', ttlMs: 0, isWrite: false },
     auvik_networks_list:        { entityType: 'generic', ttlMs: 0, isWrite: false },
-    auvik_entities_list_audits: { entityType: 'generic', ttlMs: 0, isWrite: false },
+    // SECURITY: entity audit log read = forensics-class sensitive data per warden
+    // 6-class criterion (v) → ADMIN (#453 re-push 2026-06-18).
+    auvik_entities_list_audits: { entityType: 'generic', ttlMs: 0, isWrite: false, isAdmin: true },
     auvik_tenants_get:          { entityType: 'generic', ttlMs: 0, isWrite: false },
     auvik_configurations_list:  { entityType: 'generic', ttlMs: 0, isWrite: false },
     auvik_billing_client_usage: { entityType: 'generic', ttlMs: 0, isWrite: false },
