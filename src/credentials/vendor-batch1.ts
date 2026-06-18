@@ -112,7 +112,9 @@ export const DEFERRED_FROM_BATCH_1_SLUGS: Readonly<Record<string, string>> = {
   'digitalocean-doks': 'factory-emitted-do-slug',
   'digitalocean-droplets': 'factory-emitted-do-slug',
   'digitalocean-functions': 'factory-emitted-do-slug',
-  'digitalocean-gradient-ai': 'factory-emitted-do-slug',
+  // 'digitalocean-gradient-ai' HIDDEN at launch — see vendor-config.ts (NXDOMAIN
+  // at gradient-ai.mcp.digitalocean.com; live-probed 2026-06-18). Re-add this
+  // line once the DO subdomain is confirmed.
   'digitalocean-inference': 'factory-emitted-do-slug',
   'digitalocean-networking': 'factory-emitted-do-slug',
   'digitalocean-spaces': 'factory-emitted-do-slug',
