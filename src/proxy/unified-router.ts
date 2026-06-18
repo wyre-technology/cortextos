@@ -23,6 +23,7 @@ import { ToolCache, type McpTool } from './tool-cache.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 import { getSql } from '../db/context.js';
+import { tierGate, tierDeniedRpcMessage } from '../auth/tier-gate.js';
 import { getUserPrimaryOrgId } from './request-org-context.js';
 import { getOnpremCapsForOrg } from './onprem-capability-lookup.js';
 import { decideOnpremRoute } from './onprem-fork-decision.js';
@@ -410,6 +411,48 @@ export function unifiedProxyRoutes(deps: UnifiedProxyDeps) {
                   message: `Tool "${originalToolName}" is not permitted for your scope`,
                 },
               });
+            }
+
+            // --------------- Permission-tier runtime gate (Phase-2) ---------------
+            // Flag-off = provable-no-effect (tierGate short-circuits when
+            // config.permissionTiers is false). Sits AFTER scope-allows and
+            // BEFORE the rewrite+vendor-fetch path. Both checks are independent
+            // intersections; tier-deny short-circuits before the prompt-capture
+            // gate + cache + session + vendor-fetch.
+            //
+            // CARVE-OUT: this branch only fires when `injection.orgId` is set
+            // (org-scoped credentials). Personal credentials (BYOC user-scope)
+            // pass through unchanged — tier is an ORG concept; personal-cred is
+            // a STRUCTURAL non-org-context, not a silent-fail-open. The
+            // injection.orgId-vs-userId split is set by the credential-injector
+            // based on the cred-record itself, NOT by caller request input —
+            // an org-scoped tool-call cannot be coerced into the no-orgId path
+            // by the caller. (Warden DEEP review: verify this property at the
+            // credential-injector seam.)
+            //
+            // FAIL-CLOSED on membership-null: pass raw `membership?.role ?? null`
+            // (NOT `?? 'member'` — that would write-tier an unresolvable caller,
+            // a silent fail-open). null → tierGate DENY via `unresolvable-caller`.
+            if (injection.orgId) {
+              const membership = await orgService.getMembership(injection.orgId, injection.userId);
+              const role = membership?.role ?? null;
+              const tierResult = tierGate({
+                effectiveRole: role,
+                vendorSlug,
+                toolName: originalToolName,
+                orgId: injection.orgId,
+                actorId: injection.userId,
+              });
+              if (!tierResult.allowed) {
+                return reply.send({
+                  jsonrpc: '2.0',
+                  id: body?.id ?? null,
+                  error: {
+                    code: -32601,
+                    message: tierDeniedRpcMessage(tierResult.reason, originalToolName),
+                  },
+                });
+              }
             }
 
             // Rewrite body with un-prefixed tool name

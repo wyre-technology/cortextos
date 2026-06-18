@@ -11,6 +11,7 @@ import { config } from '../config.js';
 import { ResultCache, VENDOR_TOOL_CONFIG } from './result-cache.js';
 import { shouldCapturePrompt, captureArguments, summarizeResponse } from '../audit/prompt-capture.js';
 import { getSql } from '../db/context.js';
+import { tierGate, tierDeniedRpcMessage } from '../auth/tier-gate.js';
 
 /**
  * Build the upstream header set for a request proxied to a vendor MCP
@@ -180,6 +181,45 @@ export function proxyRoutes(deps: ProxyDeps) {
           if (injection.orgId && mcpMethod) {
             const membership = await orgService.getMembership(injection.orgId, injection.userId);
             const role = membership?.role ?? 'member';
+
+            // --------------- Permission-tier runtime gate (Phase-2) ---------------
+            // Gate every tools/call by callerCanInvoke(callerTier, tool). Flag-off =
+            // provable-no-effect (tierGate short-circuits when config.permissionTiers
+            // is false). Sits BEFORE the existing tool-allowlist enforcement so a
+            // tier-deny short-circuits the allowlist lookup (cheaper) — both checks
+            // are independent intersections in the request path.
+            //
+            // CARVE-OUT: this branch only fires when `injection.orgId` is set
+            // (org-scoped credentials). Personal credentials (BYOC user-scope) have
+            // no OrgRole to resolve — tier is an ORG concept. Personal-cred calls
+            // are an EXPLICIT non-org-context allowlist carve-out, not a silent
+            // fail-open: they pass through this site unchanged. The outer
+            // `if (injection.orgId && mcpMethod)` is the carve-out boundary.
+            //
+            // FAIL-CLOSED on membership-null: if membership is missing for an
+            // org-scoped injection (shouldn't happen — credential-injector gates
+            // this — but paranoid-safety), tierGate gets `effectiveRole: null`
+            // and DENIES via `unresolvable-caller`. We pass the raw value
+            // (no `?? 'member'` default) so a null role explicitly fail-closes.
+            if (mcpMethod === 'tools/call' && toolName) {
+              const tierResult = tierGate({
+                effectiveRole: membership?.role ?? null,
+                vendorSlug,
+                toolName,
+                orgId: injection.orgId,
+                actorId: injection.userId,
+              });
+              if (!tierResult.allowed) {
+                return reply.send({
+                  jsonrpc: '2.0',
+                  id: body?.id ?? null,
+                  error: {
+                    code: -32601,
+                    message: tierDeniedRpcMessage(tierResult.reason, toolName),
+                  },
+                });
+              }
+            }
 
             // Owners are never filtered
             if (role !== 'owner') {
