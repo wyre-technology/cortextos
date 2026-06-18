@@ -162,7 +162,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
       customerId: customer.id,
       basePriceId,
       seatPriceId,
-      seatBilling: { billableSeats: opts.billableSeats },
+      seatBilling: { billableSeats: opts.billableSeats, baseCents: 39_900 },
       orgId: opts.orgId,
       trialPeriodDays: opts.trialPeriodDays,
     });
@@ -298,7 +298,7 @@ describeIfEnabled('TRIAL-END CHARGE CONTRACT — real Stripe behavior', () => {
       customerId: first.customer.id,
       basePriceId,
       seatPriceId,
-      seatBilling: { billableSeats: 1 },
+      seatBilling: { billableSeats: 1, baseCents: 39_900 },
       orgId,
     });
     const subAgain = await stripe.subscriptions.create(params, {

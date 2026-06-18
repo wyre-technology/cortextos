@@ -78,6 +78,16 @@ export type AdminEventType =
   // auth0_connection_id, display_name?
   | "idp_connection_created"
   | "idp_connection_deleted"
+  // WYREAI-25 (b) EAP slice. Fires when an admin grants or revokes the
+  // EAP org_fee waiver via POST /admin/orgs/:orgId/eap-waiver(/revoke).
+  // Metadata for the grant carries reason_note (free-form admin note,
+  // e.g. "Approved by Aaron via Slack 2026-06-18"). The grant row itself
+  // (org_discounts) carries granted_by + granted_at as the customer-
+  // facing SoT; this audit-log row is the chronological admin-trail
+  // viewer SoT (belt-and-suspenders pattern per ruby msg-1781749672262,
+  // distinct read-side consumers, same SoT semantics).
+  | "eap_waiver_granted"
+  | "eap_waiver_revoked"
   // Track C reseller-settings sweep-3 API & Webhooks tab (June 29
   // launch directive, boss msg-1781452776703 + split-into-substrate-PR-A
   // per Aaron's UI-Figma-first directive msg-1781453810337). Per-reseller-

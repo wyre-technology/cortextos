@@ -1,13 +1,17 @@
 import type { Organization } from '../../org/org-service.js';
 import type { PlanDefinition } from '../../billing/plan-catalog.js';
 import type { SeatBilling } from '../../billing/seat-service.js';
-import { ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
 import { escapeHtml, jsonForScriptEmbed } from '../helpers.js';
 import {
   composedBillLine,
   seatBreakdownLine,
   formatUsd,
   formatUsdExact,
+  findEapGrant,
+  eapWaiverChipLine,
+  eapPedigreeTooltip,
+  invoiceReconcileNote,
+  planSectionDesc,
 } from './seat-billing-copy.js';
 import {
   ICON_INFO,
@@ -52,6 +56,16 @@ export interface TeamBillingData {
   dunning: DunningView;
   /** First name for personalised copy; null falls back to "there". */
   firstName: string | null;
+  /**
+   * Display name of the admin who granted the EAP waiver, resolved at the
+   * route layer from the OrgDiscount row's granted_by user_id. Used in the
+   * chip's on-hover tooltip ("Granted by {name} on {date}"). When null,
+   * the tooltip falls back to the raw user_id — degrades-gracefully if the
+   * resolver isn't wired or the row references a deleted user. Only
+   * relevant when seatBilling.discounts contains an EAP grant; otherwise
+   * unused.
+   */
+  eapGrantedByDisplayName?: string | null;
 }
 
 // =============================================================================
@@ -501,7 +515,8 @@ function renderPlanCard(data: TeamBillingData): string {
   const { seatBilling, trial } = data;
   const billLabel = trial ? 'After your trial' : 'Monthly bill';
   return `
-    <p class="section-desc">Everything included — ${escapeHtml(formatUsd(ORG_FEE_CENTS))} base plus ${escapeHtml(formatUsd(PER_SEAT_PRICE_CENTS))} per seat. No tiers, no usage limits.</p>
+    <p class="section-desc">${escapeHtml(planSectionDesc(seatBilling))}</p>
+    ${renderEapWaiverChip(seatBilling, data.eapGrantedByDisplayName)}
     <div class="plan-summary">
       <div class="plan-line">
         <span class="plan-line-label">${escapeHtml(billLabel)}</span>
@@ -516,10 +531,29 @@ function renderPlanCard(data: TeamBillingData): string {
       </div>
     </div>
     <p class="invoice-reconcile-note">
-      Your invoice itemizes this as two lines — the ${escapeHtml(formatUsd(ORG_FEE_CENTS))}
-      base and the per-seat charge — and reconciles exactly with the breakdown above.
+      ${escapeHtml(invoiceReconcileNote(seatBilling))}
       The full invoice is in your Stripe billing portal below.
     </p>`;
+}
+
+/**
+ * The EAP-waiver indicator chip at the top of the plan-card body. Renders
+ * empty for un-discounted orgs (so the un-waived card layout is unchanged).
+ * Ruby voice-batch (msg-1781750560957): middot separator + spelled-out
+ * "Early Adopter Program" + consequence-frame "$0 org fee". On-hover
+ * pedigree tooltip pulls "Granted by {admin} on {date}" from the row.
+ */
+function renderEapWaiverChip(
+  sb: SeatBilling,
+  grantedByDisplayName: string | null | undefined,
+): string {
+  const grant = findEapGrant(sb);
+  if (!grant) return '';
+  const tooltip = eapPedigreeTooltip(grant, grantedByDisplayName ?? null);
+  return `
+    <div class="eap-waiver-chip" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">
+      ${escapeHtml(eapWaiverChipLine())}
+    </div>`;
 }
 
 /**

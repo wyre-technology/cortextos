@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { computeSeatBilling, DefaultSeatService, type SeatCounts } from './seat-service.js';
 import { INCLUDED_AGENT_SEATS, ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from './prices.js';
+import type { OrgDiscount } from './discounts.js';
+
+const EAP_WAIVER: OrgDiscount = Object.freeze({
+  reason: 'eap',
+  appliesTo: 'org_fee',
+  percent: 100,
+  grantedBy: 'admin-x',
+  grantedAt: '2026-06-18T00:00:00.000Z',
+});
 
 describe('computeSeatBilling — flat-pricing worked examples', () => {
   // FLAT model (Aaron 2026-05-26) + AGENTS-BILLABLE (Aaron 2026-06-17,
@@ -151,6 +160,43 @@ describe('computeSeatBilling — defensive input handling', () => {
   });
 });
 
+describe('computeSeatBilling — discount integration (WYREAI-25 EAP slice)', () => {
+  // The page-and-billing-agree contract from PR (a) extends to discounts
+  // via the shared applyDiscounts helper. computeSeatBilling, the team-
+  // billing page, AND subscription-factory all read the same SeatBilling
+  // snapshot — no parallel arithmetic.
+
+  it('un-discounted org is byte-identical to omitting the discounts arg', () => {
+    const without = computeSeatBilling({ humans: 5, agents: 2 });
+    const withEmpty = computeSeatBilling({ humans: 5, agents: 2 }, []);
+    expect(without).toEqual(withEmpty);
+    expect(without.discounts).toEqual([]);
+    expect(without.baseCents).toBe(ORG_FEE_CENTS);
+  });
+
+  it('EAP waiver → baseCents=0, monthlyTotalCents = seatTotal, discounts surfaces row', () => {
+    const sb = computeSeatBilling({ humans: 5, agents: 2 }, [EAP_WAIVER]);
+    expect(sb.baseCents).toBe(0);
+    expect(sb.seatTotalCents).toBe(PER_SEAT_PRICE_CENTS * 7); // 5h + 2a = 7 billable
+    expect(sb.monthlyTotalCents).toBe(PER_SEAT_PRICE_CENTS * 7); // base waived
+    expect(sb.discounts).toEqual([EAP_WAIVER]);
+  });
+
+  it('EAP waiver preserves billableSeats — only the BASE is dropped, seat math untouched', () => {
+    const sb = computeSeatBilling({ humans: 5, agents: 4 }, [EAP_WAIVER]);
+    expect(sb.billableSeats).toBe(9); // 5h + 4a, AGENTS-BILLABLE math
+    expect(sb.baseCents).toBe(0);
+    expect(sb.seatTotalCents).toBe(PER_SEAT_PRICE_CENTS * 9);
+    expect(sb.monthlyTotalCents).toBe(PER_SEAT_PRICE_CENTS * 9);
+  });
+
+  it('EAP-waived snapshot is still frozen — trial-end contract is type-enforced', () => {
+    const sb = computeSeatBilling({ humans: 5, agents: 2 }, [EAP_WAIVER]);
+    expect(Object.isFrozen(sb)).toBe(true);
+    expect(Object.isFrozen(sb.discounts)).toBe(true);
+  });
+});
+
 describe('DefaultSeatService — wires OrgService into the same arithmetic', () => {
   function makeStubOrgService(humans: number, agents: number) {
     return {
@@ -161,17 +207,44 @@ describe('DefaultSeatService — wires OrgService into the same arithmetic', () 
     } as unknown as ConstructorParameters<typeof DefaultSeatService>[0];
   }
 
+  function makeStubDiscountService(discounts: ReadonlyArray<OrgDiscount>) {
+    return {
+      getDiscounts: async () => discounts,
+    };
+  }
+
   it('getSeatCounts returns membership lengths verbatim', async () => {
     const svc = new DefaultSeatService(makeStubOrgService(5, 4));
     const counts = await svc.getSeatCounts('org-x');
     expect(counts).toEqual({ humans: 5, agents: 4 });
   });
 
-  it('getSeatBilling returns the same snapshot as computeSeatBilling on raw counts', async () => {
+  it('getSeatBilling returns the same snapshot as computeSeatBilling on raw counts (no discount service)', async () => {
     const svc = new DefaultSeatService(makeStubOrgService(5, 4));
     const fromService = await svc.getSeatBilling('org-x');
     const fromPure = computeSeatBilling({ humans: 5, agents: 4 });
     expect(fromService).toEqual(fromPure);
+  });
+
+  it('getSeatBilling honors EAP discount when the discount service returns one', async () => {
+    const svc = new DefaultSeatService(
+      makeStubOrgService(5, 4),
+      makeStubDiscountService([EAP_WAIVER]),
+    );
+    const sb = await svc.getSeatBilling('org-x');
+    expect(sb.baseCents).toBe(0);
+    expect(sb.monthlyTotalCents).toBe(PER_SEAT_PRICE_CENTS * 9);
+    expect(sb.discounts).toEqual([EAP_WAIVER]);
+  });
+
+  it('getSeatBilling on an un-discounted org with the service present returns no-discount snapshot', async () => {
+    const svc = new DefaultSeatService(
+      makeStubOrgService(5, 4),
+      makeStubDiscountService([]),
+    );
+    const sb = await svc.getSeatBilling('org-x');
+    expect(sb.baseCents).toBe(ORG_FEE_CENTS);
+    expect(sb.discounts).toEqual([]);
   });
 
   it('INCLUDED_AGENT_SEATS constant is the single knob for inclusion changes', () => {

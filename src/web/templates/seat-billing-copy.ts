@@ -26,6 +26,7 @@
 
 import type { SeatBilling } from '../../billing/seat-service.js';
 import { ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
+import { isOrgFeeFullyWaived, type OrgDiscount } from '../../billing/discounts.js';
 
 /**
  * Terse money — whole-dollar cents → "$600", non-whole → "$6.50". For
@@ -63,8 +64,20 @@ function plural(n: number, noun: string): string {
  * off `sb.monthlyTotalCents` (the SoT field on the snapshot), never
  * recomputed here — so this line cannot disagree with the trial banner,
  * the invoice, or the Stripe subscription quantity.
+ *
+ * EAP slice (WYREAI-25, boss msg-1781749682091 — A* + shared-helper GO):
+ * when the org_fee is fully waived (EAP grant via mig 054's org_discounts),
+ * the prefix collapses to the pure-math form, e.g. "7 seats × $39 = $273/mo".
+ * The EAP indicator chip directly above the math line in renderPlanCard
+ * provides the context, so the math reads as a complete-thought standalone
+ * (ruby msg-1781750560957 voice-call #3, MSP-owner-read judgment confirmed
+ * for top-of-card-body chip placement).
  */
 export function composedBillLine(sb: SeatBilling): string {
+  if (isOrgFeeFullyWaived(sb.discounts)) {
+    return `${plural(sb.billableSeats, 'seat')} × ${formatUsd(PER_SEAT_PRICE_CENTS)}`
+      + ` = ${formatUsd(sb.monthlyTotalCents)}/mo`;
+  }
   return `${formatUsd(ORG_FEE_CENTS)} base + ${plural(sb.billableSeats, 'seat')}`
     + ` × ${formatUsd(PER_SEAT_PRICE_CENTS)} = ${formatUsd(sb.monthlyTotalCents)}/mo`;
 }
@@ -114,4 +127,116 @@ export function memberSeatConsentCopy(
   return opts.trialing
     ? `Adds 1 member seat. ${price}/mo, applied when your trial ends.`
     : `Adds 1 member seat. ${price}/mo, prorated for the remainder of this cycle.`;
+}
+
+// ---------------------------------------------------------------------------
+// EAP slice — copy for the discount-applied surfaces (WYREAI-25)
+// ---------------------------------------------------------------------------
+//
+// Ruby voice-batch (msg-1781750560957, approved verbatim under (b)):
+//   - Chip:   "Early Adopter Program · $0 org fee"
+//             middot (·) separator beats em-dash, spelled-out first-mention
+//   - Pedigree tooltip: "Granted by {admin} on {Mon DD, YYYY}"
+//             short-format date for tooltip density; admin already has
+//             year context on the page (ruby msg-1781750608088)
+//   - Reconcile-note: "Your invoice shows the seat charge only. Your org
+//             fee is waived under the Early Adopter Program."
+//   - Section-desc (un-waived): em-dash → period (pre-existing ICP fix
+//             folded in per ruby's call, msg-1781750560957)
+//
+// Axis-rules adopted from ruby's msg-1781750560957 §A-C:
+//   - First mention spells out "Early Adopter Program"; subsequent
+//     mentions in the same card may abbreviate EAP.
+//   - "Waived" = consequence-frame (customer-read).
+//   - "Granted" = pedigree-frame (admin-action).
+
+/**
+ * Find the EAP grant in a SeatBilling snapshot's discount array, if any.
+ * Pearl-internal helper for the render branches. Returns the first
+ * eap/org_fee row — there is at most one by mig 054's PK(org_id, reason).
+ */
+export function findEapGrant(sb: SeatBilling): OrgDiscount | null {
+  for (const d of sb.discounts) {
+    if (d.reason === 'eap') return d;
+  }
+  return null;
+}
+
+/**
+ * The chip copy shown at the top of the billing-card body for an
+ * EAP-waived org. Spelled-out program name at first-mention; consequence-
+ * framed ("$0 org fee") as the customer-facing readout.
+ */
+export function eapWaiverChipLine(): string {
+  return 'Early Adopter Program · $0 org fee';
+}
+
+/**
+ * Short-format date for the pedigree tooltip: "Jun 18, 2026". Implicit-
+ * year is fine for short-term display; forensic audit-log surfaces use
+ * full-format with timezone separately.
+ */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/**
+ * The pedigree tooltip shown on hover over the EAP chip. Pulled from the
+ * grant's granted_by + granted_at — the audit-housed-in-primitive payoff
+ * (ruby msg-1781749672262, audit pattern #2): one row, three consumers
+ * (customer-facing tooltip + admin-trail-viewer chronological log + the
+ * adminAuditService.log emit at grant time).
+ *
+ * `grantedByDisplayName` is the admin's display name resolved at the
+ * route layer (the row stores user_id only — call sites enrich). If the
+ * resolver returns null, falls back to the raw granted_by id.
+ */
+export function eapPedigreeTooltip(
+  grant: OrgDiscount,
+  grantedByDisplayName: string | null,
+): string {
+  const who = grantedByDisplayName ?? grant.grantedBy;
+  return `Granted by ${who} on ${shortDate(grant.grantedAt)}`;
+}
+
+/**
+ * The italic invoice-reconcile-note that sits at the bottom of the plan
+ * card. Two variants:
+ *   - Un-waived: the existing two-line itemization sentence (with the
+ *     pre-existing em-dash replaced by a colon per ruby's voice-batch
+ *     fold-in).
+ *   - Waived: the single-seat-line variant explaining the org-fee absence.
+ */
+export function invoiceReconcileNote(sb: SeatBilling): string {
+  if (isOrgFeeFullyWaived(sb.discounts)) {
+    return 'Your invoice shows the seat charge only. Your org fee'
+      + ' is waived under the Early Adopter Program.';
+  }
+  return `Your invoice itemizes this as two lines: the ${formatUsd(ORG_FEE_CENTS)}`
+    + ' base and the per-seat charge. Both reconcile exactly with the'
+    + ' breakdown above.';
+}
+
+/**
+ * The section-desc one-liner above the plan summary. Two variants:
+ *   - Un-waived: the existing "$399 base + $39/seat" copy (with the
+ *     pre-existing em-dash replaced by a period per ruby's voice-batch
+ *     fold-in).
+ *   - Waived: "$39 per seat. Your org fee is waived under the Early
+ *     Adopter Program."
+ */
+export function planSectionDesc(sb: SeatBilling): string {
+  const perSeat = formatUsd(PER_SEAT_PRICE_CENTS);
+  if (isOrgFeeFullyWaived(sb.discounts)) {
+    return `Everything included. ${perSeat} per seat. Your org fee is`
+      + ' waived under the Early Adopter Program.';
+  }
+  const base = formatUsd(ORG_FEE_CENTS);
+  return `Everything included. ${base} base plus ${perSeat} per seat. No`
+    + ' tiers, no usage limits.';
 }

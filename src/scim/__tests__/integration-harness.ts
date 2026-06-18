@@ -130,6 +130,23 @@ async function applyBootstrap(sql: postgres.Sql): Promise<void> {
       UNIQUE(reseller_org_id, user_id)
     )
   `;
+  // Mirrors migration 054 — per-org discount primitive (EAP slice (b),
+  // annual-prepay slice (c)). The mig adds CHECK constraints + an RLS
+  // SELECT policy; this bootstrap only needs the table shape so the
+  // schema-harness-drift gate (the one that caught mig 052) sees mig 054
+  // as structurally in sync. SCIM tests don't exercise discounts, so
+  // CHECK constraints + RLS are intentionally omitted here.
+  await sql`
+    CREATE TABLE IF NOT EXISTS org_discounts (
+      org_id      TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      reason      TEXT NOT NULL,
+      applies_to  TEXT NOT NULL,
+      percent     INTEGER NOT NULL,
+      granted_by  TEXT NOT NULL REFERENCES users(id),
+      granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (org_id, reason)
+    )
+  `;
 }
 
 /**
@@ -171,6 +188,7 @@ const ALLOWED_SKIPS: ReadonlyArray<{ file: string; reason: string }> = [
   { file: '050_org_tool_allowlist_admin_write.sql', reason: 'WYREAI-66: DROP/CREATE POLICY on org_tool_allowlist (admin-write gate via conduit_is_org_admin SECURITY DEFINER helper). org_tool_allowlist is not in the SCIM bootstrap — same class as 014/022/030. SCIM tests do not exercise RLS policies.' },
   { file: '051_org_tool_allowlist_delete_policy.sql', reason: 'WYREAI-67: CREATE POLICY org_tool_allowlist_delete on org_tool_allowlist (was missing — no RLS DELETE coverage). org_tool_allowlist is not in the SCIM bootstrap — same class as 014/022/030/050. SCIM tests do not exercise RLS policies.' },
   { file: '052_widen_reseller_member_clause_all_customer_tables.sql', reason: 'LAYER-B subtenant-RLS fix (boss msg-1781725590563): widens reseller-clause from admin-only to member-of-parent across 7 customer-facing tables (organizations + org_members + org_credentials + org_invitations + org_tool_allowlist + org_server_access + admin_audit_log), mirroring mig 030 pattern for the broader read+write substrate. org_credentials + org_tool_allowlist + org_server_access + admin_audit_log are NOT in the SCIM bootstrap (same class as 014/022/030/050/051 — they are the subtenant read/write substrate for the reseller-on-customer customer-detail flow, NOT SCIM-provisioned tables). SCIM tests do not exercise the customer-detail reseller-flow nor the RLS-widening for it; mig 052 is orthogonal to SCIM identity-provisioning business logic.' },
+  { file: '054_org_discounts.sql', reason: 'WYREAI-25 (b) EAP slice: org_discounts CREATE POLICY for SELECT references conduit_is_member_of_org + conduit_is_reseller_admin_of_parent + conduit_is_reseller_member_of_parent + conduit_is_reseller_member_of from mig 018 (which SCIM already skips). Same class as 025/027/030/031/033/035/050/051/052. The table itself IS in the bootstrap (applyBootstrap above) so any test that referenced org_discounts would work; SCIM tests do not exercise the EAP/discount surface or its reseller-clause RLS — discount math is orthogonal to SCIM identity-provisioning business logic.' },
 ];
 
 const SKIP_LOG_PREFIX = 'HARNESS_SKIP';

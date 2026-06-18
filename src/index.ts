@@ -32,6 +32,7 @@ import { createAuth0OrgProvisioner } from './org/org-auth0-provisioner.js';
 import { OrgIdpConnectionService } from './org/org-idp-connection-service.js';
 import { DefaultBillingGate } from './billing/gate.js';
 import { DefaultSeatService } from './billing/seat-service.js';
+import { DefaultOrgDiscountService } from './billing/discounts.js';
 import { createConduitSeatSyncer } from './billing/seat-syncer.js';
 import { AuditService } from './audit/audit-service.js';
 import { AdminAuditService } from './audit/admin-audit-service.js';
@@ -217,7 +218,13 @@ initPools({
 // pool; HTTP requests resolve it to a request-path transaction instead.
 
 const orgService = new OrgService();
-const seatService = new DefaultSeatService(orgService);
+// Per-org discount primitive (mig 054, WYREAI-25). The EAP slice (b) lands
+// here so getSeatBilling honors org_discounts rows at every consumer —
+// display, Stripe sub-create, invoice preview. DefaultOrgDiscountService
+// resolves its connection via getSql() lazily (request-path or system-path
+// depending on the caller's context), same pattern as OrgService.
+const orgDiscountService = new DefaultOrgDiscountService();
+const seatService = new DefaultSeatService(orgService, orgDiscountService);
 // Layer 1: standalone-org creation provisions a Stripe trialing
 // subscription via the conduit provisioner.
 //
@@ -460,6 +467,7 @@ await app.register(adminOrgRoutes({
   billingGate,
   creditService,
   adminAuditService,
+  orgDiscountService,
   orgIdpConnectionService,
   auth0ManagementClient: auth0ManagementClient ?? undefined,
 }));

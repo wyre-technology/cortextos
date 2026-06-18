@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeSeatBilling } from './test-helpers/seat-billing-fixture.js';
+import { makeSeatBilling, EAP_WAIVER } from './test-helpers/seat-billing-fixture.js';
 import {
   formatUsd,
   formatUsdExact,
@@ -7,6 +7,11 @@ import {
   seatBreakdownLine,
   agentSeatConsentCopy,
   memberSeatConsentCopy,
+  findEapGrant,
+  eapWaiverChipLine,
+  eapPedigreeTooltip,
+  invoiceReconcileNote,
+  planSectionDesc,
 } from './seat-billing-copy.js';
 
 describe('formatUsd', () => {
@@ -106,5 +111,103 @@ describe('memberSeatConsentCopy — a human seat is always $39', () => {
   it('trial framing on-trial', () => {
     expect(memberSeatConsentCopy(makeSeatBilling(5, 0), { trialing: true }))
       .toBe('Adds 1 member seat. $39/mo, applied when your trial ends.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EAP slice — ruby voice-batch APPROVED, msg-1781750560957 (WYREAI-25 b)
+// ---------------------------------------------------------------------------
+
+describe('composedBillLine — EAP-waived format-lock', () => {
+  // Voice-call #3: pure-math no-prefix wins for the top-of-card-body chip
+  // placement — chip provides the context, math reads complete-thought
+  // standalone via symbolic operators (×, =).
+  it('drops the "$399 base + " prefix when org_fee fully waived', () => {
+    expect(composedBillLine(makeSeatBilling(5, 2, [EAP_WAIVER])))
+      .toBe('7 seats × $39 = $273/mo');
+  });
+
+  it('1-seat waived smallest org reads cleanly with singular', () => {
+    expect(composedBillLine(makeSeatBilling(1, 0, [EAP_WAIVER])))
+      .toBe('1 seat × $39 = $39/mo');
+  });
+
+  it('un-waived form is identical to the prior shape (back-compat)', () => {
+    expect(composedBillLine(makeSeatBilling(5, 2)))
+      .toBe('$399 base + 7 seats × $39 = $672/mo');
+  });
+});
+
+describe('findEapGrant', () => {
+  it('returns the EAP row when present', () => {
+    expect(findEapGrant(makeSeatBilling(5, 2, [EAP_WAIVER]))).toEqual(EAP_WAIVER);
+  });
+  it('returns null for un-discounted orgs', () => {
+    expect(findEapGrant(makeSeatBilling(5, 2))).toBe(null);
+  });
+});
+
+describe('eapWaiverChipLine — locked verbatim per ruby voice-batch', () => {
+  it('renders "Early Adopter Program · $0 org fee" with middot separator', () => {
+    expect(eapWaiverChipLine()).toBe('Early Adopter Program · $0 org fee');
+  });
+  it('contains no em-dashes (ICP-guide voice rule)', () => {
+    expect(eapWaiverChipLine()).not.toContain('—');
+  });
+});
+
+describe('eapPedigreeTooltip — pulls granted_by + short-format date from the row', () => {
+  it('uses the resolved display name when provided', () => {
+    expect(eapPedigreeTooltip(EAP_WAIVER, 'Aaron Sachs'))
+      .toBe('Granted by Aaron Sachs on Jun 18, 2026');
+  });
+
+  it('falls back to raw granted_by user_id when display name is null', () => {
+    expect(eapPedigreeTooltip(EAP_WAIVER, null))
+      .toBe('Granted by test-admin on Jun 18, 2026');
+  });
+
+  it('short-format date with implicit-year is tooltip-density appropriate (ruby msg-1781750608088)', () => {
+    expect(eapPedigreeTooltip(EAP_WAIVER, 'admin')).toMatch(/Jun 18, 2026$/);
+  });
+});
+
+describe('invoiceReconcileNote — two variants per ruby voice-batch', () => {
+  it('un-waived note: period-split (em-dash voice-violation fix folded in)', () => {
+    expect(invoiceReconcileNote(makeSeatBilling(5, 2)))
+      .toBe(
+        'Your invoice itemizes this as two lines: the $399 base and the'
+        + ' per-seat charge. Both reconcile exactly with the breakdown above.',
+      );
+  });
+
+  it('waived note: "shows the seat charge only"', () => {
+    expect(invoiceReconcileNote(makeSeatBilling(5, 2, [EAP_WAIVER])))
+      .toBe(
+        'Your invoice shows the seat charge only. Your org fee is'
+        + ' waived under the Early Adopter Program.',
+      );
+  });
+
+  it('neither variant has em-dashes (ICP-guide voice rule)', () => {
+    expect(invoiceReconcileNote(makeSeatBilling(5, 2))).not.toContain('—');
+    expect(invoiceReconcileNote(makeSeatBilling(5, 2, [EAP_WAIVER]))).not.toContain('—');
+  });
+});
+
+describe('planSectionDesc — two variants per ruby voice-batch', () => {
+  it('un-waived: period-split (em-dash voice-violation fix folded in)', () => {
+    expect(planSectionDesc(makeSeatBilling(5, 0)))
+      .toBe('Everything included. $399 base plus $39 per seat. No tiers, no usage limits.');
+  });
+
+  it('waived: $39-only + EAP frame', () => {
+    expect(planSectionDesc(makeSeatBilling(5, 0, [EAP_WAIVER])))
+      .toBe('Everything included. $39 per seat. Your org fee is waived under the Early Adopter Program.');
+  });
+
+  it('neither variant has em-dashes (ICP-guide voice rule)', () => {
+    expect(planSectionDesc(makeSeatBilling(5, 0))).not.toContain('—');
+    expect(planSectionDesc(makeSeatBilling(5, 0, [EAP_WAIVER]))).not.toContain('—');
   });
 });

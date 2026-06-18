@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Organization } from '../../org/org-service.js';
 import { getPlan } from '../../billing/plan-catalog.js';
-import { makeSeatBilling } from './test-helpers/seat-billing-fixture.js';
+import { makeSeatBilling, EAP_WAIVER } from './test-helpers/seat-billing-fixture.js';
 import {
   renderDunningBanner,
   renderDunningChip,
@@ -362,8 +362,106 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   });
 
   it('shows the two-line-item invoice reconcile note (S4)', () => {
+    // Ruby voice-batch (msg-1781750560957) folded the existing em-dash
+    // ICP-violation in this note into the EAP PR. Reconcile-note now reads:
+    //   "Your invoice itemizes this as two lines: the $399 base and the
+    //    per-seat charge. Both reconcile exactly with the breakdown above."
     const html = renderTeamBilling(mockData({ state: 'none' }));
     expect(html).toContain('itemizes this as two lines');
-    expect(html).toContain('reconciles exactly');
+    expect(html).toContain('reconcile exactly');
+  });
+});
+
+describe('renderTeamBilling — EAP waiver render (WYREAI-25 (b))', () => {
+  // Ruby voice-batch APPROVED (msg-1781750560957):
+  //   - Chip:        "Early Adopter Program · $0 org fee"
+  //   - Composed:    "7 seats × $39 = $273/mo" (no $399 prefix)
+  //   - Section-desc: "Everything included. $39 per seat. Your org fee is
+  //                    waived under the Early Adopter Program."
+  //   - Reconcile:   "Your invoice shows the seat charge only. Your org
+  //                    fee is waived under the Early Adopter Program."
+  //   - Tooltip:     "Granted by {admin} on Jun 18, 2026" (on chip hover)
+
+  it('renders the EAP indicator chip with the locked voice-batch copy', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+      eapGrantedByDisplayName: 'Aaron Sachs',
+    }));
+    expect(html).toContain('Early Adopter Program · $0 org fee');
+    expect(html).toContain('eap-waiver-chip');
+  });
+
+  it('renders the on-hover pedigree tooltip from granted_by + granted_at', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+      eapGrantedByDisplayName: 'Aaron Sachs',
+    }));
+    // Date is "Jun 18, 2026" from the fixture's 2026-06-18T00:00:00Z
+    // timestamp (UTC midnight; toLocaleDateString in the CI tz still
+    // resolves to Jun 18 in most non-UTC tz, but the test pins on the
+    // display-name + Jun 18 substring to keep it tz-stable for any
+    // tz at most 12h behind UTC).
+    expect(html).toContain('Granted by Aaron Sachs');
+    expect(html).toContain('Jun 18, 2026');
+  });
+
+  it('falls back to raw user_id in tooltip when display name is null', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+      eapGrantedByDisplayName: null,
+    }));
+    // EAP_WAIVER fixture grantedBy is 'test-admin' (see seat-billing-fixture).
+    expect(html).toContain('Granted by test-admin');
+  });
+
+  it('composed bill collapses to pure-math no-prefix form ("N seats × $39 = $X/mo")', () => {
+    // 5 humans + 2 agents = 7 billable seats × $39 = $273. Base waived.
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+    }));
+    expect(html).toContain('7 seats × $39 = $273/mo');
+    expect(html).not.toContain('$399 base + 7 seats');
+  });
+
+  it('section-desc swaps to the waived variant (no "$399 base plus" copy)', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+    }));
+    expect(html).toContain('$39 per seat. Your org fee is waived under the Early Adopter Program');
+    expect(html).not.toContain('$399 base plus');
+  });
+
+  it('reconcile-note swaps to the single-line variant', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+    }));
+    expect(html).toContain('Your invoice shows the seat charge only');
+    expect(html).toContain('Your org fee is waived under the Early Adopter Program');
+    expect(html).not.toContain('itemizes this as two lines');
+  });
+
+  it('un-waived org renders exactly as before — no EAP chip leak', () => {
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2),
+    }));
+    expect(html).not.toContain('Early Adopter Program');
+    expect(html).not.toContain('eap-waiver-chip');
+    expect(html).toContain('$399 base + 7 seats × $39 = $672/mo');
+  });
+
+  it('trial first-charge under EAP equals the (waived) composed-bill total (SoT contract)', () => {
+    // Single-source held through the EAP wire: trial banner first-charge
+    // pulls from seatBilling.monthlyTotalCents, which applyDiscounts has
+    // already reduced to $273 (no $399 base). The Stripe sub-create
+    // factory (subscription-factory.ts) reads the same SeatBilling and
+    // omits the basePriceId line — Stripe will charge $273 at trial_end,
+    // identical to what the banner says here.
+    const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const html = renderTeamBilling(mockData({ state: 'none' }, {
+      seatBilling: makeSeatBilling(5, 2, [EAP_WAIVER]),
+      trial: { endsAt },
+    }));
+    expect(html).toContain('Your first charge is $273.00 on ');
+    expect(html).toContain('7 seats × $39 = $273/mo'); // same number, math-form
   });
 });
