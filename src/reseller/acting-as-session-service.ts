@@ -28,6 +28,13 @@ export type ActingAsRevokeReason =
   | 'role_demoted_below_admin'
   | 'customer_unparented_from_reseller'
   | 'customer_archived'
+  // LAYER-C deleted-customer reason (mig 053 deleted_at distinguishability,
+  // boss msg-1781750604363 warden VERIFY-1 extension). Fires when the
+  // middleware revalidate detects the customer's deleted_at column is
+  // set OR the soft-delete route fires its explicit cascade. Lets
+  // forensics distinguish suspend-revoke from delete-revoke on the
+  // msp_operator_session_revoked event stream.
+  | 'customer_deleted'
   | 'admin_force_revoked';
 
 export interface ActingAsSession {
@@ -125,6 +132,46 @@ export class ActingAsSessionService {
       SELECT * FROM acting_as_sessions WHERE session_id = ${sessionId} LIMIT 1
     `;
     return existing[0] ? this.toEntity(existing[0]) : null;
+  }
+
+  /**
+   * Revoke EVERY active session targeting a given customer org. LAYER-C
+   * suspend side-effect cascade (boss msg-1781747367566 warden pre-prep):
+   * suspending a customer-org must close the by-construction "suspended
+   * but acting_as still works" soft-state hole — every MSP-operator
+   * currently impersonating the suspended customer is force-revoked at
+   * the next request boundary AND their cookie is invalidated server-
+   * side by clearing the active row in this table.
+   *
+   * Used by the suspend route handler (POST /api/orgs/:orgId/suspend).
+   * Idempotent: passing an orgId with zero active sessions returns an
+   * empty array; passing an orgId that's already had its sessions
+   * revoked returns an empty array (the WHERE clause filters on
+   * ended_at IS NULL).
+   *
+   * Returns the revoked sessions so the route handler can fan out audit
+   * events for forensics + ops paging (which actors were mid-impersonation
+   * when the revoke happened — important for incident reconstruction).
+   *
+   * Reason is fixed to a caller-supplied value (typically
+   * 'customer_archived' — semantically closest to "the customer org is no
+   * longer eligible to be impersonated"; the suspend route uses that
+   * one). 'admin_force_revoked' is reserved for the future admin-tooling
+   * path that isn't a customer-lifecycle event.
+   */
+  async revokeAllForCustomerOrg(
+    customerOrgId: string,
+    reason: ActingAsRevokeReason,
+  ): Promise<ActingAsSession[]> {
+    const updated = await this.sql<ActingAsSessionRow[]>`
+      UPDATE acting_as_sessions
+         SET ended_at = NOW(),
+             revoked_reason = ${reason}
+       WHERE on_behalf_of_org_id = ${customerOrgId}
+         AND ended_at IS NULL
+       RETURNING *
+    `;
+    return updated.map((row) => this.toEntity(row));
   }
 
   /**

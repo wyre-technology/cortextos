@@ -134,7 +134,14 @@ export interface ActingAsSessionRevokedEvent {
     | 'actor_removed_from_reseller'      // check 1 failed
     | 'role_demoted_below_admin'         // check 2 failed
     | 'customer_unparented_from_reseller' // check 3 failed (parent-relationship)
-    | 'customer_archived'                 // check 3 failed (deleted_at set)
+    | 'customer_archived'                 // check 3 failed (suspended_at set OR row absent)
+    // LAYER-C deleted-customer reason (mig 053 + boss msg-1781750604363
+    // warden VERIFY-1 extension). Split from customer_archived so the
+    // forensics surface can distinguish operator-pause-revoke from
+    // operator-delete-revoke. Fires when the middleware revalidate
+    // detects `customer.deletedAt` is set OR the soft-delete route
+    // fires its explicit cascade.
+    | 'customer_deleted'                  // check 3 failed (deleted_at set)
     | 'admin_force_revoked';              // out-of-band admin action
   ip: string | null;
   userAgent: string | null;

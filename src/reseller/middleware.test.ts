@@ -343,6 +343,8 @@ describe('makeRequireResellerOrCustomerAccess', () => {
       type: parent ? 'customer' : 'standalone',
       parentOrgId: parent,
       auth0OrgId: null,
+      suspendedAt: null,
+      deletedAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

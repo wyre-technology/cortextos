@@ -14,6 +14,7 @@ import type { CredentialService } from "../credentials/credential-service.js";
 import type { BillingGate } from "../billing/gate.js";
 import { isPaidPlan } from "../billing/gate.js";
 import type { AdminAuditService } from "../audit/admin-audit-service.js";
+import type { ActingAsSessionService } from "../reseller/acting-as-session-service.js";
 import type { OrgApiKeyService } from "./org-api-key-service.js";
 import { getVendor } from "../credentials/vendor-config.js";
 import {
@@ -49,6 +50,19 @@ interface OrgRouteDeps {
    * (msg-1781453810337).
    */
   orgApiKeyService?: OrgApiKeyService;
+  /**
+   * LAYER-C suspend side-effect cascade (WYREAI-171 Phase-3 follow-up,
+   * boss msg-1781747367566 warden pre-prep). The suspend route revokes
+   * every active acting-as session targeting the suspended customer-org
+   * via `revokeAllForCustomerOrg`, closing the "suspended but still
+   * impersonable" soft-state hole by-construction.
+   *
+   * Optional for test-fixture backward-compat — older fixtures that
+   * exercise non-suspend routes shouldn't have to instantiate this
+   * service. The suspend route will 503 cleanly if it's missing rather
+   * than no-op'ing the cascade (a silent skip would re-open the hole).
+   */
+  actingAsSessionService?: ActingAsSessionService;
 }
 
 // requireOrgRole + requireOrgRoleForWrite live in org-route-helpers.ts so the
@@ -75,6 +89,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
     adminAuditService,
     vendorMonitor,
     orgApiKeyService,
+    actingAsSessionService,
   } = deps;
 
   return async function plugin(app: FastifyInstance): Promise<void> {
@@ -243,9 +258,56 @@ export function orgRoutes(deps: OrgRouteDeps) {
       },
     );
 
-    // DELETE /api/orgs/:orgId — delete org
-    app.delete<{ Params: { orgId: string } }>(
+    // DELETE /api/orgs/:orgId — SOFT-delete org (LAYER-C rewrite,
+    // boss msg-1781747367566 warden pre-prep)
+    //
+    // This is the PR-2 substrate change: the pre-PR-2 behavior was a
+    // hard-delete (DELETE FROM organizations) gated at the OWNER
+    // threshold, which closed the destructive-authz hole but left Aaron
+    // (and every reseller-MSP) unable to delete a customer-org from the
+    // acting-as binding (capped effectiveRole='admin' is below 'owner').
+    //
+    // The rewrite splits soft from hard:
+    //   • SOFT-delete (this route): reversible 7-day window — sets
+    //     suspended_at = NOW. Admin-threshold gate (reseller-acting-as
+    //     can do this).
+    //   • Hard-delete (post-window sweeper, follow-up PR): permanent
+    //     DELETE FROM. Owner-threshold gate ONLY, never exposed to
+    //     reseller-acting-as.
+    //
+    // Authz-loosening rationale for warden:
+    //   The launch-safety primitive is reversibility — a 7-day window
+    //   converts a single irreversible mis-click into a recoverable
+    //   one. Owner-threshold is the right gate for irreversible
+    //   actions; admin-threshold is the right gate for reversible
+    //   destructive actions. The split was warden's own pre-prep
+    //   prescription (msg-1781747367566, "PREFER soft-delete with ≥7-day
+    //   reversibility window over hard-delete").
+    //
+    // Warden HARD-REQ artifact:
+    //   • Per-write DB revalidation: requireOrgRoleForWrite consumes the
+    //     acting-as binding, re-checks LIFECYCLE-BIND 3-check on every
+    //     call → 401 on revoked binding (not 200 / 403).
+    //   • Confirmation primitive: body.org_name MUST strict-match the
+    //     org's current name (case + whitespace sensitive); rejected
+    //     400 otherwise. Defeats accidental-click-with-pre-filled-form.
+    //   • Idempotency: re-DELETE on an already-soft-deleted org returns
+    //     200 with the unchanged row (no duplicate audit event); 404
+    //     when the org doesn't exist.
+    //   • Rate-limit: 5 per hour per IP (destructive, plus the typed-
+    //     name confirmation already filters most accidents — 5/hr is
+    //     ample headroom for legitimate MSP workflows).
+    //   • Audit triplet: actingAsAuditTriplet → metadata.acting_as for
+    //     forensics, fired at the soft-delete event.
+    //   • Side-effects: no acting-as cascade here (soft-delete leaves
+    //     suspended_at set; if the org gets restored within the window,
+    //     existing acting-as sessions resume cleanly). The suspend
+    //     route DOES do the cascade — that's the operator-initiated
+    //     "stop everything for this customer" event, distinct from
+    //     "tentatively retire this customer org pending sweeper."
+    app.delete<{ Params: { orgId: string }; Body: { org_name?: unknown } }>(
       "/api/orgs/:orgId",
+      { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -253,15 +315,347 @@ export function orgRoutes(deps: OrgRouteDeps) {
           reply,
           orgService,
           orgId,
-          "owner",
+          "admin",
         );
         if (!user) return;
 
+        // Warden pre-prep #1 — typed-name confirmation. Reject anything
+        // that isn't a string or doesn't strict-match the org's current
+        // name. We re-fetch the org under the request-context (RLS path)
+        // because the helper's per-write revalidation has already
+        // confirmed the actor is admin-scope on this org; getOrg is the
+        // canonical name source.
+        const org = await orgService.getOrg(orgId);
+        if (!org) {
+          return reply.code(404).send({ error: "Organization not found" });
+        }
+        const orgNameClaim = (request.body as { org_name?: unknown })
+          ?.org_name;
+        if (
+          typeof orgNameClaim !== "string" ||
+          orgNameClaim !== org.name
+        ) {
+          return reply.code(400).send({
+            error:
+              "Confirmation mismatch — `org_name` must match the organization's current name exactly.",
+          });
+        }
+
+        // Strict-mode body shape: reject unknown keys (warden pre-prep
+        // "Zod/JSON-schema input validation, strict-mode"). Body must
+        // contain ONLY `org_name`; anything else is suspicious.
+        const bodyKeys = Object.keys(
+          (request.body ?? {}) as Record<string, unknown>,
+        );
+        const extras = bodyKeys.filter((k) => k !== "org_name");
+        if (extras.length > 0) {
+          return reply.code(400).send({
+            error: `Unknown body fields rejected (strict-mode): ${extras.join(", ")}`,
+          });
+        }
+
+        // Idempotency: if already soft-deleted, return the row + skip
+        // the audit-emit + skip the cascade (no event duplication on
+        // retries). COLUMN-SPLIT (mig 053): the marker is `deletedAt`,
+        // not `suspendedAt` — soft-delete and suspend now have
+        // independent state columns.
+        if (org.deletedAt) {
+          return reply.code(200).send(org);
+        }
+
+        const updated = await orgService.softDeleteOrg(orgId);
+
+        // EXPLICIT cascade — defense-in-depth on the LAYER-C column-
+        // split (boss msg-1781750687331 + warden VERIFY-1 verdict
+        // matrix's APPROVE-CLEAN path). The middleware revalidate
+        // already rejects acting-as on `deletedAt IS NOT NULL` (the
+        // implicit cascade), but firing the EXPLICIT
+        // revokeAllForCustomerOrg here is symmetric with the suspend
+        // route AND emits the per-session audit-revoke events
+        // immediately at delete time (vs whenever the next request
+        // happens to revalidate). Safer + more legible for forensics.
+        //
+        // 503 cleanly if session-svc isn't wired — refuses to skip
+        // the cascade silently (same defensive posture as POST
+        // /suspend). The middleware-level reject still catches the
+        // hole on the next tick, but we shouldn't ship a quiet
+        // degradation of the immediate-revoke contract.
+        if (!actingAsSessionService) {
+          request.log.error(
+            { orgId },
+            "soft-delete route: actingAsSessionService not wired — explicit cascade required, refusing to leave the audit-stream silent on delete",
+          );
+          return reply.code(503).send({
+            error:
+              "Soft-delete cascade unavailable in this deployment — acting-as session service is not configured.",
+          });
+        }
+        const revoked = await actingAsSessionService.revokeAllForCustomerOrg(
+          orgId,
+          "customer_deleted",
+        );
+
+        const triplet = actingAsAuditTriplet(request, user);
         void adminAuditService
-          .log({ orgId, actorId: user.sub, eventType: "org_deleted" })
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "customer_org_soft_deleted",
+            metadata: {
+              org_name: org.name,
+              sessions_revoked_count: revoked.length,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
+          })
           .catch((err) => request.log.error(err, "admin audit log failed"));
-        await orgService.deleteOrg(orgId);
-        return reply.code(204).send();
+        return reply
+          .code(200)
+          .send({ org: updated, sessions_revoked: revoked.length });
+      },
+    );
+
+    // POST /api/orgs/:orgId/suspend — suspend a customer-org (LAYER-C)
+    //
+    // Distinct from soft-delete: a suspend is an operator-initiated
+    // "stop this customer NOW" event with no sweeper window. The
+    // acting-as cascade fires here, closing the by-construction
+    // "suspended but still impersonable" hole.
+    //
+    // Same warden disciplines as DELETE:
+    //   • requireOrgRoleForWrite admin-threshold
+    //   • Strict body shape (no unknown keys, no body required at all
+    //     here — suspend has no confirmation primitive because it's
+    //     reversible by definition; un-suspend is a simple POST)
+    //   • Idempotency: re-suspending an already-suspended org no-ops
+    //     and returns 200; no duplicate audit event
+    //   • Rate-limit: 10/hr per IP (less destructive than delete; a
+    //     legitimate MSP might suspend several customers in a single
+    //     incident response sweep)
+    //   • Audit triplet
+    //   • Side-effect cascade: revokeAllForCustomerOrg fires
+    //     immediately after suspendOrg succeeds, emitting one
+    //     msp_operator_session_revoked event per active session via
+    //     the existing acting-as audit boundary (handled by the
+    //     session-service consumer — here we just fire the SQL
+    //     UPDATE and surface the count to the response)
+    app.post<{ Params: { orgId: string }; Body?: unknown }>(
+      "/api/orgs/:orgId/suspend",
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRoleForWrite(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
+        if (!user) return;
+
+        // Strict body — suspend takes no fields; anything is rejected.
+        const bodyKeys = Object.keys(
+          (request.body ?? {}) as Record<string, unknown>,
+        );
+        if (bodyKeys.length > 0) {
+          return reply.code(400).send({
+            error: `Suspend takes no body fields; rejected: ${bodyKeys.join(", ")}`,
+          });
+        }
+
+        const org = await orgService.getOrg(orgId);
+        if (!org) {
+          return reply.code(404).send({ error: "Organization not found" });
+        }
+        if (org.suspendedAt) {
+          return reply.code(200).send({
+            org,
+            sessions_revoked: 0,
+            already_suspended: true,
+          });
+        }
+
+        const updated = await orgService.suspendOrg(orgId);
+
+        // Side-effect cascade — the warden HARD-REQ "Avoid the soft-
+        // state bug" (msg-1781747367566). If the session-service is
+        // wired, revoke every active acting-as targeting this customer;
+        // if it's not wired (dev/test boot before the dep was added),
+        // we 503 rather than silently skip — the soft-state hole would
+        // be a security regression worth failing loudly.
+        if (!actingAsSessionService) {
+          request.log.error(
+            { orgId },
+            "suspend route: actingAsSessionService not wired — cascade required, refusing to leave the soft-state hole open",
+          );
+          return reply.code(503).send({
+            error:
+              "Suspend cascade unavailable in this deployment — acting-as session service is not configured.",
+          });
+        }
+        const revoked = await actingAsSessionService.revokeAllForCustomerOrg(
+          orgId,
+          "customer_archived",
+        );
+
+        const triplet = actingAsAuditTriplet(request, user);
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "customer_org_suspended",
+            metadata: {
+              org_name: org.name,
+              sessions_revoked_count: revoked.length,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+        return reply.code(200).send({
+          org: updated,
+          sessions_revoked: revoked.length,
+        });
+      },
+    );
+
+    // POST /api/orgs/:orgId/unsuspend — unsuspend a customer-org (LAYER-C)
+    //
+    // Counterpart to suspend. Clears suspended_at. Does NOT restore
+    // revoked acting-as sessions (those terminated; the MSP operator
+    // starts a fresh acting-as binding via /switch if they need to
+    // resume operating on the customer).
+    //
+    // Same admin-threshold + strict-body + idempotent + rate-limited +
+    // audit-triplet disciplines as suspend.
+    app.post<{ Params: { orgId: string }; Body?: unknown }>(
+      "/api/orgs/:orgId/unsuspend",
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRoleForWrite(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
+        if (!user) return;
+
+        const bodyKeys = Object.keys(
+          (request.body ?? {}) as Record<string, unknown>,
+        );
+        if (bodyKeys.length > 0) {
+          return reply.code(400).send({
+            error: `Unsuspend takes no body fields; rejected: ${bodyKeys.join(", ")}`,
+          });
+        }
+
+        const org = await orgService.getOrg(orgId);
+        if (!org) {
+          return reply.code(404).send({ error: "Organization not found" });
+        }
+        if (!org.suspendedAt) {
+          return reply.code(200).send({
+            org,
+            already_active: true,
+          });
+        }
+
+        const updated = await orgService.unsuspendOrg(orgId);
+        const triplet = actingAsAuditTriplet(request, user);
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "customer_org_unsuspended",
+            metadata: {
+              org_name: org.name,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+        return reply.code(200).send({ org: updated });
+      },
+    );
+
+    // POST /api/orgs/:orgId/restore — restore a soft-deleted org (LAYER-C)
+    //
+    // Within the 7-day reversibility window, an admin can restore a
+    // soft-deleted org. At the schema layer this is the same operation
+    // as unsuspend (clear suspended_at); the audit event is the
+    // discriminator so forensics can reconstruct "operator restored
+    // soft-deleted X" vs "operator unsuspended X."
+    //
+    // Same admin-threshold + strict-body + idempotent + rate-limited +
+    // audit-triplet disciplines as suspend/unsuspend.
+    app.post<{ Params: { orgId: string }; Body?: unknown }>(
+      "/api/orgs/:orgId/restore",
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+      async (request, reply) => {
+        const { orgId } = request.params;
+        const user = await requireOrgRoleForWrite(
+          request,
+          reply,
+          orgService,
+          orgId,
+          "admin",
+        );
+        if (!user) return;
+
+        const bodyKeys = Object.keys(
+          (request.body ?? {}) as Record<string, unknown>,
+        );
+        if (bodyKeys.length > 0) {
+          return reply.code(400).send({
+            error: `Restore takes no body fields; rejected: ${bodyKeys.join(", ")}`,
+          });
+        }
+
+        const org = await orgService.getOrg(orgId);
+        if (!org) {
+          return reply.code(404).send({ error: "Organization not found" });
+        }
+        // COLUMN-SPLIT (mig 053): restore acts on `deletedAt` only —
+        // an org that is suspended-but-not-soft-deleted needs the
+        // POST /unsuspend route, NOT this one. Idempotency check
+        // mirrors that scope: if not soft-deleted, return cleanly
+        // with already_active=true and skip the audit-emit.
+        if (!org.deletedAt) {
+          return reply.code(200).send({
+            org,
+            already_active: true,
+          });
+        }
+
+        const updated = await orgService.restoreOrg(orgId);
+        const triplet = actingAsAuditTriplet(request, user);
+        void adminAuditService
+          .log({
+            orgId,
+            actorId: user.sub,
+            eventType: "customer_org_restored",
+            metadata: {
+              org_name: org.name,
+              acting_as: {
+                actor: triplet.actor,
+                via_reseller_org_id: triplet.viaResellerOrgId,
+                on_behalf_of_org_id: triplet.onBehalfOfOrgId,
+              },
+            },
+          })
+          .catch((err) => request.log.error(err, "admin audit log failed"));
+        return reply.code(200).send({ org: updated });
       },
     );
 
@@ -496,7 +890,14 @@ export function orgRoutes(deps: OrgRouteDeps) {
     app.patch<{
       Params: { orgId: string; userId: string };
       Body: { role: string };
-    }>("/api/orgs/:orgId/members/:userId/role", async (request, reply) => {
+    }>(
+      "/api/orgs/:orgId/members/:userId/role",
+      // B4 rate-limit fold-in (boss msg-1781747367566 warden pre-prep):
+      // destructive 10/hr per IP. Role mutations change a member's
+      // privilege scope — a legitimate org-restructure fits under 10;
+      // a brute-forced privilege-escalation probe trips the cap.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+      async (request, reply) => {
       const { orgId, userId } = request.params;
       const user = await requireOrgRoleForWrite(
         request,
@@ -651,6 +1052,10 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // PUT /api/orgs/:orgId/members/:userId/server-access/:vendor — grant access (admin+)
     app.put<{ Params: { orgId: string; userId: string; vendor: string } }>(
       "/api/orgs/:orgId/members/:userId/server-access/:vendor",
+      // B4 rate-limit fold-in (boss msg-1781747367566): authz state
+      // change → 10/hr per IP. Grant flows look like creates but
+      // semantically expand privilege scope; conservative gate.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -725,6 +1130,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // DELETE /api/orgs/:orgId/members/:userId/server-access/:vendor — revoke access (admin+)
     app.delete<{ Params: { orgId: string; userId: string; vendor: string } }>(
       "/api/orgs/:orgId/members/:userId/server-access/:vendor",
+      // B4 rate-limit fold-in (boss msg-1781747367566): destructive
+      // 10/hr per IP. Revoke = authz contraction; same cap as grant.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId, userId, vendor: vendorSlug } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -797,6 +1205,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Body: { vendors: string[] };
     }>(
       "/api/orgs/:orgId/members/:userId/server-access",
+      // B4 flood-vector fold-in (boss msg-1781750543612 ruby completeness):
+      // bulk-set is the toggle-thrash flood vector — a single request
+      // can flip every vendor on/off, so abuse cost is high per call.
+      // 10/hr per IP cap. (Per-vendor PUT/DELETE on this path already
+      // rate-limited at 10/hr above; this closes the BULK siblings.)
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId, userId } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -1316,6 +1730,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // DELETE /api/orgs/:orgId/credentials/:vendor — remove org credential
     app.delete<{ Params: { orgId: string; vendor: string } }>(
       "/api/orgs/:orgId/credentials/:vendor",
+      // B4 rate-limit fold-in (boss msg-1781747367566 warden pre-prep):
+      // destructive 10/hr per IP. Credential deletes break downstream
+      // MCP gateway access — a legitimate cleanup sweep fits under 10
+      // (most MSPs have a handful of vendor creds per customer); a
+      // rapid-fire destructive script trips the cap immediately.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId, vendor: vendorSlug } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -1639,6 +2059,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // DELETE /api/orgs/:orgId/service-clients/:clientId — revoke a service client
     app.delete<{ Params: { orgId: string; clientId: string } }>(
       "/api/orgs/:orgId/service-clients/:clientId",
+      // B4 flood-vector fold-in (boss msg-1781750543612 ruby completeness):
+      // service-client revoke is the key-rotation-churn flood vector —
+      // an attacker (or buggy script) can revoke every service client
+      // in a tight loop to cause downstream auth-stamp invalidations.
+      // 10/hr per IP cap.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const user = await requireOrgRoleForWrite(
           request,
@@ -2041,6 +2467,11 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // the JSON response body; no other surface ever exposes it.
     app.post<{ Params: { orgId: string }; Body: { name?: string } }>(
       "/api/orgs/:orgId/api-keys",
+      // B4 rate-limit fold-in (boss msg-1781747367566 warden pre-prep):
+      // creates 30/hr per IP. API keys are admin-script tokens — a
+      // legitimate sweep that rotates several keys still fits under 30,
+      // while a brute-forced create-storm caps out fast.
+      { config: { rateLimit: { max: 30, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId } = request.params;
         const user = await requireOrgRoleForWrite(

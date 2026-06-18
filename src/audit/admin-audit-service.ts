@@ -87,7 +87,20 @@ export type AdminEventType =
   // tokens; these are reseller-org-level admin script tokens for the
   // Track C management API).
   | "api_key_created"
-  | "api_key_revoked";
+  | "api_key_revoked"
+  // LAYER-C customer-org destructive lifecycle (WYREAI-171 Phase-3 follow-up,
+  // boss msg-1781747082572 + warden pre-prep msg-1781747367566). Reseller-
+  // admin operating via actingAs binding (or direct customer-owner)
+  // suspend/unsuspend/soft-delete/restore a customer-org. Schema is shared
+  // (`suspended_at` column from mig 012); the audit event is the
+  // discriminator between "operator suspended this customer" vs "operator
+  // soft-deleted this customer pending sweeper hard-delete." The
+  // 'restored' event covers both unsuspend AND restore-from-soft-delete
+  // — forensics can backfill the prior state from the prior event row.
+  | "customer_org_suspended"
+  | "customer_org_unsuspended"
+  | "customer_org_soft_deleted"
+  | "customer_org_restored";
 
 export interface AdminAuditEntry {
   id: string;
