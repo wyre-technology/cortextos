@@ -259,6 +259,8 @@ async function applyRlsMigrations(): Promise<void> {
     // so their DROP/CREATE supersedes the any-member 014/022 policies.
     '050_org_tool_allowlist_admin_write.sql',
     '051_org_tool_allowlist_delete_policy.sql',
+    // WYREAI-188: byo_mcp_servers table + owner-only RLS policies.
+    '055_byo_mcp_servers.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -907,6 +909,62 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
         expect((r as unknown as { count: number }).count).toBe(1);
       } finally {
         conn.release();
+      }
+    });
+  });
+
+  // WYREAI-188 (BYOMCP): byo_mcp_servers is owner-only — a user's BYO MCP server
+  // must never be visible/writable/deletable by another tenant.
+  describe('byo_mcp_servers owner-only isolation (migration 055)', () => {
+    beforeAll(async () => {
+      await sql.begin(async (tx) => {
+        await tx.unsafe('RESET ROLE');
+        await tx`INSERT INTO byo_mcp_servers
+          (id, user_id, name, endpoint_url, encrypted_data, iv, auth_tag, salt) VALUES
+          ('byo-alice', 'alice', 'alice-server', 'https://a.example.com/mcp', 'enc', 'iv', 'tag', 'salt')`;
+      });
+    });
+
+    it('the owner sees their server; another user sees none', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`SELECT id FROM byo_mcp_servers WHERE id = 'byo-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(1);
+      } finally {
+        aliceConn.release();
+      }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`SELECT id FROM byo_mcp_servers WHERE id = 'byo-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+    });
+
+    it("another user's DELETE matches 0 rows (owner's server survives)", async () => {
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`DELETE FROM byo_mcp_servers WHERE id = 'byo-alice'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+      const [row] = await sql<{ id: string }[]>`SELECT id FROM byo_mcp_servers WHERE id = 'byo-alice'`;
+      expect(row.id).toBe('byo-alice');
+    });
+
+    it('a user cannot INSERT a server owned by someone else (WITH CHECK → 42501)', async () => {
+      const bobConn = await asUser('bob');
+      try {
+        await bobConn.query`INSERT INTO byo_mcp_servers
+          (id, user_id, name, endpoint_url, encrypted_data, iv, auth_tag, salt) VALUES
+          ('byo-evil', 'alice', 'spoof', 'https://e.example.com/mcp', 'e', 'i', 't', 's')`;
+        throw new Error('expected RLS WITH CHECK rejection; INSERT succeeded');
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
+      } finally {
+        bobConn.release();
       }
     });
   });
