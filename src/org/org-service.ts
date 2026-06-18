@@ -56,6 +56,16 @@ export interface Organization {
    * falls through to legacy Universal Login.
    */
   auth0OrgId: string | null;
+  /**
+   * Set when a reseller-admin suspends a customer-org via the LAYER-C
+   * suspend route (POST /api/orgs/:orgId/suspend, mig 012 column).
+   * `null` = active; ISO timestamp = suspended.
+   *
+   * Read-only on this interface; mutate via `suspendOrg` / `unsuspendOrg`
+   * (org-service) which thread through the requireOrgRoleForWrite gate +
+   * actingAsAuditTriplet emit at the route boundary.
+   */
+  suspendedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -208,6 +218,7 @@ interface OrgRow {
   type: string | null;
   parent_org_id: string | null;
   auth0_org_id: string | null;
+  suspended_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -701,6 +712,7 @@ export class OrgService {
       // always have a literal value (string or null). Mapping `undefined`
       // to `null` keeps the type honest as `string | null` for callers.
       auth0OrgId: row.auth0_org_id ?? null,
+      suspendedAt: row.suspended_at ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -1024,11 +1036,106 @@ export class OrgService {
     return rows[0] ? this.toOrg(rows[0]) : null;
   }
 
+  /**
+   * Hard-delete an org row (DELETE FROM). Cascade follows FK rules in the
+   * schema. Used by the launch-window soft-delete sweeper (post-window
+   * cleanup) AND by the legacy direct-DELETE path that LAYER-C is in the
+   * process of replacing — see `softDeleteOrg` below for the new launch-
+   * safe primitive. Callers should prefer `softDeleteOrg` + the 7-day
+   * reversibility window unless the operator is explicitly bypassing it.
+   */
   async deleteOrg(orgId: string): Promise<boolean> {
     const result = await this.sql`
       DELETE FROM organizations WHERE id = ${orgId}
     `;
     return result.count > 0;
+  }
+
+  /**
+   * Soft-delete an org by setting `suspended_at` if not already set and
+   * marking the row for the sweeper. LAYER-C launch-safety primitive
+   * (boss msg-1781747367566 warden pre-prep): hard-delete is irreversible
+   * and a single accidental click should not destroy an MSP customer's
+   * org. Soft-delete buys a ≥7-day reversibility window during which
+   * `restoreOrg` un-marks the row.
+   *
+   * Implementation note: we reuse `suspended_at` as the soft-delete
+   * marker for now (no new column) — the discriminator is the audit
+   * event (`customer_org_soft_deleted` vs `customer_org_suspended`), not
+   * the schema. Post-window the sweeper hard-deletes; a dedicated
+   * `deleted_at` column is a follow-up if/when forensics needs it
+   * cleanly separated from operator-initiated suspends. Returning the
+   * updated row keeps the call-site symmetrical with suspendOrg.
+   *
+   * Idempotent: if the row is already suspended/soft-deleted, this is a
+   * no-op that still returns the current row state. That lets the
+   * DELETE route's idempotency contract (boss warden pre-prep #4)
+   * collapse to a service-layer guarantee.
+   */
+  async softDeleteOrg(orgId: string): Promise<Organization | null> {
+    const rows = await this.sql<OrgRow[]>`
+      UPDATE organizations
+      SET suspended_at = COALESCE(suspended_at, NOW()), updated_at = NOW()
+      WHERE id = ${orgId}
+      RETURNING *
+    `;
+    return rows[0] ? this.toOrg(rows[0]) : null;
+  }
+
+  /**
+   * Restore a soft-deleted (or suspended) org by clearing
+   * `suspended_at`. Used by the LAYER-C `POST /api/orgs/:orgId/restore`
+   * route within the reversibility window AND by the unsuspend route.
+   * Single primitive intentionally: at the schema layer there's nothing
+   * to distinguish a soft-delete from a suspend — that distinction is
+   * the audit event emitted at the route boundary. Returning null when
+   * no row matches keeps not-found handling at the route level.
+   */
+  async restoreOrg(orgId: string): Promise<Organization | null> {
+    const rows = await this.sql<OrgRow[]>`
+      UPDATE organizations
+      SET suspended_at = NULL, updated_at = NOW()
+      WHERE id = ${orgId}
+      RETURNING *
+    `;
+    return rows[0] ? this.toOrg(rows[0]) : null;
+  }
+
+  /**
+   * Suspend an org by setting `suspended_at` to NOW(). LAYER-C
+   * customer-suspend primitive — sets the column AND the route layer
+   * is responsible for the side-effect cascade (revoke active acting-as
+   * sessions targeting this org so 'suspended but still impersonable'
+   * is closed by-construction per boss msg-1781747367566).
+   *
+   * Schema-identical to `softDeleteOrg`: the difference is the audit
+   * event emitted by the route handler (`customer_org_suspended` vs
+   * `customer_org_soft_deleted`) and what the post-window sweeper does
+   * (suspend = no sweep, stays indefinitely until unsuspended; soft-
+   * delete = sweep + hard-delete after ≥7d). The sweeper itself is a
+   * follow-up PR; this method just writes the column.
+   *
+   * Idempotent: re-suspending an already-suspended org is a no-op that
+   * still returns the current row.
+   */
+  async suspendOrg(orgId: string): Promise<Organization | null> {
+    const rows = await this.sql<OrgRow[]>`
+      UPDATE organizations
+      SET suspended_at = COALESCE(suspended_at, NOW()), updated_at = NOW()
+      WHERE id = ${orgId}
+      RETURNING *
+    `;
+    return rows[0] ? this.toOrg(rows[0]) : null;
+  }
+
+  /**
+   * Unsuspend an org by clearing `suspended_at`. Alias for `restoreOrg`
+   * — kept as a separate symbol so route-side audit-event selection
+   * stays readable at the call site (suspend route ↔ unsuspendOrg,
+   * delete route ↔ restoreOrg). Schema-identical operation.
+   */
+  async unsuspendOrg(orgId: string): Promise<Organization | null> {
+    return this.restoreOrg(orgId);
   }
 
   async updateOrgPlan(
