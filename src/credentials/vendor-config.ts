@@ -146,6 +146,23 @@ const ALT_PAYMENTS_VALID_ENVIRONMENTS = ['production', 'demo'] as const;
 type AltPaymentsEnvironment = typeof ALT_PAYMENTS_VALID_ENVIRONMENTS[number];
 
 /**
+ * KnowBe4 region → API base URL. Same single-source-of-truth + allowlist gate
+ * shape as ALT_PAYMENTS_VALID_ENVIRONMENTS / AUVIK_VALID_REGIONS — the const
+ * keys drive `fields[].options` (render), and `validate()` rejects anything
+ * not in this set (server-side enforcement). Unknown values fall back to 'us'
+ * (the safer default — `us` is the primary region; defaulting to a wrong
+ * region on misconfigured input would silently mis-route the probe).
+ */
+const KNOWBE4_REGION_BASE_URLS = {
+  us: 'https://api.knowbe4.com',
+  eu: 'https://api.eu.knowbe4.com',
+  uk: 'https://api.uk.knowbe4.com',
+  de: 'https://api.de.knowbe4.com',
+  ca: 'https://api.ca.knowbe4.com',
+} as const;
+type KnowBe4Region = keyof typeof KNOWBE4_REGION_BASE_URLS;
+
+/**
  * DigitalOcean MCP slugs share one shape — Bearer-PAT auth against
  * <subdomain>.mcp.digitalocean.com/mcp with an initialize round-trip
  * as the validate() witness. See the inline comment at the call site
@@ -160,7 +177,12 @@ const DIGITAL_OCEAN_MCP_SLUGS: ReadonlyArray<readonly [string, string, string]> 
   ['digitalocean-doks', 'DigitalOcean Kubernetes (DOKS)', 'doks'],
   ['digitalocean-droplets', 'DigitalOcean Droplets', 'droplets'],
   ['digitalocean-functions', 'DigitalOcean Functions', 'functions'],
-  ['digitalocean-gradient-ai', 'DigitalOcean Gradient AI', 'gradient-ai'],
+  // 'digitalocean-gradient-ai' HIDDEN at launch — the gradient-ai.mcp.digitalocean.com
+  // subdomain is NXDOMAIN (DigitalOcean either never published OR has renamed this MCP
+  // endpoint, sibling shape to 'inference' → 'inference-modelcatalog'). Re-add as a
+  // new tuple line once the correct subdomain is confirmed in DO's MCP docs. Live
+  // probe with persisted DO test PAT 2026-06-18: 9/10 other slugs valid=true, this
+  // slug THREW `fetch failed` on DNS resolution.
   ['digitalocean-inference', 'DigitalOcean Inference Model Catalog', 'inference-modelcatalog'],
   ['digitalocean-networking', 'DigitalOcean Networking', 'networking'],
   ['digitalocean-spaces', 'DigitalOcean Spaces', 'spaces'],
@@ -1800,6 +1822,30 @@ export const VENDORS: Record<string, VendorConfig> = {
       secretKey: 'X-Checkpoint-Secret-Key',
     },
     docsUrl: 'https://sc1.checkpoint.com/documents/Harmony_Email_Collaboration/Default.htm',
+    async validate(creds) {
+      // Probe the Checkpoint Avanan Smart API access-token endpoint with the
+      // supplied client_id + secret_key (Basic-auth + client_credentials grant
+      // — RFC 6749). Base URL is hardcoded, so no SSRF gate needed. Sibling
+      // shape to alt-payments (#403 LENS 1 OAuth client-credentials substrate).
+      const basic = Buffer.from(`${creds.clientId}:${creds.secretKey}`).toString('base64');
+      try {
+        const res = await fetch('https://smart-api.avanan.net/v1.0/auth/login', {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${basic}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return { valid: true };
+        if (res.status === 401 || res.status === 403)
+          return { valid: false, error: 'Invalid Checkpoint Avanan client credentials.' };
+        return { valid: false, error: `Checkpoint Avanan returned HTTP ${res.status}.` };
+      } catch (e) {
+        return { valid: false, error: `Checkpoint Avanan request failed: ${(e as Error).message}` };
+      }
+    },
   },
 
   proofpoint: {
@@ -1818,6 +1864,33 @@ export const VENDORS: Record<string, VendorConfig> = {
       clusterUrl: 'X-Proofpoint-Cluster-Url',
     },
     docsUrl: 'https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation',
+    async validate(creds) {
+      // SECURITY: cluster_url is USER-SUPPLIED — must pass the SSRF gate before
+      // fetch() so the gateway can't be turned into an SSRF probe against
+      // private IPs / loopback / cloud metadata endpoints. Same #402 HARD-REQ
+      // discipline applied to auvik.region and proofpoint here is a sibling
+      // instance at the user-supplied-URL substrate.
+      const baseUrl = creds.clusterUrl?.trim() || 'https://tap-api.proofpoint.com';
+      const ssrfErr = await rejectIfUnsafeBaseUrl(baseUrl, 'Proofpoint cluster URL');
+      if (ssrfErr) return ssrfErr;
+      const basic = Buffer.from(`${creds.servicePrincipal}:${creds.apiKey}`).toString('base64');
+      try {
+        // /v2/people/vap is a low-impact authenticated probe — returns VAPs
+        // when authorized, 401/403 on bad creds. Uses a tiny window=1 to keep
+        // the response trivial.
+        const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/v2/people/vap?window=1`, {
+          method: 'GET',
+          headers: { Authorization: `Basic ${basic}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return { valid: true };
+        if (res.status === 401 || res.status === 403)
+          return { valid: false, error: 'Invalid Proofpoint service principal or API key.' };
+        return { valid: false, error: `Proofpoint returned HTTP ${res.status}.` };
+      } catch (e) {
+        return { valid: false, error: `Proofpoint request failed: ${(e as Error).message}` };
+      }
+    },
   },
 
   knowbe4: {
@@ -1831,7 +1904,7 @@ export const VENDORS: Record<string, VendorConfig> = {
         key: 'region',
         label: 'Region',
         required: false,
-        options: ['us', 'eu', 'uk', 'de', 'ca'],
+        options: Object.keys(KNOWBE4_REGION_BASE_URLS),
         placeholder: 'us',
       },
     ],
@@ -1840,6 +1913,33 @@ export const VENDORS: Record<string, VendorConfig> = {
       region: 'X-Knowbe4-Region',
     },
     docsUrl: 'https://developer.knowbe4.com/',
+    async validate(creds) {
+      // SECURITY: server-side region allowlist gate, single-source-of-truth
+      // with the `fields[].options` dropdown (KNOWBE4_REGION_BASE_URLS keys).
+      // Unknown / fragment / casing-mismatch values fall back to 'us' — same
+      // shape as auvik (#402 warden HARD-REQ) + alt-payments (#403).
+      const region: KnowBe4Region =
+        (Object.keys(KNOWBE4_REGION_BASE_URLS) as KnowBe4Region[]).includes(creds.region as KnowBe4Region)
+          ? (creds.region as KnowBe4Region)
+          : 'us';
+      const baseUrl = KNOWBE4_REGION_BASE_URLS[region];
+      try {
+        const res = await fetch(`${baseUrl}/v1/account`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${creds.apiKey}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return { valid: true };
+        if (res.status === 401 || res.status === 403)
+          return { valid: false, error: 'Invalid KnowBe4 API key for the selected region.' };
+        return { valid: false, error: `KnowBe4 returned HTTP ${res.status}.` };
+      } catch (e) {
+        return { valid: false, error: `KnowBe4 request failed: ${(e as Error).message}` };
+      }
+    },
   },
 
   sherweb: {
@@ -1858,6 +1958,33 @@ export const VENDORS: Record<string, VendorConfig> = {
       subscriptionKey: 'X-Sherweb-Subscription-Key',
     },
     docsUrl: 'https://developers.sherweb.com/apis',
+    async validate(creds) {
+      // Probe the Sherweb OAuth 2.0 token endpoint with the supplied
+      // client_id + client_secret (client_credentials grant — RFC 6749).
+      // Sibling shape to alt-payments (#403 LENS 1 OAuth client-credentials
+      // substrate). subscription_key is checked at upstream-API-call time
+      // (sidecar substrate), not at OAuth-token-mint time — validate() here
+      // witnesses the OAuth substrate only. Base URL hardcoded → no SSRF gate.
+      const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64');
+      try {
+        const res = await fetch('https://api.sherweb.com/auth/oauth2/token', {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${basic}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Ocp-Apim-Subscription-Key': creds.subscriptionKey,
+          },
+          body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'service' }).toString(),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) return { valid: true };
+        if (res.status === 401 || res.status === 403)
+          return { valid: false, error: 'Invalid Sherweb client credentials or subscription key.' };
+        return { valid: false, error: `Sherweb returned HTTP ${res.status}.` };
+      } catch (e) {
+        return { valid: false, error: `Sherweb request failed: ${(e as Error).message}` };
+      }
+    },
   },
 
   blackpoint: {

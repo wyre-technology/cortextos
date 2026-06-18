@@ -390,6 +390,10 @@ describe('vendor-config', () => {
   // shape so a future refactor cannot silently drop a slug, flip the auth
   // header, or skew a subdomain mapping.
   describe('digitalocean MCP slugs', () => {
+    // gradient-ai HIDDEN at launch — gradient-ai.mcp.digitalocean.com is
+    // NXDOMAIN (live probe 2026-06-18 with persisted DO test PAT: 9/10 valid,
+    // gradient-ai THREW fetch failed on DNS resolution). Re-add as a row here
+    // once the correct DO subdomain is confirmed.
     const DO_EXPECTED: Array<[string, string, string]> = [
       ['digitalocean-apps', 'DigitalOcean Apps', 'apps'],
       ['digitalocean-databases', 'DigitalOcean Databases', 'databases'],
@@ -397,13 +401,12 @@ describe('vendor-config', () => {
       ['digitalocean-doks', 'DigitalOcean Kubernetes (DOKS)', 'doks'],
       ['digitalocean-droplets', 'DigitalOcean Droplets', 'droplets'],
       ['digitalocean-functions', 'DigitalOcean Functions', 'functions'],
-      ['digitalocean-gradient-ai', 'DigitalOcean Gradient AI', 'gradient-ai'],
       ['digitalocean-inference', 'DigitalOcean Inference Model Catalog', 'inference-modelcatalog'],
       ['digitalocean-networking', 'DigitalOcean Networking', 'networking'],
       ['digitalocean-spaces', 'DigitalOcean Spaces', 'spaces'],
     ];
 
-    it('registers all 10 DO slugs in the infrastructure category', () => {
+    it('registers all 9 DO slugs in the infrastructure category (gradient-ai hidden at launch)', () => {
       const slugs = getVendorSlugs();
       for (const [slug] of DO_EXPECTED) {
         expect(slugs, `missing ${slug}`).toContain(slug);
@@ -448,15 +451,18 @@ describe('vendor-config', () => {
       expect(result.valid === false && result.error).toContain('DigitalOcean Docs');
     });
 
-    it('non-401 HTTP errors surface the raw status (gradient-ai 503)', async () => {
+    it('non-401 HTTP errors surface the raw status (functions 503)', async () => {
+      // Was originally written against gradient-ai; that slug HIDDEN at launch
+      // (NXDOMAIN, live-probed 2026-06-18). Functions is a sibling slug with
+      // the same generated validate() — same shape, working URL.
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response('upstream down', { status: 503 }),
       );
-      const v = getVendor('digitalocean-gradient-ai')!;
+      const v = getVendor('digitalocean-functions')!;
       const result = await v.validate!({ apiToken: 'p' });
       expect(result.valid).toBe(false);
       expect(result.valid === false && result.error).toContain('HTTP 503');
-      expect(result.valid === false && result.error).toContain('Gradient AI');
+      expect(result.valid === false && result.error).toContain('Functions');
     });
 
     it('validate() targets <subdomain>.mcp.digitalocean.com/mcp with Authorization: Bearer header', async () => {
@@ -727,5 +733,164 @@ describe('calendly wire-in', () => {
     expect(slugs).toContain('scheduling');
     const scheduling = VENDOR_CATEGORIES.find((c) => c.slug === 'scheduling');
     expect(scheduling?.label).toBe('Scheduling');
+  });
+
+  // Tests for the 4 launch-credibility-risk vendors that previously had
+  // fields-but-no-validate(). Pattern mirrors alt-payments / abnormal-security
+  // (sibling-shape per #403 LENS 1 OAuth substrate + #402 SSRF warden HARD-REQ
+  // for user-supplied URLs).
+  describe('avanan validate()', () => {
+    it('returns valid=true on 200', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('avanan')!;
+      const r = await v.validate!({ clientId: 'cid', secretKey: 'sk' });
+      expect(r.valid).toBe(true);
+    });
+    it('maps 401 to invalid-creds error (no upstream body leak)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"error":"invalid_client"}', { status: 401 }),
+      );
+      const v = getVendor('avanan')!;
+      const r = await v.validate!({ clientId: 'cid', secretKey: 'bad' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('Invalid Checkpoint Avanan client credentials.');
+      expect(r.valid === false && r.error).not.toContain('invalid_client');
+    });
+    it('non-401 HTTP errors surface raw status', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('err', { status: 503 }));
+      const v = getVendor('avanan')!;
+      const r = await v.validate!({ clientId: 'cid', secretKey: 'sk' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('HTTP 503');
+    });
+  });
+
+  describe('knowbe4 validate()', () => {
+    const REGION_FALLBACK_TABLE: Array<[string, string]> = [
+      // Mirrors the alt-payments SSRF allowlist-fallback table shape (#403):
+      // every non-allowlisted region falls back to 'us' (the safer default).
+      ['us', 'https://api.knowbe4.com/v1/account'],
+      ['eu', 'https://api.eu.knowbe4.com/v1/account'],
+      ['uk', 'https://api.uk.knowbe4.com/v1/account'],
+      ['de', 'https://api.de.knowbe4.com/v1/account'],
+      ['ca', 'https://api.ca.knowbe4.com/v1/account'],
+    ];
+    it.each(REGION_FALLBACK_TABLE)(
+      'region %s routes to %s with Bearer auth',
+      async (region, expectedUrl) => {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+        const v = getVendor('knowbe4')!;
+        const r = await v.validate!({ apiKey: 'k', region });
+        expect(r.valid).toBe(true);
+        expect(fetchSpy).toHaveBeenCalledWith(
+          expectedUrl,
+          expect.objectContaining({
+            method: 'GET',
+            headers: expect.objectContaining({ Authorization: 'Bearer k' }),
+          }),
+        );
+      },
+    );
+    const REGION_BAD_INPUTS: Array<[string]> = [
+      [''], ['unknown'], ['  us  '], ['US'], ['us;evil.com'],
+    ];
+    it.each(REGION_BAD_INPUTS)(
+      'unknown/casing/fragment region %s falls back to us base URL (single-source-of-truth + allowlist gate)',
+      async (badRegion) => {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+        const v = getVendor('knowbe4')!;
+        await v.validate!({ apiKey: 'k', region: badRegion });
+        const calledUrl = fetchSpy.mock.calls[0][0];
+        expect(calledUrl).toBe('https://api.knowbe4.com/v1/account');
+        // Empty string is a vacuous toContain — skip that case; for non-empty
+        // bad inputs assert the malicious/wrong value never appears in the URL.
+        if (badRegion.length > 0) {
+          expect(String(calledUrl)).not.toContain(badRegion);
+        }
+      },
+    );
+    it('maps 401 to invalid-API-key error', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('unauthorized', { status: 401 }));
+      const v = getVendor('knowbe4')!;
+      const r = await v.validate!({ apiKey: 'bad' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('Invalid KnowBe4 API key');
+    });
+  });
+
+  describe('proofpoint validate()', () => {
+    it('returns valid=true on 200 against the default cluster URL with Basic auth', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const v = getVendor('proofpoint')!;
+      const r = await v.validate!({ servicePrincipal: 'sp', apiKey: 'k' });
+      expect(r.valid).toBe(true);
+      const calledUrl = String(fetchSpy.mock.calls[0][0]);
+      expect(calledUrl).toContain('tap-api.proofpoint.com');
+      expect(calledUrl).toContain('/v2/people/vap');
+      const headers = (fetchSpy.mock.calls[0][1] as RequestInit)?.headers as Record<string, string>;
+      expect(headers.Authorization).toMatch(/^Basic /);
+    });
+    it('SSRF: rejects private-IP cluster URL via rejectIfUnsafeBaseUrl gate (no fetch made)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const v = getVendor('proofpoint')!;
+      const r = await v.validate!({
+        servicePrincipal: 'sp',
+        apiKey: 'k',
+        clusterUrl: 'http://169.254.169.254/latest/meta-data/',
+      });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('Proofpoint cluster URL rejected');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+    it('maps 401 to invalid-creds error (no upstream body leak)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"error":"forbidden"}', { status: 401 }),
+      );
+      const v = getVendor('proofpoint')!;
+      const r = await v.validate!({ servicePrincipal: 'sp', apiKey: 'bad' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('Invalid Proofpoint service principal or API key');
+      expect(r.valid === false && r.error).not.toContain('forbidden');
+    });
+  });
+
+  describe('sherweb validate()', () => {
+    it('returns valid=true on 200 from the OAuth token endpoint with Basic auth + subscription-key header', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('{"access_token":"t","expires_in":3600}', { status: 200 }));
+      const v = getVendor('sherweb')!;
+      const r = await v.validate!({ clientId: 'cid', clientSecret: 'cs', subscriptionKey: 'sk' });
+      expect(r.valid).toBe(true);
+      const calledUrl = String(fetchSpy.mock.calls[0][0]);
+      expect(calledUrl).toContain('api.sherweb.com');
+      expect(calledUrl).toContain('/oauth2/token');
+      const headers = (fetchSpy.mock.calls[0][1] as RequestInit)?.headers as Record<string, string>;
+      expect(headers.Authorization).toMatch(/^Basic /);
+      expect(headers['Ocp-Apim-Subscription-Key']).toBe('sk');
+    });
+    it('maps 401 to invalid-creds error', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"error":"invalid_client"}', { status: 401 }),
+      );
+      const v = getVendor('sherweb')!;
+      const r = await v.validate!({ clientId: 'cid', clientSecret: 'bad', subscriptionKey: 'sk' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('Invalid Sherweb client credentials or subscription key.');
+      expect(r.valid === false && r.error).not.toContain('invalid_client');
+    });
+    it('non-401 HTTP errors surface raw status', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('err', { status: 500 }));
+      const v = getVendor('sherweb')!;
+      const r = await v.validate!({ clientId: 'cid', clientSecret: 'cs', subscriptionKey: 'sk' });
+      expect(r.valid).toBe(false);
+      expect(r.valid === false && r.error).toContain('HTTP 500');
+    });
   });
 });
