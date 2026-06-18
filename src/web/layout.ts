@@ -630,6 +630,14 @@ const CUSTOMER_DETAIL_TABS: ReadonlyArray<{ label: string; slug: string }> = [
   // page renders a read-only list + a "Manage on behalf of" CTA;
   // with one, the action controls light up by-construction.
   { label: 'Members', slug: 'members' },
+  // WYREAI-172 PR-2.5 Teams tab (Aaron-launch-required, boss
+  // msg-1781787643789). Customer-org teams + per-team vendor
+  // allowlists. Backend's complete (#398/#441/#454 substrate +
+  // existing OWNER-scoped /api/orgs/:orgId/teams/* endpoints);
+  // this tab is pure UI surface — same actingAs-context-(C)
+  // shape as Members, multiplied across team-CRUD + team-members
+  // + team-server-access.
+  { label: 'Teams', slug: 'teams' },
   { label: 'Usage', slug: 'usage' },
   { label: 'Tool Access', slug: 'tools' },
   { label: 'Audit Log', slug: 'audit' },

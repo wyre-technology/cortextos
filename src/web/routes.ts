@@ -1543,6 +1543,105 @@ export function webRoutes(deps: WebRouteDeps) {
       });
     });
 
+    // ---------- GET /org/customers/:id/teams (WYREAI-172 PR-2.5) ----------
+    //
+    // Customer-org teams + per-team vendor allowlists. Aaron's launch-
+    // value is the per-team server-access (boss msg-1781787643789) —
+    // the team-CRUD is the carrier; per-team vendor allowlists are the
+    // payload. Same actingAs-context-(C) substrate as Members:
+    // requireOrgRoleForWrite PATH B consumes the actingAs binding, so
+    // the action controls call existing OWNER-scoped /teams/* endpoints
+    // with the operator's audit-triplet attached by-construction.
+    app.get("/org/customers/:id/teams", async (request, reply) => {
+      const ctx = await requireResellerAccess(
+        request,
+        reply,
+        orgService,
+        billingGate,
+      );
+      if (!ctx) return;
+      const customerId = (request.params as { id: string }).id;
+      const owned = await requireCustomerOwnership(
+        reply,
+        ctx,
+        customerId,
+        orgService,
+      );
+      if (!owned) return;
+
+      // The team list — same source the existing /api/orgs/:orgId/teams
+      // (org-routes GET) consumes. listTeamsWithDetails returns each
+      // team's members + serverAccess slugs in a single read; no N+1.
+      const teamDetails = await orgService.listTeamsWithDetails(owned.id);
+
+      // Resolve member display fields. Profiles are needed to map
+      // user_ids back to email + name for the team member-list +
+      // the "add to team" picker. One profile lookup serves both
+      // surfaces — keep the page handler reasonably cheap.
+      const profiles = await orgService.getMembersWithProfiles(owned.id);
+      const profilesByUserId = new Map(
+        profiles.map((p) => [
+          p.userId,
+          {
+            name: p.name ?? p.email ?? "—",
+            email: p.email ?? "—",
+          },
+        ]),
+      );
+
+      const teams = teamDetails.map((t) => ({
+        id: t.id,
+        name: t.name,
+        members: t.members.map((m) => {
+          const prof = profilesByUserId.get(m.userId);
+          return {
+            userId: m.userId,
+            name: prof?.name ?? m.name ?? m.email ?? "—",
+            email: prof?.email ?? m.email ?? "—",
+          };
+        }),
+        vendorAllowlist: t.serverAccess,
+      }));
+
+      // Vendor catalog for the per-team grant-vendor picker. Source:
+      // the same listOrgVendors that the Tool Access tab consumes —
+      // the customer-org's connected vendor slugs. Vendor display
+      // names resolve via the static getVendor() catalog (same source
+      // the credentials POST + the MCPs tab use).
+      const vendorSlugs = await credentialService.listOrgVendors(owned.id);
+      const vendorCatalog = vendorSlugs
+        .map((slug) => {
+          const v = getVendor(slug);
+          return v ? { slug: v.slug, name: v.name } : { slug, name: slug };
+        })
+        // Stable display order — alphabetical by display name.
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      // Member picker source: minimal shape (userId + name + email),
+      // sourced from the same profiles used for the team member list.
+      const membersForTeamPicker = profiles.map((p) => ({
+        userId: p.userId,
+        name: p.name ?? p.email ?? "—",
+        email: p.email ?? "—",
+      }));
+
+      const actingAsActive =
+        request.caller?.actingAs?.onBehalfOfOrgId === owned.id;
+
+      const data = buildCustomerTabData(
+        ctx.org,
+        customerSummaryOf(owned),
+        "teams",
+      );
+      return sendCustomerTab(request, reply, ctx.user, ctx.org, customerId, {
+        ...data,
+        teams,
+        vendorCatalog,
+        membersForTeamPicker: actingAsActive ? membersForTeamPicker : undefined,
+        actingAsActive,
+      });
+    });
+
     // ---------- GET /org/customers/:id/mcps (Track A — real connected vendors) ----------
     // The MCPs tab lists the customer's real connected vendors + live health.
     // Ownership-gated (parent_org_id === reseller). Vendor name + health status
