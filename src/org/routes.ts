@@ -886,7 +886,32 @@ export function orgRoutes(deps: OrgRouteDeps) {
       },
     );
 
-    // PATCH /api/orgs/:orgId/members/:userId/role — change member role (owner only)
+    // PATCH /api/orgs/:orgId/members/:userId/role — change member role
+    //
+    // Authz: admin-threshold (WYREAI-172 PR-2, boss msg-1781788880210
+    // warden-reviewed loosening from owner → admin). The MSP-as-
+    // OPERATOR substrate from #441/#454 means a reseller-MSP-admin
+    // acting-as a customer-org has effectiveRole='admin' (capped per
+    // the closed-set mapResellerRoleToCustomerRole). An owner-only
+    // gate would block the operator from rounding out member-mgmt
+    // (invite + remove already work at admin; role-change being
+    // owner-only is inconsistent with the MSP-operates-subtenant
+    // model — the operator should fully manage members on the
+    // customer's behalf).
+    //
+    // SAFETY (warden VERIFY-1 confirmed pre-loosening): the dual
+    // owner-guards at the service layer STAY in place + are the
+    // load-bearing protection:
+    //   - orgService.updateMemberRole returns null when newRole ===
+    //     'owner' (can't promote ANYONE to owner — route's body
+    //     validation also rejects this string)
+    //   - orgService.updateMemberRole returns null when
+    //     targetMembership.role === 'owner' (can't demote the
+    //     owner from any threshold)
+    // Operators manage member↔admin freely but never touch/create
+    // owner. Self-role-change is also blocked at the route below
+    // (userId === user.sub → 400) AND the data layer can pre-empt
+    // by setting canChangeRole=false on the operator's own row.
     app.patch<{
       Params: { orgId: string; userId: string };
       Body: { role: string };
@@ -904,7 +929,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
         reply,
         orgService,
         orgId,
-        "owner",
+        "admin",
       );
       if (!user) return;
 

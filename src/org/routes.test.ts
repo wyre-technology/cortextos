@@ -1237,6 +1237,150 @@ describe('orgRoutes', () => {
   });
 
   // -------------------------------------------------------------------------
+  // PATCH /api/orgs/:orgId/members/:userId/role (WYREAI-172 PR-2 — admin gate)
+  // -------------------------------------------------------------------------
+  //
+  // Authz-loosening tests (boss msg-1781788880210 warden-reviewed):
+  // pre-PR-2 the route was owner-only; post-PR-2 it's admin-threshold
+  // so MSP-operators acting-as a customer-org can manage member↔admin
+  // roles. The dual owner-guards at the service layer (cannot change
+  // owner's role + cannot promote anyone to owner) stay in place +
+  // are the load-bearing safety.
+
+  describe('PATCH /api/orgs/:orgId/members/:userId/role (LAYER-C admin gate)', () => {
+    it('admin can demote admin → member', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        updateMemberRole: vi.fn().mockResolvedValue({
+          id: 'mem-2',
+          orgId: 'org-1',
+          userId: 'user-2',
+          role: 'member',
+          joinedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        }),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-2/role',
+        payload: { role: 'member' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(orgService.updateMemberRole).toHaveBeenCalledWith(
+        'org-1',
+        'user-2',
+        'member',
+      );
+    });
+
+    it('admin can promote member → admin', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        updateMemberRole: vi.fn().mockResolvedValue({
+          id: 'mem-2',
+          orgId: 'org-1',
+          userId: 'user-2',
+          role: 'admin',
+          joinedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        }),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-2/role',
+        payload: { role: 'admin' },
+      });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it('400 when the target role is "owner" (route body validation)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        updateMemberRole: vi.fn(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-2/role',
+        payload: { role: 'owner' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('admin');
+      expect(orgService.updateMemberRole).not.toHaveBeenCalled();
+    });
+
+    it('400 when the service returns null — target is the owner (load-bearing owner-guard)', async () => {
+      // Warden VERIFY-1 artifact: admin operator tries to demote the
+      // org owner. orgService.updateMemberRole returns null when
+      // target.role === 'owner'; route maps null → 400 'Cannot change
+      // role of the org owner'. This is the substrate-layer
+      // protection that stays in place after the route-gate loosening.
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        updateMemberRole: vi.fn().mockResolvedValue(null),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-2/role',
+        payload: { role: 'member' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('owner');
+    });
+
+    it('400 when the actor targets themselves (route self-guard)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        updateMemberRole: vi.fn(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-1/role',
+        payload: { role: 'member' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('your own role');
+      expect(orgService.updateMemberRole).not.toHaveBeenCalled();
+    });
+
+    it('403 for non-admin (member role insufficient)', async () => {
+      // The admin-threshold gate: member-role caller is rejected.
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: memberMembership(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/orgs/org-1/members/user-2/role',
+        payload: { role: 'admin' },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // POST /api/orgs/:orgId/credentials/:vendor
   // -------------------------------------------------------------------------
 

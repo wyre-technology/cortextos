@@ -1442,6 +1442,107 @@ export function webRoutes(deps: WebRouteDeps) {
       });
     });
 
+    // ---------- GET /org/customers/:id/members (WYREAI-172 PR-2) ----------
+    //
+    // CRUD surface for the customer-org's membership via the actingAs
+    // auth-context. Distinct from /users (the read-only roster + MCP-
+    // activity view): /members surfaces invite + role-change + remove
+    // actions when the operator has an active acting-as binding on
+    // THIS customer-org. Without that binding the page renders the
+    // read-only list + a "Manage on behalf of {name}" CTA that POSTs
+    // to /switch (the foundation primitive from #454).
+    //
+    // The substrate (#398 LIFECYCLE-BIND + #441 actingAs-audit-triplet
+    // + #454 cookie/session) means NO new backend endpoints are
+    // needed: the action controls call existing OWNER-scoped
+    // /api/orgs/:customerOrgId/{invitations,members/...} routes,
+    // which honor the actingAs binding via requireOrgRoleForWrite
+    // PATH B. The audit-triplet automatically tags every operator
+    // action with the actor + via_reseller_org_id + on_behalf_of_org_id.
+    app.get("/org/customers/:id/members", async (request, reply) => {
+      const ctx = await requireResellerAccess(
+        request,
+        reply,
+        orgService,
+        billingGate,
+      );
+      if (!ctx) return;
+      const customerId = (request.params as { id: string }).id;
+      const owned = await requireCustomerOwnership(
+        reply,
+        ctx,
+        customerId,
+        orgService,
+      );
+      if (!owned) return;
+
+      // Read-only roster from the reseller-scoped path (same source as
+      // the /users tab) — rendered when there's no active acting-as
+      // binding so the operator can still see WHO is in the customer-
+      // org before deciding to enter context.
+      const profiles = await orgService.getMembersWithProfiles(owned.id);
+      const members = profiles.map((m) => ({
+        name: m.name ?? m.email ?? "—",
+        email: m.email ?? "—",
+        role: m.role,
+        department: "—",
+        toolAccess: "—",
+        lastActive: "—",
+      }));
+
+      // Active acting-as binding on THIS customer-org? Equality is
+      // direct on onBehalfOfOrgId — the middleware-decorated binding
+      // was already revalidated this tick (#398 LIFECYCLE-BIND), so
+      // if the field is set it's the green-light to surface CRUD.
+      const actingAsActive =
+        request.caller?.actingAs?.onBehalfOfOrgId === owned.id;
+
+      // CRUD-shaped rows — populated only when the controls light up.
+      // The owner row's canChangeRole + canRemove flags lock the
+      // owner-mutation footguns (the route layer also enforces; the
+      // UI surface should match so a "Remove" click on the owner is
+      // visibly disabled rather than 403-then-toast).
+      const crudMembers = actingAsActive
+        ? profiles.map((m) => {
+            const isOrgOwner = m.userId === owned.ownerId;
+            // Self-protect: the operator's own auth0 sub. If the
+            // operator happens to ALSO be a member of the customer-
+            // org (rare but possible — an MSP-employee who also
+            // owns the customer), self-remove from acting-as
+            // context is a footgun. Lock it.
+            const isSelf = m.userId === ctx.user.sub;
+            return {
+              id: m.id,
+              userId: m.userId,
+              name: m.name ?? m.email ?? "—",
+              email: m.email ?? "—",
+              role: m.role,
+              // Self-lock on BOTH role-change + remove (boss
+              // msg-1781788880210 — pre-empt the route's
+              // userId===user.sub → 400 with a cleaner data-
+              // layer signal). Mirrors the existing canRemove
+              // self-lock — defense-in-depth + better UX than
+              // a controls-that-shouldn't-be-clickable + toast.
+              canChangeRole: !isOrgOwner && !isSelf,
+              canRemove: !isOrgOwner && !isSelf,
+            };
+          })
+        : undefined;
+
+      const data = buildCustomerTabData(
+        ctx.org,
+        customerSummaryOf(owned),
+        "members",
+      );
+      return sendCustomerTab(request, reply, ctx.user, ctx.org, customerId, {
+        ...data,
+        members,
+        memberTotal: members.length,
+        actingAsActive,
+        crudMembers,
+      });
+    });
+
     // ---------- GET /org/customers/:id/mcps (Track A — real connected vendors) ----------
     // The MCPs tab lists the customer's real connected vendors + live health.
     // Ownership-gated (parent_org_id === reseller). Vendor name + health status
