@@ -28,6 +28,13 @@ export type ActingAsRevokeReason =
   | 'role_demoted_below_admin'
   | 'customer_unparented_from_reseller'
   | 'customer_archived'
+  // LAYER-C deleted-customer reason (mig 053 deleted_at distinguishability,
+  // boss msg-1781750604363 warden VERIFY-1 extension). Fires when the
+  // middleware revalidate detects the customer's deleted_at column is
+  // set OR the soft-delete route fires its explicit cascade. Lets
+  // forensics distinguish suspend-revoke from delete-revoke on the
+  // msp_operator_session_revoked event stream.
+  | 'customer_deleted'
   | 'admin_force_revoked';
 
 export interface ActingAsSession {

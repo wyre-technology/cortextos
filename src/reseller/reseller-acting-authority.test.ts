@@ -26,15 +26,30 @@ import type { OrgService } from '../org/org-service.js';
 
 function fakeOrgService(opts: {
   membership?: { role: 'owner' | 'admin' | 'member' } | null;
-  customer?: { id: string; parentOrgId: string | null } | null;
+  customer?: {
+    id: string;
+    parentOrgId: string | null;
+    suspendedAt?: string | null;
+    deletedAt?: string | null;
+  } | null;
 }): Pick<OrgService, 'getMembership' | 'getOrg'> {
   return {
     getMembership: vi.fn().mockResolvedValue(opts.membership ?? null),
     getOrg: vi.fn().mockImplementation((orgId: string) => {
       if (opts.customer === undefined) {
-        return Promise.resolve({ id: orgId, parentOrgId: 'org_reseller' });
+        return Promise.resolve({
+          id: orgId,
+          parentOrgId: 'org_reseller',
+          suspendedAt: null,
+          deletedAt: null,
+        });
       }
-      return Promise.resolve(opts.customer);
+      if (opts.customer === null) return Promise.resolve(null);
+      return Promise.resolve({
+        suspendedAt: null,
+        deletedAt: null,
+        ...opts.customer,
+      });
     }),
   } as unknown as Pick<OrgService, 'getMembership' | 'getOrg'>;
 }
@@ -128,28 +143,107 @@ describe('verifyResellerActingAuthority — shared 3-check primitive', () => {
     expect(result).toEqual({ ok: false, reason: 'customer_unparented_from_reseller' });
   });
 
+  // -----------------------------------------------------------------
+  // LAYER-C retired-state rejection (mig 012 suspended_at + mig 053
+  // deleted_at). Warden VERIFY-1 extension (boss msg-1781750604363):
+  // soft-delete writes deleted_at, NOT suspended_at — without the
+  // deleted_at check the middleware would silently let acting-as
+  // bindings persist on soft-deleted orgs, reopening the
+  // impersonation hole that suspend's cascade closes.
+  // -----------------------------------------------------------------
+  it('VERIFY-1-EXT: customer.suspendedAt set -> ok=false + customer_archived', async () => {
+    const svc = fakeOrgService({
+      membership: { role: 'admin' },
+      customer: {
+        id: 'org_customer',
+        parentOrgId: 'org_reseller',
+        suspendedAt: '2026-06-18T00:00:00Z',
+      },
+    });
+    const result = await verifyResellerActingAuthority(
+      svc,
+      'user_alice',
+      'org_reseller',
+      'org_customer',
+    );
+    expect(result).toEqual({ ok: false, reason: 'customer_archived' });
+  });
+
+  it('VERIFY-1-EXT: customer.deletedAt set -> ok=false + customer_deleted', async () => {
+    const svc = fakeOrgService({
+      membership: { role: 'admin' },
+      customer: {
+        id: 'org_customer',
+        parentOrgId: 'org_reseller',
+        deletedAt: '2026-06-18T00:00:00Z',
+      },
+    });
+    const result = await verifyResellerActingAuthority(
+      svc,
+      'user_alice',
+      'org_reseller',
+      'org_customer',
+    );
+    expect(result).toEqual({ ok: false, reason: 'customer_deleted' });
+  });
+
+  it('VERIFY-1-EXT: both columns set -> customer_deleted wins (discriminator precedence)', async () => {
+    // A customer that was suspended FIRST then soft-deleted carries
+    // both columns. The deleted_at state is the latest operator-
+    // intent and the dominant one for the audit-revoke discriminator;
+    // primitive returns customer_deleted in that case. Documented at
+    // the source-site so future maintainers don't accidentally swap
+    // the order.
+    const svc = fakeOrgService({
+      membership: { role: 'admin' },
+      customer: {
+        id: 'org_customer',
+        parentOrgId: 'org_reseller',
+        suspendedAt: '2026-06-18T00:00:00Z',
+        deletedAt: '2026-06-18T00:05:00Z',
+      },
+    });
+    const result = await verifyResellerActingAuthority(
+      svc,
+      'user_alice',
+      'org_reseller',
+      'org_customer',
+    );
+    expect(result).toEqual({ ok: false, reason: 'customer_deleted' });
+  });
+
   it('DENY-REASON UNION: every failure case returns a vocabulary item matching the audit-event union', async () => {
     // Type-level invariant: TypeScript narrows result.reason to the
     // exact ResellerActingAuthorityDenyReason union, which mirrors
-    // ActingAsAuditEvent revokeReason. Runtime witness: the 4 cases
-    // covered above exhaustively enumerate the non-admin-force union
-    // members. admin_force_revoked is the OUT-OF-BAND admin-tooling
-    // path (NOT a 3-check failure), so by-construction excluded here.
+    // ActingAsAuditEvent revokeReason. Runtime witness: the 6 cases
+    // below exhaustively enumerate the non-admin-force union members.
+    // admin_force_revoked is the OUT-OF-BAND admin-tooling path (NOT
+    // a 3-check failure), so by-construction excluded here.
     const cases: Array<Parameters<typeof fakeOrgService>[0]> = [
       { membership: null },
       { membership: { role: 'member' } },
       { membership: { role: 'admin' }, customer: null },
       { membership: { role: 'admin' }, customer: { id: 'c', parentOrgId: 'other' } },
+      {
+        membership: { role: 'admin' },
+        customer: { id: 'c', parentOrgId: 'org_reseller', suspendedAt: '2026-06-18T00:00:00Z' },
+      },
+      {
+        membership: { role: 'admin' },
+        customer: { id: 'c', parentOrgId: 'org_reseller', deletedAt: '2026-06-18T00:00:00Z' },
+      },
     ];
     const expectedReasons: Array<ResellerActingAuthorityResult & { ok: false }> = [
       { ok: false, reason: 'actor_removed_from_reseller' },
       { ok: false, reason: 'role_demoted_below_admin' },
       { ok: false, reason: 'customer_archived' },
       { ok: false, reason: 'customer_unparented_from_reseller' },
+      { ok: false, reason: 'customer_archived' },
+      { ok: false, reason: 'customer_deleted' },
     ];
     for (let i = 0; i < cases.length; i += 1) {
       const svc = fakeOrgService(cases[i]);
-      const result = await verifyResellerActingAuthority(svc, 'u', 'r', 'c');
+      const result = await verifyResellerActingAuthority(svc, 'u', 'org_reseller', 'c');
       expect(result).toEqual(expectedReasons[i]);
     }
   });

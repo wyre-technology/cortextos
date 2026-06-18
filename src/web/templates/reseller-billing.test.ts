@@ -18,6 +18,7 @@ const baseOrg: Organization = {
   parentOrgId: null,
   auth0OrgId: null,
   suspendedAt: null,
+  deletedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-06-13T00:00:00Z",
 };

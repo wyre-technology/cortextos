@@ -58,6 +58,7 @@ function makeResellerOrg(id = RESELLER_ID, name = 'Acme MSP'): Organization {
     parentOrgId: null,
     auth0OrgId: null,
     suspendedAt: null,
+    deletedAt: null,
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-02T00:00:00.000Z',
   };
@@ -177,6 +178,7 @@ function makeMocks(options: {
         parentOrgId: opts?.parentOrgId ?? null,
         auth0OrgId: null,
         suspendedAt: null,
+        deletedAt: null,
         createdAt: '2024-03-01T00:00:00.000Z',
         updatedAt: '2024-03-01T00:00:00.000Z',
       })),
@@ -760,6 +762,7 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
         parentOrgId: opts?.parentOrgId ?? null,
         auth0OrgId: null,
         suspendedAt: null,
+        deletedAt: null,
         createdAt: '2024-03-01T00:00:00.000Z',
         updatedAt: '2024-03-01T00:00:00.000Z',
       }));
@@ -803,6 +806,7 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
         parentOrgId: opts?.parentOrgId ?? null,
         auth0OrgId: null,
         suspendedAt: null,
+        deletedAt: null,
         createdAt: '2024-03-01T00:00:00.000Z',
         updatedAt: '2024-03-01T00:00:00.000Z',
       }));
@@ -846,6 +850,7 @@ describe('resellerRoutes (/admin/reseller/:resellerId)', () => {
         parentOrgId: opts?.parentOrgId ?? null,
         auth0OrgId: null,
         suspendedAt: null,
+        deletedAt: null,
         createdAt: '2024-03-01T00:00:00.000Z',
         updatedAt: '2024-03-01T00:00:00.000Z',
       }));

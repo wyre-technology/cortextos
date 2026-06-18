@@ -65,6 +65,7 @@ const TEST_ORG = {
   parentOrgId: null,
   auth0OrgId: null,
   suspendedAt: null,
+  deletedAt: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -503,18 +504,24 @@ describe('orgRoutes', () => {
   //     admin-threshold = sufficient for soft-delete; hard-delete is
   //     no longer reachable from this surface.
   describe('DELETE /api/orgs/:orgId (LAYER-C soft-delete)', () => {
-    it('soft-deletes when admin + typed-name matches + audit-triplet fires', async () => {
+    it('soft-deletes when admin + typed-name matches + audit-triplet fires + explicit cascade revokes acting-as sessions', async () => {
       authenticateAs();
       const softDeletedOrg = {
         ...TEST_ORG,
-        suspendedAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString(),
       };
       const orgService = createMockOrgService({
         getMembership: adminMembership(),
         getOrg: vi.fn().mockResolvedValue(TEST_ORG),
         softDeleteOrg: vi.fn().mockResolvedValue(softDeletedOrg),
       });
-      app = await buildApp(orgService);
+      const revokeAll = vi.fn().mockResolvedValue([
+        { sessionId: 'aas_a' },
+        { sessionId: 'aas_b' },
+      ]);
+      app = await buildApp(orgService, undefined, undefined, undefined, {
+        revokeAllForCustomerOrg: revokeAll,
+      });
 
       const response = await app.inject({
         method: 'DELETE',
@@ -526,6 +533,15 @@ describe('orgRoutes', () => {
       expect(orgService.softDeleteOrg).toHaveBeenCalledWith('org-1');
       // Hard-delete must NOT be called from this surface.
       expect(orgService.deleteOrg).not.toHaveBeenCalled();
+      // EXPLICIT CASCADE PROOF — warden VERIFY-1 verdict-matrix
+      // APPROVE-CLEAN path (boss msg-1781750687331). The middleware
+      // implicit cascade still catches the hole on the next tick,
+      // but the explicit cascade here emits per-session audit-
+      // revokes immediately at delete time + is symmetric with the
+      // suspend route.
+      expect(revokeAll).toHaveBeenCalledWith('org-1', 'customer_deleted');
+      const body = response.json();
+      expect(body.sessions_revoked).toBe(2);
     });
 
     it('400 when body.org_name does not match the current org name (typed-confirm gate)', async () => {
@@ -608,7 +624,7 @@ describe('orgRoutes', () => {
       authenticateAs();
       const alreadySoft = {
         ...TEST_ORG,
-        suspendedAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString(),
       };
       const orgService = createMockOrgService({
         getMembership: adminMembership(),
@@ -823,8 +839,8 @@ describe('orgRoutes', () => {
   describe('POST /api/orgs/:orgId/restore (LAYER-C)', () => {
     it('restores soft-deleted org via the same schema-level op as unsuspend', async () => {
       authenticateAs();
-      const softDeleted = { ...TEST_ORG, suspendedAt: new Date().toISOString() };
-      const restored = { ...TEST_ORG, suspendedAt: null };
+      const softDeleted = { ...TEST_ORG, deletedAt: new Date().toISOString() };
+      const restored = { ...TEST_ORG, deletedAt: null };
       const orgService = createMockOrgService({
         getMembership: adminMembership(),
         getOrg: vi.fn().mockResolvedValue(softDeleted),

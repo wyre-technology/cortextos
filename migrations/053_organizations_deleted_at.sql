@@ -1,0 +1,82 @@
+-- =============================================================================
+-- Migration:      053_organizations_deleted_at.sql
+-- Date:           2026-06-18
+-- WYREAI Ticket:  WYREAI-171 Phase-3 LAYER-C (boss msg-1781750475088).
+-- Authored by:    dev agent
+--
+-- Purpose:
+--   Add `organizations.deleted_at` as the soft-delete-distinct column,
+--   separate from `organizations.suspended_at` (mig 012). Both columns
+--   coexist deliberately: they represent DIFFERENT operator-intent
+--   states that have DIFFERENT downstream-consumer semantics.
+--
+-- Why a separate column (boss msg-1781750475088 fold-in decision):
+--   The pre-054 LAYER-C draft (PR #450) had softDeleteOrg and suspendOrg
+--   sharing `suspended_at` as the persistence column, with the audit
+--   event (`customer_org_soft_deleted` vs `customer_org_suspended`) as
+--   the discriminator. That works functionally but creates a real
+--   safe-by-construction gap at the post-window sweeper:
+--
+--     If soft-deleted and suspended share `suspended_at`, the sweeper
+--     has to identify "soft-deleted" via audit-event-filtering (find
+--     the latest state-change event per org and filter on type). A bug
+--     in that filter — a missing event, a reordering, a typo in the
+--     event-type union — would let the sweeper HARD-DELETE a SUSPENDED
+--     org. Suspended orgs are indefinite by-design (no sweeper window);
+--     hard-deleting one is permanent customer data loss with no recovery.
+--
+--   Splitting the columns eliminates that bug-class by-construction:
+--     - `WHERE deleted_at < NOW() - INTERVAL '7 days'` is the clean
+--       sweeper predicate. Cannot accidentally target suspended-only rows.
+--     - Suspended rows have `suspended_at NOT NULL` AND `deleted_at NULL`
+--       (the operator chose suspend, not delete).
+--     - Soft-deleted rows have `deleted_at NOT NULL` (operator chose
+--       delete with reversibility window). They MAY also have a
+--       `suspended_at` value if the operator suspended first then
+--       soft-deleted; that's harmless — the sweeper only reads
+--       `deleted_at`.
+--
+--   Bonus: the dashboard list-deleted-vs-suspended UX becomes a clean
+--   discriminator query, no audit-log replay needed.
+--
+-- The June 29 launch directive (Aaron P0 LAYER-C close, WYREAI-171
+-- Phase-3) ships with the column-split substrate now; the post-window
+-- sweeper that consumes `deleted_at < NOW() - INTERVAL '7 days'` lands
+-- as a follow-up PR.
+--
+-- Rollback Notes:
+--   Greenfield: drop index, then column. Once real soft-delete rows
+--   exist the column carries operator-decision state; rollback is
+--   destructive (every soft-deleted row would "un-delete" on column
+--   drop) and must be coordinated. No down-migration file — project
+--   convention is forward-only (see 001, 002, 003, 012).
+--
+-- Schema-harness drift note:
+--   This is a column-add on the already-bootstrapped `organizations`
+--   table (the SCIM bootstrap covers the table; new columns flow
+--   through). No new tables; no bootstrap addition needed.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. organizations.deleted_at
+--    Set by the LAYER-C soft-delete flow (DELETE /api/orgs/:orgId rewrite
+--    via OrgService.softDeleteOrg). Cleared by the restore flow (POST
+--    /api/orgs/:orgId/restore via OrgService.restoreOrg). Read by the
+--    follow-up post-window sweeper to identify rows eligible for the
+--    irreversible hard-delete pass.
+--
+--    DISTINCT from `suspended_at` (mig 012): suspended_at is the
+--    operator-suspend state (indefinite, no sweep). deleted_at is the
+--    soft-delete state (sweeper-eligible after the reversibility window).
+--    They can coexist on a single row without conflict; the sweeper reads
+--    only deleted_at.
+-- ---------------------------------------------------------------------------
+ALTER TABLE organizations
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
+
+-- Partial index — only soft-deleted rows are interesting for the sweeper
+-- and the dashboard "list deleted customers" view. Mirrors the mig 012
+-- shape for suspended_at.
+CREATE INDEX IF NOT EXISTS idx_organizations_deleted_at
+  ON organizations (deleted_at)
+  WHERE deleted_at IS NOT NULL;

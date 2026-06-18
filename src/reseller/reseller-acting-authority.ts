@@ -44,6 +44,18 @@ export type ResellerActingAuthorityDenyReason =
   | 'actor_removed_from_reseller'
   | 'role_demoted_below_admin'
   | 'customer_archived'
+  // LAYER-C destructive-lifecycle distinguishability (boss
+  // msg-1781750604363 warden VERIFY-1 extension). Pre-LAYER-C the
+  // single `customer_archived` reason covered hard-deleted-row +
+  // suspended state (no soft-delete existed). With mig 053 adding
+  // `organizations.deleted_at` for the LAYER-C soft-delete flow,
+  // we split the reason so forensics + the audit-revoke event union
+  // can distinguish "operator paused this customer" (suspended_at
+  // set → customer_archived) from "operator soft-deleted this
+  // customer" (deleted_at set → customer_deleted). Hard-delete-by-
+  // sweeper future case stays on customer_archived for backward-
+  // compat (the row is absent → same semantic as the current path).
+  | 'customer_deleted'
   | 'customer_unparented_from_reseller';
 
 export type ResellerActingAuthorityResult =
@@ -92,15 +104,49 @@ export async function verifyResellerActingAuthority(
     }
 
     // Check 2+3 — Customer-of-reseller FK chain intact + customer-org
-    // not deleted. Conduit uses hard-delete on organizations (no
-    // deleted_at / archived_at column today); absence of the row =
-    // customer_archived semantic (the ratified schema's term for
-    // "customer no longer exists"). Soft-delete migration would map
-    // here too without churn.
+    // not retired (suspended OR soft-deleted) + not hard-deleted.
+    //
+    // Mig 012 added organizations.suspended_at, mig 053 added
+    // organizations.deleted_at — both are LAYER-C retired-state
+    // markers (boss msg-1781747082572 + msg-1781750604363). The
+    // middleware MUST reject acting-as on EITHER state, otherwise:
+    //   - Suspended-but-impersonable: the operator suspended a
+    //     customer "to stop everything" but acting-as still works →
+    //     contradicts operator intent.
+    //   - Soft-deleted-but-impersonable: the operator soft-deleted
+    //     a customer (pending sweeper hard-delete) but acting-as
+    //     still works → soft-delete has no other cascade primitive
+    //     post-mig-054, so this IS the cascade. Without this check
+    //     the column-split (deleted_at vs suspended_at) silently
+    //     reopens the impersonation hole that the suspend cascade
+    //     closed.
+    //
+    // Discriminator split (warden VERIFY-1 extension):
+    //   - suspended_at set → 'customer_archived' (operator-pause
+    //     semantic — pre-mig-054 single-column case kept on this
+    //     reason for backward-compat with prior audit-event rows)
+    //   - deleted_at set → 'customer_deleted' (operator-delete
+    //     semantic — new in mig 053, dedicated reason so forensics
+    //     can distinguish operator-pause from operator-delete on
+    //     msp_operator_session_revoked events)
+    //   - row absent → 'customer_archived' (existing hard-delete
+    //     path — semantically closest to "customer no longer
+    //     exists"; kept on this reason for backward-compat)
+    //
+    // Order of checks matters: deleted_at takes precedence over
+    // suspended_at on the discriminator (a row with BOTH columns set
+    // means the operator suspended THEN deleted — the deleted state
+    // is the latest/dominant intent for the audit-revoke).
     const customer = await orgService.getOrg(onBehalfOfOrgId).catch(() => null);
     if (!customer) return { ok: false, reason: 'customer_archived' } as const;
     if (customer.parentOrgId !== viaResellerOrgId) {
       return { ok: false, reason: 'customer_unparented_from_reseller' } as const;
+    }
+    if (customer.deletedAt) {
+      return { ok: false, reason: 'customer_deleted' } as const;
+    }
+    if (customer.suspendedAt) {
+      return { ok: false, reason: 'customer_archived' } as const;
     }
 
     return { ok: true, role, customerOrg: customer } as const;

@@ -355,12 +355,46 @@ export function orgRoutes(deps: OrgRouteDeps) {
         }
 
         // Idempotency: if already soft-deleted, return the row + skip
-        // the audit-emit (no event duplication on retries).
-        if (org.suspendedAt) {
+        // the audit-emit + skip the cascade (no event duplication on
+        // retries). COLUMN-SPLIT (mig 053): the marker is `deletedAt`,
+        // not `suspendedAt` — soft-delete and suspend now have
+        // independent state columns.
+        if (org.deletedAt) {
           return reply.code(200).send(org);
         }
 
         const updated = await orgService.softDeleteOrg(orgId);
+
+        // EXPLICIT cascade — defense-in-depth on the LAYER-C column-
+        // split (boss msg-1781750687331 + warden VERIFY-1 verdict
+        // matrix's APPROVE-CLEAN path). The middleware revalidate
+        // already rejects acting-as on `deletedAt IS NOT NULL` (the
+        // implicit cascade), but firing the EXPLICIT
+        // revokeAllForCustomerOrg here is symmetric with the suspend
+        // route AND emits the per-session audit-revoke events
+        // immediately at delete time (vs whenever the next request
+        // happens to revalidate). Safer + more legible for forensics.
+        //
+        // 503 cleanly if session-svc isn't wired — refuses to skip
+        // the cascade silently (same defensive posture as POST
+        // /suspend). The middleware-level reject still catches the
+        // hole on the next tick, but we shouldn't ship a quiet
+        // degradation of the immediate-revoke contract.
+        if (!actingAsSessionService) {
+          request.log.error(
+            { orgId },
+            "soft-delete route: actingAsSessionService not wired — explicit cascade required, refusing to leave the audit-stream silent on delete",
+          );
+          return reply.code(503).send({
+            error:
+              "Soft-delete cascade unavailable in this deployment — acting-as session service is not configured.",
+          });
+        }
+        const revoked = await actingAsSessionService.revokeAllForCustomerOrg(
+          orgId,
+          "customer_deleted",
+        );
+
         const triplet = actingAsAuditTriplet(request, user);
         void adminAuditService
           .log({
@@ -369,6 +403,7 @@ export function orgRoutes(deps: OrgRouteDeps) {
             eventType: "customer_org_soft_deleted",
             metadata: {
               org_name: org.name,
+              sessions_revoked_count: revoked.length,
               acting_as: {
                 actor: triplet.actor,
                 via_reseller_org_id: triplet.viaResellerOrgId,
@@ -377,7 +412,9 @@ export function orgRoutes(deps: OrgRouteDeps) {
             },
           })
           .catch((err) => request.log.error(err, "admin audit log failed"));
-        return reply.code(200).send(updated);
+        return reply
+          .code(200)
+          .send({ org: updated, sessions_revoked: revoked.length });
       },
     );
 
@@ -589,7 +626,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
         if (!org) {
           return reply.code(404).send({ error: "Organization not found" });
         }
-        if (!org.suspendedAt) {
+        // COLUMN-SPLIT (mig 053): restore acts on `deletedAt` only —
+        // an org that is suspended-but-not-soft-deleted needs the
+        // POST /unsuspend route, NOT this one. Idempotency check
+        // mirrors that scope: if not soft-deleted, return cleanly
+        // with already_active=true and skip the audit-emit.
+        if (!org.deletedAt) {
           return reply.code(200).send({
             org,
             already_active: true,
@@ -1163,6 +1205,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
       Body: { vendors: string[] };
     }>(
       "/api/orgs/:orgId/members/:userId/server-access",
+      // B4 flood-vector fold-in (boss msg-1781750543612 ruby completeness):
+      // bulk-set is the toggle-thrash flood vector — a single request
+      // can flip every vendor on/off, so abuse cost is high per call.
+      // 10/hr per IP cap. (Per-vendor PUT/DELETE on this path already
+      // rate-limited at 10/hr above; this closes the BULK siblings.)
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const { orgId, userId } = request.params;
         const user = await requireOrgRoleForWrite(
@@ -2011,6 +2059,12 @@ export function orgRoutes(deps: OrgRouteDeps) {
     // DELETE /api/orgs/:orgId/service-clients/:clientId — revoke a service client
     app.delete<{ Params: { orgId: string; clientId: string } }>(
       "/api/orgs/:orgId/service-clients/:clientId",
+      // B4 flood-vector fold-in (boss msg-1781750543612 ruby completeness):
+      // service-client revoke is the key-rotation-churn flood vector —
+      // an attacker (or buggy script) can revoke every service client
+      // in a tight loop to cause downstream auth-stamp invalidations.
+      // 10/hr per IP cap.
+      { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
       async (request, reply) => {
         const user = await requireOrgRoleForWrite(
           request,
