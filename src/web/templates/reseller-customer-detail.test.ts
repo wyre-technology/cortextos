@@ -324,3 +324,106 @@ describe("renderResellerCustomerDetail", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// WYREAI-172 actingAs entry-point button + script tests
+// (boss msg-1781784272248). The "Manage on behalf of <name>" form POSTs
+// to the /switch endpoint; the JS routes the response.
+// ---------------------------------------------------------------------------
+
+describe('renderResellerCustomerDetail — actingAs entry-point button (WYREAI-172)', () => {
+  function data(over: Partial<CustomerSummary> = {}): ResellerCustomerDetailData {
+    return {
+      org: {
+        id: 'org_reseller',
+        name: 'Acme MSP',
+        ownerId: 'auth0|1',
+        plan: 'business',
+        defaultServerAccess: 'none',
+        promptCaptureEnabled: false,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        type: 'reseller',
+        parentOrgId: null,
+        auth0OrgId: null,
+        suspendedAt: null,
+        deletedAt: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-05-16T00:00:00Z',
+      },
+      customer: {
+        id: over.id ?? 'cust_1',
+        name: over.name ?? 'AM3 Technology',
+        plan: over.plan ?? 'BUSINESS',
+        userCount: over.userCount ?? 12,
+        mcpCount: over.mcpCount ?? 4,
+        subdomain: over.subdomain ?? 'am3.conduit.wyre.ai',
+      },
+    };
+  }
+
+  it('renders "Manage on behalf of <name>" button + form pointing at /switch', () => {
+    const { body } = renderResellerCustomerDetail(data());
+    expect(body).toContain('Manage on behalf of AM3 Technology');
+    expect(body).toContain(
+      'action="/api/reseller/me/customers/cust_1/switch"',
+    );
+    expect(body).toContain('method="POST"');
+    expect(body).toContain('id="cdActingAsBtn"');
+  });
+
+  it('encodes the customer id in the form action (defense vs reserved chars)', () => {
+    const { body } = renderResellerCustomerDetail(data({ id: 'cust/with/slashes' }));
+    expect(body).toContain(
+      'action="/api/reseller/me/customers/cust%2Fwith%2Fslashes/switch"',
+    );
+  });
+
+  it('escapes the customer name in the button label (HTML-injection safety)', () => {
+    const { body } = renderResellerCustomerDetail(
+      data({ name: "<script>alert('x')</script>" }),
+    );
+    expect(body).not.toContain("Manage on behalf of <script>alert('x')</script>");
+    expect(body).toContain('&lt;script&gt;');
+  });
+
+  it('script intercepts submit + redirects to /org/dashboard on 200', () => {
+    const { pageScripts } = renderResellerCustomerDetail(data());
+    expect(pageScripts).toContain("FORM.addEventListener('submit'");
+    expect(pageScripts).toContain('ev.preventDefault()');
+    expect(pageScripts).toContain('res.status === 200');
+    expect(pageScripts).toContain("window.location.href = '/org/dashboard'");
+  });
+
+  it('script routes 403 / 429 / network errors to distinct status messages', () => {
+    const { pageScripts } = renderResellerCustomerDetail(data());
+    expect(pageScripts).toContain('res.status === 403');
+    expect(pageScripts).toContain("don't have permission to act on behalf");
+    expect(pageScripts).toContain('res.status === 429');
+    expect(pageScripts).toContain('Rate limit hit');
+    expect(pageScripts).toContain('Network error');
+  });
+
+  it('script encodes the customer id via the XSS-safe embed helper', () => {
+    // Same sweep as the warden HIGH-sev XSS-fix: bare JSON.stringify of
+    // a user-controlled value in a script embed is the vector. The
+    // helper-routed embed escapes `<` so a malicious org-name cannot
+    // break out of the <script> tag.
+    const { pageScripts } = renderResellerCustomerDetail(
+      data({ id: 'cust_a<script>x</script>b' }),
+    );
+    expect(pageScripts).not.toContain('cust_a<script>x</script>b');
+    expect(pageScripts).toContain('\\u003cscript>x\\u003c/script>b');
+  });
+
+  it('button is reachable without JS (native form submit fallback)', () => {
+    // Defense-in-depth: even if the page-script fails to load (CSP
+    // breakage, CDN flap), the form's native POST still works. The
+    // server's 200 response is unsightly but the operator can refresh
+    // /org/dashboard to see customer-context.
+    const { body } = renderResellerCustomerDetail(data());
+    // The form has both method=POST and a native action — the JS only
+    // augments, it doesn't replace.
+    expect(body).toMatch(/method="POST"[\s\S]*action="\/api\/reseller\/me/);
+  });
+});

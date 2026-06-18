@@ -110,7 +110,18 @@ export type AdminEventType =
   | "customer_org_suspended"
   | "customer_org_unsuspended"
   | "customer_org_soft_deleted"
-  | "customer_org_restored";
+  | "customer_org_restored"
+  // WYREAI-172 actingAs-UI-flow foundation (boss msg-1781784272248).
+  // Operator-routes /switch and /exit handlers emit these events as
+  // admin_audit_log rows alongside the ratified
+  // ActingAsAuditEvent['msp_operator_session_*'] discriminated union
+  // (src/audit/acting-as-audit-types.ts). Same vocabulary across both
+  // surfaces so a future schema-rectification (V4=B follow-up to add
+  // a dedicated msp_operator_session_revoked_log table) can backfill
+  // from admin_audit_log metadata without event-type renames.
+  | "msp_operator_session_started"
+  | "msp_operator_session_ended"
+  | "msp_operator_session_revoked";
 
 export interface AdminAuditEntry {
   id: string;

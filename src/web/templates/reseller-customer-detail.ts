@@ -89,7 +89,7 @@ export interface ResellerCustomerDetailData {
  *     - 403 → status message: "Only an org owner can delete this
  *       customer. (Upcoming soft-delete will allow admins.)"
  *     - 404 → "Customer not found — it may already be deleted."
- *     - 429 → "Rate limit hit — try again in a few minutes."
+ *     - 429 → "Rate limit hit. Try again in a few minutes."
  *     - other → "Could not delete (HTTP NNN). See server logs."
  *  4. Escape closes the modal; overlay-click closes the modal; Cancel
  *     button closes the modal. Focus moves to the name input on open
@@ -100,6 +100,92 @@ export interface ResellerCustomerDetailData {
  * so the standard CSP + page-script discipline applies (no inline
  * handlers in the HTML body; all wiring runs from this one block).
  */
+/**
+ * WYREAI-172 actingAs entry-point script (boss msg-1781784272248).
+ *
+ * Intercepts the "Manage on behalf of <name>" form submit, POSTs to
+ * the /switch endpoint via fetch (so we can route success vs error
+ * UX), and on 200 redirects to /org/dashboard where the page renders
+ * customer-context (the layout-chrome badge confirms WHICH customer).
+ *
+ * Layered safety:
+ *  1. The form's native action attribute IS the /switch endpoint, so
+ *     the flow works WITHOUT JS (the browser POSTs natively + the 200
+ *     response body is unsightly but functional).
+ *  2. With JS: preventDefault → fetch → status-route the response →
+ *     redirect on success.
+ *  3. Failure modes:
+ *     - 403 → status: "You don't have permission to act on behalf of
+ *             this customer." (covers verifyResellerActingAuthority
+ *             denial — actor demoted, customer suspended/deleted,
+ *             customer not under this reseller)
+ *     - 429 → "Rate limit hit. Try again in a few minutes."
+ *     - network → "Network error. Check connection and retry."
+ *     - other → "Could not start customer session (HTTP NNN)."
+ *  4. While the request is in flight: button disabled + status =
+ *     "Starting session…" so the operator gets immediate feedback +
+ *     can't double-submit (which would create a second session row).
+ */
+function buildActingAsScript(customerId: string): string {
+  return `
+<script>
+  (function () {
+    var FORM = document.getElementById('cdActingAsForm');
+    var BTN = document.getElementById('cdActingAsBtn');
+    var STATUS = document.getElementById('cdActingAsStatus');
+    if (!FORM || !BTN || !STATUS) return;
+
+    var CUSTOMER_ID = ${jsonForScriptEmbed(customerId)};
+    var inFlight = false;
+
+    function setStatus(text, isError) {
+      STATUS.textContent = text;
+      STATUS.classList.toggle('cd-acting-as-status-error', !!isError);
+    }
+
+    FORM.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (inFlight) return;
+      inFlight = true;
+      BTN.disabled = true;
+      setStatus('Starting session…', false);
+
+      fetch('/api/reseller/me/customers/' + encodeURIComponent(CUSTOMER_ID) + '/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+      }).then(function (res) {
+        inFlight = false;
+        if (res.status === 200) {
+          // The cookie was set on the response — subsequent requests
+          // carry actingAs. Redirect to /org/dashboard where the
+          // operator sees customer-context (the layout badge confirms).
+          window.location.href = '/org/dashboard';
+          return;
+        }
+        BTN.disabled = false;
+        if (res.status === 403) {
+          setStatus(
+            "You don't have permission to act on behalf of this customer.",
+            true,
+          );
+          return;
+        }
+        if (res.status === 429) {
+          setStatus('Rate limit hit. Try again in a few minutes.', true);
+          return;
+        }
+        setStatus('Could not start customer session (HTTP ' + res.status + ').', true);
+      }).catch(function () {
+        inFlight = false;
+        BTN.disabled = false;
+        setStatus('Network error. Check connection and retry.', true);
+      });
+    });
+  })();
+</script>`;
+}
+
 function buildDeleteScript(customerId: string, customerName: string): string {
   return `
 <script>
@@ -198,14 +284,14 @@ function buildDeleteScript(customerId: string, customerName: string): string {
           return;
         }
         if (res.status === 429) {
-          setStatus('Rate limit hit — try again in a few minutes.', true);
+          setStatus('Rate limit hit. Try again in a few minutes.', true);
           return;
         }
         setStatus('Could not delete (HTTP ' + res.status + ').', true);
       }).catch(function () {
         inFlight = false;
         CANCEL_BTN.disabled = false;
-        setStatus('Network error — check connection and retry.', true);
+        setStatus('Network error. Check connection and retry.', true);
       });
     });
   })();
@@ -359,6 +445,32 @@ export function renderResellerCustomerDetail(
         }</p>
       </div>
       <div class="cd-actions">
+        <!--
+          WYREAI-172 actingAs-UI-flow foundation entry-point (boss
+          msg-1781784272248). The form POSTs to
+          /api/reseller/me/customers/:customerOrgId/switch which starts
+          an acting-as session + sets the signed cookie. On success the
+          handler 200s; the JS below redirects to /org/dashboard where
+          the operator now sees customer-context (the badge in the
+          layout chrome confirms WHICH customer they're operating in).
+
+          a11y: real form submit (works without JS) but the JS handler
+          on submit prevents default + uses fetch so we can route the
+          redirect on success (200 → redirect) vs error (403 → toast).
+        -->
+        <form
+          method="POST"
+          action="/api/reseller/me/customers/${encodeURIComponent(customer.id)}/switch"
+          class="cd-acting-as-form"
+          id="cdActingAsForm"
+        >
+          <button
+            type="submit"
+            class="cd-btn-secondary cd-btn-acting-as"
+            id="cdActingAsBtn"
+          >Manage on behalf of ${name}</button>
+          <span class="cd-acting-as-status" id="cdActingAsStatus" role="status" aria-live="polite"></span>
+        </form>
         <a class="cd-btn-primary" href="${onboardHref}">+ Onboard MCP</a>
         <button
           type="button"
@@ -476,7 +588,8 @@ export function renderResellerCustomerDetail(
     body,
     pageScripts:
       buildScript(org.id, customer.id) +
-      buildDeleteScript(customer.id, customer.name),
+      buildDeleteScript(customer.id, customer.name) +
+      buildActingAsScript(customer.id),
   };
 }
 
@@ -639,6 +752,41 @@ export const RESELLER_CUSTOMER_DETAIL_STYLES = `
   .cd-btn-danger:hover {
     background: var(--bg-card-hover, var(--bg-card));
     border-color: var(--error-text);
+  }
+
+  /* WYREAI-172 acting-as entry-point button — sits to the LEFT of
+     + Onboard MCP since it's the precursor flow ("enter customer
+     context, then onboard or manage members or settings"). Uses the
+     accent-cyan tone instead of the loud yellow primary or danger
+     red — it's a context-switch, not a destructive nor primary CTA. */
+  .cd-acting-as-form {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    margin: 0;
+  }
+  .cd-btn-acting-as {
+    color: var(--accent-text);
+    border-color: var(--accent);
+  }
+  .cd-btn-acting-as:hover {
+    background: var(--bg-card-hover, var(--bg-card));
+    border-color: var(--accent);
+  }
+  .cd-btn-acting-as:disabled {
+    color: var(--text-muted);
+    border-color: var(--border-primary);
+    cursor: not-allowed;
+  }
+  .cd-acting-as-status {
+    min-height: 1em;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-align: right;
+  }
+  .cd-acting-as-status-error {
+    color: var(--error-text);
   }
 
   /* Delete-customer modal — LAYER-C UI fast-win.

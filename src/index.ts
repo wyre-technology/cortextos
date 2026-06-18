@@ -84,6 +84,10 @@ import { DashboardService } from './dashboard/dashboard-service.js';
 import { dashboardRoutes } from './dashboard/routes.js';
 import { ResellerService } from './reseller/reseller-service.js';
 import { resellerRoutes } from './reseller/routes.js';
+import { operatorRoutes } from './reseller/operator-routes.js';
+import { ActingAsSessionService } from './reseller/acting-as-session-service.js';
+import { actingAsMiddleware } from './reseller/acting-as-middleware.js';
+import { verifyResellerActingAuthority } from './reseller/reseller-acting-authority.js';
 import { ResellerMemberService } from './org/reseller-member-service.js';
 import { scimPlugin } from './scim/router.js';
 
@@ -225,6 +229,11 @@ const orgService = new OrgService();
 // depending on the caller's context), same pattern as OrgService.
 const orgDiscountService = new DefaultOrgDiscountService();
 const seatService = new DefaultSeatService(orgService, orgDiscountService);
+// WYREAI-172 actingAs-UI-flow foundation (boss msg-1781784272248).
+// DB-backed session storage for MSP-as-OPERATOR actingAs state
+// (mig 049). Consumed by acting-as-middleware (read every request) +
+// operator-routes (mint at /switch, end at /exit).
+const actingAsSessionService = new ActingAsSessionService();
 // Layer 1: standalone-org creation provisions a Stripe trialing
 // subscription via the conduit provisioner.
 //
@@ -377,6 +386,54 @@ await runAsSystem(async () => {
   // non-exempt HTTP request. Registered immediately after auth so its
   // onRequest hook runs after the auth session hook.
   await app.register(requestContextPlugin());
+
+  // WYREAI-172 actingAs-UI-flow foundation (boss msg-1781784272248).
+  // The acting-as-middleware decorates request.caller.actingAs on every
+  // request by reading the signed `acting_as_session` cookie + running
+  // the LIFECYCLE-BIND 3-check revalidation against the session row.
+  // Must register AFTER auth (so request.caller.userId is populated)
+  // and AFTER requestContextPlugin (so the RLS-aware DB reads run in
+  // the right pool).
+  //
+  // emitAuditEvent: the V4=B transactional security-notice (notify the
+  // customer-org owner email at session_started boundary) is a follow-
+  // up — see operator-routes deps factory below for the same emit
+  // shape's TODO marker. Today the audit row is written to
+  // admin_audit_log; the email-fire wraps land in a sibling PR.
+  await app.register(
+    actingAsMiddleware({
+      actingAsSessionService,
+      orgService,
+      emitAuditEvent: async (event) => {
+        // Write the revoke event to admin_audit_log (the route layer's
+        // started/ended emits go through operator-routes' deps emit
+        // below; this middleware path covers ONLY the 3-check failure
+        // revoke). Same event-type vocabulary across both surfaces.
+        //
+        // Narrow on type — the discriminated union has variant-specific
+        // fields (revokedAt/revokeReason live ONLY on the _revoked
+        // variant). The middleware only emits _revoked from
+        // revalidate()'s failure path, but the deps signature accepts
+        // the full union, so we narrow defensively. Non-revoked events
+        // bypass this middleware-side emit entirely (started/ended
+        // emits go through operator-routes' deps).
+        if (event.type !== 'msp_operator_session_revoked') return;
+        await adminAuditService.log({
+          orgId: event.customerOrgId,
+          actorId: event.actorUserId,
+          eventType: 'msp_operator_session_revoked',
+          metadata: {
+            reseller_org_id: event.resellerOrgId,
+            session_started_at: event.sessionStartedAt,
+            revoked_at: event.revokedAt,
+            revoke_reason: event.revokeReason,
+            ip: event.ip,
+            user_agent: event.userAgent,
+          },
+        });
+      },
+    }),
+  );
 
   // Per-service schema init.
   await orgService.initTables();
@@ -614,6 +671,111 @@ await app.register(dashboardRoutes({
 // The plugin itself also enforces the RESELLER_CONSOLE_ENABLED flag so the
 // surface 404s even if the flag flips at runtime.
 await app.register(resellerRoutes({ resellerService, resellerMemberService, orgService, dashboardService, auditService, adminAuditService }));
+
+// WYREAI-172 actingAs-UI-flow foundation (boss msg-1781784272248).
+// MSP-as-OPERATOR routes — GET /api/reseller/me/customers (list),
+// POST /:customerOrgId/switch (start session + mint cookie),
+// POST /exit (end session + clear cookie). The substrate (#398
+// LIFECYCLE-BIND + #441 audit-triplet) is already in main; this PR
+// closes the substrate loop by registering the plugin + wiring real
+// deps so request.caller.actingAs is populated end-to-end.
+await app.register(
+  operatorRoutes({
+    listOperatableCustomers: async (resellerOrgId) => {
+      if (!resellerOrgId) return [];
+      const customers = await orgService.getCustomersOfReseller(resellerOrgId);
+      return customers.map((org) => ({
+        customerOrgId: org.id,
+        customerName: org.name,
+        customerCreatedAt: org.createdAt,
+      }));
+    },
+    authorizeActAs: async (userId, resellerOrgId, customerOrgId) => {
+      if (!userId || !resellerOrgId || !customerOrgId) {
+        return { ok: false, reason: 'NOT_RESELLER_OF_CUSTOMER' };
+      }
+      const result = await verifyResellerActingAuthority(
+        orgService,
+        userId,
+        resellerOrgId,
+        customerOrgId,
+      );
+      if (result.ok) return { ok: true };
+      // Map the primitive's deny vocabulary to the OperatorRoutes
+      // authz-result vocabulary. Both 'actor_removed_from_reseller'
+      // and 'customer_unparented_from_reseller' collapse to
+      // NOT_RESELLER_OF_CUSTOMER (the operator simply isn't authorized
+      // for THIS customer-org); role demotion maps to INSUFFICIENT_ROLE;
+      // suspended/deleted customer maps to CUSTOMER_ARCHIVED (covers
+      // both the suspended_at + deleted_at retired-states from mig 012
+      // + mig 053, per the warden VERIFY-1 extension).
+      switch (result.reason) {
+        case 'role_demoted_below_admin':
+          return { ok: false, reason: 'INSUFFICIENT_ROLE' };
+        case 'customer_archived':
+        case 'customer_deleted':
+          return { ok: false, reason: 'CUSTOMER_ARCHIVED' };
+        default:
+          return { ok: false, reason: 'NOT_RESELLER_OF_CUSTOMER' };
+      }
+    },
+    emitActingAsAuditEvent: async (event) => {
+      // V4=B transactional security-notice (email customer-org owner
+      // at session_started boundary) — TODO follow-up PR. For now we
+      // write the admin_audit_log row only; the email-fire wraps land
+      // in a sibling PR with the email-template + sender-config
+      // sourced from existing src/email/loops.ts machinery. The audit
+      // event-type vocabulary is already aligned (msp_operator_session_*).
+      const customerOrgId =
+        'customerOrgId' in event ? event.customerOrgId : '';
+      const eventType =
+        event.type === 'msp_operator_session_started'
+          ? 'msp_operator_session_started'
+          : event.type === 'msp_operator_session_ended'
+            ? 'msp_operator_session_ended'
+            : 'msp_operator_session_revoked';
+      await adminAuditService.log({
+        orgId: customerOrgId,
+        actorId: event.actorUserId,
+        eventType,
+        metadata: {
+          reseller_org_id:
+            'resellerOrgId' in event ? event.resellerOrgId : null,
+          session_started_at: event.sessionStartedAt,
+          ip: event.ip,
+          user_agent: event.userAgent,
+          // event-specific fields
+          ...(event.type === 'msp_operator_session_started'
+            ? { customer_org_owner_email: event.customerOrgOwnerEmail }
+            : {}),
+          ...(event.type === 'msp_operator_session_ended'
+            ? { session_ended_at: event.sessionEndedAt }
+            : {}),
+        },
+      });
+    },
+    getCustomerOrgOwnerEmail: async (customerOrgId) => {
+      // At-fire-time lookup (NOT cached) — the V4=B transactional
+      // security-notice MUST reach the CURRENT owner even after
+      // ownership transfers. ownerId on the org is the user_id;
+      // the email lives on the users table. Fall back to empty
+      // string if either lookup fails (the audit-event field is
+      // required by the ratified schema but defensive — better to
+      // emit an empty-string field than to fail the /switch flow).
+      try {
+        const org = await orgService.getOrg(customerOrgId);
+        if (!org?.ownerId) return '';
+        const rows = await systemPool()<{ email: string | null }[]>`
+          SELECT email FROM users WHERE id = ${org.ownerId} LIMIT 1
+        `;
+        return rows[0]?.email ?? '';
+      } catch {
+        return '';
+      }
+    },
+    actingAsSessionService,
+  }),
+);
 
 // Admin API: set org plan directly (for managed services contracts)
 app.post<{
