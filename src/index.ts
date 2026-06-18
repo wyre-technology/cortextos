@@ -47,6 +47,7 @@ import { runMigrations } from './db/migrate.js';
 import { initPools, runAsSystem, systemPool, getSql, closePools } from './db/context.js';
 import { hydrateVendorsFromRegistry } from './credentials/vendor-registry.js';
 import { requestContextPlugin } from './db/request-context-plugin.js';
+import { byoOAuthRoutes } from './byo/byo-oauth-routes.js';
 import { orgRoutes } from './org/routes.js';
 import { domainRoutes } from './org/domain-routes.js';
 import { OrgDomainService } from './org/domain-service.js';
@@ -614,6 +615,12 @@ await app.register(webRoutes({
   vendorMonitor,
   adminAuditService,
 }));
+
+// BYOMCP OAuth connect routes (WYREAI-187) — start/callback for user-supplied
+// MCP servers. Self-contained plugin; registered after webRoutes and after
+// requestContextPlugin (line ~388) so its owner-scoped DB work runs under the
+// request-path RLS context.
+await app.register(byoOAuthRoutes());
 
 // Organization management API + invitation routes
 // Track C reseller-settings sweep-3 substrate (June 29 launch).

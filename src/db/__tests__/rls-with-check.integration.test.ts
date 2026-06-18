@@ -261,6 +261,8 @@ async function applyRlsMigrations(): Promise<void> {
     '051_org_tool_allowlist_delete_policy.sql',
     // WYREAI-188: byo_mcp_servers table + owner-only RLS policies.
     '055_byo_mcp_servers.sql',
+    // WYREAI-187: byo_oauth_states table + owner-only RLS policies.
+    '056_byo_oauth_states.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -960,6 +962,64 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
         await bobConn.query`INSERT INTO byo_mcp_servers
           (id, user_id, name, endpoint_url, encrypted_data, iv, auth_tag, salt) VALUES
           ('byo-evil', 'alice', 'spoof', 'https://e.example.com/mcp', 'e', 'i', 't', 's')`;
+        throw new Error('expected RLS WITH CHECK rejection; INSERT succeeded');
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
+      } finally {
+        bobConn.release();
+      }
+    });
+  });
+
+  // WYREAI-187 (BYOMCP): byo_oauth_states (the in-flight OAuth PKCE flow state)
+  // is owner-only — one tenant must never be able to read or consume another's
+  // OAuth state. consume() is a DELETE ... RETURNING, so the DELETE policy is
+  // load-bearing: a cross-user consume must match 0 rows.
+  describe('byo_oauth_states owner-only isolation (migration 056)', () => {
+    beforeAll(async () => {
+      await sql.begin(async (tx) => {
+        await tx.unsafe('RESET ROLE');
+        await tx`INSERT INTO byo_oauth_states
+          (state_token, user_id, byo_server_id, client_id, encrypted_data, iv, auth_tag, salt, expires_at) VALUES
+          ('st-alice', 'alice', 'byo-alice', 'client-a', 'enc', 'iv', 'tag', 'salt', NOW() + INTERVAL '10 minutes')`;
+      });
+    });
+
+    it('the owner sees their flow state; another user sees none', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`SELECT state_token FROM byo_oauth_states WHERE state_token = 'st-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(1);
+      } finally {
+        aliceConn.release();
+      }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`SELECT state_token FROM byo_oauth_states WHERE state_token = 'st-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+    });
+
+    it("another user's consume (DELETE ... RETURNING) matches 0 rows (owner's state survives)", async () => {
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`DELETE FROM byo_oauth_states WHERE state_token = 'st-alice' RETURNING state_token`;
+        expect((r as unknown as unknown[]).length).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+      const [row] = await sql<{ state_token: string }[]>`SELECT state_token FROM byo_oauth_states WHERE state_token = 'st-alice'`;
+      expect(row.state_token).toBe('st-alice');
+    });
+
+    it('a user cannot INSERT a flow state owned by someone else (WITH CHECK → 42501)', async () => {
+      const bobConn = await asUser('bob');
+      try {
+        await bobConn.query`INSERT INTO byo_oauth_states
+          (state_token, user_id, byo_server_id, client_id, encrypted_data, iv, auth_tag, salt, expires_at) VALUES
+          ('st-evil', 'alice', 'byo-alice', 'client-e', 'e', 'i', 't', 's', NOW() + INTERVAL '10 minutes')`;
         throw new Error('expected RLS WITH CHECK rejection; INSERT succeeded');
       } catch (err) {
         expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
