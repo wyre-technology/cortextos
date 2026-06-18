@@ -17,14 +17,17 @@ function data(over: Partial<TeamServiceClientsData> = {}): TeamServiceClientsDat
 }
 
 describe('renderTeamServiceClients — §8 at-creation cost copy', () => {
-  it('agent within the inclusion → "$0, included" copy', () => {
-    // 1 agent now → the next agent is #2, still inside the 2-seat inclusion.
-    const html = renderTeamServiceClients(data({ seatBilling: makeSeatBilling(5, 1) }));
-    expect(html).toContain('included in your plan, $0');
+  // AGENTS-BILLABLE (Aaron 2026-06-17, WYREAI-25, boss msg-1781747082415):
+  // INCLUDED_AGENT_SEATS=0 — every agent bills $39 from seat 1, identical
+  // to a human. No "$0 included" copy path exists.
+  it('first agent → "$39/mo" copy with plain proration', () => {
+    const html = renderTeamServiceClients(data({ seatBilling: makeSeatBilling(5, 0) }));
+    expect(html).toContain('$39/mo');
+    expect(html).toContain('prorated for the remainder of this cycle');
   });
 
-  it('agent beyond the inclusion → "$39/mo" copy with plain proration', () => {
-    // 2 agents now → the next agent is #3, the first billed one.
+  it('Nth agent → still "$39/mo" — no inclusion tier, every agent is billable', () => {
+    // 2 agents now → next agent is #3; same $39 line as the first add.
     const html = renderTeamServiceClients(data({ seatBilling: makeSeatBilling(5, 2) }));
     expect(html).toContain('$39/mo');
     expect(html).toContain('prorated for the remainder of this cycle');

@@ -280,21 +280,24 @@ describe('renderTeamBilling — billing details block (F3)', () => {
 });
 
 describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
-  it('renders the composed bill and the inclusion-explicit seat line', () => {
+  it('renders the composed bill and the period-comma seat breakdown line', () => {
+    // AGENTS-BILLABLE (Aaron 2026-06-17, WYREAI-25): every agent is a $39
+    // billable seat. 5 humans + 2 agents = 7 billable seats → $672/mo.
     const html = renderTeamBilling(mockData({ state: 'none' }, {
       seatBilling: makeSeatBilling(5, 2),
     }));
-    expect(html).toContain('$399 base + 5 seats × $39 = $594/mo');
-    expect(html).toContain('7 seats — 5 members + 2 agents (2 of 2 agent seats included)');
-    expect(html).toContain('$594/mo'); // the prominent total
+    expect(html).toContain('$399 base + 7 seats × $39 = $672/mo');
+    expect(html).toContain('7 seats. 5 members, 2 agents.');
+    expect(html).toContain('$672/mo'); // the prominent total
   });
 
-  it('shows the included-vs-billed split when agents exceed the inclusion', () => {
+  it('every additional agent adds $39 — no free-agent tier', () => {
+    // 5 humans + 4 agents = 9 billable seats → $750/mo.
     const html = renderTeamBilling(mockData({ state: 'none' }, {
       seatBilling: makeSeatBilling(5, 4),
     }));
-    expect(html).toContain('9 seats — 5 members + 4 agents (2 included, 2 billed)');
-    expect(html).toContain('$672/mo');
+    expect(html).toContain('9 seats. 5 members, 4 agents.');
+    expect(html).toContain('$750/mo');
   });
 
   it('drops the obsolete "Change plan" button (one paid plan, nothing to change to)', () => {
@@ -326,11 +329,11 @@ describe('renderTeamBilling — Layer 1 §8 composed bill', () => {
   it('the trial first-charge amount equals the composed-bill total (single source)', () => {
     const endsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const html = renderTeamBilling(mockData({ state: 'none' }, {
-      seatBilling: makeSeatBilling(5, 4), // $672/mo
+      seatBilling: makeSeatBilling(5, 4), // $750/mo at AGENTS-BILLABLE math
       trial: { endsAt },
     }));
-    expect(html).toContain('Your first charge is $672.00 on ');
-    expect(html).toContain('$399 base + 7 seats × $39 = $672/mo'); // same number
+    expect(html).toContain('Your first charge is $750.00 on ');
+    expect(html).toContain('$399 base + 9 seats × $39 = $750/mo'); // same number
   });
 
   it('on-trial with 1 day left — singular copy', () => {
