@@ -23,6 +23,13 @@ export type CustomerTabId =
   // from "users" (read-only roster) — "members" is the actingAs-
   // context CRUD surface for the customer-org's membership.
   | "members"
+  // WYREAI-172 PR-2.5 Teams tab (boss msg-1781787643789).
+  // Customer-org teams + per-team vendor allowlists — the
+  // launch-value Aaron flagged (per-team server-access > team-
+  // CRUD-for-org-chart). Same actingAs-context-(C) substrate as
+  // Members, multiplied across team-CRUD + team-members + team-
+  // server-access endpoints.
+  | "teams"
   | "usage"
   | "tools"
   | "audit"
@@ -92,6 +99,38 @@ export interface MemberCrudRow {
   canRemove: boolean;
 }
 
+/**
+ * WYREAI-172 PR-2.5 Teams tab — CRUD row shape per customer-org
+ * team. Aaron's launch-value is the per-team vendor allowlist
+ * (msg-1781787643789), so the row carries both the org-chart members
+ * AND the vendor allowlist by-construction. The accordion-expand UI
+ * pulls both lists onto one screen so the operator doesn't context-
+ * switch between sub-pages for what's logically one management
+ * scope ("team X has people P + vendors V").
+ *
+ *   - id: org_teams.id — target for PATCH /teams/:teamId (rename) +
+ *     DELETE /teams/:teamId
+ *   - name: display name
+ *   - members: minimal shape (userId + display name + email) for
+ *     the inline member-list. The add-member control is a free-form
+ *     email picker; the remove control is a per-row button
+ *   - vendorAllowlist: list of vendor slugs the team has server-
+ *     access to. The grant-vendor control is a dropdown of
+ *     candidate slugs (from `vendorCatalog` field on CustomerTabData
+ *     — same source the Tool Access tab consumes); the revoke
+ *     control is a per-row chip-X button
+ */
+export interface TeamCrudRow {
+  id: string;
+  name: string;
+  members: Array<{
+    userId: string;
+    name: string;
+    email: string;
+  }>;
+  vendorAllowlist: string[];
+}
+
 export interface CustomerTabData {
   org: Organization;
   customer: CustomerSummary;
@@ -122,12 +161,36 @@ export interface CustomerTabData {
    */
   actingAsActive?: boolean;
   crudMembers?: MemberCrudRow[];
+  /**
+   * WYREAI-172 PR-2.5 Teams tab fields. Optional so call-sites that
+   * don't render the Teams tab keep compiling — renderTeams gracefully
+   * degrades to "no teams" empty-state when undefined.
+   *
+   * - teams: the customer-org's teams + per-team members + per-team
+   *   vendor allowlist (denormalized in the page handler via
+   *   listTeamsWithDetails). Read-only when actingAsActive=false;
+   *   action controls light up when active.
+   * - vendorCatalog: the customer-org's connected-vendor slugs +
+   *   display names. Source: orgService.listOrgVendors(customerOrgId)
+   *   — same source the Tool Access tab consumes. Used by the
+   *   "grant vendor to team" dropdown's option list. Omit/empty →
+   *   the grant control degrades to "no vendors connected yet".
+   * - membersForTeamPicker: the customer-org's members (id + name +
+   *   email), shape borrowed from MemberCrudRow but with role +
+   *   lock flags stripped (the team-membership operation doesn't
+   *   need them — anyone in the customer-org can be added to any
+   *   team). Used as the add-to-team picker's source.
+   */
+  teams?: TeamCrudRow[];
+  vendorCatalog?: Array<{ slug: string; name: string }>;
+  membersForTeamPicker?: Array<{ userId: string; name: string; email: string }>;
 }
 
 const TAB_TITLE: Record<CustomerTabId, string> = {
   mcps: "MCPs",
   users: "Users",
   members: "Members",
+  teams: "Teams",
   usage: "Usage",
   tools: "Tool Access",
   audit: "Audit Log",
@@ -323,7 +386,7 @@ function renderUsers(data: CustomerTabData): string {
             hint.appendChild(emailNode);
             hint.appendChild(document.createTextNode('.'));
           } else {
-            hint.textContent = 'No email sent — share the link manually.';
+            hint.textContent = 'No email sent. Share the link manually.';
           }
           result.appendChild(label);
           result.appendChild(code);
@@ -423,7 +486,7 @@ function renderMembers(data: CustomerTabData): string {
       </div>
 
       <h2 class="cdt-section-title">Current members</h2>
-      <p class="cdt-section-desc">Read-only view — enter customer context above to manage.</p>
+      <p class="cdt-section-desc">Read-only view. Enter customer context above to manage.</p>
       <table class="cdt-table cdt-table-readonly">
         <thead>
           <tr><th>Member</th><th>Role</th></tr>
@@ -489,7 +552,7 @@ function renderMembers(data: CustomerTabData): string {
       <thead>
         <tr><th>Member</th><th>Role</th><th class="cdt-row-actions">Actions</th></tr>
       </thead>
-      <tbody id="cdtMembersTbody">${crudRows || `<tr><td colspan="3" class="cdt-empty">No members yet — invite the first.</td></tr>`}</tbody>
+      <tbody id="cdtMembersTbody">${crudRows || `<tr><td colspan="3" class="cdt-empty">No members yet. Invite the first.</td></tr>`}</tbody>
     </table>
 
     <!-- Invite modal -->
@@ -662,7 +725,7 @@ function membersScript(customerId: string, actingAsActive: boolean): string {
               if (inviteResult) {
                 inviteResult.style.display = 'block';
                 inviteResult.textContent = data && data.url
-                  ? 'Invite link (copy now — shown only once): ' + data.url
+                  ? 'Invite link (shown only once). Copy now: ' + data.url
                   : 'Invite created.';
               }
             });
@@ -768,6 +831,602 @@ function membersScript(customerId: string, actingAsActive: boolean): string {
         t.disabled = false;
         setStatus(statusEl, 'Network error. Check connection and retry.', true);
       });
+    });
+  })();
+</script>`;
+}
+
+// ---- tab: Teams (WYREAI-172 PR-2.5, Aaron-launch-required) --------------
+//
+// Customer-org teams + per-team vendor allowlists. Aaron's launch-value
+// is the per-team server-access (msg-1781787643789) — the team-CRUD-for-
+// org-chart is the carrier; the per-team vendor allowlist is the payload.
+//
+// Same actingAs-context-(C) substrate as Members, multiplied across:
+//   POST   /api/orgs/:customerOrgId/teams                    — create team
+//   PATCH  /api/orgs/:customerOrgId/teams/:teamId            — rename team
+//   DELETE /api/orgs/:customerOrgId/teams/:teamId            — delete team
+//   PUT    /api/orgs/:customerOrgId/teams/:teamId/members/:userId
+//                                                            — add member to team
+//   DELETE /api/orgs/:customerOrgId/teams/:teamId/members/:userId
+//                                                            — remove member
+//   PUT    /api/orgs/:customerOrgId/teams/:teamId/server-access/:vendor
+//                                                            — grant vendor to team
+//   DELETE /api/orgs/:customerOrgId/teams/:teamId/server-access/:vendor
+//                                                            — revoke vendor from team
+//
+// All requireOrgRoleForWrite admin — actingAs PATH B consumes the binding
+// from #441 + the audit-triplet auto-tags every operator action.
+
+function renderTeams(data: CustomerTabData): string {
+  const customerName = escapeHtml(data.customer.name);
+  const customerId = encodeURIComponent(data.customer.id);
+
+  // Read-only state — operator does NOT have an active acting-as
+  // binding for this customer. Mirror the Members tab pattern: show
+  // the read-only team list + a CTA to enter context.
+  if (!data.actingAsActive) {
+    const teams = data.teams ?? [];
+    const rows = teams
+      .map(
+        (t) => `
+        <tr>
+          <td><div class="cdt-strong">${escapeHtml(t.name)}</div></td>
+          <td>${t.members.length}</td>
+          <td>${t.vendorAllowlist.length}</td>
+        </tr>`,
+      )
+      .join("");
+    return renderChrome(
+      data,
+      `
+      <div class="cdt-acting-as-cta" role="status">
+        <p class="cdt-acting-as-cta-title">Manage on behalf of ${customerName}</p>
+        <p class="cdt-acting-as-cta-desc">
+          To create teams, change membership, or adjust per-team vendor
+          allowlists for ${customerName}, enter customer context. The
+          actions will light up + audit-trail your actions on their behalf.
+        </p>
+        <form
+          method="POST"
+          action="/api/reseller/me/customers/${customerId}/switch"
+          class="cdt-acting-as-cta-form"
+          id="cdtTeamsSwitchForm"
+        >
+          <button type="submit" class="cdt-btn-primary" id="cdtTeamsSwitchBtn">Manage on behalf of ${customerName}</button>
+          <span class="cdt-acting-as-cta-status" id="cdtTeamsSwitchStatus" role="status" aria-live="polite"></span>
+        </form>
+      </div>
+
+      <h2 class="cdt-section-title">Current teams</h2>
+      <p class="cdt-section-desc">Read-only view. Enter customer context above to manage.</p>
+      <table class="cdt-table cdt-table-readonly">
+        <thead>
+          <tr><th>Team</th><th>Members</th><th>Vendor allowlist</th></tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="3" class="cdt-empty">No teams yet.</td></tr>`}</tbody>
+      </table>`,
+    );
+  }
+
+  // Active state — full CRUD UI. Each team row expands to a per-team
+  // accordion with members + vendor allowlist controls.
+  const teams = data.teams ?? [];
+  const vendorCatalog = data.vendorCatalog ?? [];
+  const membersForPicker = data.membersForTeamPicker ?? [];
+
+  const teamRows = teams
+    .map((t) => {
+      const teamIdAttr = escapeHtml(t.id);
+      const teamName = escapeHtml(t.name);
+      const memberRows = t.members
+        .map(
+          (m) => `
+          <li class="cdt-team-member-row" data-team-member="${escapeHtml(m.userId)}">
+            <span class="cdt-team-member-name">${escapeHtml(m.name)}</span>
+            <span class="cdt-team-member-email">${escapeHtml(m.email)}</span>
+            <button
+              type="button"
+              class="cdt-btn-row-remove cdt-btn-team-member-remove"
+              data-action="team-remove-member"
+              data-team-id="${teamIdAttr}"
+              data-user-id="${escapeHtml(m.userId)}"
+              data-user-name="${escapeHtml(m.name)}"
+            >Remove</button>
+          </li>`,
+        )
+        .join("");
+      const vendorChips = t.vendorAllowlist
+        .map((slug) => {
+          const slugEsc = escapeHtml(slug);
+          const display =
+            vendorCatalog.find((v) => v.slug === slug)?.name ?? slug;
+          return `
+          <span class="cdt-team-vendor-chip" data-team-vendor="${slugEsc}">
+            <span class="cdt-team-vendor-name">${escapeHtml(display)}</span>
+            <button
+              type="button"
+              class="cdt-team-vendor-revoke"
+              aria-label="Revoke ${escapeHtml(display)}"
+              data-action="team-revoke-vendor"
+              data-team-id="${teamIdAttr}"
+              data-vendor-slug="${slugEsc}"
+            >×</button>
+          </span>`;
+        })
+        .join("");
+      // Vendor-grant dropdown: only the catalog slugs NOT already on
+      // the allowlist (subtract — keep the options actionable).
+      const allowlistSet = new Set(t.vendorAllowlist);
+      const grantOptions = vendorCatalog
+        .filter((v) => !allowlistSet.has(v.slug))
+        .map(
+          (v) =>
+            `<option value="${escapeHtml(v.slug)}">${escapeHtml(v.name)}</option>`,
+        )
+        .join("");
+      // Add-member picker: only the customer-org members NOT already
+      // on the team.
+      const teamMemberUserIds = new Set(t.members.map((m) => m.userId));
+      const memberPickerOptions = membersForPicker
+        .filter((m) => !teamMemberUserIds.has(m.userId))
+        .map(
+          (m) =>
+            `<option value="${escapeHtml(m.userId)}">${escapeHtml(m.name)} (${escapeHtml(m.email)})</option>`,
+        )
+        .join("");
+      return `
+      <details class="cdt-team-row" data-team-row="${teamIdAttr}">
+        <summary class="cdt-team-summary">
+          <span class="cdt-team-summary-name">${teamName}</span>
+          <span class="cdt-team-summary-meta">${t.members.length} member${t.members.length === 1 ? "" : "s"} · ${t.vendorAllowlist.length} vendor${t.vendorAllowlist.length === 1 ? "" : "s"}</span>
+        </summary>
+        <div class="cdt-team-body">
+          <div class="cdt-team-row-actions">
+            <button
+              type="button"
+              class="cdt-btn-secondary"
+              data-action="team-rename"
+              data-team-id="${teamIdAttr}"
+              data-team-name="${teamName}"
+            >Rename</button>
+            <button
+              type="button"
+              class="cdt-btn-row-remove"
+              data-action="team-delete"
+              data-team-id="${teamIdAttr}"
+              data-team-name="${teamName}"
+            >Delete team</button>
+          </div>
+
+          <h3 class="cdt-team-section-title">Members</h3>
+          <ul class="cdt-team-member-list" data-team-id="${teamIdAttr}">
+            ${memberRows || `<li class="cdt-empty">No members yet.</li>`}
+          </ul>
+          <form class="cdt-team-add-member-form" data-team-id="${teamIdAttr}">
+            <label class="cdt-modal-label" for="cdtTeamAddMember-${teamIdAttr}">Add a customer-org member to this team</label>
+            <div class="cdt-team-add-row">
+              <select
+                id="cdtTeamAddMember-${teamIdAttr}"
+                class="cdt-team-add-select"
+                aria-label="Pick a member to add to ${teamName}"
+              >
+                <option value="" disabled selected>Select a member…</option>
+                ${memberPickerOptions || '<option value="" disabled>All members already on this team</option>'}
+              </select>
+              <button
+                type="button"
+                class="cdt-btn-secondary"
+                data-action="team-add-member"
+                data-team-id="${teamIdAttr}"
+              >Add to team</button>
+            </div>
+          </form>
+
+          <h3 class="cdt-team-section-title">Vendor allowlist</h3>
+          <p class="cdt-section-desc">
+            Per-team vendor access — only members of this team can call
+            allowlisted vendors. (Org-wide access is a separate concern
+            in the Tool Access tab.)
+          </p>
+          <div class="cdt-team-vendor-list" data-team-id="${teamIdAttr}">
+            ${vendorChips || '<span class="cdt-empty">No vendors granted yet.</span>'}
+          </div>
+          <form class="cdt-team-grant-vendor-form" data-team-id="${teamIdAttr}">
+            <label class="cdt-modal-label" for="cdtTeamGrantVendor-${teamIdAttr}">Grant a connected vendor to this team</label>
+            <div class="cdt-team-add-row">
+              <select
+                id="cdtTeamGrantVendor-${teamIdAttr}"
+                class="cdt-team-grant-select"
+                aria-label="Pick a vendor to grant to ${teamName}"
+              >
+                <option value="" disabled selected>Select a vendor…</option>
+                ${grantOptions || '<option value="" disabled>All connected vendors already granted</option>'}
+              </select>
+              <button
+                type="button"
+                class="cdt-btn-secondary"
+                data-action="team-grant-vendor"
+                data-team-id="${teamIdAttr}"
+              >Grant</button>
+            </div>
+          </form>
+        </div>
+      </details>`;
+    })
+    .join("");
+
+  return renderChrome(
+    data,
+    `
+    <div class="cdt-teams-toolbar">
+      <form class="cdt-teams-create-form" id="cdtTeamsCreateForm">
+        <label class="cdt-modal-label" for="cdtTeamsCreateName">New team name</label>
+        <div class="cdt-team-add-row">
+          <input
+            type="text"
+            id="cdtTeamsCreateName"
+            class="cdt-modal-input"
+            placeholder="e.g. Helpdesk"
+            autocomplete="off"
+            maxlength="100"
+          />
+          <button type="submit" class="cdt-btn-primary" id="cdtTeamsCreateBtn">+ Create team</button>
+        </div>
+        <span class="cdt-members-status" id="cdtTeamsStatus" role="status" aria-live="polite"></span>
+      </form>
+    </div>
+
+    <div class="cdt-teams-list" id="cdtTeamsList">
+      ${teamRows || `<p class="cdt-empty">No teams yet. Create the first.</p>`}
+    </div>`,
+  );
+}
+
+/**
+ * WYREAI-172 PR-2.5 Teams tab client script. Handles:
+ *   1. /switch CTA (read-only state) — same pattern as Members
+ *   2. Create team (POST /teams) — append to the list on success
+ *   3. Rename team (PATCH /teams/:teamId) — prompts via window.prompt;
+ *      updates the summary label on success
+ *   4. Delete team (DELETE /teams/:teamId) — confirms via window.confirm;
+ *      removes the row from the DOM on 204
+ *   5. Add member to team (PUT /teams/:teamId/members/:userId) —
+ *      reads the picker; appends to the member list on success
+ *   6. Remove member from team (DELETE /teams/:teamId/members/:userId) —
+ *      removes the member row from the DOM on 204
+ *   7. Grant vendor to team (PUT /teams/:teamId/server-access/:vendor) —
+ *      appends a chip to the allowlist on success
+ *   8. Revoke vendor from team (DELETE /teams/:teamId/server-access/:vendor) —
+ *      removes the chip on 204
+ *
+ * Status routing matches Members — 403 / 429 / 409 / network → distinct
+ * messages. For destructive ops (delete-team + revoke-vendor + remove-
+ * member) the DOM mutation is the canonical "it worked" signal; the
+ * status text auto-clears after a few seconds.
+ *
+ * Page-reload-on-mutation is intentionally AVOIDED for Teams (unlike
+ * the /switch CTA which reloads to flip the read-only→active flag).
+ * Teams ops are frequent + small-blast-radius; reloading on every
+ * mutation would lose any open accordion + form-input state. Direct
+ * DOM-mutation keeps the UX responsive.
+ */
+function teamsScript(
+  customerId: string,
+  actingAsActive: boolean,
+): string {
+  return `
+<script>
+  (function () {
+    var CUSTOMER_ID = ${jsonForScriptEmbed(customerId)};
+    var ACTING_AS = ${actingAsActive ? "true" : "false"};
+
+    function setStatus(el, text, isError) {
+      if (!el) return;
+      el.textContent = text;
+      el.classList.toggle('cdt-members-status-error', !!isError);
+    }
+    function autoClear(el, ms) {
+      setTimeout(function () { setStatus(el, '', false); }, ms || 3000);
+    }
+    function routeErrorMessage(res, data) {
+      if (res.status === 403) return "You don't have permission for this action.";
+      if (res.status === 429) return 'Rate limit hit. Try again in a few minutes.';
+      if (data && data.error) return data.error;
+      return 'Action failed (HTTP ' + res.status + ').';
+    }
+
+    // --- /switch CTA (read-only state) ---
+    var switchForm = document.getElementById('cdtTeamsSwitchForm');
+    var switchBtn = document.getElementById('cdtTeamsSwitchBtn');
+    var switchStatus = document.getElementById('cdtTeamsSwitchStatus');
+    if (switchForm && switchBtn) {
+      switchForm.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        switchBtn.disabled = true;
+        setStatus(switchStatus, 'Starting session…', false);
+        fetch('/api/reseller/me/customers/' + encodeURIComponent(CUSTOMER_ID) + '/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        }).then(function (res) {
+          if (res.status === 200) {
+            window.location.reload();
+            return;
+          }
+          switchBtn.disabled = false;
+          if (res.status === 403) {
+            setStatus(switchStatus, "You don't have permission to act on behalf of this customer.", true);
+            return;
+          }
+          if (res.status === 429) {
+            setStatus(switchStatus, 'Rate limit hit. Try again in a few minutes.', true);
+            return;
+          }
+          setStatus(switchStatus, 'Could not start customer session (HTTP ' + res.status + ').', true);
+        }).catch(function () {
+          switchBtn.disabled = false;
+          setStatus(switchStatus, 'Network error. Check connection and retry.', true);
+        });
+      });
+    }
+
+    if (!ACTING_AS) return;
+
+    var statusEl = document.getElementById('cdtTeamsStatus');
+    var createForm = document.getElementById('cdtTeamsCreateForm');
+    var createInput = document.getElementById('cdtTeamsCreateName');
+    var createBtn = document.getElementById('cdtTeamsCreateBtn');
+    var teamsList = document.getElementById('cdtTeamsList');
+
+    // --- Create team ---
+    if (createForm && createInput && createBtn) {
+      createForm.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var name = (createInput.value || '').trim();
+        if (!name) {
+          setStatus(statusEl, 'Team name is required.', true);
+          return;
+        }
+        createBtn.disabled = true;
+        setStatus(statusEl, 'Creating team…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ name: name }),
+        }).then(function (res) {
+          createBtn.disabled = false;
+          if (res.status === 200 || res.status === 201) {
+            setStatus(statusEl, 'Team "' + name + '" created. Reload to manage.', false);
+            createInput.value = '';
+            // Page-reload only on CREATE — the new team needs the
+            // server-rendered accordion shape (vendor catalog +
+            // member picker option lists are server-rendered per
+            // team), and re-deriving that client-side would duplicate
+            // template logic. Cheap trade vs the per-mutation reload-
+            // avoidance: create-team is infrequent compared to the
+            // other ops.
+            setTimeout(function () { window.location.reload(); }, 800);
+            return;
+          }
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Create team failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          createBtn.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+      });
+    }
+
+    if (!teamsList) return;
+
+    // --- Delegated handler for the per-team controls ---
+    teamsList.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (!t || !t.dataset || !t.dataset.action) return;
+      var action = t.dataset.action;
+      var teamId = t.dataset.teamId;
+
+      if (action === 'team-rename') {
+        var prev = t.dataset.teamName || '';
+        var next = window.prompt('Rename team', prev);
+        if (next == null) return;
+        var newName = next.trim();
+        if (!newName || newName === prev) return;
+        t.disabled = true;
+        setStatus(statusEl, 'Renaming…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ name: newName }),
+        }).then(function (res) {
+          t.disabled = false;
+          if (res.ok) {
+            var row = teamsList.querySelector('details[data-team-row="' + CSS.escape(teamId) + '"]');
+            if (row) {
+              var label = row.querySelector('.cdt-team-summary-name');
+              if (label) label.textContent = newName;
+              t.dataset.teamName = newName;
+              var delBtn = row.querySelector('button[data-action="team-delete"]');
+              if (delBtn) delBtn.dataset.teamName = newName;
+            }
+            setStatus(statusEl, 'Team renamed.', false);
+            autoClear(statusEl);
+            return;
+          }
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Rename failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
+
+      if (action === 'team-delete') {
+        var teamName = t.dataset.teamName || 'this team';
+        if (!window.confirm('Delete team "' + teamName + '"? This removes team membership + per-team vendor allowlists; members keep their org-wide access.')) return;
+        t.disabled = true;
+        setStatus(statusEl, 'Deleting team…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId), {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        }).then(function (res) {
+          if (res.ok || res.status === 204) {
+            var row = teamsList.querySelector('details[data-team-row="' + CSS.escape(teamId) + '"]');
+            if (row && row.parentNode) row.parentNode.removeChild(row);
+            setStatus(statusEl, 'Team deleted.', false);
+            autoClear(statusEl);
+            return;
+          }
+          t.disabled = false;
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Delete failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
+
+      if (action === 'team-add-member') {
+        var select = document.getElementById('cdtTeamAddMember-' + teamId);
+        if (!select) return;
+        var userId = select.value;
+        if (!userId) {
+          setStatus(statusEl, 'Pick a member first.', true);
+          return;
+        }
+        t.disabled = true;
+        setStatus(statusEl, 'Adding member to team…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId) + '/members/' + encodeURIComponent(userId), {
+          method: 'PUT',
+          credentials: 'same-origin',
+        }).then(function (res) {
+          t.disabled = false;
+          if (res.ok) {
+            setStatus(statusEl, 'Member added. Reload to refresh the picker list.', false);
+            autoClear(statusEl, 4000);
+            // Picker option lists are server-rendered per team; the
+            // simplest correct UX is a quiet reload on add. (Avoiding
+            // here would duplicate the team-member-picker dedup logic
+            // client-side.)
+            setTimeout(function () { window.location.reload(); }, 800);
+            return;
+          }
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Add member failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
+
+      if (action === 'team-remove-member') {
+        var userIdRm = t.dataset.userId;
+        var userNameRm = t.dataset.userName || 'this member';
+        if (!window.confirm('Remove ' + userNameRm + ' from the team? Their org-wide membership is unaffected.')) return;
+        t.disabled = true;
+        setStatus(statusEl, 'Removing…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId) + '/members/' + encodeURIComponent(userIdRm), {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        }).then(function (res) {
+          if (res.ok || res.status === 204) {
+            var li = teamsList.querySelector('li.cdt-team-member-row[data-team-member="' + CSS.escape(userIdRm) + '"]');
+            if (li && li.parentNode) li.parentNode.removeChild(li);
+            setStatus(statusEl, 'Member removed from team.', false);
+            autoClear(statusEl);
+            return;
+          }
+          t.disabled = false;
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Remove failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
+
+      if (action === 'team-grant-vendor') {
+        var grantSelect = document.getElementById('cdtTeamGrantVendor-' + teamId);
+        if (!grantSelect) return;
+        var slug = grantSelect.value;
+        if (!slug) {
+          setStatus(statusEl, 'Pick a vendor first.', true);
+          return;
+        }
+        t.disabled = true;
+        setStatus(statusEl, 'Granting…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId) + '/server-access/' + encodeURIComponent(slug), {
+          method: 'PUT',
+          credentials: 'same-origin',
+        }).then(function (res) {
+          t.disabled = false;
+          if (res.ok) {
+            setStatus(statusEl, 'Vendor granted. Reload to refresh the picker list.', false);
+            autoClear(statusEl, 4000);
+            setTimeout(function () { window.location.reload(); }, 800);
+            return;
+          }
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Grant failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
+
+      if (action === 'team-revoke-vendor') {
+        var revokeSlug = t.dataset.vendorSlug;
+        t.disabled = true;
+        setStatus(statusEl, 'Revoking…', false);
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams/' + encodeURIComponent(teamId) + '/server-access/' + encodeURIComponent(revokeSlug), {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        }).then(function (res) {
+          if (res.ok || res.status === 204) {
+            var chip = teamsList.querySelector('span.cdt-team-vendor-chip[data-team-vendor="' + CSS.escape(revokeSlug) + '"]');
+            if (chip && chip.parentNode) chip.parentNode.removeChild(chip);
+            setStatus(statusEl, 'Vendor revoked.', false);
+            autoClear(statusEl);
+            return;
+          }
+          t.disabled = false;
+          return res.json().then(function (data) {
+            setStatus(statusEl, routeErrorMessage(res, data), true);
+          }).catch(function () {
+            setStatus(statusEl, 'Revoke failed (HTTP ' + res.status + ').', true);
+          });
+        }).catch(function () {
+          t.disabled = false;
+          setStatus(statusEl, 'Network error. Check connection and retry.', true);
+        });
+        return;
+      }
     });
   })();
 </script>`;
@@ -1023,17 +1682,19 @@ export function renderCustomerTab(data: CustomerTabData): {
         ? renderUsers(data)
         : data.tab === "members"
           ? renderMembers(data)
-          : data.tab === "usage"
-            ? renderUsage(data)
-            : data.tab === "tools"
-              ? renderTools(data)
-              : data.tab === "audit"
-                ? renderAudit(data)
-                : data.tab === "billing"
-                  ? renderBilling(data)
-                  : data.tab === "settings"
-                    ? renderSettings(data)
-                    : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
+          : data.tab === "teams"
+            ? renderTeams(data)
+            : data.tab === "usage"
+              ? renderUsage(data)
+              : data.tab === "tools"
+                ? renderTools(data)
+                : data.tab === "audit"
+                  ? renderAudit(data)
+                  : data.tab === "billing"
+                    ? renderBilling(data)
+                    : data.tab === "settings"
+                      ? renderSettings(data)
+                      : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
 
   const pageScripts =
     data.tab === "usage"
@@ -1042,7 +1703,9 @@ export function renderCustomerTab(data: CustomerTabData): {
         ? auditScript(data.org.id, data.customer.id)
         : data.tab === "members"
           ? membersScript(data.customer.id, !!data.actingAsActive)
-          : "";
+          : data.tab === "teams"
+            ? teamsScript(data.customer.id, !!data.actingAsActive)
+            : "";
 
   return { body, pageScripts };
 }
@@ -1370,5 +2033,153 @@ export const CUSTOMER_TAB_STYLES = `
   .cdt-row-actions-locked {
     font-size: 12px;
     color: var(--text-muted);
+  }
+
+  /* WYREAI-172 PR-2.5 Teams tab styles */
+  .cdt-teams-toolbar {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 18px;
+  }
+  .cdt-teams-create-form { margin: 0; }
+  .cdt-team-add-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .cdt-teams-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cdt-team-row {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 14px 18px;
+  }
+  .cdt-team-summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-primary);
+    list-style: none;
+  }
+  .cdt-team-summary::-webkit-details-marker { display: none; }
+  .cdt-team-summary::before {
+    content: '▸';
+    margin-right: 8px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+  .cdt-team-row[open] .cdt-team-summary::before {
+    transform: rotate(90deg);
+  }
+  .cdt-team-summary-name {
+    flex: 1;
+    font-size: 14px;
+  }
+  .cdt-team-summary-meta {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+  }
+  .cdt-team-body {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .cdt-team-row-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .cdt-team-section-title {
+    margin: 12px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+  }
+  .cdt-team-member-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cdt-team-member-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: var(--bg-page);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .cdt-team-member-name { font-weight: 500; color: var(--text-primary); }
+  .cdt-team-member-email {
+    flex: 1;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+  .cdt-btn-team-member-remove { padding: 3px 10px; font-size: 11px; }
+
+  .cdt-team-add-select,
+  .cdt-team-grant-select {
+    flex: 1;
+    padding: 7px 10px;
+    background: var(--bg-input, var(--bg-page));
+    color: var(--text-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .cdt-team-add-select:focus,
+  .cdt-team-grant-select:focus { outline: none; border-color: var(--accent); }
+
+  .cdt-team-vendor-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    min-height: 1.5em;
+  }
+  .cdt-team-vendor-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 4px 3px 10px;
+    background: rgba(0, 201, 219, 0.12);
+    border: 1px solid rgba(0, 201, 219, 0.3);
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+  .cdt-team-vendor-chip .cdt-team-vendor-name { font-weight: 500; }
+  .cdt-team-vendor-revoke {
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 50%;
+  }
+  .cdt-team-vendor-revoke:hover {
+    color: var(--error-text);
+    background: rgba(255, 255, 255, 0.05);
   }
 `;

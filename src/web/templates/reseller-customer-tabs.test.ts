@@ -518,3 +518,282 @@ describe("renderCustomerTab — Members tab (WYREAI-172 PR-2)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// WYREAI-172 PR-2.5 Teams tab tests (Aaron-launch-required per boss
+// msg-1781787643789). Same actingAs-context-(C) substrate as Members,
+// multiplied across team-CRUD + team-members + team-server-access.
+// ---------------------------------------------------------------------------
+
+describe("renderCustomerTab — Teams tab (WYREAI-172 PR-2.5)", () => {
+  describe("read-only state (no actingAs binding)", () => {
+    it("renders the 'Manage on behalf of {name}' CTA pointing at /switch", () => {
+      const { body } = renderCustomerTab(data("teams"));
+      expect(body).toContain("Manage on behalf of AM3 Technology");
+      expect(body).toContain(
+        'action="/api/reseller/me/customers/cust_1/switch"',
+      );
+    });
+
+    it("renders the read-only team list", () => {
+      const { body } = renderCustomerTab(
+        data("teams", {
+          teams: [
+            {
+              id: "team_a",
+              name: "Helpdesk",
+              members: [
+                { userId: "u1", name: "Alice", email: "alice@example.com" },
+                { userId: "u2", name: "Bob", email: "bob@example.com" },
+              ],
+              vendorAllowlist: ["autotask", "datto-rmm"],
+            },
+          ],
+        }),
+      );
+      expect(body).toContain("Current teams");
+      expect(body).toContain("Helpdesk");
+      expect(body).toContain("cdt-table-readonly");
+    });
+
+    it("does NOT surface CRUD controls (no create form / no accordion details)", () => {
+      const { body } = renderCustomerTab(data("teams"));
+      expect(body).not.toContain("cdtTeamsCreateForm");
+      expect(body).not.toContain("cdt-team-row");
+    });
+
+    it("script wires /switch CTA reload-in-place on 200", () => {
+      const { pageScripts } = renderCustomerTab(data("teams"));
+      expect(pageScripts).toContain("cdtTeamsSwitchForm");
+      expect(pageScripts).toContain("window.location.reload()");
+    });
+  });
+
+  describe("active state (actingAs binding present)", () => {
+    function activeData() {
+      return data("teams", {
+        actingAsActive: true,
+        vendorCatalog: [
+          { slug: "autotask", name: "Autotask" },
+          { slug: "datto-rmm", name: "Datto RMM" },
+          { slug: "halopsa", name: "HaloPSA" },
+        ],
+        membersForTeamPicker: [
+          { userId: "u_alice", name: "Alice", email: "alice@am3.example" },
+          { userId: "u_bob", name: "Bob", email: "bob@am3.example" },
+          { userId: "u_carol", name: "Carol", email: "carol@am3.example" },
+        ],
+        teams: [
+          {
+            id: "team_helpdesk",
+            name: "Helpdesk",
+            members: [
+              {
+                userId: "u_alice",
+                name: "Alice",
+                email: "alice@am3.example",
+              },
+            ],
+            vendorAllowlist: ["autotask"],
+          },
+          {
+            id: "team_billing",
+            name: "Billing",
+            members: [],
+            vendorAllowlist: [],
+          },
+        ],
+      });
+    }
+
+    it("renders the Create-team form + toolbar", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toContain('id="cdtTeamsCreateForm"');
+      expect(body).toContain('id="cdtTeamsCreateName"');
+      expect(body).toContain("+ Create team");
+    });
+
+    it("renders one accordion row per team with summary meta", () => {
+      const { body } = renderCustomerTab(activeData());
+      // Each team is a <details> with data-team-row attribute.
+      expect(body).toMatch(/details[^>]*data-team-row="team_helpdesk"/);
+      expect(body).toMatch(/details[^>]*data-team-row="team_billing"/);
+      // Summary meta shows member + vendor counts.
+      expect(body).toContain("1 member");
+      expect(body).toContain("1 vendor");
+      expect(body).toContain("0 members");
+      expect(body).toContain("0 vendors");
+    });
+
+    it("renders Rename + Delete buttons per team", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toMatch(/data-action="team-rename"[^>]*data-team-id="team_helpdesk"/);
+      expect(body).toMatch(/data-action="team-delete"[^>]*data-team-id="team_helpdesk"/);
+    });
+
+    it("renders the member list with Remove buttons per existing team member", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toContain('data-team-member="u_alice"');
+      expect(body).toMatch(
+        /data-action="team-remove-member"[^>]*data-team-id="team_helpdesk"[^>]*data-user-id="u_alice"/,
+      );
+    });
+
+    it("add-member picker filters out members already on the team (Helpdesk: omit Alice)", () => {
+      const { body } = renderCustomerTab(activeData());
+      // The Helpdesk picker should show Bob + Carol but NOT Alice (already on team).
+      const helpdeskPickerMatch = body.match(
+        /id="cdtTeamAddMember-team_helpdesk"[\s\S]*?<\/select>/,
+      );
+      expect(helpdeskPickerMatch).toBeTruthy();
+      const helpdeskPicker = helpdeskPickerMatch?.[0] ?? "";
+      expect(helpdeskPicker).toContain('value="u_bob"');
+      expect(helpdeskPicker).toContain('value="u_carol"');
+      expect(helpdeskPicker).not.toContain('value="u_alice"');
+    });
+
+    it("vendor chip + revoke control per granted vendor", () => {
+      const { body } = renderCustomerTab(activeData());
+      // The Helpdesk team has autotask granted → chip with revoke btn.
+      expect(body).toMatch(
+        /class="cdt-team-vendor-chip"[^>]*data-team-vendor="autotask"/,
+      );
+      expect(body).toMatch(
+        /data-action="team-revoke-vendor"[^>]*data-team-id="team_helpdesk"[^>]*data-vendor-slug="autotask"/,
+      );
+    });
+
+    it("grant-vendor picker filters out already-allowlisted vendors (Helpdesk: omit autotask)", () => {
+      const { body } = renderCustomerTab(activeData());
+      const helpdeskGrantMatch = body.match(
+        /id="cdtTeamGrantVendor-team_helpdesk"[\s\S]*?<\/select>/,
+      );
+      expect(helpdeskGrantMatch).toBeTruthy();
+      const grantPicker = helpdeskGrantMatch?.[0] ?? "";
+      expect(grantPicker).toContain('value="datto-rmm"');
+      expect(grantPicker).toContain('value="halopsa"');
+      expect(grantPicker).not.toContain('value="autotask"');
+    });
+
+    it("script wires the full CRUD endpoint set under the OWNER-scoped path", () => {
+      const { pageScripts } = renderCustomerTab(activeData());
+      // Create team — POST /teams
+      expect(pageScripts).toContain(
+        "/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/teams",
+      );
+      expect(pageScripts).toContain("method: 'POST'");
+      // Rename team — PATCH /teams/:teamId
+      expect(pageScripts).toContain("method: 'PATCH'");
+      // Delete team — DELETE /teams/:teamId
+      expect(pageScripts).toContain("method: 'DELETE'");
+      // Add/remove members — PUT/DELETE /teams/:teamId/members/:userId
+      expect(pageScripts).toContain(
+        "/teams/' + encodeURIComponent(teamId) + '/members/' + encodeURIComponent(userId",
+      );
+      // Grant/revoke vendor — PUT/DELETE /teams/:teamId/server-access/:vendor
+      expect(pageScripts).toContain(
+        "/teams/' + encodeURIComponent(teamId) + '/server-access/' + encodeURIComponent(slug)",
+      );
+      expect(pageScripts).toContain(
+        "/teams/' + encodeURIComponent(teamId) + '/server-access/' + encodeURIComponent(revokeSlug)",
+      );
+    });
+
+    it("script status-routes 403 / 429 / network to distinct messages", () => {
+      const { pageScripts } = renderCustomerTab(activeData());
+      expect(pageScripts).toContain("res.status === 403");
+      expect(pageScripts).toContain("You don't have permission for this action.");
+      expect(pageScripts).toContain("res.status === 429");
+      expect(pageScripts).toContain("Rate limit hit. Try again in a few minutes.");
+      expect(pageScripts).toContain("Network error. Check connection and retry.");
+    });
+
+    it("HTML-injection safety on team name", () => {
+      const { body } = renderCustomerTab(
+        data("teams", {
+          actingAsActive: true,
+          teams: [
+            {
+              id: "team_x",
+              name: "<script>alert('xss')</script>",
+              members: [],
+              vendorAllowlist: [],
+            },
+          ],
+        }),
+      );
+      expect(body).not.toContain("<script>alert('xss')</script>");
+      expect(body).toContain("&lt;script&gt;");
+    });
+
+    it("XSS-safe embed for customer id in script (sweep continuity)", () => {
+      const { pageScripts } = renderCustomerTab(
+        data("teams", {
+          actingAsActive: true,
+          customer: {
+            id: "cust_a<script>x</script>b",
+            name: "Acme",
+            plan: "BUSINESS",
+            userCount: 0,
+            mcpCount: 0,
+            subdomain: "acme.example",
+          },
+        }),
+      );
+      expect(pageScripts).not.toContain("cust_a<script>x</script>b");
+      expect(pageScripts).toContain("\\u003cscript>x\\u003c/script>b");
+    });
+
+    it("renders 'all members already on team' fallback when picker would be empty", () => {
+      const { body } = renderCustomerTab(
+        data("teams", {
+          actingAsActive: true,
+          membersForTeamPicker: [
+            { userId: "u_alice", name: "Alice", email: "a@x.com" },
+          ],
+          teams: [
+            {
+              id: "t1",
+              name: "Solo",
+              members: [
+                { userId: "u_alice", name: "Alice", email: "a@x.com" },
+              ],
+              vendorAllowlist: [],
+            },
+          ],
+        }),
+      );
+      expect(body).toContain("All members already on this team");
+    });
+
+    it("renders 'all vendors already granted' fallback when grant-picker would be empty", () => {
+      const { body } = renderCustomerTab(
+        data("teams", {
+          actingAsActive: true,
+          vendorCatalog: [{ slug: "autotask", name: "Autotask" }],
+          teams: [
+            {
+              id: "t1",
+              name: "Solo",
+              members: [],
+              vendorAllowlist: ["autotask"],
+            },
+          ],
+        }),
+      );
+      expect(body).toContain("All connected vendors already granted");
+    });
+  });
+
+  describe("script behavior contract", () => {
+    it("ACTING_AS flag flips between states", () => {
+      const offScript = renderCustomerTab(data("teams")).pageScripts;
+      expect(offScript).toContain("var ACTING_AS = false");
+
+      const onScript = renderCustomerTab(
+        data("teams", { actingAsActive: true, teams: [] }),
+      ).pageScripts;
+      expect(onScript).toContain("var ACTING_AS = true");
+    });
+  });
+});
