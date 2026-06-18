@@ -2,7 +2,8 @@
  * BYOMCP tool-discovery route (WYREAI-189) — thin Fastify glue over
  * ByoToolDiscoveryService.
  *
- *   GET /connect/byo/:id/tools  → { tools: McpTool[] }
+ *   GET /connect/byo/:id/tools  → { tools: ClassifiedByoTool[] }  (each tool
+ *                                  annotated with its read/write/admin tier)
  *
  * Owner-scoped (requireAuth0 + the service loads under the request-path RLS
  * context) and SSRF-guarded inside the service. Takes the shared ToolCache
@@ -32,7 +33,9 @@ export const byoToolRoutes = (deps: ByoToolRoutesDeps) =>
       if (!user) return reply; // requireAuth0 already issued the login redirect
 
       try {
-        const tools = await discovery.discover(user.sub, request.params.id);
+        // Each tool is annotated with its required permission tier
+        // (read/write/admin) via the catalog tier resolver (WYREAI-190).
+        const tools = await discovery.discoverClassified(user.sub, request.params.id);
         return reply.send({ tools });
       } catch (err) {
         if (err instanceof ByoToolDiscoveryError) {

@@ -29,6 +29,7 @@
 import type { ByoMcpServerService } from './byo-mcp-service.js';
 import type { ToolCache, McpTool } from '../proxy/tool-cache.js';
 import { validateVendorBaseUrl } from '../credentials/safe-fetch.js';
+import { classifyByoTools, type ClassifiedByoTool } from './byo-tool-classifier.js';
 
 export class ByoToolDiscoveryError extends Error {
   constructor(message: string) {
@@ -71,6 +72,17 @@ export class ByoToolDiscoveryService {
       server.headers,
       '',
     );
+  }
+
+  /**
+   * Discover the caller's BYO tools AND classify each into its required
+   * permission tier (WYREAI-190). Same owner-scoping + SSRF guarantees as
+   * discover() — classification is a pure post-step on the discovered metadata,
+   * reusing the catalog tier resolver (see byo-tool-classifier.ts).
+   */
+  async discoverClassified(userId: string, byoServerId: string): Promise<ClassifiedByoTool[]> {
+    const tools = await this.discover(userId, byoServerId);
+    return classifyByoTools(tools);
   }
 
   /** Drop the cached tool list for one BYO server (e.g. after a re-connect). */

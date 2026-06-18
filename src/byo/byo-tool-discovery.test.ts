@@ -56,6 +56,24 @@ describe('ByoToolDiscoveryService', () => {
     );
   });
 
+  it('discoverClassified() annotates each discovered tool with its required permission tier (WYREAI-190)', async () => {
+    const service = makeService();
+    const cache = makeCache();
+    service.get.mockResolvedValue(SERVER);
+    cache.getTools.mockResolvedValue([{ name: 'get_ticket' }, { name: 'delete_user' }, { name: 'create_ticket' }]);
+
+    const disco = new ByoToolDiscoveryService(service as never, cache as never);
+    const tools = await disco.discoverClassified('user-a', 'srv-1');
+
+    expect(tools).toEqual([
+      { name: 'get_ticket', tier: 'read' },
+      { name: 'delete_user', tier: 'admin' },
+      { name: 'create_ticket', tier: 'write' },
+    ]);
+    // Same owner-scoping + SSRF as discover() — classification is a pure post-step.
+    expect(validateVendorBaseUrl).toHaveBeenCalledWith('https://byo.example.com/mcp');
+  });
+
   it('SSRF-validates BEFORE touching the cache (rejected endpoint never fetches)', async () => {
     const service = makeService();
     const cache = makeCache();
