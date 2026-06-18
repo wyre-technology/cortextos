@@ -48,6 +48,7 @@ import { initPools, runAsSystem, systemPool, getSql, closePools } from './db/con
 import { hydrateVendorsFromRegistry } from './credentials/vendor-registry.js';
 import { requestContextPlugin } from './db/request-context-plugin.js';
 import { byoOAuthRoutes } from './byo/byo-oauth-routes.js';
+import { byoToolRoutes } from './byo/byo-tool-routes.js';
 import { orgRoutes } from './org/routes.js';
 import { domainRoutes } from './org/domain-routes.js';
 import { OrgDomainService } from './org/domain-service.js';
@@ -621,6 +622,11 @@ await app.register(webRoutes({
 // requestContextPlugin (line ~388) so its owner-scoped DB work runs under the
 // request-path RLS context.
 await app.register(byoOAuthRoutes());
+
+// BYOMCP tool-discovery route (WYREAI-189) — GET /connect/byo/:id/tools.
+// Reuses the shared ToolCache (owner-namespaced keys); SSRF-guarded + owner-
+// scoped inside ByoToolDiscoveryService.
+await app.register(byoToolRoutes({ toolCache }));
 
 // Organization management API + invitation routes
 // Track C reseller-settings sweep-3 substrate (June 29 launch).
