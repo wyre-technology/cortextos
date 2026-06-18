@@ -311,3 +311,210 @@ describe("renderCustomerTab — hardening", () => {
     expect(body).toContain('<th scope="col">');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WYREAI-172 PR-2 Members tab tests (boss msg-1781787643789).
+//
+// Members tab is the actingAs-context CRUD surface for customer-org
+// membership. Without an active binding the page renders the read-only
+// roster + a "Manage on behalf of {name}" CTA pointing at /switch.
+// With an active binding for THIS customer-org, the action controls
+// (Invite + per-row role-dropdown + per-row Remove) light up.
+// ---------------------------------------------------------------------------
+
+describe("renderCustomerTab — Members tab (WYREAI-172 PR-2)", () => {
+  describe("read-only state (no actingAs binding)", () => {
+    it("renders the 'Manage on behalf of {name}' CTA pointing at /switch", () => {
+      const { body } = renderCustomerTab(data("members"));
+      expect(body).toContain("Manage on behalf of AM3 Technology");
+      expect(body).toContain(
+        'action="/api/reseller/me/customers/cust_1/switch"',
+      );
+      expect(body).toContain('method="POST"');
+    });
+
+    it("renders the read-only roster below the CTA", () => {
+      const { body } = renderCustomerTab(data("members"));
+      // The mock fixture has 1 member ("C. Ramirez"); the roster
+      // section is labeled "Current members" + table is marked
+      // cdt-table-readonly.
+      expect(body).toContain("Current members");
+      expect(body).toContain("cdt-table-readonly");
+      expect(body).toContain("C. Ramirez");
+    });
+
+    it("renders the +N more line when memberTotal exceeds the rendered roster length", () => {
+      // Fixture: 1 member in members[], 12 in memberTotal → "+ 11 more members".
+      const { body } = renderCustomerTab(data("members"));
+      expect(body).toContain("+ 11 more members");
+    });
+
+    it("does NOT surface invite/role/remove controls", () => {
+      const { body } = renderCustomerTab(data("members"));
+      expect(body).not.toContain("cdtMembersInviteBtn");
+      expect(body).not.toContain("cdt-role-select");
+      expect(body).not.toContain("cdt-btn-row-remove");
+    });
+
+    it("includes the /switch CTA wiring in pageScripts (membersScript fires)", () => {
+      const { pageScripts } = renderCustomerTab(data("members"));
+      expect(pageScripts).toContain("cdtMembersSwitchForm");
+      expect(pageScripts).toContain(
+        "/api/reseller/me/customers/' + encodeURIComponent(CUSTOMER_ID) + '/switch",
+      );
+    });
+  });
+
+  describe("active state (actingAs binding present)", () => {
+    function activeData() {
+      return data("members", {
+        actingAsActive: true,
+        crudMembers: [
+          {
+            id: "mem-owner",
+            userId: "auth0|owner-of-customer",
+            name: "Owner Person",
+            email: "owner@am3.example",
+            role: "owner",
+            canChangeRole: false, // owner-role lock
+            canRemove: false, // owner-removal lock
+          },
+          {
+            id: "mem-admin",
+            userId: "auth0|admin-user",
+            name: "Admin Person",
+            email: "admin@am3.example",
+            role: "admin",
+            canChangeRole: true,
+            canRemove: true,
+          },
+        ],
+      });
+    }
+
+    it("renders the Invite button + members table with role dropdown + Remove button", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toContain("+ Invite member");
+      expect(body).toContain('id="cdtMembersInviteBtn"');
+      expect(body).toContain('class="cdt-role-select"');
+      expect(body).toContain('class="cdt-btn-row-remove"');
+    });
+
+    it("locks the owner row's role-change + remove (canChangeRole=false / canRemove=false)", () => {
+      const { body } = renderCustomerTab(activeData());
+      // The owner row carries the locked-span variant, NOT the
+      // editable dropdown or the Remove button.
+      expect(body).toContain('class="cdt-role-locked"');
+      expect(body).toContain('class="cdt-row-actions-locked"');
+      // The locked span renders the role string in plain text.
+      expect(body).toMatch(/owner[\s\S]*🔒/);
+    });
+
+    it("surfaces the admin row's editable dropdown + Remove button", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toContain('data-user-id="auth0|admin-user"');
+      expect(body).toContain('data-action="role"');
+      expect(body).toContain('data-current-role="admin"');
+      expect(body).toContain('data-action="remove"');
+      expect(body).toContain('data-user-name="Admin Person"');
+    });
+
+    it("includes the invite modal with the customer-name in the title", () => {
+      const { body } = renderCustomerTab(activeData());
+      expect(body).toContain('id="cdtMembersInviteModal"');
+      expect(body).toContain("Invite a member to AM3 Technology");
+      // a11y: dialog role + aria-modal + labelledby.
+      expect(body).toContain('role="dialog"');
+      expect(body).toContain('aria-modal="true"');
+      expect(body).toContain('aria-labelledby="cdtMembersInviteTitle"');
+    });
+
+    it("script wires CRUD endpoints under the OWNER-scoped /api/orgs/:customerOrgId/* path", () => {
+      const { pageScripts } = renderCustomerTab(activeData());
+      // Invite POST → /api/orgs/:customerOrgId/invitations.
+      expect(pageScripts).toContain(
+        "/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/invitations",
+      );
+      // Role change PATCH → /api/orgs/:customerOrgId/members/:userId/role.
+      expect(pageScripts).toContain(
+        "/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/members/' + encodeURIComponent(userId) + '/role",
+      );
+      // Remove DELETE → /api/orgs/:customerOrgId/members/:userId.
+      expect(pageScripts).toContain(
+        "/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/members/' + encodeURIComponent(userId)",
+      );
+      // The conventional methods.
+      expect(pageScripts).toContain("method: 'PATCH'");
+      expect(pageScripts).toContain("method: 'DELETE'");
+    });
+
+    it("script status-routes 403 / 429 / network errors to distinct messages", () => {
+      const { pageScripts } = renderCustomerTab(activeData());
+      expect(pageScripts).toContain("res.status === 403");
+      expect(pageScripts).toContain(
+        "You don't have permission for this action.",
+      );
+      expect(pageScripts).toContain("res.status === 429");
+      expect(pageScripts).toContain("Rate limit hit. Try again in a few minutes.");
+      expect(pageScripts).toContain("Network error. Check connection and retry.");
+    });
+
+    it("escapes customer name in the invite modal title (HTML injection safety)", () => {
+      const { body } = renderCustomerTab(
+        data("members", {
+          actingAsActive: true,
+          crudMembers: [],
+          customer: {
+            id: "cust_1",
+            name: "<script>alert('xss')</script>",
+            plan: "BUSINESS",
+            userCount: 1,
+            mcpCount: 0,
+            subdomain: "x.example",
+          },
+        }),
+      );
+      expect(body).not.toContain("Invite a member to <script>alert('xss')</script>");
+      expect(body).toContain("&lt;script&gt;");
+    });
+
+    it("script encodes the customer id via the XSS-safe embed helper", () => {
+      const { pageScripts } = renderCustomerTab(
+        data("members", {
+          actingAsActive: true,
+          crudMembers: [],
+          customer: {
+            id: "cust_a<script>x</script>b",
+            name: "Acme",
+            plan: "BUSINESS",
+            userCount: 0,
+            mcpCount: 0,
+            subdomain: "acme.example",
+          },
+        }),
+      );
+      expect(pageScripts).not.toContain("cust_a<script>x</script>b");
+      expect(pageScripts).toContain("\\u003cscript>x\\u003c/script>b");
+    });
+  });
+
+  describe("script behavior contract", () => {
+    it("read-only state script declares ACTING_AS = false; active state declares true", () => {
+      const offScript = renderCustomerTab(data("members")).pageScripts;
+      expect(offScript).toContain("var ACTING_AS = false");
+
+      const onScript = renderCustomerTab(
+        data("members", { actingAsActive: true, crudMembers: [] }),
+      ).pageScripts;
+      expect(onScript).toContain("var ACTING_AS = true");
+    });
+
+    it("read-only-state /switch CTA reload-in-place on 200", () => {
+      const { pageScripts } = renderCustomerTab(data("members"));
+      // /switch returns 200 + sets the cookie; we reload so the next
+      // render sees the cookie + lit-up controls.
+      expect(pageScripts).toContain("res.status === 200");
+      expect(pageScripts).toContain("window.location.reload()");
+    });
+  });
+});

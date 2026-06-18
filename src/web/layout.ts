@@ -620,6 +620,16 @@ function renderResellerSettingsNav(orgName: string, activePath: string): string 
 const CUSTOMER_DETAIL_TABS: ReadonlyArray<{ label: string; slug: string }> = [
   { label: 'MCPs', slug: 'mcps' },
   { label: 'Users', slug: 'users' },
+  // WYREAI-172 PR-2 Members tab (boss msg-1781787576732 +
+  // murph's scope-doc). Distinct from "Users" — Users is the
+  // reseller-scoped read-only roster (lists members + their MCP
+  // activity); Members is the actingAs-context CRUD surface
+  // (invite / role-change / remove via the OWNER-scoped
+  // /api/orgs/:customerOrgId/members/* endpoints under the
+  // operator's acting-as binding). Without an active binding the
+  // page renders a read-only list + a "Manage on behalf of" CTA;
+  // with one, the action controls light up by-construction.
+  { label: 'Members', slug: 'members' },
   { label: 'Usage', slug: 'usage' },
   { label: 'Tool Access', slug: 'tools' },
   { label: 'Audit Log', slug: 'audit' },

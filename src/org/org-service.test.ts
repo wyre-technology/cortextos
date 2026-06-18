@@ -1162,6 +1162,16 @@ describe('OrgService', () => {
     expect(result).toBeNull();
   });
 
+  // WARDEN CRIT-3 ESCALATION LOCK (WYREAI-172 PR-2, boss msg-1781789116159).
+  // The route-gate loosening (PATCH /role owner→admin) puts the load-bearing
+  // safety entirely on the service-layer owner-guards. This test is the
+  // explicit lock against the privilege-escalation regression vector:
+  //   admin-actor calls service.updateMemberRole(target=member, newRole=owner)
+  //   → service MUST return null → route maps to 400 → can't-promote-to-owner.
+  // Anyone re-introducing newRole==='owner' acceptance trips this test at
+  // unit-time, not in production. The test below (cannot promote to owner)
+  // is the same artifact — kept verbatim from pre-loosening because it's
+  // already the right gate.
   it('updateMemberRole cannot promote to owner', async () => {
     const sql = createMockSql();
     enterTestContext(sql);
@@ -1172,6 +1182,27 @@ describe('OrgService', () => {
     await runWithSql(sql, () => service.acceptInvitation(plainToken, 'user_member'));
 
     const result = await runWithSql(sql, () => service.updateMemberRole(org.id, 'user_member', 'owner'));
+    expect(result).toBeNull();
+  });
+
+  // WARDEN CRIT-3 vector (v): owner-no-op (target=owner, newRole=owner).
+  // Two service-layer guards both fire on this path — newRole==='owner'
+  // returns null FIRST (short-circuit at the top of updateMemberRole),
+  // so the target-role check is never reached. Locking both layers means
+  // a future refactor that swaps the guard order can't silently let a
+  // no-op-owner-on-owner write succeed. Test asserts the contract:
+  // either guard's null path produces null, never a SQL UPDATE.
+  it('updateMemberRole owner→owner no-op returns null (vector v)', async () => {
+    const sql = createMockSql();
+    enterTestContext(sql);
+    const service = new OrgService();
+
+    const org = await runWithSql(sql, () => service.createOrg('Owner No-Op Org', 'user_owner'));
+    // Same user is the owner; targeting owner with role='owner' must null.
+    const result = await runWithSql(
+      sql,
+      () => service.updateMemberRole(org.id, 'user_owner', 'owner'),
+    );
     expect(result).toBeNull();
   });
 

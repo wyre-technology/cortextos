@@ -19,6 +19,10 @@ import { escapeHtml, jsonForScriptEmbed } from "../helpers.js";
 export type CustomerTabId =
   | "mcps"
   | "users"
+  // WYREAI-172 PR-2 Members tab (boss msg-1781787576732). Distinct
+  // from "users" (read-only roster) — "members" is the actingAs-
+  // context CRUD surface for the customer-org's membership.
+  | "members"
   | "usage"
   | "tools"
   | "audit"
@@ -58,6 +62,36 @@ export interface AuditRow {
 // render direction). Restore alongside the reseller customer-billing read
 // route — see the Billing tab seam comment.
 
+/**
+ * WYREAI-172 PR-2 Members tab — CRUD member row shape. Distinct from
+ * the read-only `MemberRow` (Users tab) because the CRUD surface needs
+ * stable identifiers for the action-targeting POST/PATCH/DELETE calls.
+ *
+ *   - id: org_members.id — the row id (used as target for DELETE
+ *     /api/orgs/:customerOrgId/members/:userId and PATCH /role)
+ *   - userId: auth0 sub — used as the URL :userId param
+ *   - role: 'owner' | 'admin' | 'member' — string-typed at the
+ *     template layer to keep the role-change dropdown's option-list
+ *     loose-coupled to the canonical OrgRole union (future role
+ *     additions don't break the template by-construction)
+ *   - canChangeRole: false for the customer-org-owner (the system
+ *     guards owner-role-change at the route layer; surfacing the
+ *     dropdown for the owner would 403 immediately, which reads as
+ *     UI-broken rather than as-designed)
+ *   - canRemove: false for the customer-org-owner + for the operator
+ *     themselves if they happen to be in the customer-org membership
+ *     too (self-remove from acting-as context is a footgun)
+ */
+export interface MemberCrudRow {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  canChangeRole: boolean;
+  canRemove: boolean;
+}
+
 export interface CustomerTabData {
   org: Organization;
   customer: CustomerSummary;
@@ -69,11 +103,31 @@ export interface CustomerTabData {
   toolDepartments: string[];
   toolGroups: ToolGroup[];
   audit: AuditRow[];
+  /**
+   * WYREAI-172 PR-2 Members tab fields. Optional so existing tab call
+   * sites that don't pass them keep compiling — the renderMembers
+   * function gracefully degrades to "no actingAs binding" state when
+   * `actingAsActive` is undefined/false.
+   *
+   * - actingAsActive: true ONLY when the request's caller has an
+   *   active acting-as binding targeting THIS customer-org. The page
+   *   handler computes this by comparing
+   *   `request.caller?.actingAs?.onBehalfOfOrgId === customer.id`.
+   *   Without this binding the Members tab renders the read-only
+   *   list + the "Manage on behalf of {name}" CTA; with it, the
+   *   action controls light up.
+   * - crudMembers: the row shape needed for the CRUD UI. Distinct
+   *   from `members` (MemberRow) which carries the read-only Users-
+   *   tab view-data; CRUD needs stable id + role-mutability flags.
+   */
+  actingAsActive?: boolean;
+  crudMembers?: MemberCrudRow[];
 }
 
 const TAB_TITLE: Record<CustomerTabId, string> = {
   mcps: "MCPs",
   users: "Users",
+  members: "Members",
   usage: "Usage",
   tools: "Tool Access",
   audit: "Audit Log",
@@ -297,6 +351,426 @@ function renderUsers(data: CustomerTabData): string {
     ${inviteScript}
     ${seam("Mock-data-first. SWAP-IN CONTRACT: the real org-member query MUST be reseller-scoped + :id-ownership-checked (warden Finding 2).")}`,
   );
+}
+
+// ---- tab: Members (WYREAI-172 PR-2, boss msg-1781787576732) -------------
+//
+// CRUD surface for the customer-org's membership. Calls existing OWNER-
+// scoped /api/orgs/:customerOrgId/members/* endpoints under the actingAs
+// auth-context — substrate (C) from murph's scope-doc: substrate reuse
+// over parallel reseller-scoped endpoints.
+//
+// Without an active acting-as binding the page renders a read-only list
+// + a "Manage on behalf of {name}" CTA pointing at /switch (the same
+// foundation primitive shipped in #454). With an active binding for THIS
+// customer-org, the action controls (Invite + per-row role-dropdown +
+// per-row Remove) light up.
+//
+// Endpoints consumed (all gated by requireOrgRoleForWrite admin-threshold,
+// PATH B honors the actingAs binding):
+//   POST   /api/orgs/:customerOrgId/invitations
+//   PATCH  /api/orgs/:customerOrgId/members/:userId/role
+//   DELETE /api/orgs/:customerOrgId/members/:userId
+
+function renderMembers(data: CustomerTabData): string {
+  const customerName = escapeHtml(data.customer.name);
+  const customerId = encodeURIComponent(data.customer.id);
+
+  // Disabled-state body — renders when the operator does NOT have an
+  // active acting-as binding for this customer. Shows the read-only
+  // roster + a CTA to enter customer-context via the same /switch
+  // endpoint that ships in #454. The native form action is the /switch
+  // endpoint so the flow works even without JS (browser does a plain
+  // POST → 200 + cookie → manual refresh shows the badge + lit-up
+  // controls). With JS the page-script intercepts + reloads in-place.
+  if (!data.actingAsActive) {
+    const readonlyRows = data.members
+      .map(
+        (m) => `
+        <tr>
+          <td>
+            <div class="cdt-strong">${escapeHtml(m.name)}</div>
+            <div class="cdt-sub">${escapeHtml(m.email)}</div>
+          </td>
+          <td>${escapeHtml(m.role)}</td>
+        </tr>`,
+      )
+      .join("");
+    const more =
+      data.memberTotal > data.members.length
+        ? `<p class="cdt-more">+ ${data.memberTotal - data.members.length} more members</p>`
+        : "";
+    return renderChrome(
+      data,
+      `
+      <div class="cdt-acting-as-cta" role="status">
+        <p class="cdt-acting-as-cta-title">Manage on behalf of ${customerName}</p>
+        <p class="cdt-acting-as-cta-desc">
+          To invite, change roles, or remove members from
+          ${customerName}'s organization, enter customer context. The
+          actions will light up + audit-trail your actions on their
+          behalf.
+        </p>
+        <form
+          method="POST"
+          action="/api/reseller/me/customers/${customerId}/switch"
+          class="cdt-acting-as-cta-form"
+          id="cdtMembersSwitchForm"
+        >
+          <button type="submit" class="cdt-btn-primary" id="cdtMembersSwitchBtn">Manage on behalf of ${customerName}</button>
+          <span class="cdt-acting-as-cta-status" id="cdtMembersSwitchStatus" role="status" aria-live="polite"></span>
+        </form>
+      </div>
+
+      <h2 class="cdt-section-title">Current members</h2>
+      <p class="cdt-section-desc">Read-only view — enter customer context above to manage.</p>
+      <table class="cdt-table cdt-table-readonly">
+        <thead>
+          <tr><th>Member</th><th>Role</th></tr>
+        </thead>
+        <tbody>${readonlyRows || `<tr><td colspan="2" class="cdt-empty">No members yet.</td></tr>`}</tbody>
+      </table>
+      ${more}`,
+    );
+  }
+
+  // Active-state body — operator IS acting-as this customer. Render
+  // the full CRUD UI: Invite button + per-row role dropdown + Remove
+  // button. Action controls are wired by JS (membersScript) to the
+  // OWNER-scoped endpoints; native form fallback works for the Invite
+  // submit (browser does a plain POST → 200 with the invite payload).
+  const crudRows = (data.crudMembers ?? [])
+    .map((m) => {
+      const idAttr = escapeHtml(m.userId);
+      const roleSelect = m.canChangeRole
+        ? `
+          <select
+            class="cdt-role-select"
+            data-action="role"
+            data-user-id="${idAttr}"
+            data-current-role="${escapeHtml(m.role)}"
+            aria-label="Change role for ${escapeHtml(m.name)}"
+          >
+            <option value="owner"${m.role === "owner" ? " selected" : ""}>owner</option>
+            <option value="admin"${m.role === "admin" ? " selected" : ""}>admin</option>
+            <option value="member"${m.role === "member" ? " selected" : ""}>member</option>
+          </select>`
+        : `<span class="cdt-role-locked" title="The customer-org owner's role cannot be changed from this surface.">${escapeHtml(m.role)} <span aria-hidden="true">🔒</span></span>`;
+      const removeBtn = m.canRemove
+        ? `<button
+            type="button"
+            class="cdt-btn-row-remove"
+            data-action="remove"
+            data-user-id="${idAttr}"
+            data-user-name="${escapeHtml(m.name)}"
+          >Remove</button>`
+        : `<span class="cdt-row-actions-locked" title="The customer-org owner cannot be removed from this surface.">—</span>`;
+      return `
+      <tr data-member-row="${idAttr}">
+        <td>
+          <div class="cdt-strong">${escapeHtml(m.name)}</div>
+          <div class="cdt-sub">${escapeHtml(m.email)}</div>
+        </td>
+        <td>${roleSelect}</td>
+        <td class="cdt-row-actions">${removeBtn}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return renderChrome(
+    data,
+    `
+    <div class="cdt-members-toolbar">
+      <button type="button" class="cdt-btn-primary" id="cdtMembersInviteBtn">+ Invite member</button>
+      <span class="cdt-members-status" id="cdtMembersStatus" role="status" aria-live="polite"></span>
+    </div>
+
+    <table class="cdt-table">
+      <thead>
+        <tr><th>Member</th><th>Role</th><th class="cdt-row-actions">Actions</th></tr>
+      </thead>
+      <tbody id="cdtMembersTbody">${crudRows || `<tr><td colspan="3" class="cdt-empty">No members yet — invite the first.</td></tr>`}</tbody>
+    </table>
+
+    <!-- Invite modal -->
+    <div
+      id="cdtMembersInviteModal"
+      class="cdt-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cdtMembersInviteTitle"
+      style="display:none"
+      aria-hidden="true"
+    >
+      <div class="cdt-modal">
+        <h2 id="cdtMembersInviteTitle" class="cdt-modal-title">Invite a member to ${customerName}</h2>
+        <p class="cdt-modal-desc">
+          Their invite email is optional — if provided they receive an
+          invitation link. The copy-link is also shown so you can share
+          it any other way.
+        </p>
+        <label class="cdt-modal-label" for="cdtMembersInviteEmail">Email (optional)</label>
+        <input
+          type="email"
+          id="cdtMembersInviteEmail"
+          class="cdt-modal-input"
+          placeholder="user@example.com"
+          autocomplete="off"
+        />
+        <div id="cdtMembersInviteResult" class="cdt-modal-result" style="display:none"></div>
+        <div id="cdtMembersInviteError" class="cdt-modal-error" style="display:none"></div>
+        <div class="cdt-modal-actions">
+          <button type="button" class="cdt-btn-secondary" id="cdtMembersInviteClose">Close</button>
+          <button type="button" class="cdt-btn-primary" id="cdtMembersInviteSubmit">Create invite</button>
+        </div>
+      </div>
+    </div>`,
+  );
+}
+
+/**
+ * WYREAI-172 PR-2 Members tab client script. Handles:
+ *   1. /switch CTA submit (read-only state) — same shape as the
+ *      customer-detail page's actingAs script: preventDefault →
+ *      fetch /switch → reload page in-place on 200 (the badge +
+ *      action controls light up on the next render).
+ *   2. Invite modal open/close + submit → POST OWNER-scoped
+ *      /api/orgs/:customerOrgId/invitations. Shows the copy-link in
+ *      the result block (the invite token is shown ONCE — never
+ *      re-displayed).
+ *   3. Role-change dropdown — PATCH OWNER-scoped
+ *      /api/orgs/:customerOrgId/members/:userId/role. On revert/
+ *      failure the dropdown snaps back to the previous value via the
+ *      stored data-current-role attribute.
+ *   4. Remove button — confirms via window.confirm (lightweight modal
+ *      would be heavier than the destruction-class warrants) then
+ *      DELETE OWNER-scoped /api/orgs/:customerOrgId/members/:userId.
+ *      On success the row is removed from the DOM in-place.
+ *
+ * All actions go through the OWNER-scoped endpoints; the actingAs
+ * binding is in the cookie (set by #454's /switch), and the OWNER-
+ * scoped requireOrgRoleForWrite PATH B consumes it. No new authz.
+ *
+ * Status routing matches the customer-detail conventions:
+ *   200/201 → success message (auto-clears after a few seconds)
+ *   400     → server-provided error message
+ *   403     → "You don't have permission for this action."
+ *   409     → server-provided conflict message (e.g. owner-role lock)
+ *   429     → "Rate limit hit. Try again in a few minutes."
+ *   network → "Network error. Check connection and retry."
+ */
+function membersScript(customerId: string, actingAsActive: boolean): string {
+  return `
+<script>
+  (function () {
+    var CUSTOMER_ID = ${jsonForScriptEmbed(customerId)};
+    var ACTING_AS = ${actingAsActive ? "true" : "false"};
+
+    function setStatus(el, text, isError) {
+      if (!el) return;
+      el.textContent = text;
+      el.classList.toggle('cdt-members-status-error', !!isError);
+    }
+
+    // --- /switch CTA (read-only state) ---
+    var switchForm = document.getElementById('cdtMembersSwitchForm');
+    var switchBtn = document.getElementById('cdtMembersSwitchBtn');
+    var switchStatus = document.getElementById('cdtMembersSwitchStatus');
+    if (switchForm && switchBtn) {
+      switchForm.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        switchBtn.disabled = true;
+        setStatus(switchStatus, 'Starting session…', false);
+        fetch('/api/reseller/me/customers/' + encodeURIComponent(CUSTOMER_ID) + '/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        }).then(function (res) {
+          if (res.status === 200) {
+            // Reload in place — the next render sees the actingAs
+            // cookie + lit-up action controls.
+            window.location.reload();
+            return;
+          }
+          switchBtn.disabled = false;
+          if (res.status === 403) {
+            setStatus(switchStatus, "You don't have permission to act on behalf of this customer.", true);
+            return;
+          }
+          if (res.status === 429) {
+            setStatus(switchStatus, 'Rate limit hit. Try again in a few minutes.', true);
+            return;
+          }
+          setStatus(switchStatus, 'Could not start customer session (HTTP ' + res.status + ').', true);
+        }).catch(function () {
+          switchBtn.disabled = false;
+          setStatus(switchStatus, 'Network error. Check connection and retry.', true);
+        });
+      });
+    }
+
+    if (!ACTING_AS) return; // CRUD controls don't exist in read-only state
+
+    var statusEl = document.getElementById('cdtMembersStatus');
+    var inviteBtn = document.getElementById('cdtMembersInviteBtn');
+    var inviteModal = document.getElementById('cdtMembersInviteModal');
+    var inviteEmail = document.getElementById('cdtMembersInviteEmail');
+    var inviteResult = document.getElementById('cdtMembersInviteResult');
+    var inviteError = document.getElementById('cdtMembersInviteError');
+    var inviteSubmit = document.getElementById('cdtMembersInviteSubmit');
+    var inviteClose = document.getElementById('cdtMembersInviteClose');
+
+    function openInvite() {
+      inviteModal.style.display = 'flex';
+      inviteModal.setAttribute('aria-hidden', 'false');
+      if (inviteEmail) {
+        inviteEmail.value = '';
+        inviteEmail.focus();
+      }
+      if (inviteResult) inviteResult.style.display = 'none';
+      if (inviteError) inviteError.style.display = 'none';
+    }
+    function closeInvite() {
+      inviteModal.style.display = 'none';
+      inviteModal.setAttribute('aria-hidden', 'true');
+    }
+    if (inviteBtn) inviteBtn.addEventListener('click', openInvite);
+    if (inviteClose) inviteClose.addEventListener('click', closeInvite);
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && inviteModal && inviteModal.style.display !== 'none') {
+        closeInvite();
+      }
+    });
+
+    if (inviteSubmit) {
+      inviteSubmit.addEventListener('click', function () {
+        var email = (inviteEmail && inviteEmail.value || '').trim();
+        inviteSubmit.disabled = true;
+        inviteSubmit.textContent = 'Creating…';
+        if (inviteError) inviteError.style.display = 'none';
+        if (inviteResult) inviteResult.style.display = 'none';
+        fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/invitations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(email ? { email: email } : {}),
+        }).then(function (res) {
+          inviteSubmit.disabled = false;
+          inviteSubmit.textContent = 'Create invite';
+          if (res.status === 201 || res.status === 200) {
+            return res.json().then(function (data) {
+              if (inviteResult) {
+                inviteResult.style.display = 'block';
+                inviteResult.textContent = data && data.url
+                  ? 'Invite link (copy now — shown only once): ' + data.url
+                  : 'Invite created.';
+              }
+            });
+          }
+          return res.json().then(function (data) {
+            var msg = (data && data.error) ? data.error : ('Could not create invite (HTTP ' + res.status + ').');
+            if (res.status === 403) msg = "You don't have permission for this action.";
+            if (res.status === 429) msg = 'Rate limit hit. Try again in a few minutes.';
+            if (inviteError) {
+              inviteError.style.display = 'block';
+              inviteError.textContent = msg;
+            }
+          }).catch(function () {
+            if (inviteError) {
+              inviteError.style.display = 'block';
+              inviteError.textContent = 'Could not create invite (HTTP ' + res.status + ').';
+            }
+          });
+        }).catch(function () {
+          inviteSubmit.disabled = false;
+          inviteSubmit.textContent = 'Create invite';
+          if (inviteError) {
+            inviteError.style.display = 'block';
+            inviteError.textContent = 'Network error. Check connection and retry.';
+          }
+        });
+      });
+    }
+
+    // --- Role change + Remove (delegated handlers on tbody) ---
+    var tbody = document.getElementById('cdtMembersTbody');
+    if (!tbody) return;
+
+    tbody.addEventListener('change', function (ev) {
+      var t = ev.target;
+      if (!t || t.dataset.action !== 'role') return;
+      var userId = t.dataset.userId;
+      var newRole = t.value;
+      var prevRole = t.dataset.currentRole;
+      if (newRole === prevRole) return;
+      t.disabled = true;
+      setStatus(statusEl, 'Updating role…', false);
+      fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/members/' + encodeURIComponent(userId) + '/role', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ role: newRole }),
+      }).then(function (res) {
+        t.disabled = false;
+        if (res.ok) {
+          t.dataset.currentRole = newRole;
+          setStatus(statusEl, 'Role updated.', false);
+          setTimeout(function () { setStatus(statusEl, '', false); }, 3000);
+          return;
+        }
+        // Snap dropdown back to the prior value on failure.
+        t.value = prevRole;
+        return res.json().then(function (data) {
+          var msg = (data && data.error) ? data.error : ('Role change failed (HTTP ' + res.status + ').');
+          if (res.status === 403) msg = "You don't have permission for this action.";
+          if (res.status === 409) msg = (data && data.error) || 'Role change rejected.';
+          if (res.status === 429) msg = 'Rate limit hit. Try again in a few minutes.';
+          setStatus(statusEl, msg, true);
+        }).catch(function () {
+          setStatus(statusEl, 'Role change failed (HTTP ' + res.status + ').', true);
+        });
+      }).catch(function () {
+        t.disabled = false;
+        t.value = prevRole;
+        setStatus(statusEl, 'Network error. Check connection and retry.', true);
+      });
+    });
+
+    tbody.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (!t || t.dataset.action !== 'remove') return;
+      var userId = t.dataset.userId;
+      var userName = t.dataset.userName || 'this member';
+      if (!window.confirm('Remove ' + userName + ' from the customer-org? This is reversible only by re-inviting.')) return;
+      t.disabled = true;
+      setStatus(statusEl, 'Removing…', false);
+      fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID) + '/members/' + encodeURIComponent(userId), {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      }).then(function (res) {
+        if (res.ok || res.status === 204) {
+          var row = tbody.querySelector('tr[data-member-row="' + CSS.escape(userId) + '"]');
+          if (row && row.parentNode) row.parentNode.removeChild(row);
+          setStatus(statusEl, 'Member removed.', false);
+          setTimeout(function () { setStatus(statusEl, '', false); }, 3000);
+          return;
+        }
+        t.disabled = false;
+        return res.json().then(function (data) {
+          var msg = (data && data.error) ? data.error : ('Remove failed (HTTP ' + res.status + ').');
+          if (res.status === 403) msg = "You don't have permission for this action.";
+          if (res.status === 429) msg = 'Rate limit hit. Try again in a few minutes.';
+          setStatus(statusEl, msg, true);
+        }).catch(function () {
+          setStatus(statusEl, 'Remove failed (HTTP ' + res.status + ').', true);
+        });
+      }).catch(function () {
+        t.disabled = false;
+        setStatus(statusEl, 'Network error. Check connection and retry.', true);
+      });
+    });
+  })();
+</script>`;
 }
 
 // ---- tab: Usage (LIVE) ---------------------------------------------------
@@ -547,24 +1021,28 @@ export function renderCustomerTab(data: CustomerTabData): {
       ? renderMcps(data)
       : data.tab === "users"
         ? renderUsers(data)
-        : data.tab === "usage"
-          ? renderUsage(data)
-          : data.tab === "tools"
-            ? renderTools(data)
-            : data.tab === "audit"
-              ? renderAudit(data)
-              : data.tab === "billing"
-                ? renderBilling(data)
-                : data.tab === "settings"
-                  ? renderSettings(data)
-                  : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
+        : data.tab === "members"
+          ? renderMembers(data)
+          : data.tab === "usage"
+            ? renderUsage(data)
+            : data.tab === "tools"
+              ? renderTools(data)
+              : data.tab === "audit"
+                ? renderAudit(data)
+                : data.tab === "billing"
+                  ? renderBilling(data)
+                  : data.tab === "settings"
+                    ? renderSettings(data)
+                    : renderChrome(data, '<p class="cdt-empty">Unknown tab.</p>');
 
   const pageScripts =
     data.tab === "usage"
       ? usageScript(data.org.id, data.customer.id)
       : data.tab === "audit"
         ? auditScript(data.org.id, data.customer.id)
-        : "";
+        : data.tab === "members"
+          ? membersScript(data.customer.id, !!data.actingAsActive)
+          : "";
 
   return { body, pageScripts };
 }
@@ -785,4 +1263,112 @@ export const CUSTOMER_TAB_STYLES = `
     border-radius: 6px; cursor: pointer;
   }
   .cdt-save:disabled { background: var(--border-secondary); color: var(--text-muted); cursor: not-allowed; }
+
+  /* WYREAI-172 PR-2 Members tab styles */
+  .cdt-acting-as-cta {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+  }
+  .cdt-acting-as-cta-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 6px;
+  }
+  .cdt-acting-as-cta-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 12px;
+    line-height: 1.5;
+  }
+  .cdt-acting-as-cta-form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+  }
+  .cdt-acting-as-cta-status {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    min-height: 1em;
+  }
+  .cdt-acting-as-cta-status.cdt-members-status-error {
+    color: var(--error-text);
+  }
+  .cdt-section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 4px;
+  }
+  .cdt-section-desc {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin: 0 0 12px;
+  }
+  .cdt-table-readonly {
+    /* Visual de-emphasis for the read-only roster shown without an
+       active acting-as binding. The table chrome stays the same; the
+       muted-row tone signals "view, not edit". */
+    opacity: 0.85;
+  }
+  .cdt-members-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .cdt-members-status {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    min-height: 1em;
+  }
+  .cdt-members-status-error {
+    color: var(--error-text);
+  }
+  .cdt-role-select {
+    padding: 6px 8px;
+    background: var(--bg-input, var(--bg-page));
+    color: var(--text-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .cdt-role-select:focus { outline: none; border-color: var(--accent); }
+  .cdt-role-select:disabled { opacity: 0.6; cursor: progress; }
+  .cdt-role-locked {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .cdt-btn-row-remove {
+    padding: 5px 12px;
+    background: transparent;
+    color: var(--error-text);
+    border: 1px solid var(--error-text);
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cdt-btn-row-remove:hover {
+    background: var(--bg-card-hover, var(--bg-card));
+  }
+  .cdt-btn-row-remove:disabled {
+    color: var(--text-muted);
+    border-color: var(--border-primary);
+    cursor: not-allowed;
+  }
+  .cdt-row-actions { text-align: right; }
+  .cdt-row-actions-locked {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
 `;
