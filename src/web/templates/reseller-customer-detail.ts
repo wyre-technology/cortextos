@@ -1,5 +1,5 @@
 import type { Organization } from "../../org/org-service.js";
-import { escapeHtml } from "../helpers.js";
+import { escapeHtml, jsonForScriptEmbed } from "../helpers.js";
 
 // Track C Surface 2 — Reseller Customer Detail (/org/customers/:id).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 4:2.
@@ -71,6 +71,148 @@ export interface ResellerCustomerDetailData {
 }
 
 /**
+ * Delete-customer-modal client script. Wires the open/close UX +
+ * typed-name confirmation gate + DELETE /api/orgs/:customerId submit.
+ *
+ * Layered safety:
+ *  1. Submit button stays disabled until the typed input EXACTLY matches
+ *     the customer's name (case + whitespace sensitive — defensive vs
+ *     near-miss typos like trailing spaces; the warden pre-prep
+ *     confirmation primitive is meant to STOP accidental clicks, not
+ *     just slow them down).
+ *  2. Submit POSTs DELETE /api/orgs/:customerId with a JSON body
+ *     `{ org_name }` — the matched value, NOT the typed input — so
+ *     PR-2's backend strict-match check sees a well-shaped payload
+ *     even when the UI input is stripped/normalized in flight.
+ *  3. Response routing:
+ *     - 204 → redirect to /org/customers (success)
+ *     - 403 → status message: "Only an org owner can delete this
+ *       customer. (Upcoming soft-delete will allow admins.)"
+ *     - 404 → "Customer not found — it may already be deleted."
+ *     - 429 → "Rate limit hit — try again in a few minutes."
+ *     - other → "Could not delete (HTTP NNN). See server logs."
+ *  4. Escape closes the modal; overlay-click closes the modal; Cancel
+ *     button closes the modal. Focus moves to the name input on open
+ *     and back to the trigger on close (focus-restoration is a screen-
+ *     reader contract — never leave focus orphaned in the document).
+ *
+ * The script is emitted via pageScripts alongside the analytics loader
+ * so the standard CSP + page-script discipline applies (no inline
+ * handlers in the HTML body; all wiring runs from this one block).
+ */
+function buildDeleteScript(customerId: string, customerName: string): string {
+  return `
+<script>
+  (function () {
+    var MODAL = document.getElementById('cdDeleteModal');
+    var OPEN_BTN = document.getElementById('cdDeleteOpen');
+    var CANCEL_BTN = document.getElementById('cdDeleteCancel');
+    var SUBMIT = document.getElementById('cdDeleteSubmit');
+    var INPUT = document.getElementById('cdDeleteConfirm');
+    var STATUS = document.getElementById('cdDeleteStatus');
+    if (!MODAL || !OPEN_BTN || !CANCEL_BTN || !SUBMIT || !INPUT || !STATUS) return;
+
+    var CUSTOMER_ID = ${jsonForScriptEmbed(customerId)};
+    var EXPECTED_NAME = ${jsonForScriptEmbed(customerName)};
+    var prevFocus = null;
+    var inFlight = false;
+
+    function setStatus(text, isError) {
+      STATUS.textContent = text;
+      STATUS.classList.toggle('cd-modal-status-error', !!isError);
+    }
+
+    function openModal() {
+      prevFocus = document.activeElement;
+      MODAL.hidden = false;
+      INPUT.value = '';
+      SUBMIT.disabled = true;
+      setStatus('', false);
+      // Defer focus to allow the dialog to flip from hidden to visible
+      // before assistive-tech reads it; some screen-readers ignore
+      // focus moves on still-hidden nodes.
+      setTimeout(function () { INPUT.focus(); }, 0);
+    }
+
+    function closeModal() {
+      if (inFlight) return; // don't tear down mid-request
+      MODAL.hidden = true;
+      setStatus('', false);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        prevFocus.focus();
+      }
+    }
+
+    OPEN_BTN.addEventListener('click', openModal);
+    CANCEL_BTN.addEventListener('click', closeModal);
+
+    // Overlay-click + any element with [data-cd-modal-dismiss] closes.
+    MODAL.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (t && t.hasAttribute && t.hasAttribute('data-cd-modal-dismiss')) {
+        closeModal();
+      }
+    });
+
+    // Esc dismisses the modal (while it's open).
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !MODAL.hidden) closeModal();
+    });
+
+    // Typed-name match is case + whitespace sensitive. The warden
+    // pre-prep primitive is a STOP — a near-miss should not enable
+    // the destructive button.
+    INPUT.addEventListener('input', function () {
+      SUBMIT.disabled = INPUT.value !== EXPECTED_NAME;
+    });
+
+    SUBMIT.addEventListener('click', function () {
+      if (SUBMIT.disabled || inFlight) return;
+      inFlight = true;
+      SUBMIT.disabled = true;
+      CANCEL_BTN.disabled = true;
+      setStatus('Deleting…', false);
+
+      fetch('/api/orgs/' + encodeURIComponent(CUSTOMER_ID), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ org_name: EXPECTED_NAME }),
+      }).then(function (res) {
+        inFlight = false;
+        CANCEL_BTN.disabled = false;
+        if (res.status === 204 || res.status === 200) {
+          window.location.href = '/org/customers';
+          return;
+        }
+        if (res.status === 403) {
+          setStatus(
+            'Only an org owner can delete this customer. ' +
+            '(Upcoming soft-delete will allow admins.)',
+            true,
+          );
+          return;
+        }
+        if (res.status === 404) {
+          setStatus('Customer not found — it may already be deleted.', true);
+          return;
+        }
+        if (res.status === 429) {
+          setStatus('Rate limit hit — try again in a few minutes.', true);
+          return;
+        }
+        setStatus('Could not delete (HTTP ' + res.status + ').', true);
+      }).catch(function () {
+        inFlight = false;
+        CANCEL_BTN.disabled = false;
+        setStatus('Network error — check connection and retry.', true);
+      });
+    });
+  })();
+</script>`;
+}
+
+/**
  * Client-side loader. Fetches the three reseller-scoped dashboard
  * endpoints and populates the shell with createElement + textContent
  * (never innerHTML — request-log-sourced strings are untrusted).
@@ -81,7 +223,7 @@ function buildScript(resellerId: string, customerId: string): string {
   return `
 <script>
   (function () {
-    var BASE = ${JSON.stringify(base)};
+    var BASE = ${jsonForScriptEmbed(base)};
     var DAY_MS = 86400000;
     function num(n) { return (n == null ? 0 : n).toLocaleString(); }
     function set(id, text) {
@@ -218,6 +360,74 @@ export function renderResellerCustomerDetail(
       </div>
       <div class="cd-actions">
         <a class="cd-btn-primary" href="${onboardHref}">+ Onboard MCP</a>
+        <button
+          type="button"
+          class="cd-btn-secondary cd-btn-danger"
+          id="cdDeleteOpen"
+          aria-haspopup="dialog"
+          aria-controls="cdDeleteModal"
+        >Delete customer…</button>
+      </div>
+    </div>
+
+    <!--
+      Delete-customer modal — LAYER-C UI fast-win (boss msg-1781748066737).
+      Wires to the existing DELETE /api/orgs/:orgId backend (owner-only
+      today; PR-2 rewrites to admin-threshold soft-delete with a 7-day
+      restore window). Confirmation primitive is the typed org-name match
+      (warden pre-prep msg-1781747367566) — required at the UI layer
+      regardless of backend strictness, so the primitive is in place
+      before PR-2's backend match.
+
+      role="dialog" + aria-modal="true" + the focus-trap script below
+      satisfy the screen-reader contract; the modal opens with focus on
+      the name input and closes on Esc / overlay-click / Cancel.
+    -->
+    <div
+      id="cdDeleteModal"
+      class="cd-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cdDeleteTitle"
+      aria-describedby="cdDeleteDesc"
+      hidden
+    >
+      <div class="cd-modal-overlay" data-cd-modal-dismiss></div>
+      <div class="cd-modal-panel" role="document">
+        <h2 id="cdDeleteTitle" class="cd-modal-title">Delete ${name}?</h2>
+        <p id="cdDeleteDesc" class="cd-modal-desc">
+          This deletes the customer org, all members, credentials, teams,
+          and audit history. Today this is permanent; once the upcoming
+          soft-delete window ships you'll have 7 days to restore.
+        </p>
+        <p class="cd-modal-desc">
+          To confirm, type the customer name
+          <strong>${name}</strong> below.
+        </p>
+        <label for="cdDeleteConfirm" class="cd-modal-label">Customer name</label>
+        <input
+          type="text"
+          id="cdDeleteConfirm"
+          class="cd-modal-input"
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="cdDeleteStatus"
+        />
+        <p id="cdDeleteStatus" class="cd-modal-status" role="status" aria-live="polite"></p>
+        <div class="cd-modal-actions">
+          <button
+            type="button"
+            class="cd-btn-secondary"
+            id="cdDeleteCancel"
+            data-cd-modal-dismiss
+          >Cancel</button>
+          <button
+            type="button"
+            class="cd-btn-danger-solid"
+            id="cdDeleteSubmit"
+            disabled
+          >Delete customer</button>
+        </div>
       </div>
     </div>
 
@@ -262,7 +472,12 @@ export function renderResellerCustomerDetail(
 
   `;
 
-  return { body, pageScripts: buildScript(org.id, customer.id) };
+  return {
+    body,
+    pageScripts:
+      buildScript(org.id, customer.id) +
+      buildDeleteScript(customer.id, customer.name),
+  };
 }
 
 export const RESELLER_CUSTOMER_DETAIL_STYLES = `
@@ -411,4 +626,116 @@ export const RESELLER_CUSTOMER_DETAIL_STYLES = `
   }
   .cd-num { text-align: right; font-variant-numeric: tabular-nums; }
   .cd-empty { padding: 20px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+
+  /* Delete-customer button (in header actions) — quieter than the
+     primary onboard button; danger color only applied via border + text
+     to avoid the "loud red rectangle next to + Onboard MCP" anti-pattern.
+     The actual destructive surface is the modal's solid-red Delete
+     button (cd-btn-danger-solid). */
+  .cd-btn-danger {
+    border-color: var(--error-text);
+    color: var(--error-text);
+  }
+  .cd-btn-danger:hover {
+    background: var(--bg-card-hover, var(--bg-card));
+    border-color: var(--error-text);
+  }
+
+  /* Delete-customer modal — LAYER-C UI fast-win.
+     Overlay is full-viewport; panel centers via flex. hidden attribute
+     handles the visibility toggle without display: contents fragility. */
+  .cd-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cd-modal[hidden] { display: none; }
+  .cd-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .cd-modal-panel {
+    position: relative;
+    z-index: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 24px;
+    width: min(440px, calc(100vw - 32px));
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  .cd-modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 8px;
+  }
+  .cd-modal-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 12px;
+    line-height: 1.5;
+  }
+  .cd-modal-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }
+  .cd-modal-input {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--bg-input, var(--bg-page));
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .cd-modal-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .cd-modal-status {
+    margin-top: 10px;
+    min-height: 1.2em;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .cd-modal-status-error {
+    color: var(--error-text);
+  }
+  .cd-modal-actions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  /* Solid danger button — actual destructive surface. */
+  .cd-btn-danger-solid {
+    padding: 9px 16px;
+    background: var(--error-text);
+    color: var(--text-on-accent, #fff);
+    border: 1px solid var(--error-text);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cd-btn-danger-solid:disabled {
+    background: var(--bg-card);
+    color: var(--text-muted);
+    border-color: var(--border-primary);
+    cursor: not-allowed;
+  }
 `;

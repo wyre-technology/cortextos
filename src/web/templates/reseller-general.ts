@@ -1,5 +1,5 @@
 import type { Organization } from '../../org/org-service.js';
-import { escapeHtml } from '../helpers.js';
+import { escapeHtml, jsonForScriptEmbed } from '../helpers.js';
 
 /**
  * Track C reseller-settings shell — General tab (/org/reseller/general).
@@ -81,7 +81,7 @@ export function renderResellerGeneral(data: ResellerGeneralData): string {
         var nameInput = document.getElementById('rgName');
         var slugInput = document.getElementById('rgSlug');
         var saveBtn = document.getElementById('rgSave');
-        var orgId = ${JSON.stringify(org.id)};
+        var orgId = ${jsonForScriptEmbed(org.id)};
 
         function slugify(name) {
           return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');

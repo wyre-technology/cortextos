@@ -2,7 +2,7 @@ import type { Organization } from '../../org/org-service.js';
 import type { PlanDefinition } from '../../billing/plan-catalog.js';
 import type { SeatBilling } from '../../billing/seat-service.js';
 import { ORG_FEE_CENTS, PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
-import { escapeHtml } from '../helpers.js';
+import { escapeHtml, jsonForScriptEmbed } from '../helpers.js';
 import {
   composedBillLine,
   seatBreakdownLine,
@@ -560,7 +560,7 @@ function renderBillingDetails(org: Organization): string {
     </section>
     <script>
       (function () {
-        var orgId = ${JSON.stringify(org.id)};
+        var orgId = ${jsonForScriptEmbed(org.id)};
         var btn = document.getElementById('billingPortalBtn');
         var status = document.getElementById('billingPortalStatus');
         btn.addEventListener('click', async function () {

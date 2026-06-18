@@ -1,7 +1,7 @@
 import type { Organization } from "../../org/org-service.js";
 import type { CustomerSummary } from "./reseller-customer-detail.js";
 import type { VendorHealthState } from "../../monitoring/vendor-monitor.js";
-import { escapeHtml } from "../helpers.js";
+import { escapeHtml, jsonForScriptEmbed } from "../helpers.js";
 
 // Track C step 5 — per-org management tabs (Aaron "ship it all").
 // The 7 working customer-detail sub-tabs at /org/customers/:id/<slug>:
@@ -332,7 +332,7 @@ function usageScript(resellerId: string, customerId: string): string {
   return `
 <script>
   (function () {
-    var BASE = ${JSON.stringify(base)};
+    var BASE = ${jsonForScriptEmbed(base)};
     function num(n) { return (n == null ? 0 : n).toLocaleString(); }
     function set(id, t) { var e = document.getElementById(id); if (e) e.textContent = t; }
     function cell(tag, cls, t) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = t; return e; }
@@ -427,7 +427,7 @@ function auditScript(resellerId: string, customerId: string): string {
   return `
 <script>
   (function () {
-    var URL = ${JSON.stringify(url)};
+    var URL = ${jsonForScriptEmbed(url)};
     // Compact relative-time — same idiom as the customer list.
     function rel(iso) {
       var t = new Date(iso).getTime();
