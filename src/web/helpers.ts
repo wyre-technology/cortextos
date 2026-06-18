@@ -21,6 +21,49 @@ export function safeCssColor(value: string | null | undefined, fallback: string)
 }
 
 /**
+ * JSON-encode `value` for safe embedding INSIDE a `<script>` element.
+ *
+ * Warden HIGH-sev XSS finding on PR #447 (LAYER-C delete-button UI
+ * fast-win, boss msg-1781749015009): `JSON.stringify` is correct JSON
+ * but NOT a safe HTML-script-tag embedder. JSON contains no
+ * `</script>` escape because there's no need inside pure JSON — but in
+ * HTML the parser is in "script data" state and `</script>`
+ * (case-insensitive) terminates the element BEFORE the JS parser sees
+ * the string. A stored value like
+ *   `Acme</script><img src=x onerror=…>`
+ * therefore breaks out of the script element and executes arbitrary
+ * markup in the viewing operator's session — classic stored XSS via
+ * the server-side template seam.
+ *
+ * Defensive sweep: every `${JSON.stringify(...)}` inside a `<script>`
+ * block must route through this helper. Even ids that look nanoid-
+ * shaped today might tomorrow be fed user-supplied subdomains or
+ * display names — by-construction is cheaper than per-site reasoning.
+ *
+ * Hardening applied:
+ *   - Replace every `<` with its `\\u003c` Unicode escape. The JS
+ *     parser still sees a normal string; the HTML parser never sees a
+ *     tag. One transform closes the `</script>` vector AND defends
+ *     against `<!--` HTML-comment ambiguities the same way.
+ *   - Replace U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR)
+ *     with their Unicode escapes. JSON treats them as ordinary
+ *     characters; the JS parser treats them as line terminators that
+ *     can break string literals (pre-ES2019 only, but defensive vs old
+ *     embedded engines + JSON-vs-JS-literal divergence).
+ *
+ * Result is safe to embed inside
+ * `<script>…var X = ${jsonForScriptEmbed(v)};…</script>`. The output
+ * is valid JavaScript (and valid JSON — the escapes survive a
+ * JSON.parse round-trip if a consumer ever needs that).
+ */
+export function jsonForScriptEmbed(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
  * Returns `value` only if it parses as an `https:` URL, else `null`.
  * Blocks `javascript:`, `data:`, and other schemes from reaching an
  * `src`/`href` populated by reseller-supplied data.

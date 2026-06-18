@@ -1,5 +1,5 @@
 import type { Organization } from "../../org/org-service.js";
-import { escapeHtml } from "../helpers.js";
+import { escapeHtml, jsonForScriptEmbed } from "../helpers.js";
 
 /**
  * Reseller-side Billing & Plans surface — replaces the stub at
@@ -63,7 +63,7 @@ export function renderResellerBilling(data: ResellerBillingData): string {
 
     <script>
       (function () {
-        var orgId = ${JSON.stringify(org.id)};
+        var orgId = ${jsonForScriptEmbed(org.id)};
         var btn = document.getElementById('resellerBillingPortalBtn');
         var status = document.getElementById('resellerBillingPortalStatus');
         btn.addEventListener('click', async function () {

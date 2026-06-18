@@ -1,5 +1,5 @@
 import type { Organization } from "../../org/org-service.js";
-import { escapeHtml } from "../helpers.js";
+import { escapeHtml, jsonForScriptEmbed } from "../helpers.js";
 
 // Track C Surface 2 — Reseller Customer Detail (/org/customers/:id).
 // Figma design-of-record: tbaRrzQQqZTNZu2AelcIID node 4:2.
@@ -112,8 +112,8 @@ function buildDeleteScript(customerId: string, customerName: string): string {
     var STATUS = document.getElementById('cdDeleteStatus');
     if (!MODAL || !OPEN_BTN || !CANCEL_BTN || !SUBMIT || !INPUT || !STATUS) return;
 
-    var CUSTOMER_ID = ${JSON.stringify(customerId)};
-    var EXPECTED_NAME = ${JSON.stringify(customerName)};
+    var CUSTOMER_ID = ${jsonForScriptEmbed(customerId)};
+    var EXPECTED_NAME = ${jsonForScriptEmbed(customerName)};
     var prevFocus = null;
     var inFlight = false;
 
@@ -223,7 +223,7 @@ function buildScript(resellerId: string, customerId: string): string {
   return `
 <script>
   (function () {
-    var BASE = ${JSON.stringify(base)};
+    var BASE = ${jsonForScriptEmbed(base)};
     var DAY_MS = 86400000;
     function num(n) { return (n == null ? 0 : n).toLocaleString(); }
     function set(id, text) {

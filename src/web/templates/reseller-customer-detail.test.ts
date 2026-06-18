@@ -256,5 +256,69 @@ describe("renderResellerCustomerDetail", () => {
       expect(RESELLER_CUSTOMER_DETAIL_STYLES).toContain(".cd-modal");
       expect(RESELLER_CUSTOMER_DETAIL_STYLES).toContain(".cd-modal-input");
     });
+
+    // -------------------------------------------------------------------
+    // Warden HIGH-sev XSS regression artifact (PR #447 follow-up, boss
+    // msg-1781749015009). The pre-fix vector: customer.name was embedded
+    // into the <script> via JSON.stringify, which does not escape
+    // </script> — a stored malicious org-name like
+    // `foo</script><img src=x onerror=…>` broke out of the script
+    // element and ran arbitrary HTML in the viewing operator's session.
+    // Fix is jsonForScriptEmbed (src/web/helpers.ts), which Unicode-
+    // escapes `<`. This regression locks the vector closed forever; any
+    // future regression that drops back to bare JSON.stringify is
+    // caught at unit-test time, not in production.
+    // -------------------------------------------------------------------
+    it("WARDEN-REGRESSION: stored malicious org-name cannot break out of the script tag", () => {
+      const malicious =
+        "foo</script><img src=x onerror=alert(1)>";
+      const { pageScripts } = renderResellerCustomerDetail(
+        data({ name: malicious }),
+      );
+
+      // The malicious payload's exact attack signature MUST NOT appear
+      // unescaped anywhere in the rendered script. Pre-fix this string
+      // appeared verbatim inside the `var EXPECTED_NAME = "..."` embed;
+      // post-fix the `<` is Unicode-escaped so the HTML parser stays in
+      // script-data state.
+      expect(pageScripts).not.toContain("</script><img");
+      expect(pageScripts).not.toContain(`"foo</script>`);
+
+      // The hardened Unicode-escaped form MUST appear instead. Only
+      // `<` needs escaping (the trailing `>` is harmless once the HTML
+      // parser can't see a tag-open); `</script>` is enough to
+      // neutralize the vector and keep the JS parser-equivalent value.
+      expect(pageScripts).toContain(`"foo\\u003c/script>`);
+      expect(pageScripts).toContain(
+        "\\u003cimg src=x onerror=alert(1)>",
+      );
+    });
+
+    it("WARDEN-REGRESSION: customer id also routes through the script-embed hardener", () => {
+      // Customer ids look nanoid-shaped today (no `<` reachable), but
+      // routing them through the hardener too is the defensive-sweep
+      // posture warden requested — by-construction is cheaper than
+      // per-site reasoning, and a future change that fed display
+      // names into the id slot would otherwise reopen the vector.
+      const synth = "cust_a<script>x</script>b";
+      const { pageScripts } = renderResellerCustomerDetail(data({ id: synth }));
+      expect(pageScripts).not.toContain("<script>x</script>b");
+      expect(pageScripts).toContain("\\u003cscript>x\\u003c/script>b");
+    });
+
+    it("WARDEN-REGRESSION: BASE URL embed routes through the hardener (sibling buildScript site)", () => {
+      // BASE is composed of customerId + resellerId, currently nanoid-
+      // shaped, but sweep-coverage discipline: the embed site must
+      // route through the hardener too. Asserting by-shape: with a
+      // safe id the BASE assignment is the expected literal — the same
+      // assertion future-proofs against a regression that drops the
+      // hardener and re-introduces a bare JSON.stringify.
+      const { pageScripts } = renderResellerCustomerDetail(
+        data({ id: "cust_safe" }),
+      );
+      expect(pageScripts).toContain(
+        'var BASE = "/admin/reseller/org_reseller/customers/cust_safe/dashboard"',
+      );
+    });
   });
 });

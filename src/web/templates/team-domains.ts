@@ -1,5 +1,5 @@
 import { PER_SEAT_PRICE_CENTS } from '../../billing/prices.js';
-import { escapeHtml } from '../helpers.js';
+import { escapeHtml, jsonForScriptEmbed } from '../helpers.js';
 import { formatUsd } from './seat-billing-copy.js';
 
 export interface TeamDomainsData {
@@ -174,7 +174,7 @@ export function renderTeamDomains(data: TeamDomainsData): string {
     </div>
 
     <script>
-      const ORG_ID = ${JSON.stringify(orgId)};
+      const ORG_ID = ${jsonForScriptEmbed(orgId)};
 
       function setStatus(msg, kind) {
         const el = document.getElementById('domainStatus');
