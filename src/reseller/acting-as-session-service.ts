@@ -128,6 +128,46 @@ export class ActingAsSessionService {
   }
 
   /**
+   * Revoke EVERY active session targeting a given customer org. LAYER-C
+   * suspend side-effect cascade (boss msg-1781747367566 warden pre-prep):
+   * suspending a customer-org must close the by-construction "suspended
+   * but acting_as still works" soft-state hole — every MSP-operator
+   * currently impersonating the suspended customer is force-revoked at
+   * the next request boundary AND their cookie is invalidated server-
+   * side by clearing the active row in this table.
+   *
+   * Used by the suspend route handler (POST /api/orgs/:orgId/suspend).
+   * Idempotent: passing an orgId with zero active sessions returns an
+   * empty array; passing an orgId that's already had its sessions
+   * revoked returns an empty array (the WHERE clause filters on
+   * ended_at IS NULL).
+   *
+   * Returns the revoked sessions so the route handler can fan out audit
+   * events for forensics + ops paging (which actors were mid-impersonation
+   * when the revoke happened — important for incident reconstruction).
+   *
+   * Reason is fixed to a caller-supplied value (typically
+   * 'customer_archived' — semantically closest to "the customer org is no
+   * longer eligible to be impersonated"; the suspend route uses that
+   * one). 'admin_force_revoked' is reserved for the future admin-tooling
+   * path that isn't a customer-lifecycle event.
+   */
+  async revokeAllForCustomerOrg(
+    customerOrgId: string,
+    reason: ActingAsRevokeReason,
+  ): Promise<ActingAsSession[]> {
+    const updated = await this.sql<ActingAsSessionRow[]>`
+      UPDATE acting_as_sessions
+         SET ended_at = NOW(),
+             revoked_reason = ${reason}
+       WHERE on_behalf_of_org_id = ${customerOrgId}
+         AND ended_at IS NULL
+       RETURNING *
+    `;
+    return updated.map((row) => this.toEntity(row));
+  }
+
+  /**
    * Revoke a session due to a 3-check failure (LIFECYCLE-BIND
    * HARD-REQUIREMENT). Sets ended_at = NOW + revoked_reason. Same
    * idempotency posture as end() — second call on revoked row no-ops

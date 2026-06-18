@@ -67,6 +67,7 @@ function makeOrg(partial: Partial<Organization> & Pick<Organization, 'id' | 'typ
     type: partial.type,
     parentOrgId: partial.parentOrgId ?? null,
     auth0OrgId: null,
+    suspendedAt: null,
     createdAt: partial.createdAt ?? now,
     updatedAt: partial.updatedAt ?? now,
   };

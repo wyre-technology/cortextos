@@ -61,6 +61,10 @@ const TEST_ORG = {
   promptCaptureEnabled: false,
   stripeCustomerId: null,
   stripeSubscriptionId: null,
+  type: 'standalone' as const,
+  parentOrgId: null,
+  auth0OrgId: null,
+  suspendedAt: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -75,6 +79,10 @@ function createMockOrgService(overrides: Partial<OrgService> = {}): OrgService {
     getMembersWithProfiles: vi.fn().mockResolvedValue([]),
     updateOrg: vi.fn(),
     deleteOrg: vi.fn(),
+    softDeleteOrg: vi.fn(),
+    restoreOrg: vi.fn(),
+    suspendOrg: vi.fn(),
+    unsuspendOrg: vi.fn(),
     removeMember: vi.fn(),
     updateMemberRole: vi.fn(),
     createInvitation: vi.fn(),
@@ -159,6 +167,7 @@ async function buildApp(
   credentialService?: CredentialService,
   billingGate?: BillingGate,
   vendorMonitor?: VendorMonitor,
+  actingAsSessionService?: { revokeAllForCustomerOrg: ReturnType<typeof vi.fn> },
 ): Promise<FastifyInstance> {
   vi.resetModules();
   vi.stubEnv('MASTER_KEY', MASTER_KEY);
@@ -175,6 +184,13 @@ async function buildApp(
       billingGate: billingGate ?? createMockBillingGate(),
       adminAuditService: { log: vi.fn().mockResolvedValue(undefined) } as any, //sql: {} as any,
       vendorMonitor: vendorMonitor ?? createMockVendorMonitor(),
+      // LAYER-C suspend cascade dep — default mock that returns "no
+      // sessions revoked" so non-suspend tests don't have to wire it.
+      // Suspend-route tests pass their own mock to assert the cascade.
+      actingAsSessionService:
+        (actingAsSessionService ?? {
+          revokeAllForCustomerOrg: vi.fn().mockResolvedValue([]),
+        }) as any,
     }),
   );
   return app;
@@ -476,30 +492,367 @@ describe('orgRoutes', () => {
   // DELETE /api/orgs/:orgId
   // -------------------------------------------------------------------------
 
-  describe('DELETE /api/orgs/:orgId', () => {
-    it('deletes org when user is owner', async () => {
+  // LAYER-C destructive-lifecycle suite (WYREAI-171 Phase-3 follow-up,
+  // boss msg-1781747082572 + warden pre-prep msg-1781747367566). Covers:
+  //   - DELETE rewrite to admin-threshold soft-delete + typed-name +
+  //     idempotency + rate-limit + audit-triplet
+  //   - POST /suspend with the actingAsSessionService cascade
+  //   - POST /unsuspend
+  //   - POST /restore
+  //   - Threshold-split test artifact (the boss-required warden proof):
+  //     admin-threshold = sufficient for soft-delete; hard-delete is
+  //     no longer reachable from this surface.
+  describe('DELETE /api/orgs/:orgId (LAYER-C soft-delete)', () => {
+    it('soft-deletes when admin + typed-name matches + audit-triplet fires', async () => {
       authenticateAs();
+      const softDeletedOrg = {
+        ...TEST_ORG,
+        suspendedAt: new Date().toISOString(),
+      };
       const orgService = createMockOrgService({
-        getMembership: ownerMembership(),
-        deleteOrg: vi.fn().mockResolvedValue(true),
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+        softDeleteOrg: vi.fn().mockResolvedValue(softDeletedOrg),
       });
       app = await buildApp(orgService);
 
-      const response = await app.inject({ method: 'DELETE', url: '/api/orgs/org-1' });
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: TEST_ORG.name },
+      });
 
-      expect(response.statusCode).toBe(204);
-      expect(orgService.deleteOrg).toHaveBeenCalledWith('org-1');
+      expect(response.statusCode).toBe(200);
+      expect(orgService.softDeleteOrg).toHaveBeenCalledWith('org-1');
+      // Hard-delete must NOT be called from this surface.
+      expect(orgService.deleteOrg).not.toHaveBeenCalled();
     });
 
-    it('returns 403 for non-owner', async () => {
+    it('400 when body.org_name does not match the current org name (typed-confirm gate)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+        softDeleteOrg: vi.fn(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: 'Wrong Name' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(orgService.softDeleteOrg).not.toHaveBeenCalled();
+    });
+
+    it('400 when body.org_name is missing or not a string', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+      });
+      app = await buildApp(orgService);
+
+      const resMissing = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: {},
+      });
+      expect(resMissing.statusCode).toBe(400);
+
+      const resWrongType = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: 42 },
+      });
+      expect(resWrongType.statusCode).toBe(400);
+    });
+
+    it('400 strict-mode body — unknown fields rejected (warden pre-prep)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: TEST_ORG.name, sneaky_field: 'attack' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('404 when the org does not exist', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(null),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-missing',
+        payload: { org_name: 'whatever' },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('idempotent — re-DELETE on already-soft-deleted org returns 200 without re-emitting audit', async () => {
+      authenticateAs();
+      const alreadySoft = {
+        ...TEST_ORG,
+        suspendedAt: new Date().toISOString(),
+      };
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(alreadySoft),
+        softDeleteOrg: vi.fn(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: TEST_ORG.name },
+      });
+
+      expect(response.statusCode).toBe(200);
+      // Idempotency: do NOT re-call softDeleteOrg or duplicate the audit.
+      expect(orgService.softDeleteOrg).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 for non-admin (member)', async () => {
       authenticateAs();
       const orgService = createMockOrgService({
         getMembership: memberMembership(),
       });
       app = await buildApp(orgService);
 
-      const response = await app.inject({ method: 'DELETE', url: '/api/orgs/org-1' });
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: TEST_ORG.name },
+      });
 
+      expect(response.statusCode).toBe(403);
+    });
+
+    // THRESHOLD-SPLIT TEST ARTIFACT (boss msg-1781747922884 — the
+    // warden-required proof that the authz-loosening is justified by
+    // the reversibility primitive). Pre-LAYER-C: DELETE was owner-only
+    // hard-delete (effectiveRole='admin' for reseller-acting-as → 403,
+    // Aaron blocked). Post-LAYER-C: DELETE is admin-threshold soft-
+    // delete (effectiveRole='admin' → 200, Aaron unblocked). Hard-
+    // delete is no longer reachable from this route — that's the
+    // safe-by-construction split (irreversible hard-delete stays
+    // owner-only, lives only in the post-window sweeper path).
+    it('THRESHOLD-SPLIT: admin role is sufficient for soft-delete (was 403 pre-LAYER-C, now 200)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+        softDeleteOrg: vi
+          .fn()
+          .mockResolvedValue({ ...TEST_ORG, suspendedAt: new Date().toISOString() }),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/orgs/org-1',
+        payload: { org_name: TEST_ORG.name },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(orgService.softDeleteOrg).toHaveBeenCalledWith('org-1');
+    });
+  });
+
+  describe('POST /api/orgs/:orgId/suspend (LAYER-C)', () => {
+    it('suspends + fires actingAs cascade + audit-triplet on success', async () => {
+      authenticateAs();
+      const suspendedOrg = { ...TEST_ORG, suspendedAt: new Date().toISOString() };
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+        suspendOrg: vi.fn().mockResolvedValue(suspendedOrg),
+      });
+      const revokeAll = vi.fn().mockResolvedValue([
+        { sessionId: 'aas_1' },
+        { sessionId: 'aas_2' },
+        { sessionId: 'aas_3' },
+      ]);
+      app = await buildApp(orgService, undefined, undefined, undefined, {
+        revokeAllForCustomerOrg: revokeAll,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/suspend',
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.sessions_revoked).toBe(3);
+      expect(orgService.suspendOrg).toHaveBeenCalledWith('org-1');
+      // CASCADE PROOF — the warden-required "Avoid the soft-state bug"
+      // assertion (msg-1781747367566): suspend MUST call the cascade.
+      expect(revokeAll).toHaveBeenCalledWith('org-1', 'customer_archived');
+    });
+
+    it('idempotent — re-suspending an already-suspended org returns 200 without re-cascade', async () => {
+      authenticateAs();
+      const alreadySuspended = { ...TEST_ORG, suspendedAt: new Date().toISOString() };
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(alreadySuspended),
+        suspendOrg: vi.fn(),
+      });
+      const revokeAll = vi.fn();
+      app = await buildApp(orgService, undefined, undefined, undefined, {
+        revokeAllForCustomerOrg: revokeAll,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/suspend',
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(orgService.suspendOrg).not.toHaveBeenCalled();
+      expect(revokeAll).not.toHaveBeenCalled();
+    });
+
+    it('400 strict-mode body — any field rejected', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/suspend',
+        payload: { unexpected: true },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('403 for non-admin (member)', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: memberMembership(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/suspend',
+        payload: {},
+      });
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('404 when org missing', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(null),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-missing/suspend',
+        payload: {},
+      });
+      expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('POST /api/orgs/:orgId/unsuspend (LAYER-C)', () => {
+    it('clears suspended_at + audit-triplet fires', async () => {
+      authenticateAs();
+      const suspendedOrg = { ...TEST_ORG, suspendedAt: new Date().toISOString() };
+      const restored = { ...TEST_ORG, suspendedAt: null };
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(suspendedOrg),
+        unsuspendOrg: vi.fn().mockResolvedValue(restored),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/unsuspend',
+        payload: {},
+      });
+      expect(response.statusCode).toBe(200);
+      expect(orgService.unsuspendOrg).toHaveBeenCalledWith('org-1');
+    });
+
+    it('idempotent — unsuspending an active org returns 200 without re-call', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(TEST_ORG),
+        unsuspendOrg: vi.fn(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/unsuspend',
+        payload: {},
+      });
+      expect(response.statusCode).toBe(200);
+      expect(orgService.unsuspendOrg).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/orgs/:orgId/restore (LAYER-C)', () => {
+    it('restores soft-deleted org via the same schema-level op as unsuspend', async () => {
+      authenticateAs();
+      const softDeleted = { ...TEST_ORG, suspendedAt: new Date().toISOString() };
+      const restored = { ...TEST_ORG, suspendedAt: null };
+      const orgService = createMockOrgService({
+        getMembership: adminMembership(),
+        getOrg: vi.fn().mockResolvedValue(softDeleted),
+        restoreOrg: vi.fn().mockResolvedValue(restored),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/restore',
+        payload: {},
+      });
+      expect(response.statusCode).toBe(200);
+      expect(orgService.restoreOrg).toHaveBeenCalledWith('org-1');
+    });
+
+    it('403 for non-admin', async () => {
+      authenticateAs();
+      const orgService = createMockOrgService({
+        getMembership: memberMembership(),
+      });
+      app = await buildApp(orgService);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/orgs/org-1/restore',
+        payload: {},
+      });
       expect(response.statusCode).toBe(403);
     });
   });

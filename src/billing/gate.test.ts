@@ -21,6 +21,7 @@ function makeOrg(overrides: Partial<Organization> = {}): Organization {
     type: 'standalone',
     parentOrgId: null,
     auth0OrgId: null,
+    suspendedAt: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
