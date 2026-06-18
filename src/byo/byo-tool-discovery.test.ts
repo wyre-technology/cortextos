@@ -66,12 +66,26 @@ describe('ByoToolDiscoveryService', () => {
     const tools = await disco.discoverClassified('user-a', 'srv-1');
 
     expect(tools).toEqual([
-      { name: 'get_ticket', tier: 'read' },
-      { name: 'delete_user', tier: 'admin' },
-      { name: 'create_ticket', tier: 'write' },
+      { name: 'get_ticket', tier: 'read', autoTier: 'read', overridden: false },
+      { name: 'delete_user', tier: 'admin', autoTier: 'admin', overridden: false },
+      { name: 'create_ticket', tier: 'write', autoTier: 'write', overridden: false },
     ]);
     // Same owner-scoping + SSRF as discover() — classification is a pure post-step.
     expect(validateVendorBaseUrl).toHaveBeenCalledWith('https://byo.example.com/mcp');
+  });
+
+  it('discoverClassified() applies owner tier overrides (WYREAI-191): a pin wins over the auto tier', async () => {
+    const service = makeService();
+    const cache = makeCache();
+    service.get.mockResolvedValue(SERVER);
+    cache.getTools.mockResolvedValue([{ name: 'get_ticket' }, { name: 'create_ticket' }]);
+
+    const disco = new ByoToolDiscoveryService(service as never, cache as never);
+    const overrides = new Map([['get_ticket', 'admin' as const]]);
+    const tools = await disco.discoverClassified('user-a', 'srv-1', overrides);
+
+    expect(tools[0]).toEqual({ name: 'get_ticket', tier: 'admin', autoTier: 'read', overridden: true });
+    expect(tools[1]).toMatchObject({ tier: 'write', overridden: false });
   });
 
   it('SSRF-validates BEFORE touching the cache (rejected endpoint never fetches)', async () => {

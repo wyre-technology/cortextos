@@ -151,10 +151,32 @@ export function byoRequiredTier(tool: McpTool): PermissionTier {
 
 /** A discovered BYO tool annotated with its required permission tier. */
 export interface ClassifiedByoTool extends McpTool {
+  /** The EFFECTIVE required tier — a manual owner pin if present, else autoTier. */
   tier: PermissionTier;
+  /** The tier the 190 heuristic inferred, before any owner override. */
+  autoTier: PermissionTier;
+  /** True when an owner pin (WYREAI-191) overrode the auto tier. */
+  overridden: boolean;
 }
 
-/** Annotate a list of discovered BYO tools with their required tiers. */
-export function classifyByoTools(tools: readonly McpTool[]): ClassifiedByoTool[] {
-  return tools.map((tool) => ({ ...tool, tier: byoRequiredTier(tool) }));
+/**
+ * Annotate a list of discovered BYO tools with their required tiers. With an
+ * `overrides` map (toolName → owner-pinned tier), a pin WINS over the auto
+ * classification and the tool is flagged `overridden`. Without it, every tool's
+ * effective tier is its auto tier.
+ */
+export function classifyByoTools(
+  tools: readonly McpTool[],
+  overrides?: ReadonlyMap<string, PermissionTier>,
+): ClassifiedByoTool[] {
+  return tools.map((tool) => {
+    const autoTier = byoRequiredTier(tool);
+    const pinned = overrides?.get(tool.name);
+    return {
+      ...tool,
+      autoTier,
+      tier: pinned ?? autoTier,
+      overridden: pinned !== undefined && pinned !== null,
+    };
+  });
 }

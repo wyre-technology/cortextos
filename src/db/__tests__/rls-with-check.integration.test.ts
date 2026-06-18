@@ -263,6 +263,8 @@ async function applyRlsMigrations(): Promise<void> {
     '055_byo_mcp_servers.sql',
     // WYREAI-187: byo_oauth_states table + owner-only RLS policies.
     '056_byo_oauth_states.sql',
+    // WYREAI-191: byo_tool_tier_overrides table + owner-only RLS policies.
+    '057_byo_tool_tier_overrides.sql',
   ]) {
     const raw = readFileSync(join(REPO_ROOT, 'migrations', filename), 'utf8');
     const body = raw
@@ -1025,6 +1027,77 @@ describe('RLS WITH CHECK enforcement (migration 014)', () => {
         expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
       } finally {
         bobConn.release();
+      }
+    });
+  });
+
+  // WYREAI-191 (BYOMCP): byo_tool_tier_overrides (per-tool manual tier pins) is
+  // owner-only — one tenant must never read or change another's tier pins.
+  describe('byo_tool_tier_overrides owner-only isolation (migration 057)', () => {
+    beforeAll(async () => {
+      await sql.begin(async (tx) => {
+        await tx.unsafe('RESET ROLE');
+        await tx`INSERT INTO byo_tool_tier_overrides
+          (id, user_id, byo_server_id, tool_name, tier) VALUES
+          ('ov-alice', 'alice', 'byo-alice', 'delete_thing', 'admin')`;
+      });
+    });
+
+    it('the owner sees their pin; another user sees none', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        const r = await aliceConn.query`SELECT id FROM byo_tool_tier_overrides WHERE id = 'ov-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(1);
+      } finally {
+        aliceConn.release();
+      }
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`SELECT id FROM byo_tool_tier_overrides WHERE id = 'ov-alice'`;
+        expect((r as unknown as unknown[]).length).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+    });
+
+    it("another user's clear (DELETE) matches 0 rows (owner's pin survives)", async () => {
+      const bobConn = await asUser('bob');
+      try {
+        const r = await bobConn.query`DELETE FROM byo_tool_tier_overrides WHERE id = 'ov-alice'`;
+        expect((r as unknown as { count: number }).count).toBe(0);
+      } finally {
+        bobConn.release();
+      }
+      const [row] = await sql<{ id: string }[]>`SELECT id FROM byo_tool_tier_overrides WHERE id = 'ov-alice'`;
+      expect(row.id).toBe('ov-alice');
+    });
+
+    it('a user cannot INSERT a pin owned by someone else (WITH CHECK → 42501)', async () => {
+      const bobConn = await asUser('bob');
+      try {
+        await bobConn.query`INSERT INTO byo_tool_tier_overrides
+          (id, user_id, byo_server_id, tool_name, tier) VALUES
+          ('ov-evil', 'alice', 'byo-alice', 'spoof', 'read')`;
+        throw new Error('expected RLS WITH CHECK rejection; INSERT succeeded');
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe(RLS_VIOLATION_SQLSTATE);
+      } finally {
+        bobConn.release();
+      }
+    });
+
+    it('the tier CHECK constraint rejects an out-of-model tier', async () => {
+      const aliceConn = await asUser('alice');
+      try {
+        await aliceConn.query`INSERT INTO byo_tool_tier_overrides
+          (id, user_id, byo_server_id, tool_name, tier) VALUES
+          ('ov-bad', 'alice', 'byo-alice', 'weird', 'superuser')`;
+        throw new Error('expected CHECK constraint rejection; INSERT succeeded');
+      } catch (err) {
+        // 23514 = check_violation.
+        expect((err as { code?: string }).code).toBe('23514');
+      } finally {
+        aliceConn.release();
       }
     });
   });

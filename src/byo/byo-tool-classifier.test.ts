@@ -61,11 +61,20 @@ describe('classifyByoTool / byoRequiredTier', () => {
     expect(byoRequiredTier(tool('get_ticket'))).toBe(tierForToolConfig(classifyByoTool(tool('get_ticket'))));
   });
 
-  it('classifyByoTools annotates a list, preserving tool fields', () => {
+  it('classifyByoTools annotates a list, preserving tool fields (no overrides)', () => {
     const out = classifyByoTools([tool('get_ticket', 'd1'), tool('delete_user')]);
     expect(out).toEqual([
-      { name: 'get_ticket', description: 'd1', tier: 'read' },
-      { name: 'delete_user', description: undefined, tier: 'admin' },
+      { name: 'get_ticket', description: 'd1', tier: 'read', autoTier: 'read', overridden: false },
+      { name: 'delete_user', description: undefined, tier: 'admin', autoTier: 'admin', overridden: false },
     ]);
+  });
+
+  it('a manual owner override WINS over the auto tier and is flagged (WYREAI-191)', () => {
+    const overrides = new Map<string, 'read' | 'write' | 'admin'>([['get_ticket', 'admin']]);
+    const out = classifyByoTools([tool('get_ticket'), tool('delete_user')], overrides);
+    // get_ticket auto-classifies read but the owner pinned admin → effective admin.
+    expect(out[0]).toEqual({ name: 'get_ticket', description: undefined, tier: 'admin', autoTier: 'read', overridden: true });
+    // delete_user has no pin → effective == auto.
+    expect(out[1]).toMatchObject({ tier: 'admin', autoTier: 'admin', overridden: false });
   });
 });

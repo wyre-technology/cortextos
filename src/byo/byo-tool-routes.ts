@@ -19,6 +19,7 @@ import { requireAuth0 } from '../auth/auth0.js';
 import type { ToolCache } from '../proxy/tool-cache.js';
 import { ByoMcpServerService } from './byo-mcp-service.js';
 import { ByoToolDiscoveryService, ByoToolDiscoveryError } from './byo-tool-discovery.js';
+import { ByoToolTierOverrideService } from './byo-tool-tier-override-service.js';
 
 export interface ByoToolRoutesDeps {
   toolCache: ToolCache;
@@ -27,15 +28,18 @@ export interface ByoToolRoutesDeps {
 export const byoToolRoutes = (deps: ByoToolRoutesDeps) =>
   fp(async function plugin(app: FastifyInstance): Promise<void> {
     const discovery = new ByoToolDiscoveryService(new ByoMcpServerService(), deps.toolCache);
+    const overrides = new ByoToolTierOverrideService();
 
     app.get<{ Params: { id: string } }>('/connect/byo/:id/tools', async (request, reply) => {
       const user = requireAuth0(request, reply);
       if (!user) return reply; // requireAuth0 already issued the login redirect
 
       try {
-        // Each tool is annotated with its required permission tier
-        // (read/write/admin) via the catalog tier resolver (WYREAI-190).
-        const tools = await discovery.discoverClassified(user.sub, request.params.id);
+        // Each tool is annotated with its EFFECTIVE permission tier: the 190
+        // auto-classification, with any owner pin (191) applied on top. Both
+        // reads are owner-scoped under the request-path RLS context.
+        const pins = await overrides.getOverrides(user.sub, request.params.id);
+        const tools = await discovery.discoverClassified(user.sub, request.params.id, pins);
         return reply.send({ tools });
       } catch (err) {
         if (err instanceof ByoToolDiscoveryError) {

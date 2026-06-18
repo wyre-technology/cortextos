@@ -49,6 +49,7 @@ import { hydrateVendorsFromRegistry } from './credentials/vendor-registry.js';
 import { requestContextPlugin } from './db/request-context-plugin.js';
 import { byoOAuthRoutes } from './byo/byo-oauth-routes.js';
 import { byoToolRoutes } from './byo/byo-tool-routes.js';
+import { byoRegistrationRoutes } from './byo/byo-registration-routes.js';
 import { orgRoutes } from './org/routes.js';
 import { domainRoutes } from './org/domain-routes.js';
 import { OrgDomainService } from './org/domain-service.js';
@@ -627,6 +628,10 @@ await app.register(byoOAuthRoutes());
 // Reuses the shared ToolCache (owner-namespaced keys); SSRF-guarded + owner-
 // scoped inside ByoToolDiscoveryService.
 await app.register(byoToolRoutes({ toolCache }));
+
+// BYOMCP registration UI (WYREAI-191) — GET /connect/byo page + POST create/
+// delete/tier-override. Owner-scoped; create SSRF-guards the endpoint.
+await app.register(byoRegistrationRoutes());
 
 // Organization management API + invitation routes
 // Track C reseller-settings sweep-3 substrate (June 29 launch).
