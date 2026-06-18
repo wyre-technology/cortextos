@@ -5,14 +5,22 @@ import { ConduitBillingConfigError } from '../org/org-billing-provisioner.js';
 import type { SeatService, SeatBilling } from './seat-service.js';
 
 function makeBilling(billableSeats: number): SeatBilling {
+  // Hand-built fixture (not via computeSeatBilling) so this test pins the
+  // syncer's behavior on the SeatBilling shape it actually consumes —
+  // billableSeats. Other fields are present for type-completeness; the
+  // syncer reads only billableSeats today, untouched by the EAP-waiver
+  // wire-through (which affects baseCents but not seat-item quantity).
+  const baseCents = 39_900;
+  const seatTotalCents = 3_900 * billableSeats;
   return Object.freeze({
     counts: Object.freeze({ humans: billableSeats, agents: 0 }),
-    creditSeats: billableSeats,
     billableSeats,
     includedAgents: 0,
     billedAgents: 0,
-    monthlyTotalCents: 60_000 + 2_000 * billableSeats,
-    monthlyCreditAllocation: 2_500 * billableSeats,
+    baseCents,
+    seatTotalCents,
+    monthlyTotalCents: baseCents + seatTotalCents,
+    discounts: [],
   });
 }
 

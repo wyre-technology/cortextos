@@ -11,7 +11,7 @@ describe('buildTrialingSubscriptionParams — locked contract shape', () => {
     customerId: 'cus_test_abc',
     basePriceId: 'price_base_xxx',
     seatPriceId: 'price_seat_yyy',
-    seatBilling: { billableSeats: 5 },
+    seatBilling: { billableSeats: 5, baseCents: 39_900 },
     orgId: 'org_test_123',
   };
 
@@ -64,13 +64,13 @@ describe('buildTrialingSubscriptionParams — locked contract shape', () => {
   it('binds seat-item quantity to seatBilling.billableSeats at the moment of creation', () => {
     const seven = buildTrialingSubscriptionParams({
       ...baseInputs,
-      seatBilling: { billableSeats: 7 },
+      seatBilling: { billableSeats: 7, baseCents: 39_900 },
     });
     expect((seven.items as Array<{ quantity: number }>)[1].quantity).toBe(7);
 
     const ten = buildTrialingSubscriptionParams({
       ...baseInputs,
-      seatBilling: { billableSeats: 10 },
+      seatBilling: { billableSeats: 10, baseCents: 39_900 },
     });
     expect((ten.items as Array<{ quantity: number }>)[1].quantity).toBe(10);
   });
@@ -78,6 +78,62 @@ describe('buildTrialingSubscriptionParams — locked contract shape', () => {
   it('attaches customer = inputs.customerId verbatim', () => {
     const params = buildTrialingSubscriptionParams(baseInputs);
     expect(params.customer).toBe('cus_test_abc');
+  });
+});
+
+describe('buildTrialingSubscriptionParams — EAP item-omission (WYREAI-25)', () => {
+  // Page-and-billing-agree closure: when org_discounts has an eap/org_fee/100
+  // row for the org, computeSeatBilling returns SeatBilling with baseCents=0.
+  // subscription-factory reads that and OMITS the basePriceId line entirely —
+  // Stripe sees a single seat line, charges accordingly, and our display +
+  // Stripe invoice cannot diverge (shared applyDiscounts helper at
+  // src/billing/discounts.ts is the single math path for both).
+  const eapInputs = {
+    customerId: 'cus_test_abc',
+    basePriceId: 'price_base_xxx',
+    seatPriceId: 'price_seat_yyy',
+    seatBilling: { billableSeats: 5, baseCents: 0 },
+    orgId: 'org_eap_test',
+  };
+
+  it('drops the basePriceId item when baseCents=0 — Stripe sees one seat item only', () => {
+    const params = buildTrialingSubscriptionParams(eapInputs);
+    expect(params.items).toEqual([
+      { price: 'price_seat_yyy', quantity: 5 },
+    ]);
+  });
+
+  it('seat-item quantity is still bound to billableSeats — math discipline holds', () => {
+    const nine = buildTrialingSubscriptionParams({
+      ...eapInputs,
+      seatBilling: { billableSeats: 9, baseCents: 0 },
+    });
+    expect(nine.items).toHaveLength(1);
+    expect((nine.items as Array<{ quantity: number }>)[0].quantity).toBe(9);
+  });
+
+  it('partial org_fee discount (baseCents>0) KEEPS the base item — only fully-waived omits', () => {
+    // Example: a hypothetical 50% off org_fee → baseCents=19_950. The base
+    // line stays at price=basePriceId. Partial discounts on a Stripe sub
+    // are a (c) annual-prepay concern via sub-level discounts[], NOT
+    // item-omission. For (b), only baseCents=0 triggers omission.
+    const partial = buildTrialingSubscriptionParams({
+      ...eapInputs,
+      seatBilling: { billableSeats: 5, baseCents: 19_950 },
+    });
+    expect(partial.items).toEqual([
+      { price: 'price_base_xxx', quantity: 1 },
+      { price: 'price_seat_yyy', quantity: 5 },
+    ]);
+  });
+
+  it('all the locked contract terms still hold under EAP', () => {
+    const params = buildTrialingSubscriptionParams(eapInputs);
+    expect(params.trial_period_days).toBe(TRIAL_PERIOD_DAYS);
+    expect(params.billing_cycle_anchor).toBe('trial_end');
+    expect(params.proration_behavior).toBe('none');
+    expect(params.payment_behavior).toBe('default_incomplete');
+    expect(params.metadata).toEqual({ org_id: 'org_eap_test' });
   });
 });
 

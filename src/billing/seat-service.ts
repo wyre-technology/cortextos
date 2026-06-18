@@ -33,6 +33,11 @@ import {
   INCLUDED_AGENT_SEATS,
   PER_SEAT_PRICE_CENTS,
 } from './prices.js';
+import {
+  applyDiscounts,
+  type OrgDiscount,
+  type OrgDiscountService,
+} from './discounts.js';
 
 export interface SeatCounts {
   /** Active org_members rows. Each human bills at PER_SEAT_PRICE_CENTS from seat 1. */
@@ -49,8 +54,30 @@ export interface SeatBilling {
   readonly includedAgents: number;
   /** Of agents present, how many are billed (agents − includedAgents). With includedAgents=0, this is always = agents. */
   readonly billedAgents: number;
-  /** ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS × billableSeats. */
+  /**
+   * ORG_FEE_CENTS portion of the bill AFTER any org_fee-scope discounts
+   * (EAP today; see src/billing/discounts.ts). For an org with no discounts
+   * this equals ORG_FEE_CENTS. For an EAP-waived org this equals 0 — the
+   * subscription-factory uses that as the structural signal to OMIT the
+   * basePriceId from Stripe items[] entirely (no Stripe coupon needed).
+   */
+  readonly baseCents: number;
+  /** PER_SEAT_PRICE_CENTS × billableSeats. Unaffected by org_fee-scope
+   *  discounts; reduced only by invoice_total-scope discounts ((c) ship). */
+  readonly seatTotalCents: number;
+  /** baseCents + seatTotalCents AFTER invoice_total discounts. This is the
+   *  number the customer is charged each month — the single source for
+   *  both the billing-card display and the Stripe first-invoice total. */
   readonly monthlyTotalCents: number;
+  /**
+   * The discount rows that fed applyDiscounts on this snapshot, frozen for
+   * the consuming render+Stripe surfaces. Empty array on un-discounted
+   * orgs. Used by team-billing.ts to render the grant-applied badge and
+   * by subscription-factory.ts to translate org_fee=100% into item
+   * omission. The ARRAY is the SoT — display, audit-trail-viewer pedigree,
+   * and Stripe-derivation all consume the same rows.
+   */
+  readonly discounts: ReadonlyArray<OrgDiscount>;
 }
 
 export interface SeatService {
@@ -84,9 +111,20 @@ export interface SeatService {
 /**
  * Pure arithmetic — no I/O, no class methods. Exported separately so
  * tests, previews, and the S3 consequence-copy renderer all hit the same
- * function as production. Same input ⇒ same output, by construction.
+ * function as production. Same input + same discounts ⇒ same output, by
+ * construction.
+ *
+ * `discounts` defaults to an empty array so call sites that genuinely
+ * have no discount context (test fixtures, the at-creation S3 preview
+ * BEFORE an org exists to grant against) keep the prior shape. Production
+ * call sites coming through DefaultSeatService receive the org's actual
+ * rows via OrgDiscountService — applyDiscounts is the single math path
+ * regardless.
  */
-export function computeSeatBilling(counts: SeatCounts): SeatBilling {
+export function computeSeatBilling(
+  counts: SeatCounts,
+  discounts: ReadonlyArray<OrgDiscount> = [],
+): SeatBilling {
   const humans = Math.max(0, counts.humans | 0);
   const agents = Math.max(0, counts.agents | 0);
 
@@ -94,19 +132,33 @@ export function computeSeatBilling(counts: SeatCounts): SeatBilling {
   const billedAgents = agents - includedAgents;
   const billableSeats = humans + billedAgents;
 
-  const monthlyTotalCents = ORG_FEE_CENTS + PER_SEAT_PRICE_CENTS * billableSeats;
+  const seatTotalCents = PER_SEAT_PRICE_CENTS * billableSeats;
+  const bill = applyDiscounts(ORG_FEE_CENTS, seatTotalCents, discounts);
 
   return Object.freeze({
     counts: Object.freeze({ humans, agents }),
     billableSeats,
     includedAgents,
     billedAgents,
-    monthlyTotalCents,
+    baseCents: bill.baseCents,
+    seatTotalCents: bill.seatTotalCents,
+    monthlyTotalCents: bill.monthlyTotalCents,
+    discounts: bill.appliedDiscounts,
   });
 }
 
 export class DefaultSeatService implements SeatService {
-  constructor(private orgService: OrgService) {}
+  constructor(
+    private orgService: OrgService,
+    /**
+     * Optional discount-row source. When omitted, getSeatBilling behaves
+     * exactly as before (no discounts applied) — back-compat for callers
+     * not yet wired with the org_discounts SoT. Production composition
+     * (deps factory) passes a DefaultOrgDiscountService so EAP grants on
+     * an org take effect at every consumer.
+     */
+    private discountService?: OrgDiscountService,
+  ) {}
 
   async getSeatCounts(orgId: string): Promise<SeatCounts> {
     // Sequential awaits — NOT Promise.all — per the #196/#199/#201
@@ -126,8 +178,13 @@ export class DefaultSeatService implements SeatService {
   }
 
   async getSeatBilling(orgId: string): Promise<SeatBilling> {
+    // Sequential awaits — same reserved-tx-hang discipline as
+    // getSeatCounts. Discount-row fetch is a single indexed read on
+    // (org_id, reason) so latency is negligible.
     const counts = await this.getSeatCounts(orgId);
-    return computeSeatBilling(counts);
+    const discounts =
+      (await this.discountService?.getDiscounts(orgId)) ?? [];
+    return computeSeatBilling(counts, discounts);
   }
 
   computeSeatBilling(counts: SeatCounts): SeatBilling {

@@ -29,9 +29,17 @@ export interface TrialingSubscriptionInputs {
   basePriceId: string;
   /** Stripe Price ID for the $39 per-unit seat item. From config.stripeConduitSeatPriceId. */
   seatPriceId: string;
-  /** Seat-billing snapshot at the moment of subscription creation. The
-   *  seat-item quantity is bound to billableSeats from this snapshot. */
-  seatBilling: Pick<SeatBilling, 'billableSeats'>;
+  /**
+   * Seat-billing snapshot at the moment of subscription creation. The
+   * seat-item quantity is bound to billableSeats from this snapshot.
+   * The base-line item presence/absence is driven by baseCents — 0 means
+   * the org_fee was waived (EAP today, WYREAI-25) and the basePriceId
+   * line is OMITTED from items[] entirely (no Stripe coupon — our table
+   * is the SoT; Stripe sees deterministic line items reflecting our math).
+   * Both fields are required so the factory cannot fall back to assuming
+   * a $399 base when an EAP grant exists. SoT held by-construction.
+   */
+  seatBilling: Pick<SeatBilling, 'billableSeats' | 'baseCents'>;
   /** Org ID — propagated to metadata and used as the idempotency-key root. */
   orgId: string;
   /** Optional override for testing — production callers omit this. */
@@ -54,12 +62,25 @@ export function buildTrialingSubscriptionParams(
 ): Stripe.SubscriptionCreateParams {
   const trialDays = inputs.trialPeriodDays ?? TRIAL_PERIOD_DAYS;
 
+  // EAP item-omission: when org_fee is fully waived (baseCents=0 after
+  // applyDiscounts), drop the basePriceId line entirely. Our org_discounts
+  // table is the SoT; Stripe gets deterministic line items matching our
+  // display arithmetic. No Stripe-coupon-state to keep in sync. See
+  // src/billing/discounts.ts for the apply-helper that both this factory
+  // and computeSeatBilling go through — divergence-impossible by
+  // construction (boss msg-1781749682091, A* + shared-helper GO).
+  const items: Stripe.SubscriptionCreateParams.Item[] = [];
+  if (inputs.seatBilling.baseCents > 0) {
+    items.push({ price: inputs.basePriceId, quantity: 1 });
+  }
+  items.push({
+    price: inputs.seatPriceId,
+    quantity: inputs.seatBilling.billableSeats,
+  });
+
   return {
     customer: inputs.customerId,
-    items: [
-      { price: inputs.basePriceId, quantity: 1 },
-      { price: inputs.seatPriceId, quantity: inputs.seatBilling.billableSeats },
-    ],
+    items,
     trial_period_days: trialDays,
     // EXPLICIT — Stripe's documented default when trial_period_days is set,
     // but encoding it makes the contract structural rather than discipline-
@@ -115,7 +136,9 @@ export async function createTrialingSubscription(
     customerName?: string;
     basePriceId: string;
     seatPriceId: string;
-    seatBilling: Pick<SeatBilling, 'billableSeats'>;
+    /** See TrialingSubscriptionInputs.seatBilling — baseCents=0 omits the
+     *  basePriceId line (EAP-waiver behavior). */
+    seatBilling: Pick<SeatBilling, 'billableSeats' | 'baseCents'>;
     trialPeriodDays?: number;
     /** Optional Stripe test-clock ID (used by integration tests, never prod). */
     testClock?: string;

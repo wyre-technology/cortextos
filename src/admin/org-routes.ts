@@ -4,6 +4,7 @@ import type { OrgService } from '../org/org-service.js';
 import type { BillingGate } from '../billing/gate.js';
 import type { CreditService } from '../billing/credit-service.js';
 import type { AdminAuditService } from '../audit/admin-audit-service.js';
+import type { OrgDiscountService } from '../billing/discounts.js';
 import type { OrgIdpConnectionService } from '../org/org-idp-connection-service.js';
 import type { Auth0ManagementClient } from '../auth/auth0-management.js';
 import {
@@ -72,6 +73,14 @@ interface AdminOrgRoutesDeps {
   creditService: CreditService;
   adminAuditService: AdminAuditService;
   /**
+   * Per-org discount primitive (mig 054, WYREAI-25). Wired here for the
+   * EAP-waiver grant + revoke routes. Optional for the existing test
+   * fixtures that don't exercise discount paths; when undefined the
+   * EAP routes return 503 ("EAP routes not configured") so the test
+   * boot stays clean without silently no-op'ing in prod.
+   */
+  orgDiscountService?: OrgDiscountService;
+  /**
    * Multi-IdP foundation slice 6+7 PR-B (June 29 launch directive
    * 2026-06-13): wizard substrate for per-org SAML IdP connection
    * management at /admin/orgs/:orgId/idp-connections*.
@@ -127,6 +136,7 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
     orgService,
     creditService,
     adminAuditService,
+    orgDiscountService,
     orgIdpConnectionService,
     auth0ManagementClient,
   } = deps;
@@ -1224,5 +1234,137 @@ export function adminOrgRoutes(deps: AdminOrgRoutesDeps) {
         return back(`flash_ok=${encodeURIComponent(`Deleted SAML connection ${conn.entityId}`)}`);
       },
     );
+
+    // -----------------------------------------------------------------------
+    // POST /admin/orgs/:orgId/eap-waiver — grant the EAP org_fee waiver
+    // POST /admin/orgs/:orgId/eap-waiver/revoke — revoke it
+    //
+    // WYREAI-25 (b): admin-set per-org EAP waiver. Inserts (UPSERTs) into
+    // org_discounts as an eap/org_fee/100 row; computeSeatBilling reads
+    // the row on next getSeatBilling, the team-billing card shows the
+    // waiver chip + math-line collapse + reconcile-note variant, and
+    // subscription-factory omits the basePriceId from items[] on the
+    // next sub create/update. Page-and-billing-agree closure preserved.
+    //
+    // No self-serve path — EAP is "ask us" per the live pricing page.
+    // Admin-only mutation (requireAdminMutation), audit-logged via
+    // adminAuditService (the belt-and-suspenders pattern ruby called out
+    // in msg-1781749672262: the granted_by/granted_at on the row drives
+    // the customer-facing pedigree tooltip; the adminAuditService log
+    // drives the chronological admin-trail viewer; distinct read-side
+    // consumers, same SoT semantics).
+    // -----------------------------------------------------------------------
+    app.post<{
+      Params: { orgId: string };
+      Body: { reason_note?: string };
+    }>('/admin/orgs/:orgId/eap-waiver', async (request, reply) => {
+      if (!requireAdminMutation(request, reply)) return;
+      const orgId = request.params.orgId;
+      const back = (qs: string) =>
+        reply.redirect(`/admin/orgs/${orgId}?${qs}`);
+
+      if (!orgDiscountService) {
+        return back(
+          `flash_err=${encodeURIComponent('EAP routes not configured on this boot')}`,
+        );
+      }
+
+      const org = await runAsSystem(() => orgService.getOrg(orgId));
+      if (!org) {
+        return reply.redirect(
+          `/admin/orgs?flash_err=${encodeURIComponent('Org not found')}`,
+        );
+      }
+
+      const actorSub = request.auth0User?.sub ?? '';
+      if (!actorSub) {
+        return back(
+          `flash_err=${encodeURIComponent('Admin identity unavailable')}`,
+        );
+      }
+      const reasonNote = (request.body.reason_note ?? '').trim() || undefined;
+
+      try {
+        await runAsSystem(async () => {
+          const sql = getSql();
+          await sql`
+            INSERT INTO org_discounts
+              (org_id, reason, applies_to, percent, granted_by, granted_at)
+            VALUES
+              (${orgId}, 'eap', 'org_fee', 100, ${actorSub}, NOW())
+            ON CONFLICT (org_id, reason) DO UPDATE
+              SET applies_to = EXCLUDED.applies_to,
+                  percent    = EXCLUDED.percent,
+                  granted_by = EXCLUDED.granted_by,
+                  granted_at = NOW()
+          `;
+        });
+        await runAsSystem(() =>
+          adminAuditService.log({
+            orgId,
+            actorId: actorSub,
+            eventType: 'eap_waiver_granted',
+            metadata: { reason_note: reasonNote ?? null },
+          }),
+        );
+        request.log.info(
+          { orgId, actorSub, reasonNote },
+          'admin granted EAP org-fee waiver',
+        );
+        return back(
+          `flash_ok=${encodeURIComponent('EAP org-fee waiver granted')}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        request.log.error({ orgId, err }, 'eap waiver grant failed');
+        return back(
+          `flash_err=${encodeURIComponent('Grant failed: ' + msg)}`,
+        );
+      }
+    });
+
+    app.post<{
+      Params: { orgId: string };
+    }>('/admin/orgs/:orgId/eap-waiver/revoke', async (request, reply) => {
+      if (!requireAdminMutation(request, reply)) return;
+      const orgId = request.params.orgId;
+      const back = (qs: string) =>
+        reply.redirect(`/admin/orgs/${orgId}?${qs}`);
+
+      if (!orgDiscountService) {
+        return back(
+          `flash_err=${encodeURIComponent('EAP routes not configured on this boot')}`,
+        );
+      }
+
+      const actorSub = request.auth0User?.sub ?? '';
+      try {
+        await runAsSystem(async () => {
+          const sql = getSql();
+          await sql`
+            DELETE FROM org_discounts
+             WHERE org_id = ${orgId} AND reason = 'eap'
+          `;
+        });
+        await runAsSystem(() =>
+          adminAuditService.log({
+            orgId,
+            actorId: actorSub,
+            eventType: 'eap_waiver_revoked',
+            metadata: {},
+          }),
+        );
+        request.log.info({ orgId, actorSub }, 'admin revoked EAP org-fee waiver');
+        return back(
+          `flash_ok=${encodeURIComponent('EAP org-fee waiver revoked')}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        request.log.error({ orgId, err }, 'eap waiver revoke failed');
+        return back(
+          `flash_err=${encodeURIComponent('Revoke failed: ' + msg)}`,
+        );
+      }
+    });
   };
 }
