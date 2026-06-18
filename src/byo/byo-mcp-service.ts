@@ -35,6 +35,14 @@ export interface ByoMcpServer {
 /** A BYO server with its decrypted auth headers, for the transport to use. */
 export interface ByoMcpServerWithHeaders extends ByoMcpServer {
   headers: Record<string, string>;
+  /** OAuth refresh state, present once the server is OAuth-connected (187). */
+  oauth?: { refreshToken: string; expiresAt: string };
+}
+
+/** Encrypted-at-rest secret blob: static headers and/or OAuth refresh state. */
+interface ByoSecrets {
+  headers: Record<string, string>;
+  oauth?: { refreshToken: string; expiresAt: string };
 }
 
 export interface ByoMcpServerInput {
@@ -104,7 +112,8 @@ export class ByoMcpServerService {
     await validateVendorBaseUrl(input.endpointUrl);
 
     const transport: ByoTransport = input.transport ?? 'streamable-http';
-    const payload = encryptPayload(this.masterKey, userId, JSON.stringify(input.headers ?? {}));
+    const secrets: ByoSecrets = { headers: input.headers ?? {} };
+    const payload = encryptPayload(this.masterKey, userId, JSON.stringify(secrets));
     const id = nanoid();
 
     const result = await this.sql<{ id: string }[]>`
@@ -148,16 +157,50 @@ export class ByoMcpServerService {
     const row = rows[0];
     if (!row) return null;
 
-    const headersJson = decryptPayload(this.masterKey, userId, {
+    const secrets = this.decryptSecrets(userId, row);
+    return {
+      ...this.toMeta(row),
+      headers: secrets.headers,
+      oauth: secrets.oauth,
+    };
+  }
+
+  /**
+   * Persist OAuth tokens for an existing BYO server (WYREAI-187 callback). The
+   * access token becomes the derived `Authorization` header the transport
+   * sends; the refresh token + expiry are stored alongside for refresh. All
+   * encrypted at rest, owner-scoped by RLS.
+   */
+  async setOAuthTokens(
+    userId: string,
+    id: string,
+    tokens: { accessToken: string; refreshToken: string; expiresAt: string },
+  ): Promise<boolean> {
+    const secrets: ByoSecrets = {
+      headers: { Authorization: `Bearer ${tokens.accessToken}` },
+      oauth: { refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt },
+    };
+    const payload = encryptPayload(this.masterKey, userId, JSON.stringify(secrets));
+    const result = await this.sql`
+      UPDATE byo_mcp_servers SET
+        encrypted_data = ${payload.ciphertext},
+        iv             = ${payload.iv},
+        auth_tag       = ${payload.authTag},
+        salt           = ${payload.salt},
+        updated_at     = NOW()
+      WHERE user_id = ${userId} AND id = ${id}
+    `;
+    return result.count > 0;
+  }
+
+  private decryptSecrets(userId: string, row: SecretRow): ByoSecrets {
+    const json = decryptPayload(this.masterKey, userId, {
       ciphertext: row.encrypted_data,
       iv: row.iv,
       authTag: row.auth_tag,
       salt: row.salt,
     });
-    return {
-      ...this.toMeta(row),
-      headers: JSON.parse(headersJson) as Record<string, string>,
-    };
+    return JSON.parse(json) as ByoSecrets;
   }
 
   /** Delete a user's BYO server. Returns true if a row was removed. */

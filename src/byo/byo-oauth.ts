@@ -196,3 +196,85 @@ export async function exchangeByoCode(
     raw: data,
   };
 }
+
+export interface ByoClientRegistration {
+  clientId: string;
+  /** Present for confidential clients; absent for public (PKCE-only) clients. */
+  clientSecret?: string;
+}
+
+/**
+ * RFC 7591 Dynamic Client Registration against the discovered AS. BYO servers
+ * have no pre-registered client, so the gateway registers one per server.
+ * SSRF-guards the registration endpoint and requests a PKCE-capable
+ * authorization-code client bound to our callback.
+ */
+export async function registerByoClient(
+  meta: ByoAuthServerMetadata,
+  redirectUri: string,
+): Promise<ByoClientRegistration> {
+  if (!meta.registrationEndpoint) {
+    throw new ByoOAuthError(
+      'authorization server does not advertise a registration_endpoint (RFC 7591); ' +
+        'a pre-registered client_id is required for this BYO server.',
+    );
+  }
+  await validateVendorBaseUrl(meta.registrationEndpoint);
+
+  const res = await fetch(meta.registrationEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      client_name: 'WYRE Conduit (BYO MCP)',
+      redirect_uris: [redirectUri],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none', // public client + PKCE by default
+    }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new ByoOAuthError(`dynamic client registration failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as Record<string, unknown>;
+  const clientId = data.client_id;
+  if (typeof clientId !== 'string' || !clientId) {
+    throw new ByoOAuthError('registration response did not include a client_id');
+  }
+  return {
+    clientId,
+    clientSecret: typeof data.client_secret === 'string' ? data.client_secret : undefined,
+  };
+}
+
+export interface CompleteByoOAuthParams {
+  /** The BYO MCP server's endpoint (its AS is re-discovered from this). */
+  endpointUrl: string;
+  code: string;
+  codeVerifier: string;
+  clientId: string;
+  clientSecret?: string;
+  redirectUri: string;
+  /** The `iss` parameter from the OAuth callback (RFC 9207). */
+  iss: string | undefined;
+}
+
+/**
+ * Callback half of the BYO OAuth flow: RE-discover the authorization server
+ * from the server's endpoint (so the AS metadata + issuer are fresh and never
+ * had to be persisted across the redirect), then validate the callback `iss`
+ * against that issuer and exchange the code for tokens. Caller persists the
+ * returned tokens into the byo_mcp_servers RLS store.
+ */
+export async function completeByoOAuth(p: CompleteByoOAuthParams): Promise<VendorTokenResponse> {
+  const meta = await discoverByoAuthServer(p.endpointUrl);
+  return exchangeByoCode(meta, {
+    code: p.code,
+    codeVerifier: p.codeVerifier,
+    clientId: p.clientId,
+    clientSecret: p.clientSecret,
+    redirectUri: p.redirectUri,
+    iss: p.iss,
+  });
+}

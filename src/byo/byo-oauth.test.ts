@@ -8,6 +8,8 @@ import {
   discoverByoAuthServer,
   buildByoAuthorizeUrl,
   exchangeByoCode,
+  registerByoClient,
+  completeByoOAuth,
   type ByoAuthServerMetadata,
 } from './byo-oauth.js';
 import { validateVendorBaseUrl } from '../credentials/safe-fetch.js';
@@ -134,6 +136,52 @@ describe('byo-oauth', () => {
         exchangeByoCode(META, { code: 'c', codeVerifier: 'v', clientId: 'cid', redirectUri: 'https://gw/cb', iss: undefined }),
       ).rejects.toThrow(/issuer check failed/);
       expect(f).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('registerByoClient (RFC 7591 DCR)', () => {
+    it('registers a public PKCE client at the registration endpoint', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe(`${AS}/register`);
+        const sent = JSON.parse(init.body as string);
+        expect(sent.redirect_uris).toEqual(['https://gw/cb']);
+        expect(sent.token_endpoint_auth_method).toBe('none');
+        return jsonRes({ client_id: 'dyn-client' });
+      }));
+      const reg = await registerByoClient({ ...META, registrationEndpoint: `${AS}/register` }, 'https://gw/cb');
+      expect(reg.clientId).toBe('dyn-client');
+      expect(reg.clientSecret).toBeUndefined();
+    });
+
+    it('throws when the AS advertises no registration_endpoint', async () => {
+      await expect(registerByoClient(META, 'https://gw/cb')).rejects.toThrow(/registration_endpoint/);
+    });
+
+    it('SSRF-guards the registration endpoint before posting', async () => {
+      vi.mocked(validateVendorBaseUrl).mockRejectedValueOnce(new Error('rejected'));
+      const f = vi.fn();
+      vi.stubGlobal('fetch', f);
+      await expect(
+        registerByoClient({ ...META, registrationEndpoint: 'http://10.0.0.1/reg' }, 'https://gw/cb'),
+      ).rejects.toThrow(/rejected/);
+      expect(f).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('completeByoOAuth (callback half — re-discover + exchange)', () => {
+    it('re-discovers the AS from the endpoint and exchanges the code when iss matches', async () => {
+      vi.stubGlobal('fetch', discoveryFetch());
+      const tokens = await completeByoOAuth({
+        endpointUrl: 'https://byo.example.com/mcp', code: 'c', codeVerifier: 'v', clientId: 'cid', redirectUri: 'https://gw/cb', iss: AS,
+      });
+      expect(tokens.accessToken).toBe('at-1');
+    });
+
+    it('fails closed on a mismatched iss', async () => {
+      vi.stubGlobal('fetch', discoveryFetch());
+      await expect(
+        completeByoOAuth({ endpointUrl: 'https://byo.example.com/mcp', code: 'c', codeVerifier: 'v', clientId: 'cid', redirectUri: 'https://gw/cb', iss: 'https://evil.com' }),
+      ).rejects.toThrow(/issuer check failed/);
     });
   });
 });

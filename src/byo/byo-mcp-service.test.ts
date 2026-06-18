@@ -18,6 +18,12 @@ function fakeSql(strings: TemplateStringsArray, ...values: unknown[]): Promise<u
     const [userId] = values;
     return Promise.resolve(store.filter((r) => r.user_id === userId));
   }
+  if (text.includes('UPDATE byo_mcp_servers')) {
+    const [encrypted_data, iv, auth_tag, salt, userId, id] = values;
+    const row = store.find((r) => r.user_id === userId && r.id === id);
+    if (row) Object.assign(row, { encrypted_data, iv, auth_tag, salt });
+    return Promise.resolve(Object.assign([], { count: row ? 1 : 0 }));
+  }
   if (text.includes('DELETE')) {
     const [userId, id] = values;
     const before = store.length;
@@ -89,5 +95,18 @@ describe('ByoMcpServerService', () => {
     expect(await svc.delete('user-b', id)).toBe(false);
     expect(await svc.delete('user-a', id)).toBe(true);
     expect(store).toHaveLength(0);
+  });
+
+  it('setOAuthTokens() stores a derived Authorization header + encrypted refresh state (WYREAI-187)', async () => {
+    const id = await svc.create('user-a', { name: 'oauth-server', endpointUrl: 'https://a.example.com/mcp', headers: {} });
+    await svc.setOAuthTokens('user-a', id, { accessToken: 'AT-123', refreshToken: 'RT-456', expiresAt: '2026-12-31T00:00:00Z' });
+
+    // Neither token is in plaintext at rest.
+    expect(JSON.stringify(store[0])).not.toContain('AT-123');
+    expect(JSON.stringify(store[0])).not.toContain('RT-456');
+
+    const got = await svc.get('user-a', id);
+    expect(got!.headers).toEqual({ Authorization: 'Bearer AT-123' });
+    expect(got!.oauth).toEqual({ refreshToken: 'RT-456', expiresAt: '2026-12-31T00:00:00Z' });
   });
 });
