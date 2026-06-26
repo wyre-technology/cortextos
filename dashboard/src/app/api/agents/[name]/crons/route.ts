@@ -6,6 +6,12 @@ import { spawnSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
+// Security: identifier allowlist for [name] path param. Matches the convention
+// used in dashboard/src/app/api/agents/route.ts (VALID_NAME) and
+// dashboard/src/app/api/skills/route.ts (VALID_SLUG_LIKE). Used to guard the
+// decoded URL segment BEFORE it reaches path.join / fs.readFile / spawnSync.
+const VALID_AGENT_NAME = /^[a-z0-9_-]+$/;
+
 interface Cron {
   name: string;
   type?: 'recurring' | 'once';
@@ -25,15 +31,32 @@ interface AgentConfig {
   crons: Cron[];
 }
 
-function resolveAgent(name: string): { agentDir: string; org?: string } {
+// Security: returns null when the decoded name (a) fails the identifier-regex
+// allowlist OR (b) doesn't match any known agent in allAgents. Refusing the
+// raw-decoded fallback closes the path-traversal seam: a request like
+// `/api/agents/..%2F..%2Fetc%2Fpasswd/crons` would otherwise decode to
+// `../../etc/passwd` and reach getAgentDir/path.join/fs.readFile (MEDIUM
+// finding per automated security-review). It also closes a parallel
+// shell-arg-injection seam: systemName at line ~123 reaches spawnSync as a
+// recipient argument, where a `;`/space-bearing decoded value could re-shape
+// the command. Allowlist + must-exist gives both seams a 404, not a 5xx +
+// arbitrary fs/exec.
+function resolveAgent(name: string): { agentDir: string; org?: string; systemName: string } | null {
   const decoded = decodeURIComponent(name);
+  if (!VALID_AGENT_NAME.test(decoded)) return null;
   const allAgents = getAllAgents();
   const entry = allAgents.find(
     a => a.name.toLowerCase() === decoded.toLowerCase()
   );
-  const systemName = entry?.name ?? decoded;
-  const org = entry?.org || undefined;
-  return { agentDir: getAgentDir(systemName, org), org };
+  if (!entry) return null;
+  const systemName = entry.name;
+  // entry.name is taken from the registry (server-trusted, NOT caller input)
+  // and is the only value used downstream. Re-validate as defense-in-depth
+  // in case a future change ever lets caller-controlled data leak into
+  // entry.name.
+  if (!VALID_AGENT_NAME.test(systemName)) return null;
+  const org = entry.org || undefined;
+  return { agentDir: getAgentDir(systemName, org), org, systemName };
 }
 
 // GET /api/agents/[name]/crons - Read crons from config.json
@@ -42,9 +65,12 @@ export async function GET(
   { params }: { params: Promise<{ name: string }> },
 ) {
   const { name } = await params;
+  const resolved = resolveAgent(name);
+  if (!resolved) {
+    return Response.json({ error: 'Agent not found' }, { status: 404 });
+  }
   try {
-    const { agentDir } = resolveAgent(name);
-    const configPath = path.join(agentDir, 'config.json');
+    const configPath = path.join(resolved.agentDir, 'config.json');
     const raw = await fs.readFile(configPath, 'utf-8');
     const config: AgentConfig = JSON.parse(raw);
     return Response.json({ crons: config.crons || [] });
@@ -60,10 +86,13 @@ export async function PUT(
   { params }: { params: Promise<{ name: string }> },
 ) {
   const { name } = await params;
-  const decoded = decodeURIComponent(name);
+  const resolved = resolveAgent(name);
+  if (!resolved) {
+    return Response.json({ error: 'Agent not found' }, { status: 404 });
+  }
+  const { agentDir, systemName } = resolved;
 
   try {
-    const { agentDir, org } = resolveAgent(name);
     const configPath = path.join(agentDir, 'config.json');
     const raw = await fs.readFile(configPath, 'utf-8');
     const config: AgentConfig = JSON.parse(raw);
@@ -115,12 +144,10 @@ export async function PUT(
     config.crons = crons;
     await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n');
 
-    // Notify agent to re-read config via message bus
-    const allAgents = getAllAgents();
-    const entry = allAgents.find(
-      a => a.name.toLowerCase() === decoded.toLowerCase()
-    );
-    const systemName = entry?.name ?? decoded;
+    // Notify agent to re-read config via message bus. systemName is
+    // server-validated (matched against allAgents registry + regex-checked
+    // in resolveAgent), so it's safe to pass as the spawnSync recipient arg
+    // without re-shaping the command line.
     try {
       spawnSync(
         'bash',

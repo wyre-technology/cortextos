@@ -16,8 +16,31 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ agent: string }> }
 ) {
-  // Security (H7): Authenticate SSE via ?token=<jwt> (EventSource cannot send headers).
-  const token = new URL(request.url).searchParams.get('token');
+  // Security: Authenticate SSE — prefer cookie over query string.
+  //
+  // Original H7 fix used `?token=<jwt>` because EventSource cannot set
+  // request headers. The newer finding (MEDIUM, automated security-review)
+  // escalates that: query-string JWTs land in browser history, Referer
+  // headers, server access logs, and Cloudflare/CDN logs — broadening the
+  // exfiltration surface vs. an httpOnly cookie. EventSource sends
+  // same-origin cookies automatically, so the cookie path is strictly
+  // better for SSE that runs against its own origin.
+  //
+  // Migration shape: accept the JWT from either source, prefer cookie,
+  // emit a one-line warning when the query-string path is used so we can
+  // observe the deprecation tail and drop the query support in a
+  // follow-up. Cookie name `dashboard_sse_token` matches the convention
+  // any future cookie-issuing endpoint would use (HttpOnly, SameSite=Strict).
+  let token: string | null = null;
+  let tokenSource: 'cookie' | 'query' = 'cookie';
+  const cookieToken = request.cookies.get('dashboard_sse_token')?.value;
+  if (cookieToken) {
+    token = cookieToken;
+    tokenSource = 'cookie';
+  } else {
+    token = new URL(request.url).searchParams.get('token');
+    tokenSource = 'query';
+  }
   if (!token) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -31,6 +54,12 @@ export async function GET(
     await jwtVerify(token, secret);
   } catch {
     return new Response('Unauthorized', { status: 401 });
+  }
+  if (tokenSource === 'query') {
+    // Deprecation tracker — emit once per connection so log volume scales
+    // with new connections, not heartbeats. Drop the query support once
+    // this is empty for a release cycle.
+    console.warn('[messages/stream] DEPRECATED: SSE auth via ?token= — migrate caller to httpOnly cookie `dashboard_sse_token`.');
   }
   // Auth passed — proceed with stream
 

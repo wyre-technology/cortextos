@@ -4,6 +4,33 @@ import { getFrameworkRoot } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
+// ---------------------------------------------------------------------------
+// Security: input + containment validation for POST/DELETE
+//
+// slug/org/agent enter `path.join(...)` and reach `fs.symlinkSync` /
+// `fs.unlinkSync` / `fs.rmSync`. Without containment, a value like
+// "../../etc/passwd" lets a caller delete or symlink-overwrite arbitrary
+// files (HIGH from automated security-review). Two layers:
+//
+//   1. Regex allowlist matches the project convention (same VALID_NAME
+//      pattern used in dashboard/src/app/api/agents/route.ts:14).
+//   2. Resolved-path containment check: even if regex is bypassed somehow,
+//      the resolved target MUST sit under the expected ancestor (frameworkRoot
+//      for skills, frameworkRoot/orgs for installation targets). path.resolve
+//      collapses any `..` so this catches traversal escapes.
+// ---------------------------------------------------------------------------
+const VALID_SLUG_LIKE = /^[a-z0-9_-]+$/;
+
+function isPathContainedIn(targetAbs: string, ancestorAbs: string): boolean {
+  const resolvedTarget = path.resolve(targetAbs);
+  const resolvedAncestor = path.resolve(ancestorAbs);
+  if (resolvedTarget === resolvedAncestor) return true;
+  const ancestorWithSep = resolvedAncestor.endsWith(path.sep)
+    ? resolvedAncestor
+    : resolvedAncestor + path.sep;
+  return resolvedTarget.startsWith(ancestorWithSep);
+}
+
 function parseSkillMd(content: string): { name: string; description: string } {
   const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
   let name = '';
@@ -90,16 +117,37 @@ export async function POST(request: Request) {
     if (!slug || !org || !agent) {
       return Response.json({ error: 'slug, org, and agent required' }, { status: 400 });
     }
+    // Security: regex-validate slug/org/agent before path.join.
+    if (!VALID_SLUG_LIKE.test(slug) || !VALID_SLUG_LIKE.test(org) || !VALID_SLUG_LIKE.test(agent)) {
+      return Response.json(
+        { error: 'slug, org, and agent must match /^[a-z0-9_-]+$/' },
+        { status: 400 },
+      );
+    }
 
     const frameworkRoot = getFrameworkRoot();
-    const catalogDir = path.join(frameworkRoot, 'skills', slug);
+    const skillsCatalogRoot = path.join(frameworkRoot, 'skills');
+    const orgsRoot = path.join(frameworkRoot, 'orgs');
+
+    const catalogDir = path.join(skillsCatalogRoot, slug);
+    // Security: containment check after join — even if regex was bypassed,
+    // resolved catalogDir must sit under frameworkRoot/skills.
+    if (!isPathContainedIn(catalogDir, skillsCatalogRoot)) {
+      return Response.json({ error: 'invalid slug' }, { status: 400 });
+    }
     if (!fs.existsSync(catalogDir)) {
       return Response.json({ error: `Skill not found: ${slug}` }, { status: 404 });
     }
 
-    const skillsDir = path.join(frameworkRoot, 'orgs', org, 'agents', agent, 'skills');
+    const skillsDir = path.join(orgsRoot, org, 'agents', agent, 'skills');
+    if (!isPathContainedIn(skillsDir, orgsRoot)) {
+      return Response.json({ error: 'invalid org or agent' }, { status: 400 });
+    }
     fs.mkdirSync(skillsDir, { recursive: true });
     const linkPath = path.join(skillsDir, slug);
+    if (!isPathContainedIn(linkPath, skillsDir)) {
+      return Response.json({ error: 'invalid slug' }, { status: 400 });
+    }
 
     try { if (fs.lstatSync(linkPath).isSymbolicLink()) fs.unlinkSync(linkPath); } catch { /* doesn't exist */ }
     fs.symlinkSync(catalogDir, linkPath, 'dir');
@@ -117,9 +165,21 @@ export async function DELETE(request: Request) {
     if (!slug || !org || !agent) {
       return Response.json({ error: 'slug, org, and agent required' }, { status: 400 });
     }
+    // Security: same regex + containment as POST. DELETE was the highest-impact
+    // path of the original finding (rmSync with caller-controlled segments).
+    if (!VALID_SLUG_LIKE.test(slug) || !VALID_SLUG_LIKE.test(org) || !VALID_SLUG_LIKE.test(agent)) {
+      return Response.json(
+        { error: 'slug, org, and agent must match /^[a-z0-9_-]+$/' },
+        { status: 400 },
+      );
+    }
 
     const frameworkRoot = getFrameworkRoot();
-    const linkPath = path.join(frameworkRoot, 'orgs', org, 'agents', agent, 'skills', slug);
+    const orgsRoot = path.join(frameworkRoot, 'orgs');
+    const linkPath = path.join(orgsRoot, org, 'agents', agent, 'skills', slug);
+    if (!isPathContainedIn(linkPath, orgsRoot)) {
+      return Response.json({ error: 'invalid slug, org, or agent' }, { status: 400 });
+    }
 
     try {
       const stat = fs.lstatSync(linkPath);
