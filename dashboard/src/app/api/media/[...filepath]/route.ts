@@ -75,8 +75,20 @@ const MIME_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
-const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
-const INLINE_EXTENSIONS = new Set(['.md', '.html', '.htm', '.txt', '.ts', '.tsx', '.js', '.css', '.sh', '.json', '.csv']);
+// Security: extensions that the dashboard ORIGIN must NEVER render inline.
+// .html/.htm/.svg with `Content-Disposition: inline` execute JavaScript in
+// the dashboard origin (same-origin XSS). Per automated security-review
+// (HIGH), force download + neutralized MIME on these. SVG is unsafe inline
+// because SVG can carry <script>; HTML is trivially script-bearing.
+//
+// Approach: keep them out of IMAGE_EXTENSIONS and INLINE_EXTENSIONS so the
+// generic-file path emits `Content-Disposition: attachment`, AND override
+// the MIME to a non-executing type so even a malicious sniff/render path
+// can't get the browser to execute it (defense-in-depth alongside the
+// X-Content-Type-Options: nosniff header set below).
+const UNSAFE_INLINE_EXTENSIONS = new Set(['.html', '.htm', '.svg']);
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+const INLINE_EXTENSIONS = new Set(['.md', '.txt', '.ts', '.tsx', '.js', '.css', '.sh', '.json', '.csv']);
 
 /**
  * GET /api/media/[...filepath]
@@ -189,16 +201,36 @@ export async function GET(
     });
   }
 
-  const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
+  // Security: for unsafe-inline extensions (.html/.htm/.svg), override the
+  // MIME to text/plain so even if a downstream proxy / sniffer / browser
+  // ignores Content-Disposition: attachment, the content is treated as
+  // inert text rather than executable HTML/SVG. Pairs with the attachment
+  // disposition below + X-Content-Type-Options: nosniff for triple
+  // defense-in-depth.
+  let mimeType: string;
+  if (UNSAFE_INLINE_EXTENSIONS.has(ext)) {
+    mimeType = 'text/plain; charset=utf-8';
+  } else {
+    mimeType = MIME_TYPES[ext] || 'application/octet-stream';
+  }
   const fileBuffer = fs.readFileSync(realFullPath);
 
   const headers: Record<string, string> = {
     'Content-Type': mimeType,
     'Content-Length': String(fileBuffer.length),
     'Cache-Control': 'private, max-age=3600',
+    // Belt-and-suspenders: nosniff prevents browsers from MIME-guessing the
+    // body as text/html when we said text/plain. Applies to ALL responses;
+    // safe for legitimate content (the explicit Content-Type wins anyway).
+    'X-Content-Type-Options': 'nosniff',
   };
 
-  if (IMAGE_EXTENSIONS.has(ext) || INLINE_EXTENSIONS.has(ext)) {
+  if (UNSAFE_INLINE_EXTENSIONS.has(ext)) {
+    // Force download for HTML/SVG so even if the MIME override above were
+    // bypassed (legacy browser, intermediate proxy), the browser doesn't
+    // render in the dashboard origin.
+    headers['Content-Disposition'] = `attachment; filename="${path.basename(realFullPath)}"`;
+  } else if (IMAGE_EXTENSIONS.has(ext) || INLINE_EXTENSIONS.has(ext)) {
     headers['Content-Disposition'] = `inline; filename="${path.basename(realFullPath)}"`;
   } else {
     headers['Content-Disposition'] = `attachment; filename="${path.basename(realFullPath)}"`;

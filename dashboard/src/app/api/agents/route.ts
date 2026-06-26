@@ -126,6 +126,13 @@ export async function POST(request: NextRequest) {
     await copyDir(templateDir, agentDir);
 
     // 2. Write .env file
+    //
+    // Security: .env carries BOT_TOKEN + CHAT_ID + optional ALLOWED_USER —
+    // all caller-secrets that any local user could exfiltrate at 0o644
+    // (the umask default). Per automated security-review (MEDIUM), write
+    // with mode 0o600 (owner read/write only). The `mode` option on
+    // fs.writeFile is only respected on file CREATION, so explicit chmod
+    // afterward enforces the policy on re-writes too.
     const envLines = [
       `BOT_TOKEN=${botToken}`,
       `CHAT_ID=${chatId}`,
@@ -133,7 +140,9 @@ export async function POST(request: NextRequest) {
     if (allowedUser) {
       envLines.push(`ALLOWED_USER=${allowedUser}`);
     }
-    await fs.writeFile(path.join(agentDir, '.env'), envLines.join('\n') + '\n', 'utf-8');
+    const envPath = path.join(agentDir, '.env');
+    await fs.writeFile(envPath, envLines.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
+    await fs.chmod(envPath, 0o600);
 
     // 3. Create state dirs under CTX_ROOT
     const stateDirs = ['inbox', 'outbox', 'processed', 'inflight', 'logs', 'state'];
