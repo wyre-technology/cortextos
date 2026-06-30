@@ -24,6 +24,9 @@ describe('OrgService', () => {
     const invitations = new Map<string, Record<string, unknown>>();
     const serviceClients = new Map<string, Record<string, unknown>>();
     const serviceClientsById = new Map<string, Record<string, unknown>>();
+    const users = new Map<string, { id: string; email: string }>();
+    const subscriptions = new Map<string, Record<string, unknown>>();
+    const resellerMembers = new Map<string, Record<string, unknown>>();
 
     const now = new Date().toISOString();
 
@@ -380,11 +383,194 @@ describe('OrgService', () => {
         return Promise.resolve(resultWithCount([], matched ? 1 : 0));
       }
 
+      // ----------------------------------------------------------------------
+      // Users (owner-email lookup for backfillStripeForOrg)
+      // ----------------------------------------------------------------------
+      if (query.includes('SELECT email FROM users') && query.includes('WHERE id =')) {
+        const userId = values[0] as string;
+        const row = users.get(userId);
+        return Promise.resolve(row ? [row] : []);
+      }
+
+      // ----------------------------------------------------------------------
+      // Subscriptions (seeded by persistBillingProvision)
+      // ----------------------------------------------------------------------
+      if (query.includes('INSERT INTO subscriptions')) {
+        const id = values[0] as string;
+        const orgId = values[1] as string;
+        const stripeCustomerId = values[2] as string;
+        const stripeSubscriptionId = values[3] as string;
+        const periodEndIso = values[4] as string | null;
+        const row = {
+          id,
+          org_id: orgId,
+          stripe_customer_id: stripeCustomerId,
+          stripe_subscription_id: stripeSubscriptionId,
+          plan: 'conduit',
+          status: 'trialing',
+          current_period_end: periodEndIso,
+          cancel_at_period_end: false,
+        };
+        // ON CONFLICT DO NOTHING
+        if (!subscriptions.has(stripeSubscriptionId)) {
+          subscriptions.set(stripeSubscriptionId, row);
+        }
+        return Promise.resolve([]);
+      }
+
+      // ----------------------------------------------------------------------
+      // Reseller members
+      // ----------------------------------------------------------------------
+      if (query.includes('INSERT INTO reseller_members')) {
+        // Uses SELECT ... FROM organizations to get owner_id
+        const resellerOrgId = values[1] as string;
+        const org = orgs.get(resellerOrgId);
+        if (org) {
+          const id = values[0] as string;
+          const userId = org.owner_id as string;
+          const key = `${resellerOrgId}:${userId}`;
+          if (!resellerMembers.has(key)) {
+            resellerMembers.set(key, {
+              id,
+              reseller_org_id: resellerOrgId,
+              user_id: userId,
+              role: 'reseller_owner',
+              joined_at: now,
+            });
+          }
+        }
+        return Promise.resolve([]);
+      }
+
       // Fallback
       return Promise.resolve([]);
     };
 
     return sql as unknown as import('postgres').Sql;
+  }
+
+  /**
+   * Variant of createMockSql that also exposes the internal store Maps so
+   * that tests can both seed data and assert SQL side-effects without
+   * needing a real database.
+   */
+  function createMockSqlWithStores() {
+    const orgs = new Map<string, Record<string, unknown>>();
+    const members = new Map<string, Record<string, unknown>>();
+    const users = new Map<string, { id: string; email: string }>();
+    const subscriptions = new Map<string, Record<string, unknown>>();
+    const resellerMembers = new Map<string, Record<string, unknown>>();
+    const now = new Date().toISOString();
+
+    function resultWithCount(rows: unknown[], count: number) {
+      return Object.assign(rows, { count });
+    }
+
+    const sql = (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const query = strings.join('?');
+
+      if (query.includes('CREATE TABLE') || query.includes('CREATE INDEX')) {
+        return Promise.resolve([]);
+      }
+
+      if (query.includes('INSERT INTO organizations')) {
+        const id = values[0] as string;
+        const name = values[1] as string;
+        const ownerId = values[2] as string;
+        const plan = (values[3] as string | undefined) ?? 'free';
+        const type = (values[4] as string | undefined) ?? 'standalone';
+        const parentOrgId = (values[5] as string | null | undefined) ?? null;
+        const row = {
+          id, name, owner_id: ownerId, plan,
+          stripe_customer_id: null, stripe_subscription_id: null,
+          type, parent_org_id: parentOrgId,
+          auth0_org_id: null, suspended_at: null, deleted_at: null,
+          created_at: now, updated_at: now,
+        };
+        orgs.set(id, row);
+        return Promise.resolve([row]);
+      }
+
+      // reseller_members INSERT uses SELECT FROM organizations — check before general SELECT handler
+      if (query.includes('INSERT INTO reseller_members')) {
+        const id = values[0] as string;
+        const resellerOrgId = values[1] as string;
+        const org = orgs.get(resellerOrgId);
+        if (org) {
+          const userId = org.owner_id as string;
+          const key = `${resellerOrgId}:${userId}`;
+          if (!resellerMembers.has(key)) {
+            resellerMembers.set(key, { id, reseller_org_id: resellerOrgId, user_id: userId, role: 'reseller_owner', joined_at: now });
+          }
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.includes('SELECT') && query.includes('FROM organizations') && !query.includes('JOIN')) {
+        const orgId = values[0] as string;
+        const row = orgs.get(orgId);
+        return Promise.resolve(row ? [row] : []);
+      }
+
+      // Layer 1 createOrg: UPDATE orgs with stripe IDs
+      if (query.includes('UPDATE organizations') && query.includes('stripe_customer_id') && !query.includes('plan')) {
+        const stripeCustomerId = values[0] as string | null;
+        const stripeSubscriptionId = values[1] as string | null;
+        const orgId = values[2] as string;
+        const existing = orgs.get(orgId);
+        if (existing) {
+          orgs.set(orgId, { ...existing, stripe_customer_id: stripeCustomerId, stripe_subscription_id: stripeSubscriptionId, updated_at: now });
+        }
+        return Promise.resolve([]);
+      }
+
+      // promoteToReseller: UPDATE organizations SET type='reseller'
+      if (query.includes("UPDATE organizations SET type = 'reseller'")) {
+        const orgId = values[0] as string;
+        const existing = orgs.get(orgId);
+        if (existing && existing.type === 'standalone') {
+          orgs.set(orgId, { ...existing, type: 'reseller', updated_at: now });
+        }
+        return Promise.resolve([]);
+      }
+
+      if (query.includes('INSERT INTO org_members')) {
+        const id = values[0] as string;
+        const orgId = values[1] as string;
+        const userId = values[2] as string;
+        const role = query.includes("'owner'") ? 'owner' : 'member';
+        const row = { id, org_id: orgId, user_id: userId, role, joined_at: now, created_at: now };
+        const key = `${orgId}:${userId}`;
+        if (!members.has(key)) members.set(key, row);
+        return Promise.resolve([members.get(key)!]);
+      }
+
+      if (query.includes('SELECT email FROM users') && query.includes('WHERE id =')) {
+        const userId = values[0] as string;
+        const row = users.get(userId);
+        return Promise.resolve(row ? [row] : []);
+      }
+
+      if (query.includes('INSERT INTO subscriptions')) {
+        const stripeSubId = values[3] as string;
+        if (!subscriptions.has(stripeSubId)) {
+          subscriptions.set(stripeSubId, {
+            id: values[0], org_id: values[1], stripe_customer_id: values[2],
+            stripe_subscription_id: stripeSubId, plan: 'conduit', status: 'trialing',
+            current_period_end: values[4], cancel_at_period_end: false,
+          });
+        }
+        return Promise.resolve([]);
+      }
+
+      // Fallback
+      return Promise.resolve(resultWithCount([], 0));
+    };
+
+    return {
+      sql: sql as unknown as import('postgres').Sql,
+      stores: { orgs, members, users, subscriptions, resellerMembers },
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -1533,6 +1719,161 @@ describe('OrgService', () => {
           parentOrgId: reseller.id,
         }),
       ).rejects.toBeInstanceOf(OrgHierarchyError);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Admin: backfillStripeForOrg + promoteToReseller
+  // -------------------------------------------------------------------------
+
+  describe('backfillStripeForOrg', () => {
+    it('calls provisioner and persists stripe IDs + subscription row', async () => {
+      const { sql, stores } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_backfill',
+        stripeSubscriptionId: 'sub_backfill',
+        currentPeriodEnd: null,
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      // Create an org with no stripe IDs (provisioner returns null in createOrg flow)
+      const provisioner2 = vi.fn().mockResolvedValue(null);
+      const service2 = new OrgService({ billingProvisioner: provisioner2 });
+      const org = await runWithSql(sql, () => service2.createOrg('Backfill Co', 'user_owner'));
+
+      // Seed the owner user so owner-email lookup works
+      stores.users.set('user_owner', { id: 'user_owner', email: 'owner@backfill.example' });
+
+      const result = await runWithSql(sql, () => service.backfillStripeForOrg(org.id));
+
+      expect(provisioner).toHaveBeenCalledOnce();
+      expect(provisioner).toHaveBeenCalledWith({
+        orgId: org.id,
+        orgName: 'Backfill Co',
+        ownerEmail: 'owner@backfill.example',
+      });
+      expect(result).not.toBeNull();
+      expect(result!.stripeCustomerId).toBe('cus_backfill');
+      expect(result!.stripeSubscriptionId).toBe('sub_backfill');
+      expect(result!.alreadyPresent).toBe(false);
+
+      // UPDATE organizations must have landed the IDs
+      const orgRow = stores.orgs.get(org.id);
+      expect(orgRow!.stripe_customer_id).toBe('cus_backfill');
+      expect(orgRow!.stripe_subscription_id).toBe('sub_backfill');
+
+      // INSERT INTO subscriptions must have seeded the row
+      expect(stores.subscriptions.has('sub_backfill')).toBe(true);
+    });
+
+    it('is idempotent — returns alreadyPresent without calling provisioner when stripeCustomerId already set', async () => {
+      const { sql, stores } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const provisioner = vi.fn().mockResolvedValue({
+        stripeCustomerId: 'cus_already',
+        stripeSubscriptionId: 'sub_already',
+        currentPeriodEnd: null,
+      });
+      const service = new OrgService({ billingProvisioner: provisioner });
+
+      const org = await runWithSql(sql, () => service.createOrg('Already Billed', 'user_owner'));
+      // Simulate stripe IDs already present on the org row
+      const row = stores.orgs.get(org.id)!;
+      stores.orgs.set(org.id, { ...row, stripe_customer_id: 'cus_already', stripe_subscription_id: 'sub_already' });
+      provisioner.mockClear();
+
+      const result = await runWithSql(sql, () => service.backfillStripeForOrg(org.id));
+
+      expect(provisioner).not.toHaveBeenCalled();
+      expect(result).not.toBeNull();
+      expect(result!.alreadyPresent).toBe(true);
+      expect(result!.stripeCustomerId).toBe('cus_already');
+    });
+
+    it('returns null when billingProvisioner is not configured (dev parity)', async () => {
+      const { sql, stores } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const service = new OrgService(); // no billingProvisioner
+
+      const org = await runWithSql(sql, () => service.createOrg('No Billing Co', 'user_owner'));
+      stores.users.set('user_owner', { id: 'user_owner', email: 'owner@nobilling.example' });
+
+      const result = await runWithSql(sql, () => service.backfillStripeForOrg(org.id));
+      expect(result).toBeNull();
+    });
+
+    it('throws OrgNotFoundError for unknown org', async () => {
+      const { sql } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const { OrgService: Svc, OrgNotFoundError: NotFound } = await import('./org-service.js');
+      const service = new Svc();
+      await expect(
+        runWithSql(sql, () => service.backfillStripeForOrg('org_does_not_exist')),
+      ).rejects.toBeInstanceOf(NotFound);
+    });
+  });
+
+  describe('promoteToReseller', () => {
+    it('sets type=reseller and inserts a reseller_owner membership', async () => {
+      const { sql, stores } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const service = new OrgService();
+
+      const org = await runWithSql(sql, () => service.createOrg('Solo Co', 'user_owner'));
+      expect(stores.orgs.get(org.id)!.type).toBe('standalone');
+
+      const result = await runWithSql(sql, () => service.promoteToReseller(org.id));
+
+      expect(result.promoted).toBe(true);
+      expect(result.alreadyReseller).toBe(false);
+      expect(stores.orgs.get(org.id)!.type).toBe('reseller');
+      // Owner should be in reseller_members as reseller_owner
+      const memberKey = `${org.id}:user_owner`;
+      expect(stores.resellerMembers.has(memberKey)).toBe(true);
+      expect(stores.resellerMembers.get(memberKey)!.role).toBe('reseller_owner');
+    });
+
+    it('is idempotent — returns alreadyReseller:true when already a reseller', async () => {
+      const { sql, stores } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const service = new OrgService();
+
+      const org = await runWithSql(sql, () => service.createOrg('MSP Co', 'user_owner', 'free', { type: 'reseller' }));
+
+      const result = await runWithSql(sql, () => service.promoteToReseller(org.id));
+
+      expect(result.promoted).toBe(false);
+      expect(result.alreadyReseller).toBe(true);
+      // Owner membership upsert still ran (ON CONFLICT DO NOTHING)
+      expect(stores.resellerMembers.has(`${org.id}:user_owner`)).toBe(true);
+    });
+
+    it('throws for a customer-type org', async () => {
+      const { sql } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const service = new OrgService();
+
+      // Create a reseller + customer hierarchy
+      const reseller = await runWithSql(sql, () => service.createOrg('MSP', 'user_owner', 'free', { type: 'reseller' }));
+      const customer = await runWithSql(sql, () => service.createOrg('Client', 'user_owner', 'free', {
+        type: 'customer',
+        parentOrgId: reseller.id,
+      }));
+
+      await expect(
+        runWithSql(sql, () => service.promoteToReseller(customer.id)),
+      ).rejects.toThrow('cannot promote a customer org to reseller');
+    });
+
+    it('throws OrgNotFoundError for unknown org', async () => {
+      const { sql } = createMockSqlWithStores();
+      enterTestContext(sql);
+      const { OrgService: Svc, OrgNotFoundError: NotFound } = await import('./org-service.js');
+      const service = new Svc();
+      await expect(
+        runWithSql(sql, () => service.promoteToReseller('org_does_not_exist')),
+      ).rejects.toBeInstanceOf(NotFound);
     });
   });
 });

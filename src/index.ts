@@ -24,7 +24,7 @@ import { config } from './config.js';
 import { CredentialService } from './credentials/credential-service.js';
 import { TokenStore } from './oauth/token-store.js';
 import Stripe from 'stripe';
-import { OrgService } from './org/org-service.js';
+import { OrgService, OrgNotFoundError } from './org/org-service.js';
 import { OrgApiKeyService } from './org/org-api-key-service.js';
 import { createConduitBillingProvisioner } from './org/org-billing-provisioner.js';
 import { Auth0ManagementClient } from './auth/auth0-management.js';
@@ -822,6 +822,50 @@ app.post<{
   await orgService.updateOrgPlan(orgId, 'conduit');
   return reply.send({ orgId, plan: 'conduit' });
 });
+
+// Admin API: backfill Stripe billing for an org created without it.
+// Idempotent — safe to call multiple times; no-ops if Stripe IDs already present.
+app.post<{ Params: { orgId: string } }>(
+  '/api/admin/orgs/:orgId/backfill-stripe',
+  async (request, reply) => {
+    const apiKey = request.headers['x-admin-api-key'];
+    if (!config.adminApiKey || apiKey !== config.adminApiKey) {
+      return reply.code(401).send({ error: 'Invalid admin API key' });
+    }
+    try {
+      const r = await orgService.backfillStripeForOrg(request.params.orgId);
+      if (r === null) {
+        return reply.send({ orgId: request.params.orgId, skipped: true, reason: 'billing not configured' });
+      }
+      return reply.send({ orgId: request.params.orgId, ...r });
+    } catch (e) {
+      if (e instanceof OrgNotFoundError) return reply.code(404).send({ error: 'Organization not found' });
+      throw e;
+    }
+  },
+);
+
+// Admin API: promote a standalone org to reseller type.
+// Idempotent — safe to call multiple times; returns alreadyReseller:true if already promoted.
+app.post<{ Params: { orgId: string } }>(
+  '/api/admin/orgs/:orgId/promote-reseller',
+  async (request, reply) => {
+    const apiKey = request.headers['x-admin-api-key'];
+    if (!config.adminApiKey || apiKey !== config.adminApiKey) {
+      return reply.code(401).send({ error: 'Invalid admin API key' });
+    }
+    try {
+      const r = await orgService.promoteToReseller(request.params.orgId);
+      return reply.send({ orgId: request.params.orgId, ...r });
+    } catch (e) {
+      if (e instanceof OrgNotFoundError) return reply.code(404).send({ error: 'Organization not found' });
+      if (e instanceof Error && e.message.includes('customer org')) {
+        return reply.code(400).send({ error: e.message });
+      }
+      throw e;
+    }
+  },
+);
 
 // CLI REST endpoint (tool calls as plain JSON, not MCP JSON-RPC)
 await app.register(cliRoutes({

@@ -120,6 +120,13 @@ export class OrgHierarchyError extends Error {
   }
 }
 
+export class OrgNotFoundError extends Error {
+  constructor(orgId: string) {
+    super(`Organization not found: ${orgId}`);
+    this.name = 'OrgNotFoundError';
+  }
+}
+
 export interface OrgServerAccess {
   id: string;
   orgId: string;
@@ -922,39 +929,7 @@ export class OrgService {
       if (provisionResult) {
         stripeCustomerId = provisionResult.stripeCustomerId;
         stripeSubscriptionId = provisionResult.stripeSubscriptionId;
-        await this.sql`
-          UPDATE organizations
-          SET stripe_customer_id = ${stripeCustomerId},
-              stripe_subscription_id = ${stripeSubscriptionId},
-              updated_at = NOW()
-          WHERE id = ${orgId}
-        `;
-        // Shape-A′ fix #1 (ruby ruling 2026-05-26): SEED the subscriptions
-        // row at provisioning so the cancellation/dunning lifecycle handlers
-        // have a row to mutate. Net-new orgs otherwise have NO subscriptions
-        // row (the provisioner writes Stripe IDs to organizations only), so
-        // cancellation would be a no-op (UPDATE hits zero rows →
-        // isServiceActive(null)=true) AND the dunning grace UI would never
-        // fire. BEST-EFFORT LOCAL SEED — ON CONFLICT DO NOTHING: if a
-        // customer.subscription.created/updated webhook (Stripe-truth) raced
-        // ahead and wrote the row, its status wins; the seed yields.
-        // (Asymmetry-by-authority: Stripe-truth writers upsert-and-win; the
-        // local seed does-nothing. id = stripe_subscription_id; conflict
-        // target = UNIQUE(stripe_subscription_id).)
-        const periodEndIso = provisionResult.currentPeriodEnd
-          ? new Date(provisionResult.currentPeriodEnd * 1000).toISOString()
-          : null;
-        await this.sql`
-          INSERT INTO subscriptions (
-            id, org_id, stripe_customer_id, stripe_subscription_id,
-            plan, status, current_period_end, cancel_at_period_end
-          )
-          VALUES (
-            ${stripeSubscriptionId}, ${orgId}, ${stripeCustomerId}, ${stripeSubscriptionId},
-            'conduit', 'trialing', ${periodEndIso}, FALSE
-          )
-          ON CONFLICT (stripe_subscription_id) DO NOTHING
-        `;
+        await this.persistBillingProvision(orgId, provisionResult);
       }
     }
 
@@ -962,6 +937,144 @@ export class OrgService {
     if (stripeCustomerId) org.stripeCustomerId = stripeCustomerId;
     if (stripeSubscriptionId) org.stripeSubscriptionId = stripeSubscriptionId;
     return org;
+  }
+
+  /**
+   * Writes the Stripe customer + subscription IDs to the organizations row
+   * and seeds the subscriptions table. Extracted from createOrg so that
+   * backfillStripeForOrg can reuse the exact same persistence path without
+   * duplicating the SQL. Behaviour is identical to the original inline block.
+   */
+  private async persistBillingProvision(
+    orgId: string,
+    result: { stripeCustomerId: string; stripeSubscriptionId: string; currentPeriodEnd: number | null },
+  ): Promise<void> {
+    const { stripeCustomerId, stripeSubscriptionId } = result;
+    await this.sql`
+      UPDATE organizations
+      SET stripe_customer_id = ${stripeCustomerId},
+          stripe_subscription_id = ${stripeSubscriptionId},
+          updated_at = NOW()
+      WHERE id = ${orgId}
+    `;
+    // Shape-A′ fix #1 (ruby ruling 2026-05-26): SEED the subscriptions
+    // row at provisioning so the cancellation/dunning lifecycle handlers
+    // have a row to mutate. Net-new orgs otherwise have NO subscriptions
+    // row (the provisioner writes Stripe IDs to organizations only), so
+    // cancellation would be a no-op (UPDATE hits zero rows →
+    // isServiceActive(null)=true) AND the dunning grace UI would never
+    // fire. BEST-EFFORT LOCAL SEED — ON CONFLICT DO NOTHING: if a
+    // customer.subscription.created/updated webhook (Stripe-truth) raced
+    // ahead and wrote the row, its status wins; the seed yields.
+    // (Asymmetry-by-authority: Stripe-truth writers upsert-and-win; the
+    // local seed does-nothing. id = stripe_subscription_id; conflict
+    // target = UNIQUE(stripe_subscription_id).)
+    const periodEndIso = result.currentPeriodEnd
+      ? new Date(result.currentPeriodEnd * 1000).toISOString()
+      : null;
+    await this.sql`
+      INSERT INTO subscriptions (
+        id, org_id, stripe_customer_id, stripe_subscription_id,
+        plan, status, current_period_end, cancel_at_period_end
+      )
+      VALUES (
+        ${stripeSubscriptionId}, ${orgId}, ${stripeCustomerId}, ${stripeSubscriptionId},
+        'conduit', 'trialing', ${periodEndIso}, FALSE
+      )
+      ON CONFLICT (stripe_subscription_id) DO NOTHING
+    `;
+  }
+
+  /**
+   * Admin-only: attach Stripe billing to an existing org that was created
+   * without it (e.g. an org provisioned before the billing slice shipped, or
+   * a reseller/customer org being promoted to standalone billing).
+   *
+   * Idempotent: if stripeCustomerId is already set on the org, returns
+   * { alreadyPresent: true } immediately — the provisioner is never called
+   * and no SQL is written.
+   *
+   * Returns null when billingProvisioner is absent (dev/test parity with
+   * createOrg) or when the provisioner itself returns null (price-ID guard).
+   */
+  async backfillStripeForOrg(orgId: string): Promise<{
+    stripeCustomerId: string;
+    stripeSubscriptionId: string | null;
+    alreadyPresent: boolean;
+  } | null> {
+    const org = await this.getOrg(orgId);
+    if (!org) throw new OrgNotFoundError(orgId);
+
+    if (org.stripeCustomerId) {
+      return {
+        stripeCustomerId: org.stripeCustomerId,
+        stripeSubscriptionId: org.stripeSubscriptionId ?? null,
+        alreadyPresent: true,
+      };
+    }
+
+    if (!this.billingProvisioner) return null;
+
+    const urows = await this.sql<{ email: string }[]>`
+      SELECT email FROM users WHERE id = ${org.ownerId}
+    `;
+    const ownerEmail = urows[0]?.email;
+    if (!ownerEmail) throw new Error('owner email not found');
+
+    const result = await this.billingProvisioner({
+      orgId,
+      orgName: org.name,
+      ownerEmail,
+    });
+    if (!result) return null;
+
+    await this.persistBillingProvision(orgId, result);
+    return {
+      stripeCustomerId: result.stripeCustomerId,
+      stripeSubscriptionId: result.stripeSubscriptionId,
+      alreadyPresent: false,
+    };
+  }
+
+  /**
+   * Admin-only: promote a standalone org to type='reseller'. Also upserts
+   * the org's owner as a reseller_owner member so the reseller dashboard
+   * is immediately accessible without a separate step.
+   *
+   * Idempotent: if the org is already a reseller, the owner membership upsert
+   * still runs (ON CONFLICT DO NOTHING) and { alreadyReseller: true } is returned.
+   *
+   * Throws OrgNotFoundError for unknown orgs.
+   * Throws Error for customer-type orgs (cannot promote to reseller).
+   */
+  async promoteToReseller(orgId: string): Promise<{ promoted: boolean; alreadyReseller: boolean }> {
+    const org = await this.getOrg(orgId);
+    if (!org) throw new OrgNotFoundError(orgId);
+
+    if (org.type === 'customer') {
+      throw new Error('cannot promote a customer org to reseller');
+    }
+
+    if (org.type !== 'reseller') {
+      await this.sql`
+        UPDATE organizations SET type = 'reseller', updated_at = NOW()
+        WHERE id = ${orgId} AND type = 'standalone'
+      `;
+    }
+
+    // Upsert owner as reseller_owner (idempotent — ON CONFLICT DO NOTHING).
+    await this.sql`
+      INSERT INTO reseller_members (id, reseller_org_id, user_id, role, joined_at)
+      SELECT ${nanoid()}, o.id, o.owner_id, 'reseller_owner', NOW()
+      FROM organizations o
+      WHERE o.id = ${orgId}
+      ON CONFLICT (reseller_org_id, user_id) DO NOTHING
+    `;
+
+    if (org.type === 'reseller') {
+      return { promoted: false, alreadyReseller: true };
+    }
+    return { promoted: true, alreadyReseller: false };
   }
 
   // -------------------------------------------------------------------------
