@@ -68,6 +68,22 @@
 - Forked to `wyre-technology/cortextos`; `CONTRIBUTING.md` documents upstream sync.
 
 ### Fixed
+- **Permanent inbox deadlock from orphaned `.lock.d` (silent no-reply agents).**
+  `acquireLock()` treated a `.lock.d` whose `pid` file was missing or
+  empty/corrupt as "holder mid-acquire, retry" with no staleness escape — but a
+  holder killed between `mkdirSync(.lock.d)` and `writeFileSync(pid)` (pm2
+  restart, daemon crash, shutdown) never writes a valid pid, so the
+  PID-liveness stale check could never run and the lock wedged **forever**.
+  `checkInbox()` compounded it by silently returning `[]` on lock failure, so
+  wedged agents kept answering Telegram/crons while never receiving bus
+  messages (observed 2026-07-01: 8 inboxes across two instances stranded
+  ~84 messages for 2–4 days — the "inconsistent agent replies" bug).
+  `acquireLock()` now steals a missing/corrupt-pid lock once it is older than
+  30s (`STALE_LOCK_MS`, ~6 orders of magnitude above the real mkdir→write
+  gap), preserving mid-acquire protection; live-holder and dead-pid-recovery
+  semantics unchanged. `checkInbox()` now logs a rate-limited warning (once
+  per inbox per minute) when it cannot acquire the lock, so a wedged inbox
+  can never be silent again.
 - **BUG-061 — multi-instance roster bleed.** A non-default daemon instance
   (e.g. `--instance wyre-gateway`, `CTX_ORG=wyre-gateway`) started the *wrong*
   roster: `AgentManager.discoverAgents()` scans every org under the shared
