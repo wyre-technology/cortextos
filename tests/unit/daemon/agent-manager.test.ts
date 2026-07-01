@@ -165,7 +165,9 @@ describe('AgentManager.discoverAndStart - BUG-043 fix (multi-org support)', () =
     // BUG-043: before the fix, an AgentManager constructed with org='acme'
     // would only discover agents in orgs/acme/. Agents in orgs/widgetco/
     // were silently invisible. This test pins the multi-org scan in place.
-    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    // BUG-061 scoped discover-all to the DEFAULT instance (non-default
+    // instances own exactly one org), so these tests construct as 'default'.
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
     const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
 
     await am.discoverAndStart();
@@ -180,7 +182,7 @@ describe('AgentManager.discoverAndStart - BUG-043 fix (multi-org support)', () =
     // so it can build the right filesystem path. discoverAgents now
     // attaches org per discovered entry, and discoverAndStart threads
     // it through.
-    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
     const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
 
     await am.discoverAndStart();
@@ -206,7 +208,7 @@ describe('AgentManager.discoverAndStart - BUG-043 fix (multi-org support)', () =
         dave: { enabled: false, org: 'widgetco' },
       }),
     );
-    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
     const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
 
     await am.discoverAndStart();
@@ -229,6 +231,87 @@ describe('AgentManager.discoverAndStart - BUG-043 fix (multi-org support)', () =
     } finally {
       rmSync(emptyDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('AgentManager - duplicate agent names across orgs (BUG-011 false alarm + shutdown resurrection)', () => {
+  let testDir: string;
+  let ctxRoot: string;
+  let frameworkRoot: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'cortextos-am-dup-'));
+    ctxRoot = join(testDir, 'instance');
+    frameworkRoot = join(testDir, 'framework');
+    mkdirSync(join(ctxRoot, 'config'), { recursive: true });
+    // Same agent name in two orgs — mirrors the production wyre +
+    // wyre-gateway layout where {analyst,boss,dev,forge,murph} exist in both.
+    // The default instance discovers ALL orgs (BUG-061 kept that legacy
+    // behavior), so without dedup the second alice hits startAgent while the
+    // first is registered → false BUG-011 alarm + poisoned pendingRestarts.
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme', 'agents', 'alice'), { recursive: true });
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme', 'agents', 'bob'), { recursive: true });
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme-gateway', 'agents', 'alice'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  const fakeEntry = () => ({
+    process: { stop: async () => {} },
+    checker: { stop() {} },
+  });
+
+  it('starts a same-named agent only once — duplicate org copies never reach startAgent', async () => {
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
+    const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
+
+    await am.discoverAndStart();
+
+    const aliceCalls = startSpy.mock.calls.filter(call => call[0] === 'alice');
+    expect(aliceCalls.length).toBe(1);
+    expect(startSpy).toHaveBeenCalledTimes(2); // alice once + bob once
+    // Deterministic claim: the daemon's own startup org wins the duplicate,
+    // independent of filesystem readdir order.
+    expect(aliceCalls[0][3]).toBe('acme');
+  });
+
+  it('startAgent still queues a pendingRestart when the agent is genuinely already registered (race safety net)', async () => {
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', fakeEntry());
+
+    await am.startAgent('alice', join(frameworkRoot, 'orgs', 'acme', 'agents', 'alice'));
+
+    expect((am as any).pendingRestarts.has('alice')).toBe(true);
+  });
+
+  it('stopAll does NOT honor queued restarts — no mid-shutdown resurrection', async () => {
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', fakeEntry());
+    (am as any).pendingRestarts.add('alice');
+    const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
+
+    await am.stopAll();
+
+    // Resurrection during shutdown spawns a fresh agent+FastChecker that the
+    // imminent process.exit() kills mid-poll — the exact kill window that
+    // orphans inbox .lock.d dirs. Shutdown must never restart agents.
+    expect(startSpy).not.toHaveBeenCalled();
+    expect((am as any).agents.size).toBe(0);
+    expect((am as any).pendingRestarts.size).toBe(0);
+  });
+
+  it('stopAgent (single stop, not shutdown) still honors a queued restart', async () => {
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', fakeEntry());
+    (am as any).pendingRestarts.add('alice');
+    const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
+
+    await am.stopAgent('alice');
+
+    expect(startSpy).toHaveBeenCalledWith('alice', '');
+    expect((am as any).pendingRestarts.size).toBe(0);
   });
 });
 
