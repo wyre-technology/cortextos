@@ -68,6 +68,24 @@
 - Forked to `wyre-technology/cortextos`; `CONTRIBUTING.md` documents upstream sync.
 
 ### Fixed
+- **Test suite green: repaired the three remaining pre-existing failures and
+  the import-broken integration files.** (1) hooks: the symlink-escape tests
+  used un-canonicalized `mkdtempSync` paths, so on macOS (`/var` →
+  `/private/var`) the permission-gate's containment check failed before the
+  symlink logic ran — tests now `realpathSync` their temp dirs; confirmed the
+  gate itself is correct and fail-closed, and the symlink-security assertions
+  now genuinely exercise the real code path on macOS. (2) add-agent: the
+  BUG-041 PascalCase test asserted the old `validateAgentName()` error quoting;
+  the namespace-support change moved validation to `parseQualifiedName()`
+  (same guarantee — rejection before any filesystem write) with double-quoted
+  names. Assertion is now quote-tolerant. (3) Four integration test files
+  (`phase4-dashboard-backtest`, `phase4-performance`, `phase5-e2e-simulation`,
+  `phase5-user-journeys`) runtime-imported `next/server`, a dashboard-only
+  dependency absent from root installs, so the whole files failed to load on
+  fresh checkouts. The workflows route handlers only use the standard WHATWG
+  Request surface, so the tests now build plain `Request`s via a
+  `makeRouteRequest` helper (type-only NextRequest cast, erased at transpile).
+  38 construction sites converted; 72 previously-unloadable tests now run.
 - **BUG-011 "regression" alarms were false positives from cross-org duplicate
   discovery — with a real resurrection side effect.** The default instance
   discovers ALL orgs (legacy behavior kept by BUG-061), and production has the
