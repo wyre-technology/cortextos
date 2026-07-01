@@ -31,6 +31,11 @@ export class AgentManager {
   // Tracks agents that received a start request while still stopping.
   // stopAgent() honors these after cleanup completes so restart-all is race-free.
   private pendingRestarts: Set<string> = new Set();
+  // True while stopAll() is tearing the fleet down. stopAgent() must not
+  // honor queued restarts during shutdown: a resurrected agent's fresh
+  // FastChecker gets killed moments later by process.exit(), mid-poll —
+  // the exact kill window that strands inbox .lock.d mutexes.
+  private stoppingAll = false;
   private instanceId: string;
   private ctxRoot: string;
   private frameworkRoot: string;
@@ -113,7 +118,19 @@ export class AgentManager {
    * Discover and start all enabled agents.
    */
   async discoverAndStart(): Promise<void> {
-    const agentDirs = this.discoverAgents();
+    // Same-named agents can exist in multiple orgs (production: wyre and
+    // wyre-gateway both have {analyst,boss,dev,forge,murph}), and the default
+    // instance discovers ALL orgs (legacy behavior kept by BUG-061). Without
+    // dedup, the second copy reaches startAgent while the first is registered:
+    // a false BUG-011 alarm plus a poisoned pendingRestarts entry that later
+    // resurrects the agent on an intentional stop — including mid-shutdown,
+    // the kill window that orphans inbox .lock.d dirs. One name, one agent.
+    // The daemon's own startup org wins the claim deterministically
+    // (stable sort: own-org entries first); otherwise first-discovered wins.
+    const agentDirs = [...this.discoverAgents()].sort(
+      (a, b) => Number(b.org === this.org) - Number(a.org === this.org),
+    );
+    const claimedBy = new Map<string, string>();
 
     // BUG-028: read instance-level enabled-agents.json so the daemon respects
     // the user's explicit enable/disable choices written by the CLI
@@ -123,6 +140,12 @@ export class AgentManager {
     const instanceEnabled = this.readInstanceEnableList();
 
     for (const { name, dir, org, config } of agentDirs) {
+      const claimant = claimedBy.get(name);
+      if (claimant !== undefined) {
+        console.log(`[agent-manager] Skipping duplicate agent "${name}" from org "${org}" — name already claimed by org "${claimant}" this startup. Same-named agents across orgs start once.`);
+        continue;
+      }
+      claimedBy.set(name, org);
       // Per-agent config.json `enabled: false` (existing behavior, unchanged)
       if (config.enabled === false) {
         console.log(`[agent-manager] Skipping disabled agent: ${name} (per-agent config.json)`);
@@ -874,7 +897,7 @@ export class AgentManager {
     // matching warning comment in startAgent(). The honor logic is preserved
     // as a safety net in case BUG-011 regresses; the warn line tells us
     // immediately if it ever does.
-    if (this.pendingRestarts.has(name)) {
+    if (this.pendingRestarts.has(name) && !this.stoppingAll) {
       if (this.daemonJustCrashed) {
         console.log(`[agent-manager] pendingRestarts fired for ${name} (post-crash safety net, expected). Honoring queued restart.`);
       } else {
@@ -925,6 +948,7 @@ export class AgentManager {
    * time `pty.kill()` runs, every agent already has its marker on disk.
    */
   async stopAll(): Promise<void> {
+    this.stoppingAll = true;
     const names = [...this.agents.keys()];
 
     for (const name of names) {
@@ -940,12 +964,22 @@ export class AgentManager {
       }
     }
 
-    for (const name of names) {
-      try {
-        await this.stopAgent(name);
-      } catch (err) {
-        console.error(`[agent-manager] Error stopping ${name}:`, err);
+    try {
+      for (const name of names) {
+        try {
+          await this.stopAgent(name);
+        } catch (err) {
+          console.error(`[agent-manager] Error stopping ${name}:`, err);
+        }
       }
+      // Queued restarts die with the shutdown — resurrecting an agent here
+      // would hand it straight to the imminent process.exit().
+      if (this.pendingRestarts.size > 0) {
+        console.log(`[agent-manager] Discarding ${this.pendingRestarts.size} queued restart(s) at shutdown: ${[...this.pendingRestarts].join(', ')}`);
+        this.pendingRestarts.clear();
+      }
+    } finally {
+      this.stoppingAll = false;
     }
   }
 

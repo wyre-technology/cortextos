@@ -68,6 +68,26 @@
 - Forked to `wyre-technology/cortextos`; `CONTRIBUTING.md` documents upstream sync.
 
 ### Fixed
+- **BUG-011 "regression" alarms were false positives from cross-org duplicate
+  discovery — with a real resurrection side effect.** The default instance
+  discovers ALL orgs (legacy behavior kept by BUG-061), and production has the
+  same five agent names in both `orgs/wyre` and `orgs/wyre-gateway`. Every
+  daemon boot, the duplicate copies hit `startAgent()` while the originals
+  were registered, firing "BUG-011 REGRESSION CHECK: X still in registry"
+  warnings and poisoning `pendingRestarts` with entries that later fired on
+  any intentional stop — resurrecting explicitly-stopped agents, and
+  resurrecting agents **mid-shutdown** during `stopAll()`, where the fresh
+  FastChecker is killed moments later by `process.exit()` mid-poll: the exact
+  kill window that orphans inbox `.lock.d` mutexes (see the stale-lock fix).
+  Two changes: (1) `discoverAndStart()` dedupes by agent name — one name, one
+  agent; the daemon's own startup org wins the claim deterministically,
+  first-discovered otherwise; duplicates are skipped with an info log and
+  never reach `startAgent()`. (2) `stopAgent()` no longer honors queued
+  restarts while `stopAll()` is in flight; shutdown discards the queue with a
+  log line. The genuine-race safety net (queue on live-registry collision,
+  honor on single-agent stop) is preserved and pinned by tests. Also repaired
+  the three BUG-043 multi-org tests that BUG-061's instance-scoping had left
+  stale (they now construct the manager as the `default` instance).
 - **Permanent inbox deadlock from orphaned `.lock.d` (silent no-reply agents).**
   `acquireLock()` treated a `.lock.d` whose `pid` file was missing or
   empty/corrupt as "holder mid-acquire, retry" with no staleness escape — but a
