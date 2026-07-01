@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, symlinkSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -137,7 +137,11 @@ describe('Hook Utilities', () => {
     });
 
     it('refuses a write that escapes via a symlink inside .claude (#18, codex)', () => {
-      const base = mkdtempSync(join(tmpdir(), 'hookperm-'));
+      // realpathSync: on macOS tmpdir() itself sits behind a symlink
+      // (/var -> /private/var), which would make EVERY absolute file_path here
+      // mismatch the canonicalized agent dir lexically — masking the actual
+      // symlink-escape logic under test (and failing the ok.txt sanity check).
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'hookperm-')));
       try {
         const realAgentDir = join(base, 'agent');
         mkdirSync(join(realAgentDir, '.claude'), { recursive: true });
@@ -158,7 +162,9 @@ describe('Hook Utilities', () => {
     });
 
     it('refuses a symlinked .claude root that redirects the gate (codex)', () => {
-      const base = mkdtempSync(join(tmpdir(), 'hookperm-'));
+      // realpathSync so the refusal comes from the symlink check, not from a
+      // /var vs /private/var lexical mismatch on macOS.
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'hookperm-')));
       try {
         const realAgentDir = join(base, 'agent');
         mkdirSync(realAgentDir, { recursive: true });
@@ -174,7 +180,9 @@ describe('Hook Utilities', () => {
     });
 
     it('refuses a write through a DANGLING symlink inside .claude (codex blocker)', () => {
-      const base = mkdtempSync(join(tmpdir(), 'hookperm-'));
+      // realpathSync so the refusal comes from the dangling-symlink check, not
+      // from a /var vs /private/var lexical mismatch on macOS.
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'hookperm-')));
       try {
         const realAgentDir = join(base, 'agent');
         mkdirSync(join(realAgentDir, '.claude'), { recursive: true });

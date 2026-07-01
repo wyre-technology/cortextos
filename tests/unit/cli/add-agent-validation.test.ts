@@ -11,9 +11,11 @@
  * managed fine but unable to reply to Telegram, create tasks, check inbox,
  * or do anything via the bus.
  *
- * The fix centralizes validation by calling `validateAgentName()` at the
- * entry of the add-agent action, so bad names are rejected upfront and
- * the caller gets a clear error before any filesystem state is touched.
+ * The fix centralizes validation at the entry of the add-agent action
+ * (originally via `validateAgentName()`, now via `parseQualifiedName()` to
+ * also support namespaced "engineer/agent" names), so bad names are rejected
+ * upfront and the caller gets a clear error before any filesystem state is
+ * touched.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { addAgentCommand } from '../../../src/cli/add-agent';
@@ -38,10 +40,13 @@ describe('BUG-041: add-agent agent name validation', () => {
       )
     ).rejects.toThrow(/__TEST_PROCESS_EXIT_1__/);
 
-    // The error message must tell the user exactly what was wrong
+    // The error message must tell the user exactly what was wrong.
+    // Quote style is intentionally flexible: validateAgentName() uses single
+    // quotes while parseQualifiedName() (current implementation) uses double
+    // quotes — the load-bearing part is that the offending name is echoed back.
     expect(consoleErrorSpy).toHaveBeenCalled();
     const errorOutput = consoleErrorSpy.mock.calls.flat().join(' ');
-    expect(errorOutput).toContain("Invalid agent name 'CortextDesigner'");
+    expect(errorOutput).toMatch(/Invalid agent name ['"]CortextDesigner['"]/);
     // And it must show the validation rule so the user knows how to fix it
     expect(errorOutput).toContain('/^[a-z0-9_-]+$/');
 

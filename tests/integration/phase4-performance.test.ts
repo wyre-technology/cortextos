@@ -22,7 +22,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { NextRequest } from 'next/server';
+// The workflows route handlers only use the standard WHATWG Request surface
+// (`new URL(request.url)`, `request.json()`), so a plain Request suffices.
+// Constructing a real NextRequest would require the `next` package at runtime,
+// which is a dashboard-only dependency (dashboard/node_modules) not installed
+// by the root `npm install` — the static import made this whole file fail to
+// load on fresh checkouts. Type-only import below is erased at transpile.
+const makeRouteRequest = (url: string, init?: RequestInit) =>
+  new Request(url, init) as import('next/server').NextRequest;
 
 // ---------------------------------------------------------------------------
 // Temp root — separate from the backtest root to avoid cross-contamination
@@ -196,7 +203,7 @@ const perfResults: Record<string, { p50: number; p95: number; count: number }> =
 describe('Perf: GET /api/workflows/crons — 50 crons (5 agents)', () => {
   it('p95 < 2000ms', async () => {
     const samples = await bench(async () => {
-      const req = new NextRequest('http://localhost/api/workflows/crons');
+      const req = makeRouteRequest('http://localhost/api/workflows/crons');
       const res = await cronsRootModule.GET(req);
       // Consume body to include serialization in the measurement
       await res.json();
@@ -222,7 +229,7 @@ describe('Perf: GET /api/workflows/crons — 50 crons (5 agents)', () => {
 describe('Perf: GET /api/workflows/crons — 100 crons (10 agents)', () => {
   it('p95 < 2000ms', async () => {
     const samples = await bench(async () => {
-      const req = new NextRequest('http://localhost/api/workflows/crons');
+      const req = makeRouteRequest('http://localhost/api/workflows/crons');
       const res = await cronsRootModule.GET(req);
       await res.json();
     }, 10);
@@ -247,7 +254,7 @@ describe('Perf: GET /api/workflows/crons — 100 crons (10 agents)', () => {
 describe('Perf: GET /api/workflows/health — 50 crons', () => {
   it('p95 < 2000ms', async () => {
     const samples = await bench(async () => {
-      const req = new NextRequest('http://localhost/api/workflows/health');
+      const req = makeRouteRequest('http://localhost/api/workflows/health');
       const res = await healthModule.GET(req);
       await res.json();
     }, 10);
@@ -272,7 +279,7 @@ describe('Perf: GET /api/workflows/health — 50 crons', () => {
 describe('Perf: GET /api/workflows/health — 100 crons + heavy logs', () => {
   it('p95 < 2000ms', async () => {
     const samples = await bench(async () => {
-      const req = new NextRequest('http://localhost/api/workflows/health');
+      const req = makeRouteRequest('http://localhost/api/workflows/health');
       const res = await healthModule.GET(req);
       await res.json();
     }, 10);
@@ -300,7 +307,7 @@ describe('Perf: GET executions — 1000-entry log', () => {
     const cronName = `perf-cron-${agent}-0`;
 
     const samples = await bench(async () => {
-      const req = new NextRequest(
+      const req = makeRouteRequest(
         `http://localhost/api/workflows/crons/${agent}/${cronName}/executions?limit=100`,
       );
       const res = await execModule.GET(req, {

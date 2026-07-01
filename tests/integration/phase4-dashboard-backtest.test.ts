@@ -21,7 +21,14 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vites
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { NextRequest } from 'next/server';
+// The workflows route handlers only use the standard WHATWG Request surface
+// (`new URL(request.url)`, `request.json()`), so a plain Request suffices.
+// Constructing a real NextRequest would require the `next` package at runtime,
+// which is a dashboard-only dependency (dashboard/node_modules) not installed
+// by the root `npm install` — the static import made this whole file fail to
+// load on fresh checkouts. Type-only import below is erased at transpile.
+const makeRouteRequest = (url: string, init?: RequestInit) =>
+  new Request(url, init) as import('next/server').NextRequest;
 
 // ---------------------------------------------------------------------------
 // Shared temp root for file-system backed scenarios (1–4, 6)
@@ -153,7 +160,7 @@ describe('Scenario 1 — Create cron (POST + GET round-trip)', () => {
   it('1a: POST returns 201 when IPC add-cron succeeds', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({
         agent: 'boris',
@@ -175,7 +182,7 @@ describe('Scenario 1 — Create cron (POST + GET round-trip)', () => {
   it('1b: IPC was called with correct add-cron payload', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({
         agent: 'boris',
@@ -211,7 +218,7 @@ describe('Scenario 1 — Create cron (POST + GET round-trip)', () => {
       },
     ]);
 
-    const req = new NextRequest('http://localhost/api/workflows/crons?agent=boris');
+    const req = makeRouteRequest('http://localhost/api/workflows/crons?agent=boris');
     const res = await cronsRoot.GET(req);
     expect(res.status).toBe(200);
     const rows = await res.json();
@@ -226,7 +233,7 @@ describe('Scenario 1 — Create cron (POST + GET round-trip)', () => {
   });
 
   it('1d: POST returns 400 when agent field is missing', async () => {
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({ definition: { name: 'x', prompt: 'y', schedule: '1h' } }),
       headers: { 'Content-Type': 'application/json' },
@@ -242,7 +249,7 @@ describe('Scenario 1 — Create cron (POST + GET round-trip)', () => {
       error: 'Cron s1-heartbeat already exists for agent boris.',
     });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({
         agent: 'boris',
@@ -265,7 +272,7 @@ describe('Scenario 2 — Edit cron (PATCH + disk verification)', () => {
   it('2a: PATCH returns 200 on successful update', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
       method: 'PATCH',
       body: JSON.stringify({ patch: { schedule: '12h' } }),
       headers: { 'Content-Type': 'application/json' },
@@ -281,7 +288,7 @@ describe('Scenario 2 — Edit cron (PATCH + disk verification)', () => {
   it('2b: PATCH sends correct update-cron IPC payload with patch field', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
       method: 'PATCH',
       body: JSON.stringify({ patch: { schedule: '24h', enabled: false } }),
       headers: { 'Content-Type': 'application/json' },
@@ -327,7 +334,7 @@ describe('Scenario 2 — Edit cron (PATCH + disk verification)', () => {
       error: 'Cron ghost-cron not found for agent boris',
     });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/ghost-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/ghost-cron', {
       method: 'PATCH',
       body: JSON.stringify({ patch: { schedule: '1h' } }),
       headers: { 'Content-Type': 'application/json' },
@@ -339,7 +346,7 @@ describe('Scenario 2 — Edit cron (PATCH + disk verification)', () => {
   });
 
   it('2e: PATCH returns 400 when patch field is missing from body', async () => {
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/s2-cron', {
       method: 'PATCH',
       body: JSON.stringify({ wrong: 'field' }),
       headers: { 'Content-Type': 'application/json' },
@@ -378,7 +385,7 @@ describe('Scenario 3 — View history (GET executions, pagination + filter + exp
   });
 
   async function callGet(qs: string) {
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       `http://localhost/api/workflows/crons/${AGENT}/${CRON}/executions?${qs}`,
     );
     return executionsRoute.GET(req, {
@@ -462,7 +469,7 @@ describe('Scenario 3 — View history (GET executions, pagination + filter + exp
   });
 
   it('3j: empty agent returns {entries:[], total:0, hasMore:false}', async () => {
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/ghost-agent/s3-monitor/executions',
     );
     const res = await executionsRoute.GET(req, {
@@ -556,7 +563,7 @@ describe('Scenario 4 — Health dashboard (GET /api/workflows/health)', () => {
   });
 
   function makeHealthReq(qs = ''): NextRequest {
-    return new NextRequest(`http://localhost/api/workflows/health${qs ? '?' + qs : ''}`);
+    return makeRouteRequest(`http://localhost/api/workflows/health${qs ? '?' + qs : ''}`);
   }
 
   it('4a: returns 200 with rows and summary', async () => {
@@ -679,7 +686,7 @@ describe('Scenario 5 — Test-fire (POST /api/workflows/crons/[agent]/[name]/fir
   beforeEach(() => { mockSend.mockReset(); });
 
   async function callFire(agent: string, name: string) {
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       `http://localhost/api/workflows/crons/${agent}/${name}/fire`,
       { method: 'POST' },
     );
@@ -761,7 +768,7 @@ describe('Scenario 5 — Test-fire (POST /api/workflows/crons/[agent]/[name]/fir
   });
 
   it('5g: returns 400 for invalid agent name (contains space)', async () => {
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/bad%20agent/s5-cron/fire',
       { method: 'POST' },
     );
@@ -793,7 +800,7 @@ describe('Scenario 6 — Delete cron (DELETE + disk verification)', () => {
   it('6a: DELETE returns 200 when IPC remove-cron succeeds', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/s6-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/s6-cron', {
       method: 'DELETE',
     });
     const res = await cronsName.DELETE(req, {
@@ -807,7 +814,7 @@ describe('Scenario 6 — Delete cron (DELETE + disk verification)', () => {
   it('6b: DELETE sends correct remove-cron IPC payload', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/s6-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/s6-cron', {
       method: 'DELETE',
     });
     await cronsName.DELETE(req, {
@@ -843,7 +850,7 @@ describe('Scenario 6 — Delete cron (DELETE + disk verification)', () => {
   });
 
   it('6d: subsequent GET for deleted cron is absent from list', async () => {
-    const req = new NextRequest('http://localhost/api/workflows/crons?agent=boris');
+    const req = makeRouteRequest('http://localhost/api/workflows/crons?agent=boris');
     const res = await cronsRoot.GET(req);
     const rows = await res.json();
     const deleted = rows.find(
@@ -859,7 +866,7 @@ describe('Scenario 6 — Delete cron (DELETE + disk verification)', () => {
       error: "Cron 'ghost' not found for agent 'boris'.",
     });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/ghost', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/ghost', {
       method: 'DELETE',
     });
     const res = await cronsName.DELETE(req, {
@@ -869,7 +876,7 @@ describe('Scenario 6 — Delete cron (DELETE + disk verification)', () => {
   });
 
   it('6f: DELETE returns 400 for invalid agent name (spaces)', async () => {
-    const req = new NextRequest('http://localhost/api/workflows/crons/bad%20agent/s6-cron', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/bad%20agent/s6-cron', {
       method: 'DELETE',
     });
     const res = await cronsName.DELETE(req, {

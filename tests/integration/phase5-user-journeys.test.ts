@@ -47,7 +47,14 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { NextRequest } from 'next/server';
+// The workflows route handlers only use the standard WHATWG Request surface
+// (`new URL(request.url)`, `request.json()`), so a plain Request suffices.
+// Constructing a real NextRequest would require the `next` package at runtime,
+// which is a dashboard-only dependency (dashboard/node_modules) not installed
+// by the root `npm install` — the static import made this whole file fail to
+// load on fresh checkouts. Type-only import below is erased at transpile.
+const makeRouteRequest = (url: string, init?: RequestInit) =>
+  new Request(url, init) as import('next/server').NextRequest;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -591,7 +598,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
       fire_count: 1,
     }]);
 
-    const req = new NextRequest('http://localhost/api/workflows/crons?agent=boris');
+    const req = makeRouteRequest('http://localhost/api/workflows/crons?agent=boris');
     const res = await cronsRoot.GET(req);
     expect(res.status).toBe(200);
 
@@ -614,7 +621,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
   it('J3-2: POST /api/workflows/crons creates a cron and returns 201', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({
         agent: 'boris',
@@ -659,7 +666,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
       error: 'Cron j3-heartbeat already exists for agent boris.',
     });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({
         agent: 'boris',
@@ -679,7 +686,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
   it('J3-4: PATCH updates a cron schedule via IPC and returns 200', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest('http://localhost/api/workflows/crons/boris/j3-heartbeat', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons/boris/j3-heartbeat', {
       method: 'PATCH',
       body: JSON.stringify({ patch: { schedule: '12h' } }),
       headers: { 'Content-Type': 'application/json' },
@@ -715,7 +722,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
       { ts: new Date(Date.now() -   900_000).toISOString(), cron: 'j3-daily-report', status: 'fired',  attempt: 1, duration_ms: 52, error: null },
     ]);
 
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/boris/j3-heartbeat/executions',
     );
     const res = await executions.GET(req, {
@@ -744,7 +751,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
     const firedAt = Date.now();
     mockSend.mockResolvedValueOnce({ success: true, data: { ok: true, firedAt } });
 
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/boris/j3-heartbeat/fire',
       { method: 'POST' },
     );
@@ -776,7 +783,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
       error: 'Manual fire disabled for cron j3-heartbeat',
     });
 
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/boris/j3-heartbeat/fire',
       { method: 'POST' },
     );
@@ -793,7 +800,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
   it('J3-8: DELETE removes a cron via IPC and returns 200', async () => {
     mockSend.mockResolvedValueOnce({ success: true });
 
-    const req = new NextRequest(
+    const req = makeRouteRequest(
       'http://localhost/api/workflows/crons/boris/j3-heartbeat',
       { method: 'DELETE' },
     );
@@ -818,7 +825,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
   // -------------------------------------------------------------------------
 
   it('J3-9: POST returns 400 when agent field is absent', async () => {
-    const req = new NextRequest('http://localhost/api/workflows/crons', {
+    const req = makeRouteRequest('http://localhost/api/workflows/crons', {
       method: 'POST',
       body: JSON.stringify({ definition: { name: 'x', prompt: 'y', schedule: '1h' } }),
       headers: { 'Content-Type': 'application/json' },
@@ -853,7 +860,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
 
     // Step 1: GET list — cron must appear
     {
-      const req = new NextRequest(`http://localhost/api/workflows/crons?agent=${agent}`);
+      const req = makeRouteRequest(`http://localhost/api/workflows/crons?agent=${agent}`);
       const res = await cronsRoot.GET(req);
       expect(res.status).toBe(200);
       const rows = await res.json();
@@ -867,7 +874,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
     // Step 2: PATCH schedule
     {
       mockSend.mockResolvedValueOnce({ success: true });
-      const req = new NextRequest(
+      const req = makeRouteRequest(
         `http://localhost/api/workflows/crons/${agent}/${cName}`,
         { method: 'PATCH', body: JSON.stringify({ patch: { schedule: '12h' } }), headers: { 'Content-Type': 'application/json' } },
       );
@@ -879,7 +886,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
 
     // Step 3: GET executions — empty for fresh cron
     {
-      const req = new NextRequest(
+      const req = makeRouteRequest(
         `http://localhost/api/workflows/crons/${agent}/${cName}/executions`,
       );
       const res = await executions.GET(req, {
@@ -894,7 +901,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
     // Step 4: POST fire
     {
       mockSend.mockResolvedValueOnce({ success: true, data: { ok: true, firedAt: Date.now() } });
-      const req = new NextRequest(
+      const req = makeRouteRequest(
         `http://localhost/api/workflows/crons/${agent}/${cName}/fire`,
         { method: 'POST' },
       );
@@ -908,7 +915,7 @@ describe('Journey 3: Operator workflow (dashboard API CRUD round-trip)', () => {
     // Step 5: DELETE
     {
       mockSend.mockResolvedValueOnce({ success: true });
-      const req = new NextRequest(
+      const req = makeRouteRequest(
         `http://localhost/api/workflows/crons/${agent}/${cName}`,
         { method: 'DELETE' },
       );

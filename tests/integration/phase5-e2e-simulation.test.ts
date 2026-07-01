@@ -1230,7 +1230,14 @@ describe('Scenario 7: Dashboard polling accuracy throughout simulation', () => {
       import('../../dashboard/src/app/api/workflows/crons/route.js'),
       import('../../dashboard/src/app/api/workflows/health/route.js'),
     ]);
-    const { NextRequest } = await import('next/server');
+
+    // Both GET handlers only read `request.url` (standard WHATWG Request API),
+    // so a plain Request is sufficient.  Constructing a real NextRequest would
+    // require the `next` package at runtime, which is a dashboard-only
+    // dependency (dashboard/node_modules) and is not installed by the root
+    // `npm install` — importing it here made this test fail on fresh checkouts.
+    const makeRouteRequest = (url: string) =>
+      new Request(url) as import('next/server').NextRequest;
 
     // We'll poll at simulated T=0, T=10h, T=20h (3 checkpoints in 24h sim)
     const pollResults: Array<{
@@ -1241,12 +1248,12 @@ describe('Scenario 7: Dashboard polling accuracy throughout simulation', () => {
 
     async function poll(simTimeH: number): Promise<void> {
       // GET /api/workflows/crons — list all
-      const cronsReq = new NextRequest('http://localhost/api/workflows/crons');
+      const cronsReq = makeRouteRequest('http://localhost/api/workflows/crons');
       const cronsRes = await cronsRootModule.GET(cronsReq);
       const cronsBody = await cronsRes.json();
 
       // GET /api/workflows/health
-      const healthReq = new NextRequest('http://localhost/api/workflows/health');
+      const healthReq = makeRouteRequest('http://localhost/api/workflows/health');
       const healthRes = await healthModule.GET(healthReq);
       const healthBody = await healthRes.json();
 
@@ -1307,7 +1314,7 @@ describe('Scenario 7: Dashboard polling accuracy throughout simulation', () => {
 
     // Assert: nextFire / lastFire fields in crons list response are valid ISO strings
     // Re-query at end
-    const finalCronsReq = new NextRequest('http://localhost/api/workflows/crons?agent=poll-boris');
+    const finalCronsReq = makeRouteRequest('http://localhost/api/workflows/crons?agent=poll-boris');
     const finalCronsRes = await cronsRootModule.GET(finalCronsReq);
     const finalCronsBody = await finalCronsRes.json();
 
@@ -1326,7 +1333,7 @@ describe('Scenario 7: Dashboard polling accuracy throughout simulation', () => {
     }
 
     // Assert: health rows have all required fields at T=24h checkpoint
-    const finalHealthReq = new NextRequest('http://localhost/api/workflows/health');
+    const finalHealthReq = makeRouteRequest('http://localhost/api/workflows/health');
     const finalHealthRes = await healthModule.GET(finalHealthReq);
     const finalHealthBody = await finalHealthRes.json();
 
