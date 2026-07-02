@@ -94,10 +94,10 @@ describe('agent-pidfile', () => {
     expect(verifyOwnership(rec)).toBe('unverified');
   });
 
-  it('reapOrphan on a dead pid: no kill, clears the pidfile', () => {
+  it('reapOrphan on a dead pid: no kill, clears the pidfile', async () => {
     const rec: AgentPidRecord = { pid: 2_000_000_000, agentName: 'x', spawnedAt: Date.now(), startedAt: Date.now(), daemonPid: 1 };
     writeAgentPid(stateDir, 'x', rec.pid, rec.daemonPid);
-    const res = reapOrphan(stateDir, rec, noop);
+    const res = await reapOrphan(stateDir, rec, noop);
     expect(res.reaped).toBe(false);
     expect(res.verdict).toBe('dead');
     expect(existsSync(join(stateDir, 'agent.pid'))).toBe(false);
@@ -110,24 +110,43 @@ describe('agent-pidfile', () => {
       startedAt: (processStartTimeMs(pid) ?? Date.now()) - 10 * 60_000, // recycled anchor
       daemonPid: process.pid,
     };
-    const res = reapOrphan(stateDir, rec, noop);
+    const res = await reapOrphan(stateDir, rec, noop);
     expect(res.reaped).toBe(false);
     expect(res.verdict).toBe('unverified');
     await sleep(100);
     expect(isPidAlive(pid)).toBe(true); // the innocent process is STILL ALIVE
   });
 
-  it('reapOrphan kills an ownership-confirmed live orphan', async () => {
+  it('reapOrphan kills an ownership-confirmed live orphan (SIGTERM path)', async () => {
     const pid = spawnChild();
     const rec: AgentPidRecord = {
       pid, agentName: 'x', spawnedAt: Date.now(),
       startedAt: processStartTimeMs(pid), // true start time => owned
       daemonPid: process.pid,
     };
-    const res = reapOrphan(stateDir, rec, noop, 500);
+    const res = await reapOrphan(stateDir, rec, noop, 500);
     expect(res.verdict).toBe('owned');
     expect(res.reaped).toBe(true);
     await sleep(200);
     expect(isPidAlive(pid)).toBe(false); // confirmed reaped
+  });
+
+  it('reapOrphan re-verifies ownership then SIGKILLs a still-owned orphan that ignores SIGTERM', async () => {
+    // A process that traps (ignores) SIGTERM: survives the grace window, so
+    // reapOrphan must escalate — but only after RE-verifying ownership (the
+    // TOCTOU guard). Ownership still holds here, so SIGKILL lands.
+    const c = spawn('sh', ['-c', 'trap "" TERM; sleep 5'], { stdio: 'ignore' });
+    children.push(c);
+    const pid = c.pid!;
+    await sleep(200); // let the trap install
+    const rec: AgentPidRecord = {
+      pid, agentName: 'x', spawnedAt: Date.now(),
+      startedAt: processStartTimeMs(pid),
+      daemonPid: process.pid,
+    };
+    const res = await reapOrphan(stateDir, rec, noop, 400);
+    expect(res.verdict).toBe('owned');
+    await sleep(300);
+    expect(isPidAlive(pid)).toBe(false); // SIGKILL landed after ownership re-verify
   });
 });

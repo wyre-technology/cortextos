@@ -185,7 +185,7 @@ export class AgentManager {
       if (bootRec) {
         const foreignDaemonAlive = bootRec.daemonPid !== process.pid && isPidAlive(bootRec.daemonPid);
         if (!foreignDaemonAlive) {
-          reapOrphan(bootStateDir, bootRec, (m) => console.log(`[agent-manager] ${m}`));
+          await reapOrphan(bootStateDir, bootRec, (m) => console.log(`[agent-manager] ${m}`));
         }
       }
 
@@ -921,7 +921,11 @@ export class AgentManager {
     try { entry.poller?.stop(); } catch { /* ignore */ }
     try { entry.activityPoller?.stop(); } catch { /* ignore */ }
     try { entry.checker.stop(); } catch { /* ignore */ }
-    try { void entry.process.stop(); } catch { /* fire-and-forget; do NOT await */ }
+    // dispose() (NOT stop()): stop() runs the graceful-shutdown dance and can
+    // reach pty.kill() ~6s later; if this already-dead pid were recycled in that
+    // window the signal could hit an unrelated process. dispose() never signals
+    // a pid, so evict is structurally incapable of killing anything.
+    try { entry.process.dispose(); } catch { /* best-effort */ }
     this.agents.delete(name);
     const scheduler = this.cronSchedulers.get(name);
     if (scheduler) {
@@ -947,7 +951,7 @@ export class AgentManager {
         if (foreignDaemonAlive) {
           console.log(`[agent-manager] ${name} not in registry; pidfile owned by a live daemon (pid ${rec.daemonPid}) — leaving it alone.`);
         } else {
-          reapOrphan(stateDir, rec, (m) => console.log(`[agent-manager] ${m}`));
+          await reapOrphan(stateDir, rec, (m) => console.log(`[agent-manager] ${m}`));
         }
       } else {
         console.log(`[agent-manager] Agent ${name} not found`);

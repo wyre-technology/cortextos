@@ -386,6 +386,25 @@ export class AgentProcess {
   }
 
   /**
+   * Release this process's resources WITHOUT killing anything — used by the
+   * start-path reconcile to drop a registry entry whose PTY is ALREADY CONFIRMED
+   * DEAD. A normal stop() runs the graceful-shutdown dance and can reach
+   * pty.kill() up to ~6s later (gated only by node-pty's `_alive` flag); if the
+   * dead pid were recycled inside that window, that signal could hit an
+   * unrelated process. dispose() NEVER signals a pid, so — combined with evict
+   * only ever firing on a confirmed-dead pid — it is structurally impossible for
+   * the evict path to kill a live/wrong process. We simply drop our reference to
+   * the (dead) PTY; node-pty releases its fd on GC.
+   */
+  dispose(): void {
+    this.clearSessionTimer();
+    this.stopRequested = true;
+    this.stopping = false;
+    this.pty = null;
+    this.status = 'stopped';
+  }
+
+  /**
    * Register a status change handler.
    */
   onStatusChanged(handler: (status: AgentStatus) => void): void {

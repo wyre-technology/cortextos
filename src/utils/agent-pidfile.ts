@@ -45,6 +45,8 @@ export interface AgentPidRecord {
  *  for clock/parse jitter. A recycled pid is off by many seconds-to-days. */
 const START_TIME_TOLERANCE_MS = 5_000;
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 function pidFilePath(stateDir: string): string {
   return join(stateDir, 'agent.pid');
 }
@@ -147,12 +149,12 @@ export interface ReapResult {
  * On 'unverified' it leaves the process and the pidfile untouched and lets the
  * caller surface a warning.
  */
-export function reapOrphan(
+export async function reapOrphan(
   stateDir: string,
   record: AgentPidRecord,
   log: (msg: string) => void,
   sigkillDelayMs = 2_000,
-): ReapResult {
+): Promise<ReapResult> {
   const verdict = verifyOwnership(record);
   if (verdict === 'dead') {
     clearAgentPid(stateDir);
@@ -165,16 +167,31 @@ export function reapOrphan(
     );
     return { reaped: false, verdict, pid: record.pid };
   }
-  // verdict === 'owned' — safe to kill.
+  // verdict === 'owned' — safe to signal.
   try {
     process.kill(record.pid, 'SIGTERM');
     const deadline = Date.now() + sigkillDelayMs;
     while (Date.now() < deadline && isPidAlive(record.pid)) {
-      // brief busy-wait; sigkillDelayMs is small. Avoids pulling in async here.
-      execFileSync('sleep', ['0.05'], { stdio: 'ignore' });
+      await sleep(50); // async grace wait — does not serialize other boot reaps
     }
-    if (isPidAlive(record.pid)) process.kill(record.pid, 'SIGKILL');
-    log(`[reap] reaped orphaned PTY pid ${record.pid} for ${record.agentName} (ownership confirmed).`);
+    if (isPidAlive(record.pid)) {
+      // TOCTOU guard: the pid may have exited on SIGTERM and been RECYCLED to an
+      // unrelated process during the grace window. Re-verify ownership
+      // IMMEDIATELY before the SIGKILL — only escalate if it is STILL provably
+      // our process. This makes the never-kill-a-wrong-process invariant hold
+      // literally, not just statistically.
+      if (verifyOwnership(record) === 'owned') {
+        process.kill(record.pid, 'SIGKILL');
+        log(`[reap] SIGKILLed orphaned PTY pid ${record.pid} for ${record.agentName} (ownership re-confirmed).`);
+      } else {
+        log(
+          `[reap] pid ${record.pid} for ${record.agentName} is no longer ownership-verified before SIGKILL ` +
+            `(exited on SIGTERM then recycled?) — NOT sending SIGKILL.`,
+        );
+      }
+    } else {
+      log(`[reap] reaped orphaned PTY pid ${record.pid} for ${record.agentName} (exited on SIGTERM).`);
+    }
   } catch (err) {
     log(`[reap] error reaping pid ${record.pid} for ${record.agentName}: ${(err as Error).message}`);
   }
