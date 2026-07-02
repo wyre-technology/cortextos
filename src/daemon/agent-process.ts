@@ -377,6 +377,15 @@ export class AgentProcess {
   }
 
   /**
+   * The live PTY process id, or undefined if not currently running.
+   * Used by AgentManager to persist a pidfile and to probe registry-vs-reality
+   * liveness during start/stop reconcile.
+   */
+  getPid(): number | undefined {
+    return this.pty?.getPid() ?? undefined;
+  }
+
+  /**
    * Register a status change handler.
    */
   onStatusChanged(handler: (status: AgentStatus) => void): void {

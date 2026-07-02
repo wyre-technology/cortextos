@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed — daemon agent-registry ↔ PTY-liveness reconcile
+
+- **Restart-tooling divergence**: `cortextos stop <agent>` could silently no-op
+  while the agent stayed alive ("stop didn't kill it"), and `cortextos start`
+  could return "deduped — already in registry" on a *dead* agent. Root cause: the
+  daemon's in-memory agent registry (`AgentManager.agents`) was never reconciled
+  against real PTY liveness; agents are PTY children of the daemon (not pm2 apps),
+  so when the Map diverged from reality the ops no-op'd against reality.
+  - **start**: a dead-but-registered entry is now evicted before the dedup guard,
+    so a fresh start proceeds instead of DEDUPE-ing forever. Never kills — the
+    process is already gone.
+  - **stop / boot orphan-reap**: a PTY that survived a prior daemon generation is
+    now reaped, but ONLY after ownership verification — the pid must be alive AND
+    its process start-time must match the recorded spawn. This guards the
+    catastrophic pid-recycling case (a reused pid belonging to an unrelated
+    process is NEVER killed); it fails closed on any doubt.
+  - New `src/utils/agent-pidfile.ts` persists each agent's PTY pid + start-time +
+    spawning-daemon pid to `state/<agent>/agent.pid`; new `AgentProcess.getPid()`.
+    Covered by `tests/unit/utils/agent-pidfile.test.ts` (incl. explicit
+    recycling-guard tests that assert an unverified live pid is never killed).
+
 ### Hook Framework — Loop Detection (B1)
 
 - **`hook-loop-detector`**: new PreToolUse hook that detects and blocks repeated Claude tool-call loops. Two patterns are detected: (a) the same tool invoked with identical arguments 15+ times within the last 30 calls, and (b) two tools ping-ponging (24+ alternations within a 12-call dominant-pair window). Blocked calls are NOT recorded into history, so the wedge cannot self-perpetuate. History is time-windowed (60s) so a stale prior-session tail does not block the first call of a new session. After 30 minutes of continuous block, exactly one tool call is allowed through ("emergency escape") so the agent can issue a Telegram alert before re-entering the blocked window.

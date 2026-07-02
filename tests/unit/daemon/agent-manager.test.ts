@@ -17,6 +17,7 @@ vi.mock('../../../src/daemon/agent-process.js', () => ({
     async start() { /* no-op */ }
     async stop() { /* no-op */ }
     getStatus() { return { name: this.name, status: 'stopped' }; }
+    getPid(): number | undefined { return undefined; }
     onExit() { /* no-op */ }
   },
 }));
@@ -259,7 +260,10 @@ describe('AgentManager - duplicate agent names across orgs (BUG-011 false alarm 
   });
 
   const fakeEntry = () => ({
-    process: { stop: async () => {} },
+    // getPid returns a LIVE pid so the start-path reconcile treats this as a
+    // genuinely-running agent (an alive entry to queue), not a stale/dead one
+    // to evict.
+    process: { stop: async () => {}, getPid: () => process.pid },
     checker: { stop() {} },
   });
 

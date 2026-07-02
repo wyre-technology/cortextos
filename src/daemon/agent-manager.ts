@@ -17,6 +17,7 @@ import { stripControlChars } from '../utils/validate.js';
 import { processMediaMessage } from '../telegram/media.js';
 import { resolveAgentDir } from '../utils/agent-dir.js';
 import { stripBom } from '../utils/strip-bom.js';
+import { writeAgentPid, readAgentPid, clearAgentPid, reapOrphan, isPidAlive } from '../utils/agent-pidfile.js';
 
 type LogFn = (msg: string) => void;
 
@@ -174,6 +175,20 @@ export class AgentManager {
           continue;
         }
       }
+      // RECONCILE (boot orphan-reap): before spawning, reap any PTY that
+      // survived a PRIOR daemon generation, recorded in this agent's pidfile, so
+      // we never end up with two live copies (PTY accretion / "running-but-dead
+      // fleet"). Ownership-verified: kills only a pid proven to be this agent's
+      // original PTY; refuses on a recycled pid; skips a live foreign daemon's.
+      const bootStateDir = join(this.ctxRoot, 'state', name);
+      const bootRec = readAgentPid(bootStateDir);
+      if (bootRec) {
+        const foreignDaemonAlive = bootRec.daemonPid !== process.pid && isPidAlive(bootRec.daemonPid);
+        if (!foreignDaemonAlive) {
+          reapOrphan(bootStateDir, bootRec, (m) => console.log(`[agent-manager] ${m}`));
+        }
+      }
+
       // BUG-043 fix: pass the per-agent org so startAgent can use it instead
       // of falling back to `this.org` (the daemon's startup org).
       await this.startAgent(name, dir, config, org);
@@ -285,6 +300,20 @@ export class AgentManager {
   }
 
   async startAgent(name: string, agentDir: string, config?: AgentConfig, org?: string): Promise<void> {
+    // RECONCILE (start): a dead-but-registered entry must not block a fresh
+    // start. If the registered PTY pid is dead (its onExit was skipped, or a
+    // crash), evict the stale entry BEFORE the dedup guard so this start
+    // proceeds instead of DEDUPE-ing forever ("deduped — already in registry"
+    // on a dead agent). This never kills anything (already dead) => always safe.
+    const stale = this.agents.get(name);
+    if (stale) {
+      const stalePid = stale.process.getPid();
+      if (stalePid !== undefined && !isPidAlive(stalePid)) {
+        console.warn(`[agent-manager] ${name} registered but PTY pid ${stalePid} is dead — evicting stale entry before (re)start.`);
+        this.evictDeadEntry(name);
+      }
+    }
+
     if (this.agents.has(name)) {
       // BUG-031: this branch was the workaround for the BUG-011 PTY race
       // (restart-all could send stop+start simultaneously, and the new
@@ -448,6 +477,13 @@ export class AgentManager {
 
     // Start agent
     await agentProcess.start();
+
+    // Persist the PTY pid so start/stop reconcile can detect divergence between
+    // this in-memory registry and the real process — including across daemon
+    // generations (a crash leaves the Map empty but the PTY may survive on disk
+    // as an orphan). Best-effort; writeAgentPid never throws.
+    const spawnedPid = agentProcess.getPid();
+    if (spawnedPid) writeAgentPid(paths.stateDir, name, spawnedPid, process.pid);
 
     // Subtask 2.2: Auto-migrate crons from config.json → crons.json before
     // starting the scheduler, so the scheduler always has a populated crons.json
@@ -872,10 +908,50 @@ export class AgentManager {
   /**
    * Stop a specific agent.
    */
+  /**
+   * Drop a registry entry whose PTY is already DEAD, WITHOUT awaiting
+   * process.stop() — its onExit may never fire (the exact divergence we fix),
+   * so awaiting could hang. Best-effort teardown of the side channels, then
+   * remove the entry, its cron scheduler, and its pidfile. Never kills a
+   * process (the PTY is already gone). Used by the start-path reconcile.
+   */
+  private evictDeadEntry(name: string): void {
+    const entry = this.agents.get(name);
+    if (!entry) return;
+    try { entry.poller?.stop(); } catch { /* ignore */ }
+    try { entry.activityPoller?.stop(); } catch { /* ignore */ }
+    try { entry.checker.stop(); } catch { /* ignore */ }
+    try { void entry.process.stop(); } catch { /* fire-and-forget; do NOT await */ }
+    this.agents.delete(name);
+    const scheduler = this.cronSchedulers.get(name);
+    if (scheduler) {
+      try { scheduler.stop(); } catch { /* ignore */ }
+      this.cronSchedulers.delete(name);
+    }
+    clearAgentPid(join(this.ctxRoot, 'state', name));
+  }
+
   async stopAgent(name: string): Promise<void> {
     const entry = this.agents.get(name);
     if (!entry) {
-      console.log(`[agent-manager] Agent ${name} not found`);
+      // RECONCILE (stop): not in the in-memory registry, but a PTY from a PRIOR
+      // daemon generation may still be alive on disk — a crash left the Map
+      // empty while the process survived ("stop didn't kill it"). Ownership-
+      // verified reap: kills ONLY a pid we can prove is this agent's original
+      // PTY (alive AND process start-time matches the recorded spawn); refuses
+      // on any doubt (recycled pid) and never touches a live foreign daemon's.
+      const stateDir = join(this.ctxRoot, 'state', name);
+      const rec = readAgentPid(stateDir);
+      if (rec) {
+        const foreignDaemonAlive = rec.daemonPid !== process.pid && isPidAlive(rec.daemonPid);
+        if (foreignDaemonAlive) {
+          console.log(`[agent-manager] ${name} not in registry; pidfile owned by a live daemon (pid ${rec.daemonPid}) — leaving it alone.`);
+        } else {
+          reapOrphan(stateDir, rec, (m) => console.log(`[agent-manager] ${m}`));
+        }
+      } else {
+        console.log(`[agent-manager] Agent ${name} not found`);
+      }
       return;
     }
 
@@ -884,6 +960,7 @@ export class AgentManager {
     entry.checker.stop();
     await entry.process.stop();
     this.agents.delete(name);
+    clearAgentPid(join(this.ctxRoot, 'state', name));
 
     // Stop and remove the agent's cron scheduler (if one was wired)
     const scheduler = this.cronSchedulers.get(name);
