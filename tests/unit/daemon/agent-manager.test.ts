@@ -17,6 +17,8 @@ vi.mock('../../../src/daemon/agent-process.js', () => ({
     async start() { /* no-op */ }
     async stop() { /* no-op */ }
     getStatus() { return { name: this.name, status: 'stopped' }; }
+    getPid(): number | undefined { return undefined; }
+    dispose() { /* no-op */ }
     onExit() { /* no-op */ }
   },
 }));
@@ -259,7 +261,10 @@ describe('AgentManager - duplicate agent names across orgs (BUG-011 false alarm 
   });
 
   const fakeEntry = () => ({
-    process: { stop: async () => {} },
+    // getPid returns a LIVE pid so the start-path reconcile treats this as a
+    // genuinely-running agent (an alive entry to queue), not a stale/dead one
+    // to evict.
+    process: { stop: async () => {}, getPid: () => process.pid },
     checker: { stop() {} },
   });
 
@@ -284,6 +289,26 @@ describe('AgentManager - duplicate agent names across orgs (BUG-011 false alarm 
     await am.startAgent('alice', join(frameworkRoot, 'orgs', 'acme', 'agents', 'alice'));
 
     expect((am as any).pendingRestarts.has('alice')).toBe(true);
+  });
+
+  it('evict drops a stale entry via dispose() — NEVER stop() (no delayed pty.kill on a recycled pid)', () => {
+    const am = new AgentManager('default', ctxRoot, frameworkRoot, 'acme');
+    const disposeSpy = vi.fn();
+    const stopSpy = vi.fn(async () => {});
+    (am as any).agents.set('alice', {
+      process: { stop: stopSpy, dispose: disposeSpy, getPid: () => 2_000_000_000 },
+      checker: { stop() {} },
+    });
+
+    // The start-path reconcile evicts a dead-but-registered entry via this path.
+    (am as any).evictDeadEntry('alice');
+
+    // Torn down through dispose() (never signals a pid) and NEVER through stop()
+    // (which can reach pty.kill() ~6s later — the recycled-pid kill risk). Entry
+    // removed so a fresh start proceeds instead of DEDUPE-ing.
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect((am as any).agents.has('alice')).toBe(false);
   });
 
   it('stopAll does NOT honor queued restarts — no mid-shutdown resurrection', async () => {
