@@ -17,6 +17,8 @@ If this fails, your agent shows as DEAD on the dashboard. Fix it before anything
 
 Both are required every cycle. Skipping Step 1 leaves your dashboard view stale even though you're firing events.
 
+**Beat on EVERY cron fire — even when idle-blocked, even when you're about to dive straight into work. Update-heartbeat is FIRST, before the work, every single fire.** Why (load-bearing): your heartbeat is the fleet's only freeze signal. A frozen session and an idle-but-not-beating session look identical from outside. If you skip the beat when idle ("nothing to report") or beat only *after* your work ("I'll update when done"), you look frozen — and the health-monitor burns cycles, or the real freeze next to you gets lost in the noise. If every healthy agent beats on every fire, a **missing** heartbeat becomes an *unambiguous* freeze signal. That one rule is what makes the whole fleet debuggable.
+
 ## Step 2: Check inbox
 
 ```bash
@@ -37,23 +39,28 @@ Target: 0 un-ACK'd messages after this step.
 Full reference: `.claude/skills/agent-management/SKILL.md`
 
 ```bash
-# Check all agent heartbeats — flag any silent for >5 hours
-cortextos bus read-all-heartbeats
-
-# Check for agents with no recent activity
-cortextos bus list-tasks --status in_progress 2>/dev/null | head -20
+cortextos bus read-all-heartbeats        # all agent heartbeats
+cortextos bus list-crons <agent>         # per-candidate: cron last-fire vs its heartbeat
 ```
 
-For each agent: if heartbeat is older than 5 hours, send a message to that agent:
+**Raw heartbeat-age is NOT a reliable freeze signal — it false-positives on idle and on fire-batching.** A >5h heartbeat is a *candidate*, not a verdict. Use the freeze-test:
+
+**The reliable signal: did the agent process its MOST-RECENT DELIVERED fire?** — NOT "is the heartbeat older than some fire timestamp." The daemon **batches** queued fires: after a quiet gap it delivers them together, so an intermediate fire shows as "fired" in `list-crons` but never produced a separate invocation → a healthy agent legitimately has no heartbeat for it. Age-based detection reads that as a freeze; it isn't.
+
+Freeze-test, per stale candidate:
+1. **Don't escalate on raw age.** Wait for the recovery signal — a fire that *just* fired may be processed any moment (batched agents can lag up to a full inter-fire interval). Re-check after it lands.
+2. **Decisive tell — did others revive while this one didn't?** When a shared fire (or a fleet `--continue` reload) revives the rest of a stale cluster but one agent stays stuck, that one is frozen (the reviving fire came and went). A wide reload is a free test: if everyone returns fresh except one, that one is down.
+3. **Cross-check the watchdog.** `[watchdog] <agent> alive` means the session *process* is up → stale heartbeat there is idle-suppression, not a dead session.
+
+Escalate (calibrated — include the *evidence*, not just the age):
 ```bash
-cortextos bus send-message <agent_name> normal "Heartbeat check: are you running? Last heartbeat was more than 5 hours ago."
+# CONFIRMED freeze (failed the fire-test, batching ruled out):
+cortextos bus send-message $CTX_ORCHESTRATOR_AGENT normal "Agent <name> FROZEN — missed <fire>, others revived. Recommend restart."
+cortextos bus log-event action agent_unresponsive warning --meta '{"agent":"<name>","status":"confirmed-freeze","evidence":"<missed-fire>"}'
 ```
-
-If an agent is unresponsive for >8 hours, notify the orchestrator and log the issue:
-```bash
-cortextos bus send-message $CTX_ORCHESTRATOR_AGENT normal "Agent <name> appears unresponsive — last heartbeat >8h ago. May need restart."
-cortextos bus log-event action agent_unresponsive warning --meta '{"agent":"<name>","hours_silent":8}'
-```
+- **Ambiguous** (missed fires but could be batching): DO NOT escalate yet — name it, watch the next fire.
+- **Impact-scale urgency:** a frozen idle/gated agent (nothing in flight) is low-urgency; the **orchestrator** frozen is high — and it can't restart itself, so THAT escalation goes to the operator (human), not into the orchestrator's own dead inbox.
+- **Never wake the principal on ambiguous data.** A false "systemic freeze!" to the human is worse than a few hours' wait.
 
 ## Step 3b: Check own task queue + stale task detection
 
