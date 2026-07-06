@@ -17,6 +17,8 @@ If this fails, your agent shows as DEAD on the dashboard. Fix it before anything
 
 Both are required every cycle. Skipping Step 1 leaves your dashboard view stale even though you're firing events.
 
+**Beat on EVERY cron fire — even when idle-blocked, even when you're about to dive straight into work. Update-heartbeat is FIRST, before the work, every single fire.** Why (load-bearing): your heartbeat is the fleet's only freeze signal. A frozen session and an idle-but-not-beating session look identical from outside. If you skip the beat when idle ("nothing to report") or beat only *after* your work ("I'll update when done"), you look frozen — and the health-monitor burns cycles, or the real freeze next to you gets lost in the noise. If every healthy agent beats on every fire, a **missing** heartbeat becomes an *unambiguous* freeze signal. That one rule is what makes the whole fleet debuggable.
+
 ## Step 2: Check inbox
 
 ```bash
