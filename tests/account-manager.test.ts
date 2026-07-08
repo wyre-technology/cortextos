@@ -168,3 +168,16 @@ describe('token loading', () => {
     expect(alerts[0]).not.toContain('using cached');
   });
 });
+
+describe('park alert dedup', () => {
+  it('first caller wins; resets when an account recovers', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech"]');
+    const m = mk();
+    m.markLimited('wyretech', new Date('2026-07-12T02:00:00Z'));
+    expect(m.shouldSendParkAlert()).toBe(true);
+    expect(m.shouldSendParkAlert()).toBe(false);  // deduped (also across instances — persisted)
+    expect(mk().shouldSendParkAlert()).toBe(false);
+    m.clearParkAlert();
+    expect(m.shouldSendParkAlert()).toBe(true);
+  });
+});

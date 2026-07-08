@@ -792,7 +792,7 @@ export interface AgentInfo {
 
 export interface AgentStatus {
   name: string;
-  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted';
+  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted' | 'parked';
   pid?: number;
   uptime?: number; // seconds
   lastHeartbeat?: string;

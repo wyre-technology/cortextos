@@ -72,3 +72,53 @@ describe('AgentProcess.scheduleFailoverRefresh status guard', () => {
     expect(startSpy).not.toHaveBeenCalled();
   });
 });
+
+// Task 7: the park branch's resume timer follows the same cancellable-handle +
+// fire-time status guard pattern as scheduleFailoverRefresh (Task 6 fix,
+// commit f5745d29). A bare setTimeout here would resurrect an agent an
+// operator deliberately stopped while parked. This test drives the real
+// start() park path (all accounts unusable -> park, returns before spawning
+// a PTY) and confirms stop() both clears the pending resume timer and leaves
+// the agent stopped.
+describe('AgentProcess park-timer resume guard', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not resume a parked agent that was stopped before the resume timer fires', async () => {
+    vi.useFakeTimers();
+
+    const dir = mkdtempSync(join(tmpdir(), 'park-timer-'));
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech"]');
+    const accountManager = new AccountManager({ sharedDir: dir });
+    // Invalid accounts never auto-recover, so selectAccount() returns null
+    // while loadConfig().length > 0 -> the park branch fires.
+    accountManager.markInvalid('wyretech', 'test: forced invalid');
+
+    const mockEnv: CtxEnv = {
+      instanceId: 'test',
+      ctxRoot: mkdtempSync(join(tmpdir(), 'park-timer-ctxroot-')),
+      frameworkRoot: mkdtempSync(join(tmpdir(), 'park-timer-fw-')),
+      agentName: 'alice',
+      agentDir: mkdtempSync(join(tmpdir(), 'park-timer-agentdir-')),
+      org: 'acme',
+      projectRoot: '/tmp/fw',
+    };
+
+    const ap = new AgentProcess('alice', mockEnv, {}, undefined, accountManager);
+
+    await ap.start();
+    expect(ap.getStatus().status).toBe('parked');
+
+    // Operator stops the parked agent — must clear the pending resume timer.
+    await ap.stop();
+    expect(ap.getStatus().status).toBe('stopped');
+
+    const startSpy = vi.spyOn(ap, 'start');
+    // No known reset time for an invalid-only account -> fallback 30min delay.
+    vi.advanceTimersByTime(30 * 60 * 1000 + 1000);
+
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(ap.getStatus().status).toBe('stopped');
+  });
+});

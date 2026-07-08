@@ -110,9 +110,9 @@ export class AccountManager {
 
   earliestReset(): Date | null {
     const map = this.readHealth();
-    const times = Object.values(map)
-      .filter((h) => h.status === 'limited' && h.limitedUntil)
-      .map((h) => new Date(h.limitedUntil!).getTime());
+    const times = Object.entries(map)
+      .filter(([key, h]) => !key.startsWith('_') && h.status === 'limited' && h.limitedUntil)
+      .map(([, h]) => new Date(h.limitedUntil!).getTime());
     return times.length ? new Date(Math.min(...times)) : null;
   }
 
@@ -121,15 +121,48 @@ export class AccountManager {
    * Policy: strict preference order; a limited account becomes eligible
    * again the moment its limitedUntil passes; invalid accounts never
    * auto-recover (operator must fix the token and clear the entry).
+   *
+   * Selection runs at every spawn, so whenever it finds a usable account we
+   * also clear the park-alert dedup flag here — cheaper than detecting the
+   * exact transition that made an account usable again, and it means the
+   * flag clears on the very first successful un-park.
    */
   selectAccount(now: Date = new Date()): string | null {
     const health = this.readHealth();
     for (const name of this.loadConfig()) {
+      if (name.startsWith('_')) continue;
       const h = health[name];
-      if (!h || h.status === 'healthy') return name;
-      if (h.status === 'limited' && h.limitedUntil && new Date(h.limitedUntil) <= now) return name;
+      const usable =
+        !h || h.status === 'healthy' ||
+        (h.status === 'limited' && !!h.limitedUntil && new Date(h.limitedUntil) <= now);
+      if (usable) {
+        this.clearParkAlert();
+        return name;
+      }
     }
     return null;
+  }
+
+  /**
+   * True the first time it's called while all accounts are unusable; false
+   * on every subsequent call until clearParkAlert() resets the flag.
+   * Dedup state lives in the shared health file's reserved `_meta` key
+   * (excluded from account iteration above) so the dedup holds across daemon
+   * restarts and across every AgentProcess instance racing to park at once.
+   */
+  shouldSendParkAlert(): boolean {
+    const map = this.readHealth() as HealthMap & { _meta?: { parkAlertSentAt?: string } };
+    if (map._meta?.parkAlertSentAt) return false;
+    map._meta = { ...(map._meta ?? {}), parkAlertSentAt: new Date().toISOString() };
+    this.writeHealth(map);
+    return true;
+  }
+
+  clearParkAlert(): void {
+    const map = this.readHealth() as HealthMap & { _meta?: { parkAlertSentAt?: string } };
+    if (!map._meta?.parkAlertSentAt) return;
+    delete map._meta.parkAlertSentAt;
+    this.writeHealth(map);
   }
 
   private defaultFetchSecret(secretName: string): string | null {

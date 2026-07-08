@@ -12,6 +12,7 @@ import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
 import { AccountManager } from './account-manager.js';
+import { sendOperatorAlert } from './operator-alert.js';
 
 type LogFn = (msg: string) => void;
 
@@ -26,6 +27,12 @@ export class AgentProcess {
   private pty: AgentPTY | CodexAppServerPTY | null = null;
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
   private failoverTimer: ReturnType<typeof setTimeout> | null = null;
+  // Task 7: mirrors failoverTimer's cancellable-handle + fire-time status
+  // guard pattern (commit f5745d29). A bare setTimeout resurrecting the
+  // agent regardless of what happened in the meantime would resume a parked
+  // agent an operator deliberately stopped — cleared in the same two places
+  // as failoverTimer: stop() and handleExit().
+  private parkTimer: ReturnType<typeof setTimeout> | null = null;
   private crashCount: number = 0;
   private maxCrashesPerDay: number = 10;
   // CrashLoopPauser (instar-inspired): sliding-window crash detection.
@@ -139,9 +146,34 @@ export class AgentProcess {
         this.env.oauthToken = token;
         this.log(`Using account "${account}"`);
       } else if (this.accountManager.loadConfig().length > 0) {
-        // Accounts are configured but none usable → park (Task 7 fills this in).
+        // Accounts are configured but none usable → park.
         this.currentAccount = null;
         this.env.oauthToken = undefined;
+        this.status = 'parked';
+        const resumeAt = this.accountManager.earliestReset();
+        const delay = resumeAt
+          ? Math.max(resumeAt.getTime() - Date.now(), 0) + Math.floor(Math.random() * 120_000)
+          : 30 * 60 * 1000; // no known reset — re-probe in 30 min
+        this.log(`All accounts limited/invalid — parked. Retrying at ${new Date(Date.now() + delay).toISOString()}`);
+        if (this.accountManager.shouldSendParkAlert()) {
+          void sendOperatorAlert(this.env.frameworkRoot,
+            `⏸️ All Claude accounts are limited — fleet parked. Auto-resume ~${resumeAt?.toISOString() ?? 'in 30 min (no reset time known)'}. Inbound messages queue in agent inboxes.`);
+        }
+        // Cancellable-handle + fire-time status guard (mirrors
+        // scheduleFailoverRefresh / commit f5745d29): only resume if we're
+        // still 'parked' when this fires. An operator-issued stop() clears
+        // this timer outright (see stop()); the status check is defense in
+        // depth for any other path that might change status in the meantime.
+        this.clearParkTimer();
+        this.parkTimer = setTimeout(() => {
+          this.parkTimer = null;
+          if (this.status !== 'parked') {
+            this.log(`Park resume skipped (status: ${this.status})`);
+            return;
+          }
+          this.start().catch((err) => this.log(`Un-park failed: ${err}`));
+        }, delay);
+        return; // do not spawn a doomed session
       } else {
         // Zero accounts configured: legacy behavior, no token injection.
         this.currentAccount = null;
@@ -241,6 +273,7 @@ export class AgentProcess {
     this.log('Stopping...');
     this.clearSessionTimer();
     this.clearFailoverTimer();
+    this.clearParkTimer();
 
     // Capture and null out pty BEFORE any awaits so handleExit() during graceful
     // shutdown doesn't race with us and trigger crash recovery or a double-kill.
@@ -603,6 +636,7 @@ export class AgentProcess {
     this.pty = null;
     this.clearSessionTimer();
     this.clearFailoverTimer();
+    this.clearParkTimer();
 
     // When the cortextos daemon is shut down by PM2, SIGTERM propagates to
     // the whole process group and reaches each PTY's Claude Code child
@@ -976,6 +1010,13 @@ export class AgentProcess {
     if (this.failoverTimer) {
       clearTimeout(this.failoverTimer);
       this.failoverTimer = null;
+    }
+  }
+
+  private clearParkTimer(): void {
+    if (this.parkTimer) {
+      clearTimeout(this.parkTimer);
+      this.parkTimer = null;
     }
   }
 
