@@ -81,3 +81,38 @@ describe('AccountManager health transitions', () => {
     expect(m.earliestReset()?.toISOString()).toBe('2026-07-10T02:00:00.000Z');
   });
 });
+
+describe('selectAccount', () => {
+  const NOW = new Date('2026-07-08T00:00:00Z');
+  beforeEach(() => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech","personal"]');
+  });
+  it('picks the first account when all healthy', () => {
+    expect(mk().selectAccount(NOW)).toBe('wyretech');
+  });
+  it('skips a limited account', () => {
+    const m = mk();
+    m.markLimited('wyretech', new Date('2026-07-12T02:00:00Z'));
+    expect(m.selectAccount(NOW)).toBe('personal');
+  });
+  it('drains back after the reset time passes', () => {
+    const m = mk();
+    m.markLimited('wyretech', new Date('2026-07-12T02:00:00Z'));
+    expect(m.selectAccount(new Date('2026-07-12T02:00:01Z'))).toBe('wyretech');
+  });
+  it('skips invalid accounts (no auto-recovery)', () => {
+    const m = mk();
+    m.markInvalid('wyretech', 'Not logged in');
+    expect(m.selectAccount(new Date('2027-01-01T00:00:00Z'))).toBe('personal');
+  });
+  it('returns null when every account is unusable', () => {
+    const m = mk();
+    m.markLimited('wyretech', new Date('2026-07-12T02:00:00Z'));
+    m.markInvalid('personal', 'Not logged in');
+    expect(m.selectAccount(NOW)).toBeNull();
+  });
+  it('returns null with zero accounts configured', () => {
+    writeFileSync(join(dir, 'accounts.json'), '[]');
+    expect(mk().selectAccount(NOW)).toBeNull();
+  });
+});
