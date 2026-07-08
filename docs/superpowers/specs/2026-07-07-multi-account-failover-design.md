@@ -1,7 +1,7 @@
 # Multi-Account Failover for cortextOS
 
 **Date:** 2026-07-07
-**Status:** Approved (design review with Aaron, 2026-07-07)
+**Status:** Implemented (2026-07-08; commits `21883b39`..`227c2c5c`, final review READY TO MERGE). Amendment vs original design: the account pool is four accounts, not two (`wyretech-team`, `wyretech-max`, `aaronmsachs`, `sachshaus`); hyphenated names map to underscore secret names.
 **Origin:** 2026-07-06 fleet outage — the shared subscription hit its weekly
 usage limit and every agent session died silently at the limit banner while
 the daemon, crons, and Telegram plumbing stayed green. Post-incident, a

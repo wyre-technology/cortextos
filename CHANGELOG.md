@@ -23,6 +23,32 @@
     Covered by `tests/unit/utils/agent-pidfile.test.ts` (incl. explicit
     recycling-guard tests that assert an unverified live pid is never killed).
 
+### Multi-Account Failover
+
+- **Account failover**: the daemon now detects Claude weekly-limit and
+  auth-failure banners in agent session output (`limit-detector`), fails the
+  fleet over to the next healthy account from an ordered pool
+  (`~/.cortextos/shared/accounts.json`, tokens fetched from Infisical as
+  `CLAUDE_OAUTH_TOKEN_<NAME>` with a chmod-600 offline cache), and alerts the
+  operator once per transition. Health state is shared across daemon
+  instances via atomic writes to `account-health.json`; a daemon that loses
+  the marking race still self-schedules its own agents' refresh.
+- **Parking**: when no account is usable, agents park (no doomed spawns),
+  inbound work queues in the existing inbox, one deduped fleet-wide alert
+  fires, and a persisted timer auto-resumes at the earliest reset (+jitter),
+  with a resume alert when the fleet lifts.
+- **Drain-back is emergent**: account selection runs at every session spawn,
+  so agents return to the preferred account automatically after its limit
+  resets — failover, initial assignment, and drain-back are one code path.
+- **Safety**: failover/park timers are cancellable and status-guarded (no
+  zombie respawns of stopped or halted agents); detection requires a real
+  ANSI escape adjacent to the banner phrase so agents reading this repo's
+  own test fixtures cannot false-trigger it; Codex/Hermes runtimes are
+  excluded; zero-config installs behave exactly as before.
+- **Debug**: `CTX_DEBUG_FAKE_LIMIT_BANNER=1` + SIGUSR1 injects a fake limit
+  banner into the first running Claude agent to rehearse failover without
+  burning a real weekly limit.
+
 ### Hook Framework — Loop Detection (B1)
 
 - **`hook-loop-detector`**: new PreToolUse hook that detects and blocks repeated Claude tool-call loops. Two patterns are detected: (a) the same tool invoked with identical arguments 15+ times within the last 30 calls, and (b) two tools ping-ponging (24+ alternations within a 12-call dominant-pair window). Blocked calls are NOT recorded into history, so the wedge cannot self-perpetuate. History is time-windowed (60s) so a stale prior-session tail does not block the first call of a new session. After 30 minutes of continuous block, exactly one tool call is allowed through ("emergency escape") so the agent can issue a Telegram alert before re-entering the blocked window.
