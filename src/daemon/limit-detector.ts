@@ -35,6 +35,15 @@ export function parseResetTime(text: string, now: Date): Date | null {
 }
 
 const TAIL_CHARS = 2000;
+// C4 self-hosting discriminator: this fleet's own agents Read the test fixtures
+// and plan docs that CONTAIN these banner strings — but there the escape shows
+// as LITERAL "\x1b" text (printable backslash-x-1-b) and any real ANSI is TUI
+// syntax-highlight chrome far from the phrase. The genuine Claude Code banner
+// emits a REAL ESC byte (0x1B) as the phrase's own colour styling, immediately
+// before it. We require a real ESC within this many RAW chars ahead of the
+// phrase before treating it as a live limit — so reading a fixture never trips
+// a failover, while the real banner (ESC ~10 chars before the phrase) still does.
+const REAL_ESC_LOOKBACK = 24;
 // Once the weekly-limit phrase is seen but the reset clause won't parse, keep
 // waiting for up to this many additional fed characters (tracked independently
 // of the sliding tail, since the phrase itself can scroll out of the tail
@@ -44,6 +53,10 @@ const WEEKLY_PENDING_LIMIT = 4000;
 
 export class LimitDetector {
   private tail = '';
+  // Raw (un-stripped) tail kept in parallel with `tail`. The stripped tail
+  // still drives parseResetTime (whitespace-tolerant clause extraction); the
+  // raw tail powers the real-ESC proximity check (see phrasePrecededByRealEscape).
+  private rawTail = '';
   private fired = new Set<LimitSignal['kind']>();
   private weeklyPending = false;
   private weeklyPendingChars = 0;
@@ -56,17 +69,33 @@ export class LimitDetector {
 
   reset(): void {
     this.tail = '';
+    this.rawTail = '';
     this.fired.clear();
     this.weeklyPending = false;
     this.weeklyPendingChars = 0;
   }
 
+  /**
+   * C4: true only when `re` matches the RAW tail AND a real ESC byte (0x1B)
+   * appears within REAL_ESC_LOOKBACK chars immediately before the match — the
+   * signature of the live styled banner. Literal "\x1b" fixture text and
+   * distant syntax-highlight chrome both fail this, so an agent reading its
+   * own test/plan files can never self-trigger a failover.
+   */
+  private phrasePrecededByRealEscape(re: RegExp): boolean {
+    const m = re.exec(this.rawTail);
+    if (!m) return false;
+    const windowStart = Math.max(0, m.index - REAL_ESC_LOOKBACK);
+    return this.rawTail.slice(windowStart, m.index).includes('\x1b');
+  }
+
   feed(chunk: string): LimitSignal | null {
     const clean = stripAnsi(chunk);
     this.tail = (this.tail + clean).slice(-TAIL_CHARS);
+    this.rawTail = (this.rawTail + chunk).slice(-TAIL_CHARS);
 
     if (!this.fired.has('weekly-limit')) {
-      const sawPhrase = WEEKLY_RE.test(this.tail);
+      const sawPhrase = this.phrasePrecededByRealEscape(WEEKLY_RE);
       if (sawPhrase && !this.weeklyPending) {
         this.weeklyPending = true;
         this.weeklyPendingChars = 0;
@@ -88,7 +117,7 @@ export class LimitDetector {
         }
       }
     }
-    if (!this.fired.has('not-logged-in') && NOT_LOGGED_IN_RE.test(this.tail)) {
+    if (!this.fired.has('not-logged-in') && this.phrasePrecededByRealEscape(NOT_LOGGED_IN_RE)) {
       this.fired.add('not-logged-in');
       return { kind: 'not-logged-in' };
     }
