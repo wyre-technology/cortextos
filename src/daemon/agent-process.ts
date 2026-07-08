@@ -25,6 +25,7 @@ export class AgentProcess {
   private config: AgentConfig;
   private pty: AgentPTY | CodexAppServerPTY | null = null;
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  private failoverTimer: ReturnType<typeof setTimeout> | null = null;
   private crashCount: number = 0;
   private maxCrashesPerDay: number = 10;
   // CrashLoopPauser (instar-inspired): sliding-window crash detection.
@@ -239,6 +240,7 @@ export class AgentProcess {
     this.stopRequested = true;
     this.log('Stopping...');
     this.clearSessionTimer();
+    this.clearFailoverTimer();
 
     // Capture and null out pty BEFORE any awaits so handleExit() during graceful
     // shutdown doesn't race with us and trigger crash recovery or a double-kill.
@@ -368,9 +370,22 @@ export class AgentProcess {
 
   /** Session refresh with random jitter — avoids thundering-herd 429s when a whole fleet fails over. */
   scheduleFailoverRefresh(maxJitterMs = 120_000): void {
+    // Re-schedule safety: clear any previously pending failover timer before
+    // arming a new one so overlapping calls can't leave a stale timer around.
+    this.clearFailoverTimer();
     const jitter = Math.floor(Math.random() * maxJitterMs);
     this.log(`Failover refresh scheduled in ${Math.round(jitter / 1000)}s`);
-    setTimeout(() => {
+    this.failoverTimer = setTimeout(() => {
+      this.failoverTimer = null;
+      // The 0-120s jitter window can outlive a stop()/crash-halt that happened
+      // while this timer was pending. Only fire the refresh if the agent is
+      // still running — otherwise stop() would no-op and start() would spawn
+      // a zombie PTY invisible to the manager (or a halted agent would flip
+      // back to running, defeating crash-loop protection).
+      if (this.status !== 'running') {
+        this.log(`Failover refresh skipped (status: ${this.status})`);
+        return;
+      }
       this.sessionRefresh('account failover').catch((err) => this.log(`Failover refresh failed: ${err}`));
     }, jitter);
   }
@@ -587,6 +602,7 @@ export class AgentProcess {
 
     this.pty = null;
     this.clearSessionTimer();
+    this.clearFailoverTimer();
 
     // When the cortextos daemon is shut down by PM2, SIGTERM propagates to
     // the whole process group and reaches each PTY's Claude Code child
@@ -953,6 +969,13 @@ export class AgentProcess {
     if (this.sessionTimer) {
       clearTimeout(this.sessionTimer);
       this.sessionTimer = null;
+    }
+  }
+
+  private clearFailoverTimer(): void {
+    if (this.failoverTimer) {
+      clearTimeout(this.failoverTimer);
+      this.failoverTimer = null;
     }
   }
 
