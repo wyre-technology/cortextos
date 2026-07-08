@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { AccountManager } from '../src/daemon/account-manager.js';
@@ -114,5 +114,44 @@ describe('selectAccount', () => {
   it('returns null with zero accounts configured', () => {
     writeFileSync(join(dir, 'accounts.json'), '[]');
     expect(mk().selectAccount(NOW)).toBeNull();
+  });
+});
+
+describe('token loading', () => {
+  beforeEach(() => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech","personal"]');
+  });
+  it('fetches tokens per account and caches them (0600)', () => {
+    const m = mk();
+    m.loadTokens((name) => `tok-${name}`);
+    expect(m.getToken('wyretech')).toBe('tok-CLAUDE_OAUTH_TOKEN_WYRETECH');
+    const cachePath = join(dir, '.account-tokens.cache');
+    const st = statSync(cachePath);
+    expect(st.mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(cachePath, 'utf-8')).personal).toBe('tok-CLAUDE_OAUTH_TOKEN_PERSONAL');
+  });
+  it('falls back to the cache when fetch fails', () => {
+    mk().loadTokens((name) => `tok-${name}`); // seed cache
+    const m = mk();
+    const alerts: string[] = [];
+    m.onAlert((msg) => alerts.push(msg));
+    m.loadTokens(() => null); // Infisical down
+    expect(m.getToken('wyretech')).toBe('tok-CLAUDE_OAUTH_TOKEN_WYRETECH');
+    expect(alerts.length).toBe(1);
+  });
+  it('maps hyphenated account names to underscore secret names', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech-team"]');
+    const m = mk();
+    m.loadTokens((name) => `tok-${name}`);
+    expect(m.getToken('wyretech-team')).toBe('tok-CLAUDE_OAUTH_TOKEN_WYRETECH_TEAM');
+  });
+  it('runs with partial tokens and alerts about missing ones', () => {
+    const m = mk();
+    const alerts: string[] = [];
+    m.onAlert((msg) => alerts.push(msg));
+    m.loadTokens((name) => (name.endsWith('WYRETECH') ? 'tok-w' : null));
+    expect(m.getToken('wyretech')).toBe('tok-w');
+    expect(m.getToken('personal')).toBeNull();
+    expect(alerts.some((a) => a.includes('personal'))).toBe(true);
   });
 });
