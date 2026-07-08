@@ -5,7 +5,8 @@ import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import { ensureDir } from '../utils/atomic.js';
-import { getOperatorChatCreds } from './operator-alert.js';
+import { getOperatorChatCreds, sendOperatorAlert } from './operator-alert.js';
+import { AccountManager } from './account-manager.js';
 
 // Each fast-checker registers a process-level SIGUSR1 handler (see
 // fast-checker.ts:102). With >10 active agents the default Node listener cap
@@ -220,8 +221,20 @@ class Daemon {
       } catch { /* best effort */ }
     }
 
+    // Multi-account failover: load account tokens and wire alerts/transitions
+    // to the operator chat before agents start spawning.
+    const accountManager = new AccountManager({});
+    accountManager.onAlert((msg) => { void sendOperatorAlert(frameworkRoot, `⚠️ [accounts] ${msg}`); });
+    accountManager.onTransition((account, health) => {
+      void sendOperatorAlert(frameworkRoot,
+        health.status === 'limited'
+          ? `🔄 Account "${account}" hit its weekly limit (resets ${health.limitedUntil}). Fleet failing over.`
+          : `🚫 Account "${account}" auth is broken (${health.lastError}). Fix its token and clear account-health.json.`);
+    });
+    accountManager.loadTokens();
+
     // Create agent manager
-    this.agentManager = new AgentManager(this.instanceId, this.ctxRoot, frameworkRoot, org);
+    this.agentManager = new AgentManager(this.instanceId, this.ctxRoot, frameworkRoot, org, accountManager);
 
     // Start IPC server
     this.ipcServer = new IPCServer(this.agentManager, this.instanceId);

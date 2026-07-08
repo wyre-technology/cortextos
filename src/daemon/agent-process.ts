@@ -11,6 +11,7 @@ import { ensureDir } from '../utils/atomic.js';
 import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
+import { AccountManager } from './account-manager.js';
 
 type LogFn = (msg: string) => void;
 
@@ -69,8 +70,10 @@ export class AgentProcess {
   // daemon should fire the codex-app-server back-online Telegram directly
   // (skipped on handoff restart — the agent sends its own contextual reply).
   private lastSpawnWasHandoff = false;
+  private accountManager: AccountManager | null;
+  private currentAccount: string | null = null;
 
-  constructor(name: string, env: CtxEnv, config: AgentConfig, log?: LogFn) {
+  constructor(name: string, env: CtxEnv, config: AgentConfig, log?: LogFn, accountManager?: AccountManager) {
     this.name = name;
     this.env = env;
     this.config = config;
@@ -83,6 +86,7 @@ export class AgentProcess {
     }
     this.dedup = new MessageDedup();
     this.log = log || ((msg) => console.log(`[${name}] ${msg}`));
+    this.accountManager = accountManager ?? null;
   }
 
   /**
@@ -125,6 +129,25 @@ export class AgentProcess {
     // handleExit, preventing spurious crash recovery on the new agent.
     const myGeneration = ++this.lifecycleGeneration;
 
+    // Multi-account failover: pick the account for this session.
+    if (this.accountManager) {
+      const account = this.accountManager.selectAccount();
+      const token = account ? this.accountManager.getToken(account) : null;
+      if (account && token) {
+        this.currentAccount = account;
+        this.env.oauthToken = token;
+        this.log(`Using account "${account}"`);
+      } else if (this.accountManager.loadConfig().length > 0) {
+        // Accounts are configured but none usable → park (Task 7 fills this in).
+        this.currentAccount = null;
+        this.env.oauthToken = undefined;
+      } else {
+        // Zero accounts configured: legacy behavior, no token injection.
+        this.currentAccount = null;
+        this.env.oauthToken = undefined;
+      }
+    }
+
     // Create PTY — runtime-specific subclass handles binary, args, bootstrap detection
     const logPath = join(this.env.ctxRoot, 'logs', this.name, 'stdout.log');
     ensureDir(join(this.env.ctxRoot, 'logs', this.name));
@@ -134,6 +157,10 @@ export class AgentProcess {
       : this.config.runtime === 'codex-app-server'
         ? new CodexAppServerPTY(this.env, this.config, logPath)
         : new AgentPTY(this.env, this.config, logPath);
+
+    if (this.pty instanceof AgentPTY) {
+      this.pty.onLimitSignal((sig) => this.handleLimitSignal(sig));
+    }
 
     // Issue #330: re-wire the Telegram handle on every start() (session refresh
     // creates a fresh CodexAppServerPTY). Only CodexAppServerPTY uses this — Claude / Hermes
@@ -297,7 +324,7 @@ export class AgentProcess {
    * `start()` will pick up `continue` mode automatically because the
    * conversation directory still has .jsonl files (shouldContinue() is true).
    */
-  async sessionRefresh(): Promise<void> {
+  async sessionRefresh(reason = 'session-time-cap rollover'): Promise<void> {
     this.log('Session refresh (--continue restart)');
     // Write .session-refresh marker so the SessionEnd crash-alert hook
     // (src/hooks/hook-crash-alert.ts) classifies the imminent PTY exit as a
@@ -305,12 +332,13 @@ export class AgentProcess {
     // quiet-suppression set + message switch were all wired for this type,
     // but no writer existed — every --continue rollover at the session-time
     // cap surfaced as a false-positive 'crash' on chief/analyst + the
-    // crashes.log file.
+    // crashes.log file. The hook keys on the marker's existence, not its
+    // content, so any reason string (session rollover, account failover) stays quiet.
     try {
       const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
       writeFileSync(
         join(paths.stateDir, '.session-refresh'),
-        'session-time-cap rollover\n',
+        `${reason}\n`,
         'utf-8',
       );
     } catch (err) {
@@ -319,6 +347,32 @@ export class AgentProcess {
     await this.stop();
     await this.start();
     this.log('Session refreshed');
+  }
+
+  private handleLimitSignal(sig: import('./limit-detector.js').LimitSignal): void {
+    if (!this.accountManager || !this.currentAccount) return;
+    if (sig.kind === 'weekly-limit') {
+      this.log(`Weekly limit detected on account "${this.currentAccount}" (resets ${sig.resetsAt?.toISOString() ?? 'unknown'})`);
+      this.accountManager.markLimited(this.currentAccount, sig.resetsAt);
+    } else {
+      this.log(`Auth failure detected on account "${this.currentAccount}"`);
+      this.accountManager.markInvalid(this.currentAccount, 'Not logged in banner in session output');
+    }
+    // The AgentManager transition fan-out refreshes every affected agent,
+    // including this one — no self-refresh here (avoids double refresh).
+  }
+
+  getCurrentAccount(): string | null {
+    return this.currentAccount;
+  }
+
+  /** Session refresh with random jitter — avoids thundering-herd 429s when a whole fleet fails over. */
+  scheduleFailoverRefresh(maxJitterMs = 120_000): void {
+    const jitter = Math.floor(Math.random() * maxJitterMs);
+    this.log(`Failover refresh scheduled in ${Math.round(jitter / 1000)}s`);
+    setTimeout(() => {
+      this.sessionRefresh('account failover').catch((err) => this.log(`Failover refresh failed: ${err}`));
+    }, jitter);
   }
 
   /**

@@ -3,6 +3,7 @@ import { join, relative } from 'path';
 import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage } from '../types/index.js';
 import { AgentProcess } from './agent-process.js';
 import { WorkerProcess } from './worker-process.js';
+import { AccountManager } from './account-manager.js';
 import { FastChecker } from './fast-checker.js';
 import { CronScheduler } from './cron-scheduler.js';
 import { migrateCronsForAgent } from './cron-migration.js';
@@ -41,6 +42,7 @@ export class AgentManager {
   private ctxRoot: string;
   private frameworkRoot: string;
   private org: string;
+  private accountManager: AccountManager;
 
   // Set true at construction time if any agent in state/ has a stale
   // .daemon-crashed marker, meaning the previous daemon process died
@@ -51,7 +53,11 @@ export class AgentManager {
   // finishes so the next clean restart starts from a known-good baseline.
   private daemonJustCrashed: boolean = false;
 
-  constructor(instanceId: string, ctxRoot: string, frameworkRoot: string, org: string) {
+  // accountManager is optional so pre-existing call sites (tests, tools) that
+  // construct AgentManager without failover keep working; production boot
+  // (src/daemon/index.ts) always threads in the real fleet-wide instance so
+  // its onAlert/onTransition operator wiring shares state with this fan-out.
+  constructor(instanceId: string, ctxRoot: string, frameworkRoot: string, org: string, accountManager: AccountManager = new AccountManager({})) {
     this.instanceId = instanceId;
     this.ctxRoot = ctxRoot;
     this.frameworkRoot = frameworkRoot;
@@ -60,6 +66,15 @@ export class AgentManager {
     if (this.daemonJustCrashed) {
       console.log('[agent-manager] Detected .daemon-crashed marker(s) — previous daemon exited abnormally. Will quiet BUG-011 alarm for this startup cycle.');
     }
+    this.accountManager = accountManager;
+    this.accountManager.onTransition((account, health) => {
+      if (health.status !== 'limited' && health.status !== 'invalid') return;
+      for (const { process: agent } of this.agents.values()) {
+        if (agent.getCurrentAccount() === account) {
+          agent.scheduleFailoverRefresh();
+        }
+      }
+    });
   }
 
   /**
@@ -439,7 +454,7 @@ export class AgentManager {
       }
     }
 
-    const agentProcess = new AgentProcess(name, env, config, log);
+    const agentProcess = new AgentProcess(name, env, config, log, this.accountManager);
     // Issue #330: pass the Telegram handle into AgentProcess so CodexAppServerPTY
     // can emit sendChatAction directly from the JSONL stream. Has no effect for
     // claude-code / hermes runtimes — those still use fast-checker.
