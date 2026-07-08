@@ -5,7 +5,7 @@ import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import { ensureDir } from '../utils/atomic.js';
-import { getOperatorChatCreds, sendOperatorAlert } from './operator-alert.js';
+import { getOperatorChatCreds, sendOperatorAlert, formatAccountTransitionAlert } from './operator-alert.js';
 import { AccountManager } from './account-manager.js';
 
 // Each fast-checker registers a process-level SIGUSR1 handler (see
@@ -226,10 +226,7 @@ class Daemon {
     const accountManager = new AccountManager({});
     accountManager.onAlert((msg) => { void sendOperatorAlert(frameworkRoot, `⚠️ [accounts] ${msg}`); });
     accountManager.onTransition((account, health) => {
-      void sendOperatorAlert(frameworkRoot,
-        health.status === 'limited'
-          ? `🔄 Account "${account}" hit its weekly limit (resets ${health.limitedUntil}). Fleet failing over.`
-          : `🚫 Account "${account}" auth is broken (${health.lastError}). Fix its token and clear account-health.json.`);
+      void sendOperatorAlert(frameworkRoot, formatAccountTransitionAlert(account, health));
     });
     accountManager.loadTokens();
 

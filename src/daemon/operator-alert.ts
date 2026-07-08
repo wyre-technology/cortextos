@@ -1,6 +1,26 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { TelegramAPI } from '../telegram/api.js';
+import type { AccountHealth } from './account-manager.js';
+
+/**
+ * Build the operator alert for an account health transition (limited/invalid).
+ * Pure + exported so the wording is unit-testable without booting the daemon.
+ *
+ * M2: when the reset time could not be parsed off the banner, markLimited()
+ * records `... unparseable ...` in lastError and falls back to a 6h cooldown.
+ * Surface that honestly so the operator knows the "resets" timestamp is a
+ * synthetic cooldown, not a real Anthropic reset time.
+ */
+export function formatAccountTransitionAlert(account: string, health: AccountHealth): string {
+  if (health.status === 'limited') {
+    const unparseable = health.lastError?.includes('unparseable')
+      ? ' (reset time unparseable — 6h cooldown)'
+      : '';
+    return `🔄 Account "${account}" hit its weekly limit (resets ${health.limitedUntil}). Fleet failing over.${unparseable}`;
+  }
+  return `🚫 Account "${account}" auth is broken (${health.lastError}). Fix its token and clear account-health.json.`;
+}
 
 export function getOperatorChatCreds(frameworkRoot: string): { chatId: string; botToken: string } | null {
   // Priority 1: explicit operator env (recommended for production).
