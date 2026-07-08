@@ -65,6 +65,15 @@ describe('AccountManager health transitions', () => {
     expect(m.readHealth()).toEqual({});
     expect(alerts.length).toBe(1);
   });
+  it('valid-JSON-but-non-object health file fails open and alerts', () => {
+    writeFileSync(join(dir, 'account-health.json'), 'null');
+    const m = mk();
+    const alerts: string[] = [];
+    m.onAlert((msg) => alerts.push(msg));
+    expect(m.readHealth()).toEqual({});
+    expect(alerts.length).toBe(1);
+    expect(m.markLimited('wyretech', null)).toBe(true); // downstream no longer crashes
+  });
   it('earliestReset returns the soonest limitedUntil', () => {
     const m = mk();
     m.markLimited('wyretech', new Date('2026-07-12T02:00:00Z'));

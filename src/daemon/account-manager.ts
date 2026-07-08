@@ -60,7 +60,12 @@ export class AccountManager {
     const file = this.healthFile();
     if (!existsSync(file)) return {};
     try {
-      return JSON.parse(readFileSync(file, 'utf-8')) as HealthMap;
+      const parsed = JSON.parse(readFileSync(file, 'utf-8'));
+      // Validate result is a plain object (not null, not array, not primitive)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Invalid health file: not a plain object');
+      }
+      return parsed as HealthMap;
     } catch {
       // Fail open: all accounts treated healthy. Rewrite so we only alert once.
       this.writeHealth({});
