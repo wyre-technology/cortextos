@@ -35,10 +35,18 @@ export function parseResetTime(text: string, now: Date): Date | null {
 }
 
 const TAIL_CHARS = 2000;
+// Once the weekly-limit phrase is seen but the reset clause won't parse, keep
+// waiting for up to this many additional fed characters (tracked independently
+// of the sliding tail, since the phrase itself can scroll out of the tail
+// before the reset clause ever arrives) before giving up and firing with
+// resetsAt: null so downstream can fall back to its cooldown.
+const WEEKLY_PENDING_LIMIT = 4000;
 
 export class LimitDetector {
   private tail = '';
   private fired = new Set<LimitSignal['kind']>();
+  private weeklyPending = false;
+  private weeklyPendingChars = 0;
 
   constructor(private nowFn: Date | (() => Date) = () => new Date()) {}
 
@@ -49,15 +57,35 @@ export class LimitDetector {
   reset(): void {
     this.tail = '';
     this.fired.clear();
+    this.weeklyPending = false;
+    this.weeklyPendingChars = 0;
   }
 
   feed(chunk: string): LimitSignal | null {
-    this.tail = (this.tail + stripAnsi(chunk)).slice(-TAIL_CHARS);
-    if (!this.fired.has('weekly-limit') && WEEKLY_RE.test(this.tail)) {
-      const resetsAt = parseResetTime(this.tail, this.now());
-      if (resetsAt !== null) {
-        this.fired.add('weekly-limit');
-        return { kind: 'weekly-limit', resetsAt };
+    const clean = stripAnsi(chunk);
+    this.tail = (this.tail + clean).slice(-TAIL_CHARS);
+
+    if (!this.fired.has('weekly-limit')) {
+      const sawPhrase = WEEKLY_RE.test(this.tail);
+      if (sawPhrase && !this.weeklyPending) {
+        this.weeklyPending = true;
+        this.weeklyPendingChars = 0;
+      }
+      if (sawPhrase || this.weeklyPending) {
+        const resetsAt = parseResetTime(this.tail, this.now());
+        if (resetsAt !== null) {
+          this.fired.add('weekly-limit');
+          this.weeklyPending = false;
+          this.weeklyPendingChars = 0;
+          return { kind: 'weekly-limit', resetsAt };
+        }
+        this.weeklyPendingChars += clean.length;
+        if (this.weeklyPendingChars >= WEEKLY_PENDING_LIMIT) {
+          this.fired.add('weekly-limit');
+          this.weeklyPending = false;
+          this.weeklyPendingChars = 0;
+          return { kind: 'weekly-limit', resetsAt: null };
+        }
       }
     }
     if (!this.fired.has('not-logged-in') && NOT_LOGGED_IN_RE.test(this.tail)) {
