@@ -86,13 +86,27 @@ export class AccountManager {
   private transition(account: string, next: AccountHealth): boolean {
     const map = this.readHealth();
     const prev = map[account];
-    if (prev && prev.status === next.status) return false; // debounce
+    if (prev && prev.status === next.status && !this.isSpentLimit(prev)) {
+      return false; // debounce: same live status, no new information
+    }
     map[account] = next;
     this.writeHealth(map);
     for (const cb of this.transitionCbs) {
       try { cb(account, next); } catch (err) { this.log(`transition callback failed: ${err}`); }
     }
     return true;
+  }
+
+  /**
+   * C1: a `limited` entry whose limitedUntil has already passed is SPENT.
+   * Nothing writes `healthy` back on drain-back, so a stale expired entry
+   * lingers on the shared file; debouncing the next real limit against it
+   * swallows the transition (no fan-out, no alert) and the fleet dead-loops
+   * on a dead account. A spent entry carries no live information, so a fresh
+   * write over it must be allowed through with its callbacks.
+   */
+  private isSpentLimit(h: AccountHealth): boolean {
+    return h.status === 'limited' && !!h.limitedUntil && new Date(h.limitedUntil).getTime() <= Date.now();
   }
 
   markLimited(account: string, until: Date | null): boolean {
@@ -129,16 +143,24 @@ export class AccountManager {
    */
   selectAccount(now: Date = new Date()): string | null {
     const health = this.readHealth();
+    // C2: a healthy account with no loaded token is as unusable as a limited
+    // one — start() would park on it AND, worse, the old return-non-null path
+    // wiped the park-alert dedup on every spawn, storming ~18 park alerts per
+    // cycle. Skip tokenless accounts here so selection matches reality.
+    // Carve-out: when NO tokens are loaded at all (empty map — tests, zero-
+    // config, legacy single-credential installs), skip the token check so
+    // pure-health selection still stands.
+    const enforceTokens = Object.keys(this.tokens).length > 0;
     for (const name of this.loadConfig()) {
       if (name.startsWith('_')) continue;
       const h = health[name];
-      const usable =
+      const healthUsable =
         !h || h.status === 'healthy' ||
         (h.status === 'limited' && !!h.limitedUntil && new Date(h.limitedUntil) <= now);
-      if (usable) {
-        this.clearParkAlert();
-        return name;
-      }
+      if (!healthUsable) continue;
+      if (enforceTokens && this.getToken(name) === null) continue;
+      this.clearParkAlert();
+      return name;
     }
     return null;
   }

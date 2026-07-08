@@ -309,6 +309,43 @@ describe('Task 8: end-to-end failover rehearsal (fake tokens, real AccountManage
   });
 });
 
+describe('C3: second daemon self-schedules failover on a debounced limit', () => {
+  it('self-schedules when markLimited returns false (lost the cross-daemon transition race)', () => {
+    const { sharedDir, accountManager } = makeFleetFixture();
+    // Daemon A already wrote primary=limited to the SHARED health file.
+    const daemonA = new AccountManager({ sharedDir });
+    daemonA.markLimited('primary', new Date(Date.now() + 3_600_000));
+
+    // This agent runs under daemon B (a different AccountManager over the same
+    // shared file). Its markLimited() will debounce (return false) because the
+    // live limited entry is already on disk — so the in-process onTransition
+    // fan-out never fires here and this agent would otherwise be stranded.
+    const ap = makeAgentProcess('ivan', accountManager);
+    forceCurrentAccount(ap, 'primary');
+    const scheduleSpy = vi
+      .spyOn(ap, 'scheduleFailoverRefresh')
+      .mockImplementation(() => {});
+
+    fireLimitSignal(ap, { kind: 'weekly-limit', resetsAt: new Date(Date.now() + 3_600_000) });
+
+    expect(scheduleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT self-schedule when it won the transition (true) — the fan-out covers it', () => {
+    const { accountManager } = makeFleetFixture();
+    const ap = makeAgentProcess('jane', accountManager);
+    forceCurrentAccount(ap, 'primary');
+    const scheduleSpy = vi
+      .spyOn(ap, 'scheduleFailoverRefresh')
+      .mockImplementation(() => {});
+
+    // Fresh account (no prior limited entry) -> markLimited returns true.
+    fireLimitSignal(ap, { kind: 'weekly-limit', resetsAt: new Date(Date.now() + 3_600_000) });
+
+    expect(scheduleSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('Task 8: both accounts limited -> fleet parks with exactly one operator alert', () => {
   beforeEach(() => {
     // sendOperatorAlert is a single module-level mock shared across this

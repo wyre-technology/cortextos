@@ -386,15 +386,26 @@ export class AgentProcess {
 
   private handleLimitSignal(sig: import('./limit-detector.js').LimitSignal): void {
     if (!this.accountManager || !this.currentAccount) return;
+    let transitioned: boolean;
     if (sig.kind === 'weekly-limit') {
       this.log(`Weekly limit detected on account "${this.currentAccount}" (resets ${sig.resetsAt?.toISOString() ?? 'unknown'})`);
-      this.accountManager.markLimited(this.currentAccount, sig.resetsAt);
+      transitioned = this.accountManager.markLimited(this.currentAccount, sig.resetsAt);
     } else {
       this.log(`Auth failure detected on account "${this.currentAccount}"`);
-      this.accountManager.markInvalid(this.currentAccount, 'Not logged in banner in session output');
+      transitioned = this.accountManager.markInvalid(this.currentAccount, 'Not logged in banner in session output');
     }
-    // The AgentManager transition fan-out refreshes every affected agent,
-    // including this one — no self-refresh here (avoids double refresh).
+    // C3: markLimited/markInvalid returns false when THIS daemon lost the
+    // cross-daemon transition race (the other daemon already wrote the same
+    // status to the shared file) or the account was already marked. In that
+    // case the in-process onTransition fan-out never fires HERE, so this agent
+    // — still running on the now-dead account — would never refresh and would
+    // stay stranded for the full cooldown (~71h observed). Self-schedule the
+    // refresh directly; the existing status guard + jitter + clear-before-arm
+    // make this safe. When TRUE, the fan-out already reaches this agent — do
+    // NOT double-schedule in the same daemon.
+    if (!transitioned) {
+      this.scheduleFailoverRefresh();
+    }
   }
 
   getCurrentAccount(): string | null {

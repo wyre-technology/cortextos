@@ -80,6 +80,27 @@ describe('AccountManager health transitions', () => {
     m.markLimited('personal', new Date('2026-07-10T02:00:00Z'));
     expect(m.earliestReset()?.toISOString()).toBe('2026-07-10T02:00:00.000Z');
   });
+
+  it('C1: an EXPIRED limited entry does not debounce the next limit (doom-loop fix)', () => {
+    const m = mk();
+    // A spent limited entry: reset time already in the past. Nothing writes
+    // `healthy` back on drain-back, so this stale entry lingers on the shared
+    // file. The NEXT real limit must still transition + fire callbacks.
+    m.markLimited('wyretech', new Date(Date.now() - 1000));
+    const seen: string[] = [];
+    m.onTransition((a, h) => seen.push(`${a}:${h.status}:${h.limitedUntil}`));
+    const future = new Date(Date.now() + 3_600_000);
+    expect(m.markLimited('wyretech', future)).toBe(true); // NOT debounced
+    expect(seen).toEqual([`wyretech:limited:${future.toISOString()}`]);
+    expect(m.readHealth().wyretech.limitedUntil).toBe(future.toISOString());
+  });
+
+  it('C1: an UNEXPIRED limited entry still debounces (no double fan-out)', () => {
+    const m = mk();
+    const future = new Date(Date.now() + 3_600_000);
+    expect(m.markLimited('wyretech', future)).toBe(true);
+    expect(m.markLimited('wyretech', future)).toBe(false); // still debounced while live
+  });
 });
 
 describe('selectAccount', () => {
@@ -114,6 +135,68 @@ describe('selectAccount', () => {
   it('returns null with zero accounts configured', () => {
     writeFileSync(join(dir, 'accounts.json'), '[]');
     expect(mk().selectAccount(NOW)).toBeNull();
+  });
+});
+
+describe('selectAccount token awareness (C2)', () => {
+  const NOW = new Date('2026-07-08T00:00:00Z');
+
+  it('with zero tokens loaded, the token check is skipped (pure-health carve-out)', () => {
+    // No loadTokens() -> tokens map empty -> legacy pure-health behavior.
+    writeFileSync(join(dir, 'accounts.json'), '["a","b"]');
+    expect(mk().selectAccount(NOW)).toBe('a');
+  });
+
+  it('(a) skips a healthy-but-tokenless account and returns the next tokened one', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["a","b","c","d"]');
+    const m = mk();
+    m.loadTokens((n) => (n.endsWith('_A') ? null : `tok-${n}`)); // only 'a' has no token
+    expect(m.selectAccount(NOW)).toBe('b');
+  });
+
+  it('(b) returns null when every usable account is tokenless (token map non-empty)', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["valid","invalid"]');
+    const m = mk();
+    // Exactly one token loaded, and it belongs to the invalid-status account —
+    // so enforcement is ON but the only healthy account ('valid') has no token.
+    m.loadTokens((n) => (n.endsWith('_INVALID') ? 'tok-invalid' : null));
+    m.markInvalid('invalid', 'bad token');
+    expect(m.selectAccount(NOW)).toBeNull();
+  });
+
+  it('(c) tokenless-first + rest limited parks with exactly one alert across two daemons (no storm)', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["a","b","c"]');
+    const future = new Date(Date.now() + 3_600_000);
+    const mkLoaded = () => {
+      const m = new AccountManager({ sharedDir: dir });
+      m.loadTokens((n) => (n.endsWith('_B') || n.endsWith('_C') ? `tok-${n}` : null)); // 'a' tokenless
+      return m;
+    };
+    const d1 = mkLoaded();
+    d1.markLimited('b', future);
+    d1.markLimited('c', future);
+    const d2 = mkLoaded();
+
+    // Mirror AgentProcess.start()'s claude selection block: select, then verify
+    // the picked account actually has a token — else the agent parks.
+    const simulateStart = (m: AccountManager): 'ran' | 'parked' => {
+      const acct = m.selectAccount(NOW);
+      const tok = acct ? m.getToken(acct) : null;
+      return acct && tok ? 'ran' : 'parked';
+    };
+
+    // 'a' is healthy but tokenless; b & c are limited -> no usable account.
+    expect(simulateStart(d1)).toBe('parked');
+    expect(simulateStart(d2)).toBe('parked');
+
+    // ~18 agents split across the two daemons race to park. Before C2,
+    // selectAccount returned the tokenless 'a' (non-null) and cleared the park
+    // dedup flag on every call -> an alert per agent. Now it returns null and
+    // the shared-file dedup holds: exactly one alert.
+    let trueCount = 0;
+    for (let i = 0; i < 9; i++) if (simulateStart(d1) === 'parked' && d1.shouldSendParkAlert()) trueCount++;
+    for (let i = 0; i < 9; i++) if (simulateStart(d2) === 'parked' && d2.shouldSendParkAlert()) trueCount++;
+    expect(trueCount).toBe(1);
   });
 });
 
