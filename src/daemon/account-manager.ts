@@ -113,4 +113,20 @@ export class AccountManager {
       .map((h) => new Date(h.limitedUntil!).getTime());
     return times.length ? new Date(Math.min(...times)) : null;
   }
+
+  /**
+   * Pick the account the next session spawn should use.
+   * Policy: strict preference order; a limited account becomes eligible
+   * again the moment its limitedUntil passes; invalid accounts never
+   * auto-recover (operator must fix the token and clear the entry).
+   */
+  selectAccount(now: Date = new Date()): string | null {
+    const health = this.readHealth();
+    for (const name of this.loadConfig()) {
+      const h = health[name];
+      if (!h || h.status === 'healthy') return name;
+      if (h.status === 'limited' && h.limitedUntil && new Date(h.limitedUntil) <= now) return name;
+    }
+    return null;
+  }
 }
