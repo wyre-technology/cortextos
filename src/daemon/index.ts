@@ -311,6 +311,37 @@ class Daemon {
       console.log('[daemon] SIGUSR2 crash trigger ENABLED (debug mode)');
     }
 
+    // Debug-only: SIGUSR1 pushes a fabricated Claude Code weekly-limit
+    // banner through the first running claude-code agent's live PTY
+    // limit-detector path (AgentProcess.injectDebugLimitBanner()), driving
+    // an actual account failover (health transition -> jittered refresh ->
+    // next-selection drain) for end-to-end rehearsal without burning a real
+    // weekly limit. Off in production unless CTX_DEBUG_FAKE_LIMIT_BANNER=1
+    // is explicitly set — mirrors CTX_DEBUG_ALLOW_CRASH_TRIGGER's SIGUSR2
+    // hook above; SIGUSR2 is already claimed by the crash trigger, so this
+    // debug hook uses SIGUSR1 instead.
+    //
+    // NOTE: SIGUSR1 is also the signal each agent's FastChecker listens on
+    // for wake-on-signal (see fast-checker.ts). Node allows multiple
+    // listeners per signal, so enabling this flag means `kill -SIGUSR1`
+    // both wakes every fast checker AND fires this debug injector. That's
+    // expected and harmless in a scratch/test instance; this flag must
+    // never be set in production.
+    if (process.env.CTX_DEBUG_FAKE_LIMIT_BANNER === '1') {
+      process.on('SIGUSR1', () => {
+        console.error('[daemon] SIGUSR1 received — injecting debug limit banner (CTX_DEBUG_FAKE_LIMIT_BANNER=1)');
+        const result = this.agentManager?.debugInjectLimitBanner();
+        if (!result) {
+          console.error('[daemon] Debug limit banner injection skipped: agentManager not ready');
+        } else if (result.ok) {
+          console.log(`[daemon] Debug limit banner injected into agent "${result.agent}"`);
+        } else {
+          console.error(`[daemon] Debug limit banner injection failed: ${result.reason}`);
+        }
+      });
+      console.log('[daemon] SIGUSR1 debug limit-banner trigger ENABLED (debug mode)');
+    }
+
     // Fallback cleanup on exit (belt-and-suspenders for Windows)
     process.on('exit', () => {
       if (this.ipcServer) {

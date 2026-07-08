@@ -554,3 +554,74 @@ describe('AgentManager.reloadCrons - silent-success bug fix (iter 7)', () => {
     expect((am as any).cronSchedulers.has('ghost')).toBe(false);
   });
 });
+
+describe('AgentManager.debugInjectLimitBanner - Task 8', () => {
+  // debugInjectLimitBanner() is the routing half of the CTX_DEBUG_FAKE_LIMIT_BANNER
+  // debug hook (daemon/index.ts's SIGUSR1 handler calls this to find its
+  // target before calling AgentProcess.injectDebugLimitBanner()). It must:
+  //   - only consider agents whose status is 'running'
+  //   - only consider claude-code runtime (undefined or 'claude-code') —
+  //     codex-app-server / hermes never emit the Claude Code limit banner
+  //   - pick the FIRST qualifying agent in registry (insertion) order
+
+  const fakeEntry = (status: string, runtime?: string) => {
+    const injectDebugLimitBanner = vi.fn();
+    return {
+      injectDebugLimitBanner,
+      entry: {
+        process: {
+          getConfig: () => ({ runtime }),
+          getStatus: () => ({ status }),
+          injectDebugLimitBanner,
+        } as any,
+        checker: {} as any,
+      },
+    };
+  };
+
+  it('skips stopped and non-claude-runtime agents, targeting the first running claude-code agent', () => {
+    const am = new AgentManager('test-instance', '/tmp/nonexistent-ctx', '/tmp/nonexistent-fw', 'acme');
+
+    const stopped = fakeEntry('stopped', undefined);
+    const codexRunning = fakeEntry('running', 'codex-app-server');
+    const hermesRunning = fakeEntry('running', 'hermes');
+    const claudeRunningDefault = fakeEntry('running', undefined); // runtime unset == claude-code
+    const claudeRunningExplicit = fakeEntry('running', 'claude-code');
+
+    const agents = (am as any).agents as Map<string, unknown>;
+    agents.set('stopped-agent', stopped.entry);
+    agents.set('codex-agent', codexRunning.entry);
+    agents.set('hermes-agent', hermesRunning.entry);
+    agents.set('claude-agent', claudeRunningDefault.entry);
+    agents.set('claude-agent-2', claudeRunningExplicit.entry);
+
+    const result = am.debugInjectLimitBanner();
+
+    expect(result).toEqual({ ok: true, agent: 'claude-agent' });
+    expect(claudeRunningDefault.injectDebugLimitBanner).toHaveBeenCalledTimes(1);
+    expect(claudeRunningExplicit.injectDebugLimitBanner).not.toHaveBeenCalled();
+    expect(codexRunning.injectDebugLimitBanner).not.toHaveBeenCalled();
+    expect(hermesRunning.injectDebugLimitBanner).not.toHaveBeenCalled();
+    expect(stopped.injectDebugLimitBanner).not.toHaveBeenCalled();
+  });
+
+  it('reports failure when no running claude-code-runtime agent exists', () => {
+    const am = new AgentManager('test-instance', '/tmp/nonexistent-ctx', '/tmp/nonexistent-fw', 'acme');
+
+    const stopped = fakeEntry('stopped', undefined);
+    const codexRunning = fakeEntry('running', 'codex-app-server');
+    const agents = (am as any).agents as Map<string, unknown>;
+    agents.set('stopped-agent', stopped.entry);
+    agents.set('codex-agent', codexRunning.entry);
+
+    const result = am.debugInjectLimitBanner();
+
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('no running claude-code-runtime agent') });
+  });
+
+  it('reports failure when the registry is empty', () => {
+    const am = new AgentManager('test-instance', '/tmp/nonexistent-ctx', '/tmp/nonexistent-fw', 'acme');
+    const result = am.debugInjectLimitBanner();
+    expect(result.ok).toBe(false);
+  });
+});

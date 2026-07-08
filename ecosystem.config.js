@@ -38,6 +38,18 @@ module.exports = {
         // then watch the operator chat for "🚨 CRITICAL: daemon crash-looping"
         // after 3 crashes in 15 min.
         CTX_DEBUG_ALLOW_CRASH_TRIGGER: '0',
+        // Debug-only: set to '1' to enable SIGUSR1 signal → fabricated
+        // Claude Code weekly-limit banner injected into the first running
+        // claude-code agent, rehearsing a full account failover (health
+        // transition, jittered refresh, next-selection drain to the backup
+        // account) without waiting for or burning a real weekly limit.
+        // Leave '0' in production; enable only in a scratch/test instance.
+        // `kill -SIGUSR1 $(pm2 pid cortextos-daemon)` then watch the agent
+        // log for "Failover refresh scheduled in Ns" and
+        // account-health.json for the primary account flipping to 'limited'.
+        // NOTE: SIGUSR1 is also used by each agent's FastChecker for
+        // wake-on-signal — enabling this flag means the signal does both.
+        CTX_DEBUG_FAKE_LIMIT_BANNER: '0',
       },
       // max_restarts + restart_delay is the ultimate crash-storm circuit
       // breaker. If the daemon dies 10 times faster than 5s apart, PM2

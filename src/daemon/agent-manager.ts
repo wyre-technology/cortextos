@@ -1106,6 +1106,32 @@ export class AgentManager {
   }
 
   /**
+   * DEBUG ONLY (CTX_DEBUG_FAKE_LIMIT_BANNER=1): find the first running
+   * claude-code-runtime agent in registry order and drive its
+   * injectDebugLimitBanner() to rehearse an account failover end-to-end.
+   * Called from daemon/index.ts's SIGUSR1 handler, which already gates on
+   * the env var — this method has no gate of its own beyond that (and
+   * AgentProcess.injectDebugLimitBanner() re-checks the env var itself as
+   * defense in depth for any other caller).
+   *
+   * codex-app-server and hermes agents never see the Claude Code weekly-limit
+   * banner text (it's specific to that CLI's own output), so both are
+   * skipped even if running — only 'claude-code' (or the default/unset
+   * runtime, which means claude-code per AgentConfig.runtime's doc) qualify.
+   */
+  debugInjectLimitBanner(): { ok: true; agent: string } | { ok: false; reason: string } {
+    for (const [name, entry] of this.agents) {
+      const runtime = entry.process.getConfig().runtime;
+      const isClaudeRuntime = runtime === undefined || runtime === 'claude-code';
+      if (isClaudeRuntime && entry.process.getStatus().status === 'running') {
+        entry.process.injectDebugLimitBanner();
+        return { ok: true, agent: name };
+      }
+    }
+    return { ok: false, reason: 'no running claude-code-runtime agent found in registry' };
+  }
+
+  /**
    * Get all agent names.
    */
   getAgentNames(): string[] {

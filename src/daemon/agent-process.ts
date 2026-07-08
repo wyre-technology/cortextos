@@ -401,6 +401,24 @@ export class AgentProcess {
     return this.currentAccount;
   }
 
+  /**
+   * DEBUG ONLY (CTX_DEBUG_FAKE_LIMIT_BANNER=1): push a fabricated weekly-limit
+   * banner through the same handleLimitSignal() path the live PTY detector
+   * uses, so an operator can rehearse a full account failover (health
+   * transition -> jittered refresh -> next-selection drain) without waiting
+   * for — or burning — a real weekly limit. Same pattern as
+   * CTX_DEBUG_ALLOW_CRASH_TRIGGER's SIGUSR2 hook in daemon/index.ts: gated on
+   * the env var and a no-op otherwise, so it is inert unless explicitly
+   * enabled by an operator or test harness.
+   */
+  injectDebugLimitBanner(): void {
+    if (process.env.CTX_DEBUG_FAKE_LIMIT_BANNER !== '1') {
+      this.log('injectDebugLimitBanner ignored (CTX_DEBUG_FAKE_LIMIT_BANNER != 1)');
+      return;
+    }
+    this.handleLimitSignal({ kind: 'weekly-limit', resetsAt: new Date(Date.now() + 60_000) });
+  }
+
   /** Session refresh with random jitter — avoids thundering-herd 429s when a whole fleet fails over. */
   scheduleFailoverRefresh(maxJitterMs = 120_000): void {
     // Re-schedule safety: clear any previously pending failover timer before
