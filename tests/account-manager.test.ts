@@ -263,4 +263,13 @@ describe('park alert dedup', () => {
     m.clearParkAlert();
     expect(m.shouldSendParkAlert()).toBe(true);
   });
+
+  it('I1: clearParkAlert() returns true only when it actually cleared a set flag', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech"]');
+    const m = mk();
+    expect(m.clearParkAlert()).toBe(false);   // nothing set yet
+    expect(m.shouldSendParkAlert()).toBe(true);
+    expect(m.clearParkAlert()).toBe(true);     // cleared the flag we just set
+    expect(m.clearParkAlert()).toBe(false);    // already clear
+  });
 });

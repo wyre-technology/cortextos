@@ -17,6 +17,37 @@ vi.mock('../src/daemon/operator-alert.js', () => ({
 }));
 import { sendOperatorAlert } from '../src/daemon/operator-alert.js';
 
+// The I1 (resume-alert) and I2 (non-claude runtime) tests below drive
+// AgentProcess.start() PAST the account-selection block into PTY spawn — the
+// pre-existing park tests all return before creating a PTY, so these fakes
+// only engage for the new success/legacy paths. No native node-pty, no real
+// process. A real class (not a returning-function) keeps `instanceof AgentPTY`
+// true so start()'s onLimitSignal wiring still runs.
+vi.mock('../src/pty/agent-pty.js', () => ({
+  AgentPTY: class {
+    onLimitSignal(): void {}
+    onExit(): void {}
+    async spawn(): Promise<void> {}
+    getPid(): number { return 4242; }
+    getOutputBuffer(): { isBootstrapped: () => boolean } { return { isBootstrapped: () => true }; }
+    isAlive(): boolean { return true; }
+    kill(): void {}
+    write(): void {}
+  },
+}));
+vi.mock('../src/pty/codex-app-server-pty.js', () => ({
+  CodexAppServerPTY: class {
+    onExit(): void {}
+    async spawn(): Promise<void> {}
+    getPid(): number { return 4243; }
+    getOutputBuffer(): { isBootstrapped: () => boolean } { return { isBootstrapped: () => true }; }
+    isAlive(): boolean { return true; }
+    kill(): void {}
+    write(): void {}
+    setTelegramHandle(): void {}
+  },
+}));
+
 // The full AgentProcess lifecycle needs a PTY; these tests cover the pure
 // decision helpers. The end-to-end path is Task 8's integration test.
 describe('failover decision flow', () => {
@@ -186,6 +217,24 @@ function makeAgentProcess(
     projectRoot: '/tmp/fw',
   };
   return new AgentProcess(name, mockEnv, {}, log, accountManager);
+}
+
+/** Like makeAgentProcess but with an explicit runtime (for the I2 non-claude tests). */
+function makeAgentProcessWithRuntime(
+  name: string,
+  accountManager: AccountManager,
+  runtime: string,
+): AgentProcess {
+  const mockEnv: CtxEnv = {
+    instanceId: 'test',
+    ctxRoot: mkdtempSync(join(tmpdir(), 'i2-ctxroot-')),
+    frameworkRoot: mkdtempSync(join(tmpdir(), 'i2-fw-')),
+    agentName: name,
+    agentDir: mkdtempSync(join(tmpdir(), 'i2-agentdir-')),
+    org: 'acme',
+    projectRoot: '/tmp/fw',
+  };
+  return new AgentProcess(name, mockEnv, { runtime } as never, () => {}, accountManager);
 }
 
 /** Reach the private handleLimitSignal() the same way the live PTY detector calls it. */
@@ -383,6 +432,8 @@ describe('Task 8: both accounts limited -> fleet parks with exactly one operator
     // of the two start() calls above should have sent the alert.
     expect(sendOperatorAlert).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sendOperatorAlert).mock.calls[0][1]).toContain('fleet parked');
+    // M3: accurate mixed-state copy (not the old "All Claude accounts are limited").
+    expect(vi.mocked(sendOperatorAlert).mock.calls[0][1]).toContain('No usable Claude account (limited/invalid/no token)');
 
     // Resume timer armed on both: no known reset for invalid-only accounts
     // -> fixed 30min fallback delay (see start()'s park branch). Advancing
@@ -394,5 +445,86 @@ describe('Task 8: both accounts limited -> fleet parks with exactly one operator
 
     expect(startSpy1).toHaveBeenCalledTimes(1);
     expect(startSpy2).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('I1: fleet-resume alert when a park lifts', () => {
+  beforeEach(() => {
+    vi.mocked(sendOperatorAlert).mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(sendOperatorAlert).mockClear();
+  });
+
+  it('sends exactly one resume alert when the park lifts, deduped across two racing starts', async () => {
+    vi.useFakeTimers();
+
+    const { accountManager } = makeFleetFixture(); // primary/backup healthy + tokened
+    // Simulate an in-progress park episode: the dedup flag is set on the
+    // shared file (as a prior park alert would have set it).
+    expect(accountManager.shouldSendParkAlert()).toBe(true);
+
+    const ap1 = makeAgentProcess('gwen', accountManager);
+    const ap2 = makeAgentProcess('hank', accountManager);
+
+    // Usable account available -> start()'s success path lifts the park and,
+    // if IT cleared the flag, announces the resume exactly once.
+    await ap1.start();
+    await ap2.start();
+
+    expect(ap1.getStatus().status).toBe('running');
+    const resumeCalls = vi
+      .mocked(sendOperatorAlert)
+      .mock.calls.filter((c) => /park lifted/.test(String(c[1])));
+    expect(resumeCalls.length).toBe(1);
+    expect(String(resumeCalls[0][1])).toContain('Fleet resumed on account "primary"');
+  });
+});
+
+describe('M1: zero-accounts legacy fallback', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('logs the legacy-credential warning when accounts.json is empty (claude runtime)', async () => {
+    vi.useFakeTimers();
+
+    const sharedDir = mkdtempSync(join(tmpdir(), 'm1-shared-'));
+    writeFileSync(join(sharedDir, 'accounts.json'), '[]');
+    const accountManager = new AccountManager({ sharedDir });
+
+    const logs: string[] = [];
+    const ap = makeAgentProcess('lee', accountManager, (m) => logs.push(m));
+
+    await ap.start();
+
+    expect(logs.some((l) => /No accounts configured — legacy credential behavior/.test(l))).toBe(true);
+    expect(ap.getCurrentAccount()).toBeNull();
+  });
+});
+
+describe('I2: non-claude runtimes skip the account selection/park machinery', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a codex-app-server agent never parks or takes an account, even when all accounts are unusable', async () => {
+    vi.useFakeTimers();
+
+    const { accountManager } = makeFleetFixture();
+    // Both accounts unusable — a CLAUDE agent here would park.
+    accountManager.markInvalid('primary', 'test: forced invalid');
+    accountManager.markInvalid('backup', 'test: forced invalid');
+
+    const ap = makeAgentProcessWithRuntime('kev', accountManager, 'codex-app-server');
+    const selectSpy = vi.spyOn(accountManager, 'selectAccount');
+
+    await ap.start();
+
+    // Legacy path: no selection, no currentAccount, no park.
+    expect(selectSpy).not.toHaveBeenCalled();
+    expect(ap.getCurrentAccount()).toBeNull();
+    expect(ap.getStatus().status).not.toBe('parked');
   });
 });

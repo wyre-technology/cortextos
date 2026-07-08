@@ -625,3 +625,36 @@ describe('AgentManager.debugInjectLimitBanner - Task 8', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe('AccountManager transition fan-out routing (I2)', () => {
+  // The constructor wires accountManager.onTransition to refresh every agent
+  // whose currentAccount matches the transitioned account. Under I2, non-claude
+  // runtimes (codex/hermes) never take a currentAccount — it stays null — so
+  // they must be skipped by this fan-out even when a shared account they were
+  // fanned tokens on goes limited.
+  it('refreshes only agents on the limited account; a codex/null-account agent is skipped', async () => {
+    const { AccountManager } = await import('../../../src/daemon/account-manager.js');
+    const dir = mkdtempSync(join(tmpdir(), 'cortextos-fanout-'));
+    writeFileSync(join(dir, 'accounts.json'), '["acct1"]');
+    const am = new AccountManager({ sharedDir: dir });
+    const mgr = new AgentManager('test', '/tmp/nonexistent-ctx', '/tmp/nonexistent-fw', 'acme', am);
+
+    const claudeRefresh = vi.fn();
+    const codexRefresh = vi.fn();
+    const agents = (mgr as any).agents as Map<string, unknown>;
+    agents.set('claude1', {
+      process: { getCurrentAccount: () => 'acct1', scheduleFailoverRefresh: claudeRefresh },
+      checker: {},
+    });
+    agents.set('codex1', {
+      // Under I2 a codex agent's start() skips selection, so its account is null.
+      process: { getCurrentAccount: () => null, scheduleFailoverRefresh: codexRefresh },
+      checker: {},
+    });
+
+    am.markLimited('acct1', new Date(Date.now() + 3_600_000));
+
+    expect(claudeRefresh).toHaveBeenCalledTimes(1);
+    expect(codexRefresh).not.toHaveBeenCalled();
+  });
+});

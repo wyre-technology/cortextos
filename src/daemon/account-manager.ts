@@ -134,12 +134,12 @@ export class AccountManager {
    * Pick the account the next session spawn should use.
    * Policy: strict preference order; a limited account becomes eligible
    * again the moment its limitedUntil passes; invalid accounts never
-   * auto-recover (operator must fix the token and clear the entry).
+   * auto-recover (operator must fix the token and clear the entry); a
+   * healthy account with no loaded token is skipped (C2).
    *
-   * Selection runs at every spawn, so whenever it finds a usable account we
-   * also clear the park-alert dedup flag here — cheaper than detecting the
-   * exact transition that made an account usable again, and it means the
-   * flag clears on the very first successful un-park.
+   * Pure query — no side effects. The park-alert dedup flag is cleared by
+   * start() on the success path (I1), so the one-time fleet-resume alert can
+   * be threaded off the boolean clearParkAlert() returns.
    */
   selectAccount(now: Date = new Date()): string | null {
     const health = this.readHealth();
@@ -159,7 +159,6 @@ export class AccountManager {
         (h.status === 'limited' && !!h.limitedUntil && new Date(h.limitedUntil) <= now);
       if (!healthUsable) continue;
       if (enforceTokens && this.getToken(name) === null) continue;
-      this.clearParkAlert();
       return name;
     }
     return null;
@@ -180,11 +179,19 @@ export class AccountManager {
     return true;
   }
 
-  clearParkAlert(): void {
+  /**
+   * Clear the park-alert dedup flag. Returns true ONLY when it actually cleared
+   * a set flag — i.e. THIS call is the one that lifted the park. start() threads
+   * that boolean to send the one-time fleet-resume alert (I1), with the same
+   * cross-daemon race tolerance as the park alert (the flag transitions once
+   * per episode, so exactly one racing caller sees true).
+   */
+  clearParkAlert(): boolean {
     const map = this.readHealth() as HealthMap & { _meta?: { parkAlertSentAt?: string } };
-    if (!map._meta?.parkAlertSentAt) return;
+    if (!map._meta?.parkAlertSentAt) return false;
     delete map._meta.parkAlertSentAt;
     this.writeHealth(map);
+    return true;
   }
 
   private defaultFetchSecret(secretName: string): string | null {

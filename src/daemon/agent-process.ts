@@ -138,13 +138,26 @@ export class AgentProcess {
     const myGeneration = ++this.lifecycleGeneration;
 
     // Multi-account failover: pick the account for this session.
-    if (this.accountManager) {
+    // I2: gate the whole selection/park block on the claude-code runtime — the
+    // same discriminator used at PTY construction below (default/undefined or
+    // 'claude-code' => AgentPTY). codex-app-server / hermes never emit the
+    // Claude Code weekly-limit banner and must not get a currentAccount (which
+    // the fan-out would then refresh mid-task) or park. They take the legacy
+    // path: no selection, no token injection, no park.
+    if (this.accountManager && this.isClaudeRuntime()) {
       const account = this.accountManager.selectAccount();
       const token = account ? this.accountManager.getToken(account) : null;
       if (account && token) {
         this.currentAccount = account;
         this.env.oauthToken = token;
         this.log(`Using account "${account}"`);
+        // I1: if THIS selection lifted a park (cleared the shared dedup flag),
+        // announce the fleet resume exactly once. Dedup is inherent — the flag
+        // transitions once per episode, so exactly one racing start() sees true.
+        if (this.accountManager.clearParkAlert()) {
+          void sendOperatorAlert(this.env.frameworkRoot,
+            `▶️ Fleet resumed on account "${account}" — park lifted.`);
+        }
       } else if (this.accountManager.loadConfig().length > 0) {
         // Accounts are configured but none usable → park.
         this.currentAccount = null;
@@ -156,8 +169,10 @@ export class AgentProcess {
           : 30 * 60 * 1000; // no known reset — re-probe in 30 min
         this.log(`All accounts limited/invalid — parked. Retrying at ${new Date(Date.now() + delay).toISOString()}`);
         if (this.accountManager.shouldSendParkAlert()) {
+          // M3: accurate mixed-state copy — a park can be any mix of limited /
+          // invalid / no-token accounts, not only "all limited".
           void sendOperatorAlert(this.env.frameworkRoot,
-            `⏸️ All Claude accounts are limited — fleet parked. Auto-resume ~${resumeAt?.toISOString() ?? 'in 30 min (no reset time known)'}. Inbound messages queue in agent inboxes.`);
+            `⏸️ No usable Claude account (limited/invalid/no token) — fleet parked. Auto-resume ~${resumeAt?.toISOString() ?? 'in 30 min (no reset time known)'}. Inbound messages queue in agent inboxes.`);
         }
         // Cancellable-handle + fire-time status guard (mirrors
         // scheduleFailoverRefresh / commit f5745d29): only resume if we're
@@ -176,6 +191,10 @@ export class AgentProcess {
         return; // do not spawn a doomed session
       } else {
         // Zero accounts configured: legacy behavior, no token injection.
+        // M1: surface the spec's warning once per start so an operator who
+        // expected multi-account failover can see it silently fell back to the
+        // single-credential path (accounts.json missing/empty).
+        this.log('No accounts configured — legacy credential behavior');
         this.currentAccount = null;
         this.env.oauthToken = undefined;
       }
@@ -382,6 +401,16 @@ export class AgentProcess {
     await this.stop();
     await this.start();
     this.log('Session refreshed');
+  }
+
+  /**
+   * True for the Claude Code runtime (the only one that emits the weekly-limit
+   * banner and participates in multi-account failover). Matches the runtime
+   * discriminator used at PTY construction: default/undefined or 'claude-code'
+   * => AgentPTY; anything else (hermes, codex-app-server) => legacy path.
+   */
+  private isClaudeRuntime(): boolean {
+    return this.config.runtime === undefined || this.config.runtime === 'claude-code';
   }
 
   private handleLimitSignal(sig: import('./limit-detector.js').LimitSignal): void {
