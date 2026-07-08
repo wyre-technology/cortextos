@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { spawnSync } from 'child_process';
@@ -154,13 +154,17 @@ export class AccountManager {
     if (missing.length > 0 && existsSync(this.cacheFile())) {
       try {
         const cached = JSON.parse(readFileSync(this.cacheFile(), 'utf-8')) as Record<string, string>;
+        let recovered = 0;
         for (const name of [...missing]) {
           if (cached[name]) {
             this.tokens[name] = cached[name];
             missing.splice(missing.indexOf(name), 1);
+            recovered++;
           }
         }
-        this.alert('token fetch failed for some accounts — using cached tokens');
+        if (recovered > 0) {
+          this.alert('token fetch failed for some accounts — using cached tokens');
+        }
       } catch { /* cache unreadable; missing stays as-is */ }
     }
     if (missing.length > 0) {

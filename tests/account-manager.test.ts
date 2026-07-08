@@ -154,4 +154,17 @@ describe('token loading', () => {
     expect(m.getToken('personal')).toBeNull();
     expect(alerts.some((a) => a.includes('personal'))).toBe(true);
   });
+  it('does not claim cache fallback when the cache lacks the missing account', () => {
+    // Seed a cache that contains ONLY wyretech
+    mk().loadTokens((name) => (name.endsWith('WYRETECH') ? 'tok-w' : null));
+    const m = mk();
+    const alerts: string[] = [];
+    m.onAlert((msg) => alerts.push(msg));
+    // wyretech fetches live; personal fails and is NOT in the cache
+    m.loadTokens((name) => (name.endsWith('WYRETECH') ? 'tok-w' : null));
+    expect(m.getToken('personal')).toBeNull();
+    expect(alerts.length).toBe(1);
+    expect(alerts[0]).toContain('personal');
+    expect(alerts[0]).not.toContain('using cached');
+  });
 });
