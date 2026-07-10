@@ -45,6 +45,33 @@ truth-table + loop backstop + overflow guard). Ported/reconciled from upstream #
 against this fork's already-evolved handoff machinery (#194 `.force-fresh` pre-arm
 was already present).
 
+### Added — freeze-cure: hang detection (DETECTION half)
+
+Complements the context-handoff PREVENTION path: catches the *non-context* freeze mode
+— a `--continue`-resumed session frozen mid-turn that processes no cron fires — which no
+context-% threshold can see (this is what took out several fleet agents).
+
+- **`last_session_heartbeat`** on the heartbeat record — advanced ONLY by a genuine
+  session-authored `update-heartbeat --source session` (the new default). The 50-min
+  watchdog beat (`--source watchdog`) and the log-event timestamp bump preserve it and
+  never advance it, so the sensor keys on the *real* signal (session processing) rather
+  than `last_heartbeat`, which the watchdog keeps fresh even for a dead session.
+- **`update-heartbeat --source <session|watchdog>`** flag; the daemon idle-watchdog
+  (`fast-checker`) now beats with `--source watchdog`. `updateHeartbeat` carries the prior
+  `last_session_heartbeat` forward on a watchdog beat (it rewrites the whole object).
+- **`src/daemon/hang-detector.ts`** (pure, unit-tested sensor): HUNG iff a delivered cron
+  fire (`crons.json` `last_fire_attempted_at`) is older than a grace window (~15min) AND
+  the most-recent session beat predates it. Batching-aware (keys on the most-recent
+  delivered fire). **Fail-safe by construction** — absent field, absent fire, parse error,
+  or any ambiguity falls through to *not* hung. Idle-exit ≠ hang: a resumed idle session
+  writes a Part-A beat after its fire, so it never trips.
+- **Actuator** (`fast-checker` `checkHangStatus`/`forceHangRestart`): force-fresh restart
+  (never `--continue`, which re-hangs) with a persisted **halt-after-3-in-30min** breaker
+  so the auto-healer can't itself loop, plus a cooldown and a daemon-sent Telegram alert
+  to the agent's chat on restart and on HALT. Governing bias: **fail safe toward
+  not-restarting** (a missed hang is re-caught on the next fire; a false restart disrupts
+  a healthy agent). Covered by `hang-detector.test.ts` + `heartbeat-source.test.ts`.
+
 ### Fixed — daemon agent-registry ↔ PTY-liveness reconcile
 
 - **Restart-tooling divergence**: `cortextos stop <agent>` could silently no-op

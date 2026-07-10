@@ -67,12 +67,27 @@ export function updateHeartbeat(
   paths: BusPaths,
   agentName: string,
   status: string,
-  options?: { org?: string; timezone?: string; loopInterval?: string; currentTask?: string; displayName?: string },
+  options?: { org?: string; timezone?: string; loopInterval?: string; currentTask?: string; displayName?: string; source?: 'session' | 'watchdog' },
 ): void {
   ensureDir(paths.stateDir);
 
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const mode = options?.timezone ? detectDayNightMode(options.timezone) : detectDayNightMode('UTC');
+  const hbPath = join(paths.stateDir, 'heartbeat.json');
+
+  // last_session_heartbeat advances ONLY on a genuine session-authored beat (the
+  // default source). The 50-min watchdog beat (source=watchdog) MUST preserve the prior
+  // value, never advance or zero it — the hang detector keys on last_session_heartbeat
+  // to tell live session processing apart from the watchdog keeping last_heartbeat
+  // fresh. updateHeartbeat rewrites the WHOLE object, so a watchdog beat carries the
+  // prior value forward or it would be dropped (mass false-positive at the next sweep).
+  const source = options?.source ?? 'session';
+  let lastSessionHeartbeat: string | undefined = source === 'session' ? ts : undefined;
+  if (source !== 'session' && existsSync(hbPath)) {
+    try {
+      lastSessionHeartbeat = (JSON.parse(readFileSync(hbPath, 'utf-8')) as Heartbeat).last_session_heartbeat;
+    } catch { /* no prior value to carry forward — leave undefined (sensor fail-safes) */ }
+  }
 
   const heartbeat: Heartbeat = {
     agent: agentName,
@@ -82,11 +97,12 @@ export function updateHeartbeat(
     current_task: options?.currentTask ?? '',
     mode,
     last_heartbeat: ts,
+    ...(lastSessionHeartbeat ? { last_session_heartbeat: lastSessionHeartbeat } : {}),
     loop_interval: options?.loopInterval ?? '',
   };
 
   atomicWriteSync(
-    join(paths.stateDir, 'heartbeat.json'),
+    hbPath,
     JSON.stringify(heartbeat),
   );
 

@@ -3,6 +3,8 @@ import { execFile } from 'child_process';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
+import { readCrons } from '../bus/crons.js';
+import { evaluateHang, mostRecentDeliveredFireMs } from './hang-detector.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
 import { checkInbox, ackInbox } from '../bus/message.js';
 import { updateApproval } from '../bus/approval.js';
@@ -63,6 +65,15 @@ export class FastChecker {
   // Persisted to disk so --continue restarts don't reset the circuit breaker
   private ctxCircuitFile: string = '';
 
+  // Hang detector (DETECTION path — catches non-context / environmental session freezes
+  // that no context-% threshold sees: a --continue-resumed session frozen mid-turn that
+  // processes no cron fires). Keyed on delivered-fire-without-session-beat, never staleness.
+  private hangLastCheckAt: number = 0;        // throttle the hang sweep (runs ~60s, not per 1s poll)
+  private hangLastRestartAt: number = 0;      // cooldown: give a fresh session a full grace window to beat
+  private hangRestarts: number[] = [];        // persisted hang-restart window (halt-after-N so auto-heal can't loop)
+  private hangHaltedAt: number | null = null; // when the hang auto-heal halted (null = healthy)
+  private hangCircuitFile: string = '';
+
   constructor(
     agent: AgentProcess,
     paths: BusPaths,
@@ -85,6 +96,8 @@ export class FastChecker {
     // Load persisted circuit breaker state so --continue restarts don't reset it
     this.ctxCircuitFile = join(paths.stateDir, '.ctx-circuit.json');
     this.loadCtxCircuit();
+    this.hangCircuitFile = join(paths.stateDir, '.hang-circuit.json');
+    this.loadHangCircuit();
   }
 
   /**
@@ -115,7 +128,11 @@ export class FastChecker {
     const agentName = this.agent.name;
     this.heartbeatTimer = setInterval(() => {
       const ts = new Date().toISOString();
-      execFile('cortextos', ['bus', 'update-heartbeat', `[watchdog] ${agentName} alive — idle session ${ts}`], (err) => {
+      // --source watchdog: this daemon timer keeps last_heartbeat fresh for an idle
+      // session but MUST NOT advance last_session_heartbeat — otherwise the hang
+      // detector could never tell a frozen session (only the watchdog beating) from a
+      // live one. The heartbeat writer carries the prior last_session_heartbeat forward.
+      execFile('cortextos', ['bus', 'update-heartbeat', `[watchdog] ${agentName} alive — idle session ${ts}`, '--source', 'watchdog'], (err) => {
         if (err) this.log(`Heartbeat watchdog error: ${err.message}`);
       });
     }, HEARTBEAT_INTERVAL_MS);
@@ -215,6 +232,10 @@ export class FastChecker {
 
     // Context monitor: check usage thresholds and fire warnings/handoffs
     await this.checkContextStatus();
+
+    // Hang monitor: detect a frozen session that received a cron fire but processed
+    // it with no session-authored heartbeat (the non-context freeze mode).
+    this.checkHangStatus();
   }
 
   /**
@@ -1280,6 +1301,120 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
         restarts: this.ctxCircuitRestarts,
         handoffFires: this.ctxHandoffFires,
         brokenAt: this.ctxCircuitBrokenAt,
+      }), 'utf-8');
+    } catch {
+      // Non-critical
+    }
+  }
+
+  /**
+   * Hang monitor — throttled sweep (~once/min, not per 1s poll). Detects a session that
+   * received a cron fire but produced no session-authored heartbeat within the grace
+   * window, and force-fresh-restarts it. Keyed on delivered-fire-without-session-beat via
+   * the pure hang-detector; every uncertainty (absent field/fire, parse/read error) falls
+   * through to not-hung (FAIL SAFE TOWARD NOT-RESTARTING). See src/daemon/hang-detector.ts.
+   */
+  private checkHangStatus(): void {
+    const now = Date.now();
+    if (now - this.hangLastCheckAt < 60_000) return; // throttle: sweep ~once/min
+    this.hangLastCheckAt = now;
+
+    // Halt state: if the auto-heal halted (repeated hang-restarts didn't clear it), stay
+    // paused for the window rather than loop — same discipline as the crash-halt.
+    if (this.hangHaltedAt !== null) {
+      if (now - this.hangHaltedAt < 30 * 60_000) return;
+      this.hangHaltedAt = null;
+      this.hangRestarts = [];
+      this.saveHangCircuit();
+      this.log('Hang auto-heal breaker reset after 30min pause');
+    }
+
+    // Cooldown: after a hang restart, give the fresh session a full grace window to land
+    // its Part-A beat before reconsidering it hung (prevents re-acting on the same hang).
+    if (this.hangLastRestartAt > 0 && now - this.hangLastRestartAt < 15 * 60_000) return;
+
+    // Sensor inputs (fail-safe: any read error → return, i.e. treated as not-hung).
+    let deliveredFireAt: number | null;
+    try {
+      deliveredFireAt = mostRecentDeliveredFireMs(readCrons(this.agent.name));
+    } catch { return; }
+
+    let lastSessionHeartbeat: number | null = null;
+    try {
+      const hbPath = join(this.paths.stateDir, 'heartbeat.json');
+      if (existsSync(hbPath)) {
+        const raw = JSON.parse(readFileSync(hbPath, 'utf-8'));
+        const s = raw.last_session_heartbeat ? new Date(raw.last_session_heartbeat).getTime() : NaN;
+        lastSessionHeartbeat = Number.isFinite(s) ? s : null;
+      }
+    } catch { return; }
+
+    const { hung, reason } = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat });
+    if (!hung) return;
+
+    this.log(`Hang detected for ${this.agent.name}: ${reason}`);
+    this.forceHangRestart(reason);
+  }
+
+  /**
+   * Force-fresh restart for a detected hang. Shares the crash-path discipline: an
+   * auto-healer that can itself loop is worse than the bug, so hang-restarts are counted
+   * in a persisted 30min window and HALT (pause + alert) at the cap of 3. A --continue
+   * restart re-hangs (proven), so this always goes fresh via hardRestart's .force-fresh.
+   */
+  private forceHangRestart(reason: string): void {
+    const now = Date.now();
+
+    // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
+    this.hangRestarts = this.hangRestarts.filter(t => now - t < 30 * 60_000);
+    if (this.hangRestarts.length >= 3) {
+      this.hangHaltedAt = now;
+      this.saveHangCircuit();
+      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 hang-restarts in 30min didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+      this.log(msg);
+      // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
+      // even though the frozen session can't post for itself. (analyst's separate
+      // →Aaron fallback covers the case where even this channel is down.)
+      if (this.telegramApi && this.chatId) {
+        this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+      }
+      return;
+    }
+    this.hangRestarts.push(now);
+    this.hangLastRestartAt = now;
+    this.saveHangCircuit();
+
+    const msg = `Agent ${this.agent.name} frozen (hang) — auto-restarting fresh. ${reason}`;
+    this.log(msg);
+    if (this.telegramApi && this.chatId) {
+      this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+    }
+
+    // Force-fresh (NOT --continue: a --continue restart re-hangs). hardRestart writes
+    // .force-fresh + .restart-planned; sessionRefresh's shouldContinue() then returns
+    // false, giving a clean fresh session that runs Part-A and re-establishes liveness.
+    hardRestart(this.paths, this.agent.name, `HANG-FORCE-RESTART: ${reason}`);
+    this.agent.sessionRefresh().catch(err => this.log(`Hang restart failed: ${err}`));
+  }
+
+  /** Load persisted hang-restart window (survives --continue restarts, like the ctx breaker). */
+  private loadHangCircuit(): void {
+    try {
+      if (!existsSync(this.hangCircuitFile)) return;
+      const data = JSON.parse(readFileSync(this.hangCircuitFile, 'utf-8'));
+      this.hangRestarts = Array.isArray(data.restarts) ? data.restarts : [];
+      this.hangHaltedAt = typeof data.haltedAt === 'number' ? data.haltedAt : null;
+    } catch {
+      // Start fresh on error
+    }
+  }
+
+  /** Persist the hang-restart window after every update. */
+  private saveHangCircuit(): void {
+    try {
+      writeFileSync(this.hangCircuitFile, JSON.stringify({
+        restarts: this.hangRestarts,
+        haltedAt: this.hangHaltedAt,
       }), 'utf-8');
     } catch {
       // Non-critical
