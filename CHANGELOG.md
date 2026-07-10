@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### Fixed — freeze-cure: context-handoff default-ON + fleet-wide bridge wiring
+
+The daemon shipped a full context-handoff mechanism (thresholds, tiers, handoff
+prompt, `.force-fresh` pre-arm) that **never fired**, so agents ran to context
+exhaustion and froze (one orchestrator reached ~928k / ~93% of a 1M window before
+freezing for ~51h). Two dead gates in series were responsible:
+
+- **Primary (make-or-break): the context-status bridge was unwired.** The monitor
+  reads `state/<agent>/context_status.json`, which is only written by the
+  `cortextos bus hook-context-status` statusLine hook — and that hook was wired
+  into **0** agents. `checkContextStatus` returned at `!existsSync` before any
+  threshold logic ran, so `pct` was always null and the whole mechanism was inert.
+  - The three agent **templates** (`agent`, `analyst`, `orchestrator`) now ship
+    the `statusLine` hook so new agents emit context data.
+  - New `scripts/wire-statusline.mjs` (idempotent, `--dry-run`) wires the hook into
+    existing agents' gitignored local `.claude/settings.json` — a `statusLine`-only
+    patch that does not touch permissions. Agents must be restarted to apply.
+- **Secondary: handoff was observe-only by default.** An unset
+  `ctx_handoff_threshold` meant observe-only (log, never act). It now **defaults ON**
+  at warn 30% / handoff 60% of the model window; an explicit `ctx_handoff_threshold
+  <= 0` is the deliberate opt-out.
+
+Safety envelope so default-ON is at least as safe as the source mechanism:
+
+- **Fleet handoff lease** (`src/daemon/context-handoff-lease.ts`): caps concurrent
+  handoffs (2) and staggers the rest, so the first-ever fleet-wide context flow
+  can't become a thundering-herd restart storm. Release-safe (by name, session-id
+  independent, on fresh session / Tier-3 teardown) so a slot never leaks.
+- **Cooperative-restart loop backstop**: the circuit breaker now also counts Tier-2
+  handoff fires in a persisted 15-min window and trips (30-min pause + alert) if a
+  runtime fails to reset context on the handoff restart — so a handoff treadmill
+  self-limits regardless of cause.
+- **Overflow-banner corroboration guard**: the PTY-overflow backstop now only fires
+  when context usage corroborates it (exceeds 200k, or pct ≥ 85), so a fresh boot
+  re-reading memory/source that *documents* the overflow phrase no longer
+  force-restarts on every boot.
+
+Covered by `tests/unit/daemon/context-handoff-lease.test.ts` (herd drain + leaked-
+lease edges) and `tests/unit/daemon/context-handoff-defaulton.test.ts` (default
+truth-table + loop backstop + overflow guard). Ported/reconciled from upstream #685
+against this fork's already-evolved handoff machinery (#194 `.force-fresh` pre-arm
+was already present).
+
 ### Fixed — daemon agent-registry ↔ PTY-liveness reconcile
 
 - **Restart-tooling divergence**: `cortextos stop <agent>` could silently no-op
