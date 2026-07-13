@@ -106,6 +106,13 @@ export class AgentProcess {
       writeCortextosEnv(this.env.agentDir, this.env);
     }
 
+    // #19b: record restart-time as an expected-beat anchor. Every start() — fresh
+    // OR --continue — is a restart the hang-detector's bootstrap sensor needs to
+    // know about, so it can flag "restarted N ago, no session beat since" even
+    // when no cron has fired yet (evaluateHang's fire-anchored sensor can't see
+    // that gap; see hang-detector.ts evaluateBootstrapHang).
+    this.writeRestartTime();
+
     // Determine start mode
     const mode = this.shouldContinue() ? 'continue' : 'fresh';
     const prompt = mode === 'fresh'
@@ -522,6 +529,22 @@ export class AgentProcess {
       writeFileSync(markerPath, `${new Date().toISOString()} ${reason}\n`, 'utf-8');
     } catch (err) {
       this.log(`Failed to arm .force-fresh marker: ${err}`);
+    }
+  }
+
+  /**
+   * #19b: write the `.restart-time` marker FastChecker's bootstrap-hang sensor
+   * (evaluateBootstrapHang) reads as its restart anchor. Written unconditionally
+   * on every start() — the marker means "a restart happened here", not "this was
+   * a fresh session" — so both continue and fresh modes write it.
+   */
+  private writeRestartTime(): void {
+    try {
+      const stateDir = join(this.env.ctxRoot, 'state', this.name);
+      ensureDir(stateDir);
+      writeFileSync(join(stateDir, '.restart-time'), `${new Date().toISOString()}\n`, 'utf-8');
+    } catch (err) {
+      this.log(`Failed to write .restart-time marker: ${err}`);
     }
   }
 

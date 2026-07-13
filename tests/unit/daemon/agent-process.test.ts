@@ -107,6 +107,28 @@ beforeEach(() => {
   fsMocks.statSync.mockReset();
 });
 
+describe('AgentProcess — #19b restart-time marker (bootstrap-hang expected-beat anchor)', () => {
+  it('writes .restart-time on every start() — fresh mode', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+
+    const call = fsMocks.writeFileSync.mock.calls.find(c => String(c[0]).endsWith('.restart-time'));
+    expect(call).toBeDefined();
+    expect(String(call![0])).toBe('/tmp/test-ctx/state/alice/.restart-time');
+    // Content is a parseable ISO timestamp
+    expect(Number.isNaN(new Date(String(call![1]).trim()).getTime())).toBe(false);
+  });
+
+  it('writes .restart-time on every start() — continue mode too (a --continue restart is still a restart)', async () => {
+    fsMocks.existsSync.mockImplementation((p: string) => String(p).includes('.claude') || String(p).includes('projects'));
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+
+    const call = fsMocks.writeFileSync.mock.calls.find(c => String(c[0]).endsWith('.restart-time'));
+    expect(call).toBeDefined();
+  });
+});
+
 describe('AgentProcess - BUG-011 fix (stop awaits PTY exit)', () => {
   it('stop() awaits the PTY exit handler before resolving', async () => {
     const ap = new AgentProcess('alice', mockEnv, {});
