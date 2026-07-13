@@ -106,6 +106,14 @@ export interface Heartbeat {
   current_task: string;
   mode: 'day' | 'night';
   last_heartbeat: string; // ISO 8601
+  /**
+   * Last GENUINE session-authored heartbeat (ISO 8601). Advanced ONLY by
+   * `update-heartbeat --source session`; the 50-min watchdog beat and the log-event
+   * timestamp bump preserve it, never advance it. The hang detector keys on this to
+   * tell a live session's processing apart from the daemon keeping last_heartbeat fresh.
+   * Absent until an agent's first session beat (deploy-transition) — sensor fail-safes.
+   */
+  last_session_heartbeat?: string;
   loop_interval: string;
   // Legacy field — sync.ts falls back to this if last_heartbeat absent
   timestamp?: string;

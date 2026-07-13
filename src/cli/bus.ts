@@ -424,7 +424,8 @@ busCommand
   .option('--task <task>', 'Current task description')
   .option('--timezone <tz>', 'Timezone for day/night mode detection')
   .option('--interval <i>', 'Loop interval from cron config')
-  .action((status: string, opts: { task?: string; timezone?: string; interval?: string }) => {
+  .option('--source <src>', 'Heartbeat source: "session" (genuine session beat, default) or "watchdog" (daemon idle-timer)', 'session')
+  .action((status: string, opts: { task?: string; timezone?: string; interval?: string; source?: string }) => {
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
 
@@ -470,6 +471,7 @@ busCommand
       loopInterval: opts.interval,
       currentTask: opts.task,
       displayName,
+      source: opts.source === 'watchdog' ? 'watchdog' : 'session',
     });
     // Auto-emit a heartbeat event so the activity feed surfaces any live agent
     // even if the agent itself forgets to call log-event. This makes the
