@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { FastChecker } from '../../../src/daemon/fast-checker';
+import { tryAcquireRestartLock, releaseRestartLock } from '../../../src/daemon/restart-lock';
 import type { BusPaths, TelegramCallbackQuery } from '../../../src/types';
 
 // Minimal mock for AgentProcess
@@ -896,6 +897,127 @@ describe('FastChecker', () => {
       (checker as any).checkHangStatus();
 
       expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+    });
+  });
+
+  describe('checkHangStatus — dual-source liveness wiring (2026-07-13 false-positive fix)', () => {
+    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+    it('does NOT restart (check-approvals-shaped false-positive): no session-heartbeat since restart, but last_idle.flag proves real turn-processing activity', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      // No heartbeat.json at all — mirrors a session that only ever processed
+      // non-heartbeat crons (check-approvals, etc.), never calling update-heartbeat.
+      const idleFlagSeconds = Math.floor((Date.now() - 18 * 60 * 1000) / 1000); // Stop hook fired after the restart
+      writeFileSync(join(paths.stateDir, 'last_idle.flag'), String(idleFlagSeconds), 'utf-8');
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+    });
+
+    it('still force-fresh-restarts when last_idle.flag is ALSO stale/absent (genuine hang, no activity proof at all)', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      // No heartbeat.json, no last_idle.flag — nothing proves this session ever ran a turn.
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('checkHangStatus — storm-cannot-self-perpetuate (persisted hangLastRestartAt survives fresh-session construction)', () => {
+    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+    it('a freshly-CONSTRUCTED FastChecker loading a recent hangLastRestartAt from disk does NOT re-restart, even though the hang condition still looks true', () => {
+      // Simulates exactly the storm mechanism: a hang-restart just happened (recorded
+      // in .hang-circuit.json), a brand-new FastChecker object is constructed for the
+      // freshly-spawned session (in-memory hangLastRestartAt would default to 0
+      // without persistence), and the SAME stale heartbeat/restart-time is still on
+      // disk (nothing has beaten yet — the new session hasn't had a chance to).
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      const recentRestart = Date.now() - 30_000; // hang-restart fired 30s ago
+      writeFileSync(join(paths.stateDir, '.hang-circuit.json'), JSON.stringify({
+        restarts: [recentRestart],
+        haltedAt: null,
+        lastRestartAt: recentRestart,
+        lastCheckAt: 0,
+      }), 'utf-8');
+
+      const agent = createMockAgent('test-agent');
+      // Constructing a NEW FastChecker is the fresh-session equivalent — loadHangCircuit()
+      // runs in the constructor and must restore lastRestartAt from the file above.
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      // Cooldown (15min) has NOT elapsed since the persisted lastRestartAt (30s ago) —
+      // must be a no-op, not another restart. Pre-fix, a fresh instance's in-memory
+      // hangLastRestartAt defaulted to 0, so this check would have been skipped and
+      // the storm would have continued.
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+    });
+
+    it('once the persisted cooldown genuinely expires (>15min), a fresh FastChecker DOES restart on a real hang', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      const oldRestart = Date.now() - 20 * 60 * 1000; // 20min ago — cooldown expired
+      writeFileSync(join(paths.stateDir, '.hang-circuit.json'), JSON.stringify({
+        restarts: [oldRestart],
+        haltedAt: null,
+        lastRestartAt: oldRestart,
+        lastCheckAt: 0,
+      }), 'utf-8');
+
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+    });
+  });
+
+  describe('checkHangStatus — CROSS-PATH RACE FIX (2026-07-13 storm): restart-in-flight lock vs the manual/CLI path', () => {
+    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+    it('is a clean no-op when agent-manager.ts\'s manual restartAgent() already holds the restart-in-flight lock', () => {
+      // Simulates the OTHER half of the confirmed cross-path race: the manual/CLI
+      // restart path (agent-manager.ts's restartAgent) acquired the lock first via
+      // the exact same restart-lock.ts module this automated actuator now checks.
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      // No heartbeat.json, no last_idle.flag — this WOULD force-fresh-restart if the
+      // lock didn't block it (same setup as the "genuine hang" test above).
+      const preAcquired = tryAcquireRestartLock(paths.stateDir, 'manual-restart');
+      expect(preAcquired.acquired).toBe(true); // sanity: the simulated manual path got it first
+
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+
+      releaseRestartLock(paths.stateDir);
+    });
+
+    it('restarts normally once the manual path\'s lock has been released', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      tryAcquireRestartLock(paths.stateDir, 'manual-restart');
+      releaseRestartLock(paths.stateDir); // the manual path finished and released
+
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
     });
   });
 

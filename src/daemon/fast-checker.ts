@@ -13,6 +13,7 @@ import type { TelegramAPI } from '../telegram/api.js';
 import { KEYS } from '../pty/inject.js';
 import { stripControlChars, sanitizeForPtyInjection, wrapFenceSafe } from '../utils/validate.js';
 import { agentHoldsContextHandoffLease, releaseContextHandoffLease, requestContextHandoffLease } from './context-handoff-lease.js';
+import { tryAcquireRestartLock, releaseRestartLock } from './restart-lock.js';
 
 type LogFn = (msg: string) => void;
 
@@ -1155,75 +1156,92 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
    * The circuit breaker prevents runaway restart loops.
    */
   private forceContextRestart(reason: string): void {
-    const now = Date.now();
-
-    // Update and check circuit breaker window (persisted to disk — survives --continue restarts)
-    this.ctxCircuitRestarts = this.ctxCircuitRestarts.filter(t => now - t < 15 * 60_000);
-    if (this.ctxCircuitRestarts.length >= 3) {
-      this.ctxCircuitBrokenAt = now;
-      this.saveCtxCircuit();
-      const msg = `Context circuit breaker TRIPPED for ${this.agent.name}: 3 restarts in 15min. Watchdog paused 30min. Check logs/${this.agent.name}/restarts.log for details.`;
-      this.log(msg);
-      if (this.telegramApi && this.chatId) {
-        this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
-      }
+    // Cross-path restart-in-flight lock (2026-07-13 storm fix): this actuator and
+    // agent-manager.ts's manual restartAgent() share no other coordination — whichever
+    // gets here first wins, the other is a clean logged no-op. See restart-lock.ts.
+    const lock = tryAcquireRestartLock(this.paths.stateDir, 'context-handoff');
+    if (!lock.acquired) {
+      this.log(`Context restart SKIPPED for ${this.agent.name} — ${lock.reason}`);
       return;
     }
-    this.ctxCircuitRestarts.push(now);
-    this.saveCtxCircuit();
-
-    // If the agent wrote a handoff doc in the last 15 minutes but didn't get to call
-    // hard-restart --handoff-doc (e.g. Tier 3 force-restart cut it short), pick it up
-    // so the new session still receives handoff context.
     try {
-      const handoffsDir = join(this.agent.getAgentDir(), 'memory', 'handoffs');
-      if (existsSync(handoffsDir)) {
-        const cutoff = now - 15 * 60_000;
-        const recent = readdirSync(handoffsDir)
-          .filter(f => f.startsWith('handoff-') && f.endsWith('.md'))
-          .map(f => ({ f, mtime: statSync(join(handoffsDir, f)).mtimeMs }))
-          .filter(({ mtime }) => mtime >= cutoff)
-          .sort((a, b) => b.mtime - a.mtime);
-        if (recent.length > 0) {
-          const docPath = join(handoffsDir, recent[0].f);
-          const markerPath = join(this.paths.stateDir, '.handoff-doc-path');
-          writeFileSync(markerPath, docPath, 'utf-8');
-          this.log(`Tier 3 restart: found recent handoff doc, writing marker → ${docPath}`);
+      const now = Date.now();
+
+      // Update and check circuit breaker window (persisted to disk — survives --continue restarts)
+      this.ctxCircuitRestarts = this.ctxCircuitRestarts.filter(t => now - t < 15 * 60_000);
+      if (this.ctxCircuitRestarts.length >= 3) {
+        this.ctxCircuitBrokenAt = now;
+        this.saveCtxCircuit();
+        const msg = `Context circuit breaker TRIPPED for ${this.agent.name}: 3 restarts in 15min. Watchdog paused 30min. Check logs/${this.agent.name}/restarts.log for details.`;
+        this.log(msg);
+        if (this.telegramApi && this.chatId) {
+          this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
         }
+        return;
       }
-    } catch { /* non-fatal — proceed without handoff context */ }
+      this.ctxCircuitRestarts.push(now);
+      this.saveCtxCircuit();
 
-    // Reset per-session context state for the new session
-    this.ctxHandoffFiredAt = 0;
-    this.ctxHandoffDeadlineAt = 0;
-    this.ctxWarningFiredAt = 0;
+      // If the agent wrote a handoff doc in the last 15 minutes but didn't get to call
+      // hard-restart --handoff-doc (e.g. Tier 3 force-restart cut it short), pick it up
+      // so the new session still receives handoff context.
+      try {
+        const handoffsDir = join(this.agent.getAgentDir(), 'memory', 'handoffs');
+        if (existsSync(handoffsDir)) {
+          const cutoff = now - 15 * 60_000;
+          const recent = readdirSync(handoffsDir)
+            .filter(f => f.startsWith('handoff-') && f.endsWith('.md'))
+            .map(f => ({ f, mtime: statSync(join(handoffsDir, f)).mtimeMs }))
+            .filter(({ mtime }) => mtime >= cutoff)
+            .sort((a, b) => b.mtime - a.mtime);
+          if (recent.length > 0) {
+            const docPath = join(handoffsDir, recent[0].f);
+            const markerPath = join(this.paths.stateDir, '.handoff-doc-path');
+            writeFileSync(markerPath, docPath, 'utf-8');
+            this.log(`Tier 3 restart: found recent handoff doc, writing marker → ${docPath}`);
+          }
+        }
+      } catch { /* non-fatal — proceed without handoff context */ }
 
-    // Release this dying session's context-handoff lease on teardown. This restart is
-    // IN-PROCESS — sessionRefresh() below does stop()+start() on the same AgentProcess
-    // and does NOT recreate this FastChecker, so ctxHandoffLeaseId survives into the
-    // fresh session. The by-name cleanup in checkContextStatus is gated on
-    // ctxHandoffLeaseId === null, so without this it would skip a lease this session
-    // leaked when the fresh session reports session_id:null (the Tier-3 arm of the
-    // Claude null-session_id leak — the agent ignored the 5-min handoff prompt and was
-    // force-restarted). Release by name and clear the in-memory id HERE, before the
-    // restart spawns the new session, so we free the dying session's own lease — never
-    // a lease the fresh session might later acquire.
-    releaseContextHandoffLease(this.paths.ctxRoot, this.agent.name);
-    this.ctxHandoffLeaseId = null;
+      // Reset per-session context state for the new session
+      this.ctxHandoffFiredAt = 0;
+      this.ctxHandoffDeadlineAt = 0;
+      this.ctxWarningFiredAt = 0;
 
-    // Write .force-fresh + .restart-planned (hardRestart from src/bus/system.ts)
-    hardRestart(this.paths, this.agent.name, `CONTEXT-FORCE-RESTART: ${reason}`);
+      // Release this dying session's context-handoff lease on teardown. This restart is
+      // IN-PROCESS — sessionRefresh() below does stop()+start() on the same AgentProcess
+      // and does NOT recreate this FastChecker, so ctxHandoffLeaseId survives into the
+      // fresh session. The by-name cleanup in checkContextStatus is gated on
+      // ctxHandoffLeaseId === null, so without this it would skip a lease this session
+      // leaked when the fresh session reports session_id:null (the Tier-3 arm of the
+      // Claude null-session_id leak — the agent ignored the 5-min handoff prompt and was
+      // force-restarted). Release by name and clear the in-memory id HERE, before the
+      // restart spawns the new session, so we free the dying session's own lease — never
+      // a lease the fresh session might later acquire.
+      releaseContextHandoffLease(this.paths.ctxRoot, this.agent.name);
+      this.ctxHandoffLeaseId = null;
 
-    // Reset context_status.json so the new session's FastChecker doesn't re-trigger
-    // Tier 2 immediately by reading the stale high-% value from the previous session.
-    const statusPath = join(this.paths.stateDir, 'context_status.json');
-    try {
-      writeFileSync(statusPath, JSON.stringify({ used_percentage: 0, exceeds_200k_tokens: false, written_at: new Date().toISOString() }));
-    } catch { /* non-fatal */ }
+      // Write .force-fresh + .restart-planned (hardRestart from src/bus/system.ts)
+      hardRestart(this.paths, this.agent.name, `CONTEXT-FORCE-RESTART: ${reason}`);
 
-    // sessionRefresh() does stop() + start(); shouldContinue() will return false
-    // because .force-fresh was just written, giving us a clean fresh session.
-    this.agent.sessionRefresh().catch(err => this.log(`Context restart failed: ${err}`));
+      // Reset context_status.json so the new session's FastChecker doesn't re-trigger
+      // Tier 2 immediately by reading the stale high-% value from the previous session.
+      const statusPath = join(this.paths.stateDir, 'context_status.json');
+      try {
+        writeFileSync(statusPath, JSON.stringify({ used_percentage: 0, exceeds_200k_tokens: false, written_at: new Date().toISOString() }));
+      } catch { /* non-fatal */ }
+
+      // sessionRefresh() does stop() + start(); shouldContinue() will return false
+      // because .force-fresh was just written, giving us a clean fresh session.
+      this.agent.sessionRefresh().catch(err => this.log(`Context restart failed: ${err}`));
+    } finally {
+      // Release promptly once the restart has been TRIGGERED (not once the new session
+      // finishes booting) — the race this lock closes is two near-simultaneous restart
+      // DECISIONS, not any restart activity for the agent's whole boot window. A later,
+      // genuinely separate restart request (e.g. a human restarting minutes afterward)
+      // should not be blocked by a lock held open the whole time.
+      releaseRestartLock(this.paths.stateDir);
+    }
   }
 
   /**
@@ -1323,6 +1341,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     const now = Date.now();
     if (now - this.hangLastCheckAt < 60_000) return; // throttle: sweep ~once/min
     this.hangLastCheckAt = now;
+    this.saveHangCircuit();
 
     // Halt state: if the auto-heal halted (repeated hang-restarts didn't clear it), stay
     // paused for the window rather than loop — same discipline as the crash-halt.
@@ -1354,7 +1373,21 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
-    const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat });
+    // Dual-source liveness (2026-07-13 false-positive fix): last_idle.flag is written
+    // by the Stop hook on EVERY turn completion, regardless of which cron triggered
+    // it — unlike lastSessionHeartbeat, which only advances when the agent explicitly
+    // calls update-heartbeat (only the heartbeat cron's own prompt instructs that).
+    // Same read pattern as isAgentActive() below.
+    let lastIdleFlagAt: number | null = null;
+    try {
+      const flagPath = join(this.paths.stateDir, 'last_idle.flag');
+      if (existsSync(flagPath)) {
+        const t = parseInt(readFileSync(flagPath, 'utf-8').trim(), 10) * 1000;
+        lastIdleFlagAt = Number.isFinite(t) ? t : null;
+      }
+    } catch { return; }
+
+    const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (fireVerdict.hung) {
       this.log(`Hang detected for ${this.agent.name}: ${fireVerdict.reason}`);
       this.forceHangRestart(fireVerdict.reason);
@@ -1374,7 +1407,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
-    const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat });
+    const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (!bootVerdict.hung) return;
 
     this.log(`Bootstrap hang detected for ${this.agent.name}: ${bootVerdict.reason}`);
@@ -1388,47 +1421,71 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
    * restart re-hangs (proven), so this always goes fresh via hardRestart's .force-fresh.
    */
   private forceHangRestart(reason: string): void {
-    const now = Date.now();
+    // Cross-path restart-in-flight lock (2026-07-13 storm fix): confirmed root
+    // mechanism of the fleet-wide dup-session storm was THIS actuator racing with
+    // agent-manager.ts's manual restartAgent() — two structurally different call
+    // shapes, no shared coordination. Whichever gets here first wins, the other is a
+    // clean logged no-op. See restart-lock.ts.
+    const lock = tryAcquireRestartLock(this.paths.stateDir, 'hang-detector');
+    if (!lock.acquired) {
+      this.log(`Hang restart SKIPPED for ${this.agent.name} — ${lock.reason}`);
+      return;
+    }
+    try {
+      const now = Date.now();
 
-    // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
-    this.hangRestarts = this.hangRestarts.filter(t => now - t < 30 * 60_000);
-    if (this.hangRestarts.length >= 3) {
-      this.hangHaltedAt = now;
+      // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
+      this.hangRestarts = this.hangRestarts.filter(t => now - t < 30 * 60_000);
+      if (this.hangRestarts.length >= 3) {
+        this.hangHaltedAt = now;
+        this.saveHangCircuit();
+        const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 hang-restarts in 30min didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+        this.log(msg);
+        // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
+        // even though the frozen session can't post for itself. (analyst's separate
+        // →Aaron fallback covers the case where even this channel is down.)
+        if (this.telegramApi && this.chatId) {
+          this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+        }
+        return;
+      }
+      this.hangRestarts.push(now);
+      this.hangLastRestartAt = now;
       this.saveHangCircuit();
-      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 hang-restarts in 30min didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+
+      const msg = `Agent ${this.agent.name} frozen (hang) — auto-restarting fresh. ${reason}`;
       this.log(msg);
-      // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
-      // even though the frozen session can't post for itself. (analyst's separate
-      // →Aaron fallback covers the case where even this channel is down.)
       if (this.telegramApi && this.chatId) {
         this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
       }
-      return;
-    }
-    this.hangRestarts.push(now);
-    this.hangLastRestartAt = now;
-    this.saveHangCircuit();
 
-    const msg = `Agent ${this.agent.name} frozen (hang) — auto-restarting fresh. ${reason}`;
-    this.log(msg);
-    if (this.telegramApi && this.chatId) {
-      this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+      // Force-fresh (NOT --continue: a --continue restart re-hangs). hardRestart writes
+      // .force-fresh + .restart-planned; sessionRefresh's shouldContinue() then returns
+      // false, giving a clean fresh session that runs Part-A and re-establishes liveness.
+      hardRestart(this.paths, this.agent.name, `HANG-FORCE-RESTART: ${reason}`);
+      this.agent.sessionRefresh().catch(err => this.log(`Hang restart failed: ${err}`));
+    } finally {
+      // Release promptly once triggered — same reasoning as forceContextRestart's
+      // release: the race is two near-simultaneous DECISIONS, not the whole boot window.
+      releaseRestartLock(this.paths.stateDir);
     }
-
-    // Force-fresh (NOT --continue: a --continue restart re-hangs). hardRestart writes
-    // .force-fresh + .restart-planned; sessionRefresh's shouldContinue() then returns
-    // false, giving a clean fresh session that runs Part-A and re-establishes liveness.
-    hardRestart(this.paths, this.agent.name, `HANG-FORCE-RESTART: ${reason}`);
-    this.agent.sessionRefresh().catch(err => this.log(`Hang restart failed: ${err}`));
   }
 
-  /** Load persisted hang-restart window (survives --continue restarts, like the ctx breaker). */
+  /**
+   * Load persisted hang-restart window (survives --continue restarts, like the ctx
+   * breaker). 2026-07-13: also restores hangLastRestartAt/hangLastCheckAt — a
+   * freshly-spawned session's in-memory defaults (0) previously meant zero cooldown,
+   * which let a still-live false-positive (see hang-detector.ts's dual-source fix)
+   * re-trigger a restart on the new session's very first poll, storming the fleet.
+   */
   private loadHangCircuit(): void {
     try {
       if (!existsSync(this.hangCircuitFile)) return;
       const data = JSON.parse(readFileSync(this.hangCircuitFile, 'utf-8'));
       this.hangRestarts = Array.isArray(data.restarts) ? data.restarts : [];
       this.hangHaltedAt = typeof data.haltedAt === 'number' ? data.haltedAt : null;
+      this.hangLastRestartAt = typeof data.lastRestartAt === 'number' ? data.lastRestartAt : 0;
+      this.hangLastCheckAt = typeof data.lastCheckAt === 'number' ? data.lastCheckAt : 0;
     } catch {
       // Start fresh on error
     }
@@ -1440,6 +1497,8 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       writeFileSync(this.hangCircuitFile, JSON.stringify({
         restarts: this.hangRestarts,
         haltedAt: this.hangHaltedAt,
+        lastRestartAt: this.hangLastRestartAt,
+        lastCheckAt: this.hangLastCheckAt,
       }), 'utf-8');
     } catch {
       // Non-critical
