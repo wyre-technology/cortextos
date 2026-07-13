@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { platform } from 'os';
 import type { AgentConfig, CtxEnv } from '../types/index.js';
 import { OutputBuffer } from './output-buffer.js';
+import { LimitDetector, LimitSignal } from '../daemon/limit-detector.js';
 
 // node-pty types
 interface IPty {
@@ -36,6 +37,8 @@ export class AgentPTY {
   private config: AgentConfig;
   private onExitHandler: ((exitCode: number, signal?: number) => void) | null = null;
   private spawnFn: SpawnFn | null = null;
+  private limitDetector = new LimitDetector();
+  private limitSignalCb: ((sig: LimitSignal) => void) | null = null;
 
   constructor(env: CtxEnv, config: AgentConfig, logPath?: string, bootstrapPattern?: string) {
     this.env = env;
@@ -53,6 +56,8 @@ export class AgentPTY {
     if (this.pty) {
       throw new Error('PTY already spawned. Kill first.');
     }
+
+    this.limitDetector.reset();
 
     // Lazy-load node-pty (native addon)
     if (!this.spawnFn) {
@@ -110,6 +115,13 @@ export class AgentPTY {
       }
     }
 
+    // Multi-account failover: token chosen by AccountManager for this spawn.
+    // Placed after .env sourcing so a dynamically selected account wins over
+    // a static CLAUDE_CODE_OAUTH_TOKEN in the agent's .env.
+    if (this.env.oauthToken) {
+      ptyEnv['CLAUDE_CODE_OAUTH_TOKEN'] = this.env.oauthToken;
+    }
+
     // Add convenience CTX_* aliases used throughout agent templates.
     // CTX_TELEGRAM_CHAT_ID: alias for CHAT_ID from the agent's .env
     if (ptyEnv['CHAT_ID']) {
@@ -156,6 +168,10 @@ export class AgentPTY {
     // Set up output capture
     this.pty.onData((data: string) => {
       this.outputBuffer.push(data);
+      const limitSig = this.limitDetector.feed(data);
+      if (limitSig && this.limitSignalCb) {
+        try { this.limitSignalCb(limitSig); } catch { /* handler must not kill the data pump */ }
+      }
     });
 
     // Set up exit handler
@@ -325,6 +341,14 @@ export class AgentPTY {
   }
 
   /**
+   * Register a callback fired when the LimitDetector recognizes a
+   * weekly-limit or not-logged-in signal in the PTY output stream.
+   */
+  onLimitSignal(cb: (sig: LimitSignal) => void): void {
+    this.limitSignalCb = cb;
+  }
+
+  /**
    * Get the output buffer for inspection.
    */
   getOutputBuffer(): OutputBuffer {
@@ -340,6 +364,7 @@ export class AgentPTY {
     const keepVars = [
       'PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL',
       'TMPDIR', 'TEMP', 'TMP', 'ANTHROPIC_API_KEY', 'CLAUDE_API_KEY',
+      'CLAUDE_CODE_OAUTH_TOKEN',
       'NODE_PATH', 'COMSPEC', 'USERPROFILE',
       // Windows path-expansion essentials. Stripping these causes phantom
       // %SystemDrive% directories from inherited Search Indexer processes

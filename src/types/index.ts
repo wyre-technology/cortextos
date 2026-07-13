@@ -594,6 +594,8 @@ export interface CtxEnv {
   projectRoot: string;
   timezone?: string;
   orchestrator?: string;
+  /** OAuth token selected by AccountManager for this spawn; injected as CLAUDE_CODE_OAUTH_TOKEN. */
+  oauthToken?: string;
 }
 
 // Bus Path Types
@@ -790,7 +792,7 @@ export interface AgentInfo {
 
 export interface AgentStatus {
   name: string;
-  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted';
+  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted' | 'parked';
   pid?: number;
   uptime?: number; // seconds
   lastHeartbeat?: string;

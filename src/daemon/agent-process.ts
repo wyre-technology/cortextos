@@ -11,6 +11,8 @@ import { ensureDir } from '../utils/atomic.js';
 import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
+import { AccountManager } from './account-manager.js';
+import { sendOperatorAlert } from './operator-alert.js';
 
 type LogFn = (msg: string) => void;
 
@@ -24,6 +26,13 @@ export class AgentProcess {
   private config: AgentConfig;
   private pty: AgentPTY | CodexAppServerPTY | null = null;
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  private failoverTimer: ReturnType<typeof setTimeout> | null = null;
+  // Task 7: mirrors failoverTimer's cancellable-handle + fire-time status
+  // guard pattern (commit f5745d29). A bare setTimeout resurrecting the
+  // agent regardless of what happened in the meantime would resume a parked
+  // agent an operator deliberately stopped — cleared in the same two places
+  // as failoverTimer: stop() and handleExit().
+  private parkTimer: ReturnType<typeof setTimeout> | null = null;
   private crashCount: number = 0;
   private maxCrashesPerDay: number = 10;
   // CrashLoopPauser (instar-inspired): sliding-window crash detection.
@@ -69,8 +78,10 @@ export class AgentProcess {
   // daemon should fire the codex-app-server back-online Telegram directly
   // (skipped on handoff restart — the agent sends its own contextual reply).
   private lastSpawnWasHandoff = false;
+  private accountManager: AccountManager | null;
+  private currentAccount: string | null = null;
 
-  constructor(name: string, env: CtxEnv, config: AgentConfig, log?: LogFn) {
+  constructor(name: string, env: CtxEnv, config: AgentConfig, log?: LogFn, accountManager?: AccountManager) {
     this.name = name;
     this.env = env;
     this.config = config;
@@ -83,6 +94,7 @@ export class AgentProcess {
     }
     this.dedup = new MessageDedup();
     this.log = log || ((msg) => console.log(`[${name}] ${msg}`));
+    this.accountManager = accountManager ?? null;
   }
 
   /**
@@ -125,6 +137,69 @@ export class AgentProcess {
     // handleExit, preventing spurious crash recovery on the new agent.
     const myGeneration = ++this.lifecycleGeneration;
 
+    // Multi-account failover: pick the account for this session.
+    // I2: gate the whole selection/park block on the claude-code runtime — the
+    // same discriminator used at PTY construction below (default/undefined or
+    // 'claude-code' => AgentPTY). codex-app-server / hermes never emit the
+    // Claude Code weekly-limit banner and must not get a currentAccount (which
+    // the fan-out would then refresh mid-task) or park. They take the legacy
+    // path: no selection, no token injection, no park.
+    if (this.accountManager && this.isClaudeRuntime()) {
+      const account = this.accountManager.selectAccount();
+      const token = account ? this.accountManager.getToken(account) : null;
+      if (account && token) {
+        this.currentAccount = account;
+        this.env.oauthToken = token;
+        this.log(`Using account "${account}"`);
+        // I1: if THIS selection lifted a park (cleared the shared dedup flag),
+        // announce the fleet resume exactly once. Dedup is inherent — the flag
+        // transitions once per episode, so exactly one racing start() sees true.
+        if (this.accountManager.clearParkAlert()) {
+          void sendOperatorAlert(this.env.frameworkRoot,
+            `▶️ Fleet resumed on account "${account}" — park lifted.`);
+        }
+      } else if (this.accountManager.loadConfig().length > 0) {
+        // Accounts are configured but none usable → park.
+        this.currentAccount = null;
+        this.env.oauthToken = undefined;
+        this.status = 'parked';
+        const resumeAt = this.accountManager.earliestReset();
+        const delay = resumeAt
+          ? Math.max(resumeAt.getTime() - Date.now(), 0) + Math.floor(Math.random() * 120_000)
+          : 30 * 60 * 1000; // no known reset — re-probe in 30 min
+        this.log(`All accounts limited/invalid — parked. Retrying at ${new Date(Date.now() + delay).toISOString()}`);
+        if (this.accountManager.shouldSendParkAlert()) {
+          // M3: accurate mixed-state copy — a park can be any mix of limited /
+          // invalid / no-token accounts, not only "all limited".
+          void sendOperatorAlert(this.env.frameworkRoot,
+            `⏸️ No usable Claude account (limited/invalid/no token) — fleet parked. Auto-resume ~${resumeAt?.toISOString() ?? 'in 30 min (no reset time known)'}. Inbound messages queue in agent inboxes.`);
+        }
+        // Cancellable-handle + fire-time status guard (mirrors
+        // scheduleFailoverRefresh / commit f5745d29): only resume if we're
+        // still 'parked' when this fires. An operator-issued stop() clears
+        // this timer outright (see stop()); the status check is defense in
+        // depth for any other path that might change status in the meantime.
+        this.clearParkTimer();
+        this.parkTimer = setTimeout(() => {
+          this.parkTimer = null;
+          if (this.status !== 'parked') {
+            this.log(`Park resume skipped (status: ${this.status})`);
+            return;
+          }
+          this.start().catch((err) => this.log(`Un-park failed: ${err}`));
+        }, delay);
+        return; // do not spawn a doomed session
+      } else {
+        // Zero accounts configured: legacy behavior, no token injection.
+        // M1: surface the spec's warning once per start so an operator who
+        // expected multi-account failover can see it silently fell back to the
+        // single-credential path (accounts.json missing/empty).
+        this.log('No accounts configured — legacy credential behavior');
+        this.currentAccount = null;
+        this.env.oauthToken = undefined;
+      }
+    }
+
     // Create PTY — runtime-specific subclass handles binary, args, bootstrap detection
     const logPath = join(this.env.ctxRoot, 'logs', this.name, 'stdout.log');
     ensureDir(join(this.env.ctxRoot, 'logs', this.name));
@@ -134,6 +209,10 @@ export class AgentProcess {
       : this.config.runtime === 'codex-app-server'
         ? new CodexAppServerPTY(this.env, this.config, logPath)
         : new AgentPTY(this.env, this.config, logPath);
+
+    if (this.pty instanceof AgentPTY) {
+      this.pty.onLimitSignal((sig) => this.handleLimitSignal(sig));
+    }
 
     // Issue #330: re-wire the Telegram handle on every start() (session refresh
     // creates a fresh CodexAppServerPTY). Only CodexAppServerPTY uses this — Claude / Hermes
@@ -212,6 +291,8 @@ export class AgentProcess {
     this.stopRequested = true;
     this.log('Stopping...');
     this.clearSessionTimer();
+    this.clearFailoverTimer();
+    this.clearParkTimer();
 
     // Capture and null out pty BEFORE any awaits so handleExit() during graceful
     // shutdown doesn't race with us and trigger crash recovery or a double-kill.
@@ -297,7 +378,7 @@ export class AgentProcess {
    * `start()` will pick up `continue` mode automatically because the
    * conversation directory still has .jsonl files (shouldContinue() is true).
    */
-  async sessionRefresh(): Promise<void> {
+  async sessionRefresh(reason = 'session-time-cap rollover'): Promise<void> {
     this.log('Session refresh (--continue restart)');
     // Write .session-refresh marker so the SessionEnd crash-alert hook
     // (src/hooks/hook-crash-alert.ts) classifies the imminent PTY exit as a
@@ -305,12 +386,13 @@ export class AgentProcess {
     // quiet-suppression set + message switch were all wired for this type,
     // but no writer existed — every --continue rollover at the session-time
     // cap surfaced as a false-positive 'crash' on chief/analyst + the
-    // crashes.log file.
+    // crashes.log file. The hook keys on the marker's existence, not its
+    // content, so any reason string (session rollover, account failover) stays quiet.
     try {
       const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
       writeFileSync(
         join(paths.stateDir, '.session-refresh'),
-        'session-time-cap rollover\n',
+        `${reason}\n`,
         'utf-8',
       );
     } catch (err) {
@@ -319,6 +401,84 @@ export class AgentProcess {
     await this.stop();
     await this.start();
     this.log('Session refreshed');
+  }
+
+  /**
+   * True for the Claude Code runtime (the only one that emits the weekly-limit
+   * banner and participates in multi-account failover). Matches the runtime
+   * discriminator used at PTY construction: default/undefined or 'claude-code'
+   * => AgentPTY; anything else (hermes, codex-app-server) => legacy path.
+   */
+  private isClaudeRuntime(): boolean {
+    return this.config.runtime === undefined || this.config.runtime === 'claude-code';
+  }
+
+  private handleLimitSignal(sig: import('./limit-detector.js').LimitSignal): void {
+    if (!this.accountManager || !this.currentAccount) return;
+    let transitioned: boolean;
+    if (sig.kind === 'weekly-limit') {
+      this.log(`Weekly limit detected on account "${this.currentAccount}" (resets ${sig.resetsAt?.toISOString() ?? 'unknown'})`);
+      transitioned = this.accountManager.markLimited(this.currentAccount, sig.resetsAt);
+    } else {
+      this.log(`Auth failure detected on account "${this.currentAccount}"`);
+      transitioned = this.accountManager.markInvalid(this.currentAccount, 'Not logged in banner in session output');
+    }
+    // C3: markLimited/markInvalid returns false when THIS daemon lost the
+    // cross-daemon transition race (the other daemon already wrote the same
+    // status to the shared file) or the account was already marked. In that
+    // case the in-process onTransition fan-out never fires HERE, so this agent
+    // — still running on the now-dead account — would never refresh and would
+    // stay stranded for the full cooldown (~71h observed). Self-schedule the
+    // refresh directly; the existing status guard + jitter + clear-before-arm
+    // make this safe. When TRUE, the fan-out already reaches this agent — do
+    // NOT double-schedule in the same daemon.
+    if (!transitioned) {
+      this.scheduleFailoverRefresh();
+    }
+  }
+
+  getCurrentAccount(): string | null {
+    return this.currentAccount;
+  }
+
+  /**
+   * DEBUG ONLY (CTX_DEBUG_FAKE_LIMIT_BANNER=1): push a fabricated weekly-limit
+   * banner through the same handleLimitSignal() path the live PTY detector
+   * uses, so an operator can rehearse a full account failover (health
+   * transition -> jittered refresh -> next-selection drain) without waiting
+   * for — or burning — a real weekly limit. Same pattern as
+   * CTX_DEBUG_ALLOW_CRASH_TRIGGER's SIGUSR2 hook in daemon/index.ts: gated on
+   * the env var and a no-op otherwise, so it is inert unless explicitly
+   * enabled by an operator or test harness.
+   */
+  injectDebugLimitBanner(): void {
+    if (process.env.CTX_DEBUG_FAKE_LIMIT_BANNER !== '1') {
+      this.log('injectDebugLimitBanner ignored (CTX_DEBUG_FAKE_LIMIT_BANNER != 1)');
+      return;
+    }
+    this.handleLimitSignal({ kind: 'weekly-limit', resetsAt: new Date(Date.now() + 60_000) });
+  }
+
+  /** Session refresh with random jitter — avoids thundering-herd 429s when a whole fleet fails over. */
+  scheduleFailoverRefresh(maxJitterMs = 120_000): void {
+    // Re-schedule safety: clear any previously pending failover timer before
+    // arming a new one so overlapping calls can't leave a stale timer around.
+    this.clearFailoverTimer();
+    const jitter = Math.floor(Math.random() * maxJitterMs);
+    this.log(`Failover refresh scheduled in ${Math.round(jitter / 1000)}s`);
+    this.failoverTimer = setTimeout(() => {
+      this.failoverTimer = null;
+      // The 0-120s jitter window can outlive a stop()/crash-halt that happened
+      // while this timer was pending. Only fire the refresh if the agent is
+      // still running — otherwise stop() would no-op and start() would spawn
+      // a zombie PTY invisible to the manager (or a halted agent would flip
+      // back to running, defeating crash-loop protection).
+      if (this.status !== 'running') {
+        this.log(`Failover refresh skipped (status: ${this.status})`);
+        return;
+      }
+      this.sessionRefresh('account failover').catch((err) => this.log(`Failover refresh failed: ${err}`));
+    }, jitter);
   }
 
   /**
@@ -533,6 +693,8 @@ export class AgentProcess {
 
     this.pty = null;
     this.clearSessionTimer();
+    this.clearFailoverTimer();
+    this.clearParkTimer();
 
     // When the cortextos daemon is shut down by PM2, SIGTERM propagates to
     // the whole process group and reaches each PTY's Claude Code child
@@ -899,6 +1061,20 @@ export class AgentProcess {
     if (this.sessionTimer) {
       clearTimeout(this.sessionTimer);
       this.sessionTimer = null;
+    }
+  }
+
+  private clearFailoverTimer(): void {
+    if (this.failoverTimer) {
+      clearTimeout(this.failoverTimer);
+      this.failoverTimer = null;
+    }
+  }
+
+  private clearParkTimer(): void {
+    if (this.parkTimer) {
+      clearTimeout(this.parkTimer);
+      this.parkTimer = null;
     }
   }
 
