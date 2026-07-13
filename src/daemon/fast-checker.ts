@@ -4,7 +4,7 @@ import { join } from 'path';
 import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
 import { readCrons } from '../bus/crons.js';
-import { evaluateHang, mostRecentDeliveredFireMs } from './hang-detector.js';
+import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs } from './hang-detector.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
 import { checkInbox, ackInbox } from '../bus/message.js';
 import { updateApproval } from '../bus/approval.js';
@@ -1308,11 +1308,16 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   }
 
   /**
-   * Hang monitor — throttled sweep (~once/min, not per 1s poll). Detects a session that
-   * received a cron fire but produced no session-authored heartbeat within the grace
-   * window, and force-fresh-restarts it. Keyed on delivered-fire-without-session-beat via
-   * the pure hang-detector; every uncertainty (absent field/fire, parse/read error) falls
-   * through to not-hung (FAIL SAFE TOWARD NOT-RESTARTING). See src/daemon/hang-detector.ts.
+   * Hang monitor — throttled sweep (~once/min, not per 1s poll). Two independent
+   * cause-agnostic checks, sharing one actuator (forceHangRestart):
+   *   #19a — a delivered cron fire with no session-authored heartbeat since (a
+   *          --continue-resumed session frozen mid-turn that processes no fires).
+   *   #19b — a restart with no bootstrap heartbeat within grace (closes the gap where
+   *          a hang right after --continue, before the first fire, would otherwise go
+   *          undetected up to a full cron interval — the 2026-07-13 fleet-freeze class).
+   * Keyed on delivered-fire-or-restart-without-session-beat via the pure hang-detector;
+   * every uncertainty (absent field/fire/restart-time, parse/read error) falls through
+   * to not-hung (FAIL SAFE TOWARD NOT-RESTARTING). See src/daemon/hang-detector.ts.
    */
   private checkHangStatus(): void {
     const now = Date.now();
@@ -1349,11 +1354,31 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
-    const { hung, reason } = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat });
-    if (!hung) return;
+    const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat });
+    if (fireVerdict.hung) {
+      this.log(`Hang detected for ${this.agent.name}: ${fireVerdict.reason}`);
+      this.forceHangRestart(fireVerdict.reason);
+      return;
+    }
 
-    this.log(`Hang detected for ${this.agent.name}: ${reason}`);
-    this.forceHangRestart(reason);
+    // #19b: a restart is an expected-beat anchor too, independent of whether any cron
+    // has fired yet. Closes the gap where a bootstrap-hang (frozen right after
+    // --continue, before the first fire) would otherwise go undetected until the next
+    // scheduled fire — up to a full cron interval. See hang-detector.ts evaluateBootstrapHang.
+    let restartAt: number | null = null;
+    try {
+      const restartPath = join(this.paths.stateDir, '.restart-time');
+      if (existsSync(restartPath)) {
+        const t = new Date(readFileSync(restartPath, 'utf-8').trim()).getTime();
+        restartAt = Number.isFinite(t) ? t : null;
+      }
+    } catch { return; }
+
+    const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat });
+    if (!bootVerdict.hung) return;
+
+    this.log(`Bootstrap hang detected for ${this.agent.name}: ${bootVerdict.reason}`);
+    this.forceHangRestart(bootVerdict.reason);
   }
 
   /**

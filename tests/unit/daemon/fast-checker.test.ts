@@ -14,6 +14,7 @@ function createMockAgent(name = 'test-agent') {
     isBootstrapped: vi.fn().mockReturnValue(true),
     injectMessage: vi.fn().mockReturnValue(true),
     write: vi.fn(),
+    sessionRefresh: vi.fn().mockResolvedValue(undefined),
   } as any;
 }
 
@@ -833,6 +834,68 @@ describe('FastChecker', () => {
       );
       checker.stop();
       checker.wake();
+    });
+  });
+
+  describe('checkHangStatus — #19b bootstrap-hang wiring (restart as expected-beat anchor)', () => {
+    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString(); // 20min ago
+    const WITHIN_GRACE_ISO = new Date(Date.now() - 5 * 60 * 1000).toISOString();    // 5min ago
+
+    it('force-fresh-restarts when .restart-time exceeds grace with no session beat since', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      // No heartbeat.json at all — never beat since restart.
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('force-fresh-restarts when the only session beat on record predates the restart (stale carry-over)', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      const staleBeat = new Date(Date.now() - 30 * 60 * 1000).toISOString(); // before the restart
+      writeFileSync(join(paths.stateDir, 'heartbeat.json'), JSON.stringify({ last_session_heartbeat: staleBeat }), 'utf-8');
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+    });
+
+    it('does NOT restart within grace-of-restart, even with no beat yet', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), WITHIN_GRACE_ISO + '\n', 'utf-8');
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+    });
+
+    it('does NOT restart once a session beat lands at/after the restart (healthy bootstrap)', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      const freshBeat = new Date(Date.now() - 18 * 60 * 1000).toISOString(); // after the restart
+      writeFileSync(join(paths.stateDir, 'heartbeat.json'), JSON.stringify({ last_session_heartbeat: freshBeat }), 'utf-8');
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
+    });
+
+    it('does NOT restart when .restart-time is absent (fail-safe: unknown anchor)', () => {
+      // No .restart-time file written at all.
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).checkHangStatus();
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
     });
   });
 
