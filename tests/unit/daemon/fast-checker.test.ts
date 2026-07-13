@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { FastChecker } from '../../../src/daemon/fast-checker';
-import { tryAcquireRestartLock, releaseRestartLock } from '../../../src/daemon/restart-lock';
 import type { BusPaths, TelegramCallbackQuery } from '../../../src/types';
 
 // Minimal mock for AgentProcess
@@ -983,43 +982,15 @@ describe('FastChecker', () => {
     });
   });
 
-  describe('checkHangStatus — CROSS-PATH RACE FIX (2026-07-13 storm): restart-in-flight lock vs the manual/CLI path', () => {
-    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-
-    it('is a clean no-op when agent-manager.ts\'s manual restartAgent() already holds the restart-in-flight lock', () => {
-      // Simulates the OTHER half of the confirmed cross-path race: the manual/CLI
-      // restart path (agent-manager.ts's restartAgent) acquired the lock first via
-      // the exact same restart-lock.ts module this automated actuator now checks.
-      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
-      // No heartbeat.json, no last_idle.flag — this WOULD force-fresh-restart if the
-      // lock didn't block it (same setup as the "genuine hang" test above).
-      const preAcquired = tryAcquireRestartLock(paths.stateDir, 'manual-restart');
-      expect(preAcquired.acquired).toBe(true); // sanity: the simulated manual path got it first
-
-      const agent = createMockAgent('test-agent');
-      const checker = new FastChecker(agent, paths, '/tmp/framework');
-
-      (checker as any).checkHangStatus();
-
-      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(false);
-      expect(agent.sessionRefresh).not.toHaveBeenCalled();
-
-      releaseRestartLock(paths.stateDir);
-    });
-
-    it('restarts normally once the manual path\'s lock has been released', () => {
-      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
-      tryAcquireRestartLock(paths.stateDir, 'manual-restart');
-      releaseRestartLock(paths.stateDir); // the manual path finished and released
-
-      const agent = createMockAgent('test-agent');
-      const checker = new FastChecker(agent, paths, '/tmp/framework');
-
-      (checker as any).checkHangStatus();
-
-      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
-    });
-  });
+  // NOTE (2026-07-13, revised): a "cross-path restart-in-flight lock" describe block
+  // used to live here, testing that forceHangRestart/forceContextRestart no-op when
+  // agent-manager.ts's manual restartAgent() already holds the lock. Removed — the
+  // lock acquire/release moved from these actuators into sessionRefresh() itself
+  // (agent-process.ts), the single choke point that covers every caller including a
+  // 4th one these actuator-level checks missed (the session-time-cap rollover timer,
+  // confirmed as the actual race that hit boss+forge). The cross-path lock behavior
+  // is now tested in agent-process.test.ts (sessionRefresh's own acquire/block/release)
+  // and agent-manager.test.ts (restartAgent's still-separate, unchanged lock check).
 
   describe('formatTelegramVideoMessage', () => {
     it('formats video message with all fields', () => {

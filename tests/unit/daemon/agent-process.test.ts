@@ -48,6 +48,7 @@ const fsMocks = {
   writeFileSync: vi.fn(),
   appendFileSync: vi.fn(),
   statSync: vi.fn(),
+  unlinkSync: vi.fn(),
 };
 
 vi.mock('fs', async () => {
@@ -76,6 +77,7 @@ vi.mock('fs', async () => {
     get writeFileSync() { return fsMocks.writeFileSync; },
     get appendFileSync() { return fsMocks.appendFileSync; },
     get statSync() { return fsMocks.statSync; },
+    get unlinkSync() { return fsMocks.unlinkSync; },
   };
 });
 
@@ -105,6 +107,7 @@ beforeEach(() => {
   fsMocks.writeFileSync.mockReset();
   fsMocks.appendFileSync.mockReset();
   fsMocks.statSync.mockReset();
+  fsMocks.unlinkSync.mockReset();
 });
 
 describe('AgentProcess — #19b restart-time marker (bootstrap-hang expected-beat anchor)', () => {
@@ -290,6 +293,102 @@ describe('AgentProcess - BUG-011 fix (stop awaits PTY exit)', () => {
     // the PTY dies must already see the marker, or it classifies a false crash.
     const markerWriteOrder = fsMocks.writeFileSync.mock.invocationCallOrder[writeIdx];
     expect(markerWriteOrder).toBeLessThan(stopSpy.mock.invocationCallOrder[0]);
+  });
+});
+
+describe('AgentProcess.sessionRefresh — cross-path restart-in-flight lock (2026-07-13, revised scope)', () => {
+  // Analyst review found a 4th caller of sessionRefresh() that the original
+  // per-actuator lock checks (fast-checker.ts's forceHangRestart/forceContextRestart,
+  // agent-manager.ts's restartAgent) all missed: this class's OWN session-time-cap
+  // rollover timer (scheduleCheck) calls this.sessionRefresh() directly. Confirmed
+  // via the actual incident markers as the race that hit boss+forge. Gating HERE
+  // instead is the single choke point that covers every caller by construction.
+
+  it('acquires the restart-in-flight lock before stop()/start(), and releases it after both complete', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+    fsMocks.writeFileSync.mockClear();
+    fsMocks.unlinkSync.mockClear();
+
+    const stopSpy = vi.spyOn(ap, 'stop').mockResolvedValue();
+    const startSpy = vi.spyOn(ap, 'start').mockResolvedValue();
+
+    await ap.sessionRefresh();
+
+    // Lock acquired: a wx-flagged write to .restart-in-flight, BEFORE stop().
+    const lockWriteIdx = fsMocks.writeFileSync.mock.calls.findIndex(
+      (call) => String(call[0]).endsWith('.restart-in-flight'),
+    );
+    expect(lockWriteIdx).toBeGreaterThanOrEqual(0);
+    expect(String(fsMocks.writeFileSync.mock.calls[lockWriteIdx][0])).toBe('/tmp/test-ctx/state/alice/.restart-in-flight');
+    expect(fsMocks.writeFileSync.mock.invocationCallOrder[lockWriteIdx]).toBeLessThan(stopSpy.mock.invocationCallOrder[0]);
+
+    // Lock released: unlinkSync on the same path, AFTER start() completes.
+    const unlinkCall = fsMocks.unlinkSync.mock.calls.find(c => String(c[0]).endsWith('.restart-in-flight'));
+    expect(unlinkCall).toBeDefined();
+    expect(fsMocks.unlinkSync.mock.invocationCallOrder[0]).toBeGreaterThan(startSpy.mock.invocationCallOrder[0]);
+  });
+
+  it('is a clean no-op (does NOT call stop()/start()) when the restart-in-flight lock is already held by another caller — the confirmed missed-4th-caller race', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+
+    const stopSpy = vi.spyOn(ap, 'stop').mockResolvedValue();
+    const startSpy = vi.spyOn(ap, 'start').mockResolvedValue();
+
+    // Simulate: some OTHER caller (fast-checker.ts's actuator, or another instance's
+    // rollover timer) already holds the lock, fresh. writeFileSync's wx-flagged
+    // acquire attempt must fail with EEXIST for the LOCK PATH specifically — other
+    // paths (.restart-time, .session-refresh marker) must keep working normally.
+    fsMocks.writeFileSync.mockImplementation((path: unknown) => {
+      if (String(path).endsWith('.restart-in-flight')) {
+        const err: NodeJS.ErrnoException = new Error('EEXIST: file already exists');
+        err.code = 'EEXIST';
+        throw err;
+      }
+      return undefined;
+    });
+    fsMocks.readFileSync.mockImplementation((path: unknown) => {
+      if (String(path).endsWith('.restart-in-flight')) {
+        return JSON.stringify({ source: 'hang-detector', at: Date.now() - 5_000 }); // fresh, 5s ago
+      }
+      return '';
+    });
+
+    await ap.sessionRefresh();
+
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it('proceeds normally (stop()+start() called) once a previously-held lock is stale (>2min, holder presumably crashed)', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+
+    const stopSpy = vi.spyOn(ap, 'stop').mockResolvedValue();
+    const startSpy = vi.spyOn(ap, 'start').mockResolvedValue();
+
+    fsMocks.writeFileSync.mockImplementationOnce((path: unknown) => {
+      // First call (the wx-flagged acquire attempt for the lock) fails EEXIST once;
+      // subsequent calls (the reclaim-write, the marker writes) succeed normally.
+      if (String(path).endsWith('.restart-in-flight')) {
+        const err: NodeJS.ErrnoException = new Error('EEXIST: file already exists');
+        err.code = 'EEXIST';
+        throw err;
+      }
+      return undefined;
+    });
+    fsMocks.readFileSync.mockImplementation((path: unknown) => {
+      if (String(path).endsWith('.restart-in-flight')) {
+        return JSON.stringify({ source: 'hang-detector', at: Date.now() - 5 * 60_000 }); // 5min ago — stale
+      }
+      return '';
+    });
+
+    await ap.sessionRefresh();
+
+    expect(stopSpy).toHaveBeenCalled();
+    expect(startSpy).toHaveBeenCalled();
   });
 });
 
