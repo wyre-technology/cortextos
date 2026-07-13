@@ -1041,6 +1041,20 @@ describe('FastChecker', () => {
       expect(agent.sessionRefresh).toHaveBeenCalledTimes(4);
     });
 
+    it('reset-on-beat also honors the idle-flag source (dual-source parity — Stop-hook activity alone breaks the chain)', () => {
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).forceHangRestart('hang 1');
+      vi.advanceTimersByTime(16 * 60_000); // past cooldown
+      // No heartbeat.json — only the Stop-hook idle flag proves the restart worked.
+      writeFileSync(join(paths.stateDir, 'last_idle.flag'),
+        String(Math.floor((Date.now() - 60_000) / 1000)), 'utf-8');
+      (checker as any).checkHangStatus();
+
+      expect((checker as any).hangConsecutiveRestarts).toBe(0);
+    });
+
     it('legacy .hang-circuit.json with a restarts array migrates to the consecutive counter (no restart credit lost across the upgrade)', () => {
       const t = Date.now();
       writeFileSync(join(paths.stateDir, '.hang-circuit.json'), JSON.stringify({

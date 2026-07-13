@@ -1440,7 +1440,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     if (this.hangConsecutiveRestarts >= 3) {
       this.hangHaltedAt = now;
       this.saveHangCircuit();
-      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 consecutive hang-restarts with no intervening session beat didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 consecutive hang-restarts with no intervening session beat didn't clear it. Auto-restart paused 30min (auto-resumes after); if it re-halts, manual attention needed (cortextos start ${this.agent.name}).`;
       this.log(msg);
       // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
       // even though the frozen session can't post for itself. (analyst's separate
