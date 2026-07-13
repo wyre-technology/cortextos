@@ -12,6 +12,7 @@ import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
 import { tryAcquireRestartLock, releaseRestartLock } from './restart-lock.js';
+import { writeAgentPid } from '../utils/agent-pidfile.js';
 
 type LogFn = (msg: string) => void;
 
@@ -188,6 +189,7 @@ export class AgentProcess {
       }
       this.status = 'running';
       this.sessionStart = new Date();
+      this.writePidRecord();
       this.log(`Running (pid: ${this.pty.getPid()})`);
 
       // Issue #392: codex-app-server does not reliably execute the inline
@@ -574,6 +576,20 @@ export class AgentProcess {
     } catch (err) {
       this.log(`Failed to write .restart-time marker: ${err}`);
     }
+  }
+
+  /**
+   * Pid-truth choke point (2026-07-13 storm forensics): record the live PTY pid on
+   * EVERY spawn path. This used to live only in agent-manager.startAgent(), so
+   * sessionRefresh()/crash-recovery respawns left agent.pid pointing at dead pids
+   * (8/9 of the fleet measured stale) — and a stale record plus OS pid reuse is
+   * exactly what reapOrphan's ownership check must never be fed. Same single-
+   * choke-point shape as writeRestartTime() above: every current and future spawn
+   * path goes through start(), so none can forget to record its pid.
+   */
+  private writePidRecord(): void {
+    const pid = this.pty?.getPid();
+    if (pid) writeAgentPid(join(this.env.ctxRoot, 'state', this.name), this.name, pid, process.pid);
   }
 
   private handleExit(exitCode: number): void {

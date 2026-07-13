@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed — liveness-truth: pid-record choke point + reachable hang-restart breaker
+
+- **`agent.pid` is now written by `AgentProcess.start()` itself** (the pid-truth
+  choke point, mirroring the `.restart-time` marker) instead of only by
+  `agent-manager.startAgent()`. Previously every `sessionRefresh()`/crash-recovery
+  respawn left `agent.pid` pointing at a dead pid (8/9 of the fleet measured stale
+  on 2026-07-13) — stale records + OS pid reuse is the exact input the
+  `reapOrphan` ownership guard must never be fed.
+- **The hang-restart halt breaker actually trips now.** The old
+  3-restarts-in-30min window was arithmetically unreachable at the 15min
+  post-restart cooldown cadence (max 2 entries in any 30min window at fire time —
+  murph looped 4 unbroken hang-restarts 20:15→21:01Z). Replaced with a
+  consecutive-restarts-without-intervening-session-beat counter: reset when a
+  dual-source beat (session heartbeat or Stop-hook idle flag) lands after the
+  last restart, HALT at 3. Spacing-independent and immune to grace-constant
+  retuning. Legacy `.hang-circuit.json` `restarts` arrays migrate to the counter
+  on load (no restart credit lost).
+
 ### Fixed — freeze-cure: context-handoff default-ON + fleet-wide bridge wiring
 
 The daemon shipped a full context-handoff mechanism (thresholds, tiers, handoff

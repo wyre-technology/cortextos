@@ -70,7 +70,7 @@ export class FastChecker {
   // processes no cron fires). Keyed on delivered-fire-without-session-beat, never staleness.
   private hangLastCheckAt: number = 0;        // throttle the hang sweep (runs ~60s, not per 1s poll)
   private hangLastRestartAt: number = 0;      // cooldown: give a fresh session a full grace window to beat
-  private hangRestarts: number[] = [];        // persisted hang-restart window (halt-after-N so auto-heal can't loop)
+  private hangConsecutiveRestarts: number = 0; // persisted count of hang-restarts with NO intervening session beat (halt-after-N so auto-heal can't loop)
   private hangHaltedAt: number | null = null; // when the hang auto-heal halted (null = healthy)
   private hangCircuitFile: string = '';
 
@@ -1338,7 +1338,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     if (this.hangHaltedAt !== null) {
       if (now - this.hangHaltedAt < 30 * 60_000) return;
       this.hangHaltedAt = null;
-      this.hangRestarts = [];
+      this.hangConsecutiveRestarts = 0;
       this.saveHangCircuit();
       this.log('Hang auto-heal breaker reset after 30min pause');
     }
@@ -1377,6 +1377,17 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
+    // Reset-on-beat: any dual-source liveness signal AFTER the last hang-restart
+    // proves that restart worked — the consecutive chain is broken. A later hang
+    // is a NEW incident that starts counting from zero.
+    if (this.hangConsecutiveRestarts > 0) {
+      const lastBeat = Math.max(lastSessionHeartbeat ?? 0, lastIdleFlagAt ?? 0);
+      if (lastBeat > this.hangLastRestartAt) {
+        this.hangConsecutiveRestarts = 0;
+        this.saveHangCircuit();
+      }
+    }
+
     const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (fireVerdict.hung) {
       this.log(`Hang detected for ${this.agent.name}: ${fireVerdict.reason}`);
@@ -1407,7 +1418,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   /**
    * Force-fresh restart for a detected hang. Shares the crash-path discipline: an
    * auto-healer that can itself loop is worse than the bug, so hang-restarts are counted
-   * in a persisted 30min window and HALT (pause + alert) at the cap of 3. A --continue
+   * in a persisted consecutive-without-beat counter and HALT (pause + alert) at the cap of 3. A --continue
    * restart re-hangs (proven), so this always goes fresh via hardRestart's .force-fresh.
    */
   private forceHangRestart(reason: string): void {
@@ -1418,12 +1429,18 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // entirely and was confirmed as the actual race that hit boss+forge).
     const now = Date.now();
 
-    // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
-    this.hangRestarts = this.hangRestarts.filter(t => now - t < 30 * 60_000);
-    if (this.hangRestarts.length >= 3) {
+    // Halt-after-N CONSECUTIVE (2026-07-13 storm forensics): the previous
+    // 3-in-30min window could NEVER trip — the 15min post-restart cooldown spaces
+    // fires so a 30min filter holds at most 2 entries at fire time (murph looped
+    // 4x unbroken, 20:15→21:01Z). Any window formula stays coupled to the cooldown
+    // (needs window > cap × spacing STRICTLY, and silently dies again if grace is
+    // retuned), so count the thing we actually mean instead: consecutive
+    // hang-restarts with no intervening session beat. checkHangStatus() resets the
+    // counter when a dual-source beat lands after the last restart.
+    if (this.hangConsecutiveRestarts >= 3) {
       this.hangHaltedAt = now;
       this.saveHangCircuit();
-      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 hang-restarts in 30min didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 consecutive hang-restarts with no intervening session beat didn't clear it. Auto-restart paused 30min (auto-resumes after); if it re-halts, manual attention needed (cortextos start ${this.agent.name}).`;
       this.log(msg);
       // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
       // even though the frozen session can't post for itself. (analyst's separate
@@ -1433,7 +1450,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
       return;
     }
-    this.hangRestarts.push(now);
+    this.hangConsecutiveRestarts++;
     this.hangLastRestartAt = now;
     this.saveHangCircuit();
 
@@ -1463,7 +1480,11 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     try {
       if (!existsSync(this.hangCircuitFile)) return;
       const data = JSON.parse(readFileSync(this.hangCircuitFile, 'utf-8'));
-      this.hangRestarts = Array.isArray(data.restarts) ? data.restarts : [];
+      this.hangConsecutiveRestarts = typeof data.consecutiveRestarts === 'number'
+        ? data.consecutiveRestarts
+        // Legacy window shape (pre consecutive-counter): each entry was a restart with
+        // no reset mechanism — carry the count over so no restart credit is lost.
+        : (Array.isArray(data.restarts) ? data.restarts.length : 0);
       this.hangHaltedAt = typeof data.haltedAt === 'number' ? data.haltedAt : null;
       this.hangLastRestartAt = typeof data.lastRestartAt === 'number' ? data.lastRestartAt : 0;
       this.hangLastCheckAt = typeof data.lastCheckAt === 'number' ? data.lastCheckAt : 0;
@@ -1476,7 +1497,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   private saveHangCircuit(): void {
     try {
       writeFileSync(this.hangCircuitFile, JSON.stringify({
-        restarts: this.hangRestarts,
+        consecutiveRestarts: this.hangConsecutiveRestarts,
         haltedAt: this.hangHaltedAt,
         lastRestartAt: this.hangLastRestartAt,
         lastCheckAt: this.hangLastCheckAt,
