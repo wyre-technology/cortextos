@@ -3,18 +3,31 @@
 // catches non-context / environmental hangs where a `--continue`-resumed session is
 // frozen and processes no cron fires, which no context-% threshold can detect.
 //
-// The signal (why it's reliable): the always-heartbeat-FIRST convention (Part A)
-// guarantees a HEALTHY session's first action on ANY delivered cron fire is a
-// session-authored `update-heartbeat` (source=session), which advances
-// last_session_heartbeat. So: a delivered fire with NO session-authored beat after it
-// is an unambiguous hang. We key on that — NEVER on last-seen staleness, which the
-// 50-min watchdog beat and log-event bumps keep fresh even for a dead session.
+// The signal: a delivered fire with NO proof-of-activity since is an unambiguous hang.
+// We key on that — NEVER on last-seen staleness, which the 50-min watchdog beat and
+// log-event bumps keep fresh even for a dead session.
+//
+// DUAL-SOURCE (2026-07-13 correction): "proof-of-activity" is the more recent of TWO
+// signals — last_session_heartbeat (only advances on an explicit `update-heartbeat`
+// call) and last_idle.flag (the Stop hook, which fires on EVERY turn completion
+// regardless of which cron triggered it). The ORIGINAL design assumed an
+// "always-heartbeat-FIRST convention" — that a healthy session's first action on ANY
+// delivered fire is a session-authored update-heartbeat. That assumption was FALSE:
+// only the `heartbeat` cron's own prompt instructs update-heartbeat; the other cron
+// prompts (check-approvals, morning-review, etc.) never do. A healthy agent silently
+// processing one of those for 15+min with no intervening heartbeat-cron fire has a
+// frozen last_session_heartbeat despite being genuinely alive — confirmed root cause
+// of the 2026-07-13 ~15:02 UTC false restart (and the self-perpetuating restart storm
+// it triggered, since a freshly-spawned session reproduces the identical false
+// baseline). last_idle.flag closes this: it can't lie about real turn-processing the
+// way an unfired heartbeat-cron can look like silence.
 //
 // GOVERNING PRINCIPLE — FAIL SAFE TOWARD NOT-RESTARTING: a missed hang is cheap (the
 // next delivered fire re-catches it); a false restart disrupts a healthy agent and, at
 // fleet scale, is itself a mini-storm. So on ANY uncertainty — absent last_session
-// _heartbeat (deploy-transition / never-beat-yet), absent delivered fire, unparseable
-// timestamp — we DO NOT flag. HUNG requires a positive assertion on every input.
+// _heartbeat AND absent last_idle_flag (deploy-transition / never-beat-yet), absent
+// delivered fire, unparseable timestamp — we DO NOT flag. HUNG requires a positive
+// assertion on every input.
 
 export interface Cronish {
   /** ISO 8601 of the most recent fire DISPATCHED to the session (persisted pre-dispatch). */
@@ -30,6 +43,27 @@ export interface HangEvalInput {
   deliveredFireAt: number | null;
   /** Last genuine session-authored beat (ms), or null if absent. From heartbeat.json. */
   lastSessionHeartbeat: number | null;
+  /**
+   * 2026-07-13 dual-source fix: mtime-equivalent of `state/<agent>/last_idle.flag`
+   * (ms), or null/absent if never written. Written by the Stop hook on EVERY turn
+   * completion, regardless of which cron triggered it — unlike `lastSessionHeartbeat`,
+   * which only advances when the agent explicitly calls `update-heartbeat` (only the
+   * `heartbeat` cron's own prompt instructs that). Without this, a healthy agent
+   * processing any OTHER cron (check-approvals, morning-review, etc.) for 15+min
+   * false-positives as hung — confirmed root cause of the 2026-07-13 ~15:02 UTC
+   * false restart. Optional (omit entirely) to preserve pre-fix single-source
+   * behavior for any caller that hasn't wired the new read yet.
+   */
+  lastIdleFlagAt?: number | null;
+}
+
+/** The more recent of two beat timestamps, ignoring nulls/undefined; null if both absent. */
+function maxBeat(a: number | null | undefined, b: number | null | undefined): number | null {
+  const av = a ?? null;
+  const bv = b ?? null;
+  if (av === null) return bv;
+  if (bv === null) return av;
+  return Math.max(av, bv);
 }
 
 export interface HangEvalResult {
@@ -45,6 +79,8 @@ export interface BootstrapHangEvalInput {
   restartAt: number | null;
   /** Last genuine session-authored beat (ms), or null if absent. From heartbeat.json. */
   lastSessionHeartbeat: number | null;
+  /** Same dual-source fix as HangEvalInput — see its doc comment. */
+  lastIdleFlagAt?: number | null;
 }
 
 /** Parse an ISO timestamp to epoch ms; null on absent/invalid (fail-safe). */
@@ -80,7 +116,8 @@ export function mostRecentDeliveredFireMs(crons: Cronish[]): number | null {
  * we key on delivered-fire-without-beat, not on last-seen age.
  */
 export function evaluateHang(input: HangEvalInput): HangEvalResult {
-  const { now, graceMs, deliveredFireAt: T, lastSessionHeartbeat: S } = input;
+  const { now, graceMs, deliveredFireAt: T, lastSessionHeartbeat, lastIdleFlagAt } = input;
+  const S = maxBeat(lastSessionHeartbeat, lastIdleFlagAt);
 
   if (T === null) return { hung: false, reason: 'no delivered fire recorded — fail-safe' };
   if (now - T <= graceMs) {
@@ -119,7 +156,8 @@ export function evaluateHang(input: HangEvalInput): HangEvalResult {
  * governing principle as evaluateHang).
  */
 export function evaluateBootstrapHang(input: BootstrapHangEvalInput): HangEvalResult {
-  const { now, graceMs, restartAt: R, lastSessionHeartbeat: S } = input;
+  const { now, graceMs, restartAt: R, lastSessionHeartbeat, lastIdleFlagAt } = input;
+  const S = maxBeat(lastSessionHeartbeat, lastIdleFlagAt);
 
   if (R === null) return { hung: false, reason: 'no restart-time recorded — fail-safe' };
   if (now - R <= graceMs) {

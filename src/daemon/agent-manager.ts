@@ -18,6 +18,7 @@ import { processMediaMessage } from '../telegram/media.js';
 import { resolveAgentDir } from '../utils/agent-dir.js';
 import { stripBom } from '../utils/strip-bom.js';
 import { writeAgentPid, readAgentPid, clearAgentPid, reapOrphan, isPidAlive } from '../utils/agent-pidfile.js';
+import { tryAcquireRestartLock, releaseRestartLock } from './restart-lock.js';
 
 type LogFn = (msg: string) => void;
 
@@ -1008,10 +1009,32 @@ export class AgentManager {
       console.log(`[agent-manager] Agent ${name} not found — cannot restart`);
       return;
     }
-    console.log(`[agent-manager] Restarting ${name}`);
-    await this.stopAgent(name);
-    await this.startAgent(name, '');
-    console.log(`[agent-manager] Restart complete for ${name}`);
+
+    // Cross-path restart-in-flight lock (2026-07-13 storm fix): confirmed root
+    // mechanism of the fleet-wide dup-session storm was this manual/CLI path racing
+    // with fast-checker.ts's automated actuators (forceHangRestart/forceContextRestart)
+    // — two structurally different call shapes (stopAgent+startAgent here vs
+    // AgentProcess.sessionRefresh() there), no shared coordination before this lock.
+    // Whichever gets here first wins, the other is a clean logged no-op. See
+    // restart-lock.ts.
+    const stateDir = join(this.ctxRoot, 'state', name);
+    const lock = tryAcquireRestartLock(stateDir, 'manual-restart');
+    if (!lock.acquired) {
+      console.log(`[agent-manager] Restart SKIPPED for ${name} — ${lock.reason}`);
+      return;
+    }
+    try {
+      console.log(`[agent-manager] Restarting ${name}`);
+      await this.stopAgent(name);
+      await this.startAgent(name, '');
+      console.log(`[agent-manager] Restart complete for ${name}`);
+    } finally {
+      // Release once the new session has actually been started (unlike the
+      // fast-checker.ts actuators, which release right after TRIGGERING an
+      // in-process sessionRefresh — this path awaits stopAgent+startAgent fully
+      // before returning, so releasing after both matches its own completion point).
+      releaseRestartLock(stateDir);
+    }
   }
 
   /**

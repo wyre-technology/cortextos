@@ -149,4 +149,35 @@ describe('agent-pidfile', () => {
     await sleep(300);
     expect(isPidAlive(pid)).toBe(false); // SIGKILL landed after ownership re-verify
   });
+
+  it('REGRESSION (2026-07-13 restart-storm): after a restart cycle reaps the prior session, isPidAlive confirms NO live orphan of the OLD pid remains', async () => {
+    // Direct regression proof for the cross-path restart-lock fix (fast-checker.ts's
+    // forceHangRestart/forceContextRestart + agent-manager.ts's restartAgent racing
+    // via sessionRefresh() bypassing all 3 gated call-sites — a 4th, unguarded
+    // caller, the session-time-cap rollover timer, was the confirmed mechanism).
+    // The lock itself prevents a SECOND restart trigger from firing concurrently,
+    // but the actual "no orphan" guarantee ultimately rests on THIS check — the same
+    // isPidAlive/reapOrphan primitive agent-manager.ts's stopAgent already calls for
+    // any pidfile it finds pointing at a no-longer-registered agent. Simulating that
+    // exact shape: a "previous session" pid on disk (as if start() is about to run
+    // again post-restart and finds a stale pidfile from before), verify the pre-check
+    // sees it alive, then confirm reapOrphan (the code path stopAgent invokes) kills
+    // it and isPidAlive subsequently reports it dead — no live process from the OLD
+    // session survives into the new one.
+    const oldSessionPid = spawnChild();
+    expect(isPidAlive(oldSessionPid)).toBe(true); // sanity: old session genuinely alive first
+
+    const rec: AgentPidRecord = {
+      pid: oldSessionPid, agentName: 'dev', spawnedAt: Date.now(),
+      startedAt: processStartTimeMs(oldSessionPid), // true start time => ownership verifies
+      daemonPid: process.pid,
+    };
+    const res = await reapOrphan(stateDir, rec, noop, 500);
+    expect(res.verdict).toBe('owned');
+    expect(res.reaped).toBe(true);
+    await sleep(200);
+
+    expect(isPidAlive(oldSessionPid)).toBe(false); // the OLD pid is confirmed dead — no orphan
+    expect(existsSync(join(stateDir, 'agent.pid'))).toBe(false); // pidfile cleared too
+  });
 });

@@ -1155,6 +1155,13 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
    * The circuit breaker prevents runaway restart loops.
    */
   private forceContextRestart(reason: string): void {
+    // NOTE (2026-07-13, revised): the restart-in-flight lock used to be acquired
+    // HERE. Moved to sessionRefresh() itself (agent-process.ts) — a 4th caller (the
+    // session-time-cap rollover timer) called sessionRefresh() directly, bypassing
+    // this and the other 2 gated call-sites entirely, and was confirmed as the
+    // actual race that hit boss+forge. Gating inside sessionRefresh() is the single
+    // choke point that covers every caller by construction. This function no longer
+    // needs to acquire/release anything — this.agent.sessionRefresh() below does it.
     const now = Date.now();
 
     // Update and check circuit breaker window (persisted to disk — survives --continue restarts)
@@ -1221,8 +1228,9 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       writeFileSync(statusPath, JSON.stringify({ used_percentage: 0, exceeds_200k_tokens: false, written_at: new Date().toISOString() }));
     } catch { /* non-fatal */ }
 
-    // sessionRefresh() does stop() + start(); shouldContinue() will return false
-    // because .force-fresh was just written, giving us a clean fresh session.
+    // sessionRefresh() does stop() + start() — AND now acquires/releases the
+    // cross-path restart-in-flight lock internally; shouldContinue() will return
+    // false because .force-fresh was just written, giving us a clean fresh session.
     this.agent.sessionRefresh().catch(err => this.log(`Context restart failed: ${err}`));
   }
 
@@ -1323,6 +1331,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     const now = Date.now();
     if (now - this.hangLastCheckAt < 60_000) return; // throttle: sweep ~once/min
     this.hangLastCheckAt = now;
+    this.saveHangCircuit();
 
     // Halt state: if the auto-heal halted (repeated hang-restarts didn't clear it), stay
     // paused for the window rather than loop — same discipline as the crash-halt.
@@ -1354,7 +1363,21 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
-    const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat });
+    // Dual-source liveness (2026-07-13 false-positive fix): last_idle.flag is written
+    // by the Stop hook on EVERY turn completion, regardless of which cron triggered
+    // it — unlike lastSessionHeartbeat, which only advances when the agent explicitly
+    // calls update-heartbeat (only the heartbeat cron's own prompt instructs that).
+    // Same read pattern as isAgentActive() below.
+    let lastIdleFlagAt: number | null = null;
+    try {
+      const flagPath = join(this.paths.stateDir, 'last_idle.flag');
+      if (existsSync(flagPath)) {
+        const t = parseInt(readFileSync(flagPath, 'utf-8').trim(), 10) * 1000;
+        lastIdleFlagAt = Number.isFinite(t) ? t : null;
+      }
+    } catch { return; }
+
+    const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (fireVerdict.hung) {
       this.log(`Hang detected for ${this.agent.name}: ${fireVerdict.reason}`);
       this.forceHangRestart(fireVerdict.reason);
@@ -1374,7 +1397,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
     } catch { return; }
 
-    const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat });
+    const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (!bootVerdict.hung) return;
 
     this.log(`Bootstrap hang detected for ${this.agent.name}: ${bootVerdict.reason}`);
@@ -1388,6 +1411,11 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
    * restart re-hangs (proven), so this always goes fresh via hardRestart's .force-fresh.
    */
   private forceHangRestart(reason: string): void {
+    // NOTE (2026-07-13, revised): the restart-in-flight lock used to be acquired
+    // HERE. Moved to sessionRefresh() itself (agent-process.ts) — see the identical
+    // note on forceContextRestart above for why (a 4th, previously-missed caller of
+    // sessionRefresh — the session-time-cap rollover timer — bypassed this gate
+    // entirely and was confirmed as the actual race that hit boss+forge).
     const now = Date.now();
 
     // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
@@ -1418,17 +1446,27 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // Force-fresh (NOT --continue: a --continue restart re-hangs). hardRestart writes
     // .force-fresh + .restart-planned; sessionRefresh's shouldContinue() then returns
     // false, giving a clean fresh session that runs Part-A and re-establishes liveness.
+    // sessionRefresh() now also acquires/releases the cross-path restart-in-flight
+    // lock internally.
     hardRestart(this.paths, this.agent.name, `HANG-FORCE-RESTART: ${reason}`);
     this.agent.sessionRefresh().catch(err => this.log(`Hang restart failed: ${err}`));
   }
 
-  /** Load persisted hang-restart window (survives --continue restarts, like the ctx breaker). */
+  /**
+   * Load persisted hang-restart window (survives --continue restarts, like the ctx
+   * breaker). 2026-07-13: also restores hangLastRestartAt/hangLastCheckAt — a
+   * freshly-spawned session's in-memory defaults (0) previously meant zero cooldown,
+   * which let a still-live false-positive (see hang-detector.ts's dual-source fix)
+   * re-trigger a restart on the new session's very first poll, storming the fleet.
+   */
   private loadHangCircuit(): void {
     try {
       if (!existsSync(this.hangCircuitFile)) return;
       const data = JSON.parse(readFileSync(this.hangCircuitFile, 'utf-8'));
       this.hangRestarts = Array.isArray(data.restarts) ? data.restarts : [];
       this.hangHaltedAt = typeof data.haltedAt === 'number' ? data.haltedAt : null;
+      this.hangLastRestartAt = typeof data.lastRestartAt === 'number' ? data.lastRestartAt : 0;
+      this.hangLastCheckAt = typeof data.lastCheckAt === 'number' ? data.lastCheckAt : 0;
     } catch {
       // Start fresh on error
     }
@@ -1440,6 +1478,8 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       writeFileSync(this.hangCircuitFile, JSON.stringify({
         restarts: this.hangRestarts,
         haltedAt: this.hangHaltedAt,
+        lastRestartAt: this.hangLastRestartAt,
+        lastCheckAt: this.hangLastCheckAt,
       }), 'utf-8');
     } catch {
       // Non-critical

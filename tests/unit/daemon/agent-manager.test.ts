@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildReplyContext } from '../../../src/daemon/agent-manager.js';
+import { tryAcquireRestartLock, releaseRestartLock } from '../../../src/daemon/restart-lock.js';
 
 // Mock the PTY layer so we don't load native bindings or spawn real processes.
 // AgentManager → AgentProcess → AgentPTY → node-pty. We mock at AgentProcess.
@@ -392,6 +393,47 @@ describe('AgentManager.restartAgent - BUG-007 fix (rebuild Telegram poller)', ()
 
     expect(stopSpy).not.toHaveBeenCalled();
     expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it('CROSS-PATH RACE FIX (2026-07-13 storm): is a clean no-op when fast-checker.ts\'s automated actuator already holds the restart-in-flight lock for this agent', async () => {
+    // Simulates the confirmed storm mechanism directly: the hang-detector actuator
+    // (fast-checker.ts's forceHangRestart) acquires the lock first via the exact same
+    // restart-lock.ts module this manual path now checks. This proves the fix closes
+    // the ACTUAL cross-path race (two structurally different call shapes on the same
+    // agent), not just a same-module double-call.
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', { process: {}, checker: {}, poller: { stop() {} } });
+    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue();
+    const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
+
+    const stateDir = join(ctxRoot, 'state', 'alice');
+    mkdirSync(stateDir, { recursive: true });
+    const preAcquired = tryAcquireRestartLock(stateDir, 'hang-detector');
+    expect(preAcquired.acquired).toBe(true); // sanity: the simulated actuator got it first
+
+    await am.restartAgent('alice');
+
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect(startSpy).not.toHaveBeenCalled();
+
+    releaseRestartLock(stateDir);
+  });
+
+  it('proceeds normally once the other path\'s lock has been released', async () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', { process: {}, checker: {}, poller: { stop() {} } });
+    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue();
+    const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
+
+    const stateDir = join(ctxRoot, 'state', 'alice');
+    mkdirSync(stateDir, { recursive: true });
+    tryAcquireRestartLock(stateDir, 'hang-detector');
+    releaseRestartLock(stateDir); // the other path finished and released
+
+    await am.restartAgent('alice');
+
+    expect(stopSpy).toHaveBeenCalledWith('alice');
+    expect(startSpy).toHaveBeenCalledWith('alice', '');
   });
 });
 

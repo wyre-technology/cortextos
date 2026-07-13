@@ -50,6 +50,47 @@ describe('hang-detector — evaluateHang (fail-safe by construction)', () => {
   });
 });
 
+describe('hang-detector — evaluateHang dual-source liveness (last_idle.flag as a second beat source)', () => {
+  it('does NOT false-positive: stale session-heartbeat but a FRESH idle-flag (real activity) since the fire', () => {
+    // Reproduces the 2026-07-13 15:02 false-positive: agent processed a non-heartbeat
+    // cron (e.g. check-approvals) for 15+min with no update-heartbeat call (only the
+    // heartbeat cron's prompt instructs that), but the Stop hook proves real turns ran.
+    const T = NOW - 20 * MIN; // fire delivered 20min ago
+    const S = T - 30 * MIN;   // last SESSION heartbeat is stale, predates the fire
+    const idle = T + 5 * MIN; // but last_idle.flag (Stop hook) landed AFTER the fire
+    const r = evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: S, lastIdleFlagAt: idle });
+    expect(r.hung).toBe(false);
+  });
+
+  it('still FIRES on a real hang when NEITHER session-heartbeat NOR idle-flag advanced since the fire', () => {
+    const T = NOW - 20 * MIN;
+    const S = T - 5 * MIN;
+    const idle = T - 2 * MIN; // idle-flag also predates the fire — no activity proof at all
+    const r = evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: S, lastIdleFlagAt: idle });
+    expect(r.hung).toBe(true);
+  });
+
+  it('fail-safe unchanged: no session-heartbeat AND no idle-flag at all (no baseline yet — deploy-transition) does NOT fire', () => {
+    const T = NOW - 20 * MIN;
+    const r = evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: null, lastIdleFlagAt: null });
+    expect(r.hung).toBe(false);
+    expect(r.reason).toMatch(/deploy-transition|fail-safe/);
+  });
+
+  it('omitting lastIdleFlagAt entirely (undefined) behaves like the pre-fix single-source check', () => {
+    const T = NOW - 20 * MIN;
+    const S = T - 5 * MIN;
+    expect(evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: S }).hung).toBe(true);
+  });
+
+  it('does NOT fire when idle-flag is present but session-heartbeat is null (idle-flag alone establishes the baseline)', () => {
+    const T = NOW - 20 * MIN;
+    const idle = T + 3 * MIN;
+    const r = evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: null, lastIdleFlagAt: idle });
+    expect(r.hung).toBe(false);
+  });
+});
+
 describe('hang-detector — evaluateBootstrapHang (#19b: restart is an expected-beat anchor too)', () => {
   it('FIRES on a bootstrap hang: restart past grace, no session beat ever', () => {
     const R = NOW - 20 * MIN; // restarted 20min ago (> 15min grace)
@@ -88,6 +129,23 @@ describe('hang-detector — evaluateBootstrapHang (#19b: restart is an expected-
   it('boundary: session beat exactly at restart time (S == R) is healthy', () => {
     const R = NOW - 20 * MIN;
     expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: R }).hung).toBe(false);
+  });
+
+  it('dual-source parallel treatment: does NOT fire when idle-flag (Stop-hook) landed after restart, even with no session-heartbeat ever', () => {
+    // A bootstrap session that reached Stop-hook completion is provably NOT hung,
+    // even if it never called update-heartbeat (same fix as evaluateHang, applied
+    // to the restart-anchored sensor for consistency).
+    const R = NOW - 20 * MIN;
+    const idle = R + 4 * MIN; // Stop hook fired after the restart
+    const r = evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: null, lastIdleFlagAt: idle });
+    expect(r.hung).toBe(false);
+  });
+
+  it('dual-source: still FIRES when idle-flag also predates the restart (genuine bootstrap hang, never completed a turn)', () => {
+    const R = NOW - 20 * MIN;
+    const idle = R - 30 * MIN; // stale idle-flag from a PRIOR session, before this restart
+    const r = evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: null, lastIdleFlagAt: idle });
+    expect(r.hung).toBe(true);
   });
 });
 

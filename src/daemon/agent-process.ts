@@ -11,6 +11,7 @@ import { ensureDir } from '../utils/atomic.js';
 import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
+import { tryAcquireRestartLock, releaseRestartLock } from './restart-lock.js';
 
 type LogFn = (msg: string) => void;
 
@@ -305,27 +306,54 @@ export class AgentProcess {
    * conversation directory still has .jsonl files (shouldContinue() is true).
    */
   async sessionRefresh(): Promise<void> {
-    this.log('Session refresh (--continue restart)');
-    // Write .session-refresh marker so the SessionEnd crash-alert hook
-    // (src/hooks/hook-crash-alert.ts) classifies the imminent PTY exit as a
-    // session refresh rather than a crash. The hook's marker handler +
-    // quiet-suppression set + message switch were all wired for this type,
-    // but no writer existed — every --continue rollover at the session-time
-    // cap surfaced as a false-positive 'crash' on chief/analyst + the
-    // crashes.log file.
-    try {
-      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
-      writeFileSync(
-        join(paths.stateDir, '.session-refresh'),
-        'session-time-cap rollover\n',
-        'utf-8',
-      );
-    } catch (err) {
-      this.log(`Failed to write .session-refresh marker: ${err}`);
+    // Cross-path restart-in-flight lock (2026-07-13 storm fix, revised): this is the
+    // SINGLE choke point for restart. Originally the lock was checked at each CALLER
+    // (fast-checker.ts's forceHangRestart/forceContextRestart, agent-manager.ts's
+    // restartAgent) — but a FOURTH caller was missed: the session-time-cap rollover
+    // timer (scheduleCheck, below) calls sessionRefresh() directly too, completely
+    // bypassing those gated call-sites. Confirmed via the actual incident markers
+    // that THIS untracked caller is what raced boss+forge (same-second timestamps).
+    // Gating HERE instead covers every current and future caller of sessionRefresh()
+    // by construction — no call-site can forget to check it, because none of them
+    // call stop()/start() directly; they all go through this one method.
+    //
+    // agent-manager.ts's restartAgent does NOT call sessionRefresh() (it does
+    // stopAgent+startAgent directly) and keeps its own separate lock acquire/release
+    // — this gate has no effect on that path, they only share the same LOCK FILE.
+    const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+    const lock = tryAcquireRestartLock(paths.stateDir, 'session-refresh');
+    if (!lock.acquired) {
+      this.log(`Session refresh SKIPPED for ${this.name} — ${lock.reason}`);
+      return;
     }
-    await this.stop();
-    await this.start();
-    this.log('Session refreshed');
+    try {
+      this.log('Session refresh (--continue restart)');
+      // Write .session-refresh marker so the SessionEnd crash-alert hook
+      // (src/hooks/hook-crash-alert.ts) classifies the imminent PTY exit as a
+      // session refresh rather than a crash. The hook's marker handler +
+      // quiet-suppression set + message switch were all wired for this type,
+      // but no writer existed — every --continue rollover at the session-time
+      // cap surfaced as a false-positive 'crash' on chief/analyst + the
+      // crashes.log file.
+      try {
+        writeFileSync(
+          join(paths.stateDir, '.session-refresh'),
+          'session-time-cap rollover\n',
+          'utf-8',
+        );
+      } catch (err) {
+        this.log(`Failed to write .session-refresh marker: ${err}`);
+      }
+      await this.stop();
+      await this.start();
+      this.log('Session refreshed');
+    } finally {
+      // Release promptly once stop()+start() have both completed (unlike
+      // fast-checker.ts's actuators, which used to release right after
+      // TRIGGERING — now moot there since they no longer acquire directly, but
+      // preserved here as the correct point: the new session is up by now).
+      releaseRestartLock(paths.stateDir);
+    }
   }
 
   /**
