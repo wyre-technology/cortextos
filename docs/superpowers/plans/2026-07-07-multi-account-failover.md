@@ -537,7 +537,7 @@ cd /Users/asachs/cortextos && git add src/daemon/account-manager.ts && git commi
 **Interfaces:**
 - Consumes: `loadConfig()` (Task 2).
 - Produces:
-  - `loadTokens(fetchSecret?: (name: string) => string | null): void` — call once at daemon boot. Default `fetchSecret` shells out to `cortex-secret get CLAUDE_OAUTH_TOKEN_<UPPERCASED_NAME>`; tests inject a fake.
+  - `loadTokens(fetchSecret?: (name: string) => string | null): void` — call once at daemon boot. Default `fetchSecret` shells out to `cortex-secret get CLAUDE_OAUTH_TOKEN_<NAME>` where `<NAME>` is the account name uppercased with hyphens mapped to underscores (`wyretech-team` → `WYRETECH_TEAM`); tests inject a fake.
   - `getToken(account: string): string | null`
   - Cache file `.account-tokens.cache` in `sharedDir` — JSON `{name: token}`, chmod `0o600`, written after each successful fetch, read as fallback when a fetch fails.
 
@@ -565,6 +565,12 @@ describe('token loading', () => {
     m.loadTokens(() => null); // Infisical down
     expect(m.getToken('wyretech')).toBe('tok-CLAUDE_OAUTH_TOKEN_WYRETECH');
     expect(alerts.length).toBe(1);
+  });
+  it('maps hyphenated account names to underscore secret names', () => {
+    writeFileSync(join(dir, 'accounts.json'), '["wyretech-team"]');
+    const m = mk();
+    m.loadTokens((name) => `tok-${name}`);
+    expect(m.getToken('wyretech-team')).toBe('tok-CLAUDE_OAUTH_TOKEN_WYRETECH_TEAM');
   });
   it('runs with partial tokens and alerts about missing ones', () => {
     const m = mk();
@@ -610,7 +616,7 @@ import { statSync, chmodSync } from 'fs';  // merge into existing fs import
     const fetch = fetchSecret ?? ((n: string) => this.defaultFetchSecret(n));
     const missing: string[] = [];
     for (const name of this.loadConfig()) {
-      const secretName = `CLAUDE_OAUTH_TOKEN_${name.toUpperCase()}`;
+      const secretName = `CLAUDE_OAUTH_TOKEN_${name.toUpperCase().replace(/-/g, '_')}`;
       const tok = fetch(secretName);
       if (tok) this.tokens[name] = tok;
       else missing.push(name);
