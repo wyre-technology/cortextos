@@ -1,5 +1,5 @@
 import { AgentManager } from './agent-manager.js';
-import { resolveInstanceId, assertSingleDaemon } from './instance-guard.js';
+import { resolveInstanceId, assertSingleDaemon, recordDaemonPid } from './instance-guard.js';
 import { IPCServer } from './ipc-server.js';
 import { readdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'fs';
 import { spawnSync } from 'child_process';
@@ -255,15 +255,10 @@ class Daemon {
     // overwriting it below would otherwise hide the split-brain it implies.
     assertSingleDaemon(this.ctxRoot, process.pid);
 
-    // Write PID file
-    const pidFile = join(this.ctxRoot, 'daemon.pid');
-    ensureDir(this.ctxRoot);
-    writeFileSync(pidFile, String(process.pid), 'utf-8');
-    if (process.platform !== 'win32') {
-      try {
-        chmodSync(pidFile, 0o600);
-      } catch { /* best effort */ }
-    }
+    // Write PID file + start-time anchor (bare-int format preserved for the
+    // runbook's `cat daemon.pid` invariant; the anchor is what lets the boot
+    // guard above tell a real second daemon from a crash-orphaned recycled pid).
+    recordDaemonPid(this.ctxRoot, process.pid);
 
     // Create agent manager
     this.agentManager = new AgentManager(this.instanceId, this.ctxRoot, frameworkRoot, org);
@@ -293,7 +288,8 @@ class Daemon {
       // Clean up PID file
       try {
         const { unlinkSync } = require('fs');
-        unlinkSync(pidFile);
+        unlinkSync(join(this.ctxRoot, 'daemon.pid'));
+        unlinkSync(join(this.ctxRoot, 'daemon.start-time'));
       } catch { /* ignore */ }
       process.exit(0);
     };
@@ -350,7 +346,8 @@ class Daemon {
       }
       try {
         const { unlinkSync } = require('fs');
-        unlinkSync(pidFile);
+        unlinkSync(join(this.ctxRoot, 'daemon.pid'));
+        unlinkSync(join(this.ctxRoot, 'daemon.start-time'));
       } catch { /* ignore */ }
     });
   }
