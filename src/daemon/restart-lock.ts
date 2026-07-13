@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 
 // Cross-path restart-in-flight lock (2026-07-13 restart-storm fix).
@@ -41,11 +41,30 @@ function lockPath(stateDir: string): string {
  * acquisition logic (a second attempt from the SAME source is blocked too, not just
  * cross-source, since the point is "is a restart already in flight", not "is a
  * DIFFERENT kind of restart in flight").
+ *
+ * ATOMIC by construction: the primary acquire attempt is a SINGLE `writeFileSync`
+ * with the `wx` flag (open with O_CREAT|O_EXCL — fails with EEXIST if the file
+ * already exists), not a separate existsSync-then-writeFileSync pair. The prior
+ * two-call version had a real TOCTOU window: two processes could both pass the
+ * existsSync check before either's writeFileSync landed, both believing they'd
+ * acquired. `wx` closes that at the OS level — the create-if-absent check and the
+ * write happen as one atomic syscall.
  */
 export function tryAcquireRestartLock(stateDir: string, source: string): RestartLockResult {
+  const path = lockPath(stateDir);
   try {
-    if (existsSync(lockPath(stateDir))) {
-      const raw = readFileSync(lockPath(stateDir), 'utf-8');
+    writeFileSync(path, JSON.stringify({ source, at: Date.now() } satisfies LockFileData), { encoding: 'utf-8', flag: 'wx' });
+    return { acquired: true, reason: 'acquired' };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'EEXIST') {
+      // Fail-open on any OTHER lock-mechanism trouble (permissions, disk full, etc.)
+      // — see the governing-principle note at the top of this file.
+      return { acquired: true, reason: `lock check failed (${err instanceof Error ? err.message : String(err)}) — proceeding fail-open` };
+    }
+    // EEXIST: something is already holding the lock. Read it to decide fresh-vs-stale.
+    try {
+      const raw = readFileSync(path, 'utf-8');
       const data = JSON.parse(raw) as LockFileData;
       if (typeof data.at === 'number' && typeof data.source === 'string') {
         const age = Date.now() - data.at;
@@ -55,16 +74,21 @@ export function tryAcquireRestartLock(stateDir: string, source: string): Restart
             reason: `restart already in flight (source=${data.source}, ${Math.round(age / 1000)}s ago)`,
           };
         }
-        // Stale — fall through and reclaim it.
+        // Stale — the holder likely crashed mid-restart without releasing. Reclaim.
       }
-      // Malformed content (missing/wrong-typed fields) — fall through and reclaim,
-      // same as the corrupt-JSON catch branch below.
+      // Malformed content (missing/wrong-typed fields) — treat like stale, reclaim.
+    } catch {
+      // Couldn't read/parse the existing lock — treat as reclaimable rather than
+      // fail-closed-forever on a corrupt file.
     }
-    writeFileSync(lockPath(stateDir), JSON.stringify({ source, at: Date.now() } satisfies LockFileData), 'utf-8');
-    return { acquired: true, reason: 'acquired' };
-  } catch (err) {
-    // Fail-open: see the governing-principle note at the top of this file.
-    return { acquired: true, reason: `lock check failed (${err instanceof Error ? err.message : String(err)}) — proceeding fail-open` };
+    // Reclaim: overwrite unconditionally (no `wx` needed here — we've already
+    // decided the existing holder is stale/corrupt/unreadable and are taking over).
+    try {
+      writeFileSync(path, JSON.stringify({ source, at: Date.now() } satisfies LockFileData), 'utf-8');
+      return { acquired: true, reason: 'acquired (reclaimed stale/corrupt lock)' };
+    } catch (writeErr) {
+      return { acquired: true, reason: `lock reclaim-write failed (${writeErr instanceof Error ? writeErr.message : String(writeErr)}) — proceeding fail-open` };
+    }
   }
 }
 

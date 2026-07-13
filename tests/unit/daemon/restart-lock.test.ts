@@ -82,4 +82,21 @@ describe('restart-lock — cross-path restart-in-flight guard', () => {
     expect(data.source).toBe('context-handoff');
     expect(data.at).toBeGreaterThanOrEqual(before);
   });
+
+  it('ATOMICITY: acquire is a single wx-flagged write, not a check-then-write pair — a lock file created by ANOTHER process between check and write cannot be silently overwritten', () => {
+    // The prior implementation did existsSync(...) then writeFileSync(...) as two
+    // separate calls — a real TOCTOU window where two processes could both pass the
+    // existsSync check before either write landed. Simulating that exact race
+    // directly: a lock file appears (as if written by a concurrent process) with a
+    // FRESH timestamp; the current implementation's single wx-flagged write MUST
+    // fail with EEXIST and fall through to the fresh-lock-blocks branch, never
+    // blindly overwrite a fresh concurrent lock.
+    writeFileSync(join(stateDir, '.restart-in-flight'), JSON.stringify({ source: 'concurrent-writer', at: Date.now() }), 'utf-8');
+    const r = tryAcquireRestartLock(stateDir, 'this-caller');
+    expect(r.acquired).toBe(false);
+    expect(r.reason).toMatch(/concurrent-writer/);
+    // The concurrent writer's lock must be untouched — proves no blind overwrite happened.
+    const data = JSON.parse(readFileSync(join(stateDir, '.restart-in-flight'), 'utf-8'));
+    expect(data.source).toBe('concurrent-writer');
+  });
 });
