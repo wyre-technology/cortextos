@@ -982,6 +982,86 @@ describe('FastChecker', () => {
     });
   });
 
+  describe('forceHangRestart — consecutive-counter breaker (window formula retired: halt must trip regardless of restart spacing)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-13T20:00:00Z'));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('halts on the 4th consecutive hang-restart even when fires are >15min apart (murph 20:15→21:01 class — the old 3-in-30min window arithmetically could not trip at 15min-cooldown spacing)', () => {
+      const agent = createMockAgent('test-agent');
+      const tg = createMockTelegramApi();
+      const checker = new FastChecker(agent, paths, '/tmp/framework', { telegramApi: tg, chatId: '999' });
+
+      for (let i = 1; i <= 3; i++) {
+        (checker as any).forceHangRestart(`hang ${i}`);
+        vi.advanceTimersByTime(20 * 60_000); // 20min apart — outside any 30min window
+      }
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(3);
+
+      (checker as any).forceHangRestart('hang 4');
+
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(3); // 4th must NOT fire
+      const halted = tg.sendMessage.mock.calls.some((c: unknown[]) => String(c[1]).includes('HALTED'));
+      expect(halted).toBe(true);
+
+      // ...and the halt auto-resets after the 30min pause: the breaker clears and
+      // a later genuine hang may restart again.
+      vi.advanceTimersByTime(31 * 60_000);
+      (checker as any).checkHangStatus(); // resumes the breaker (halted branch)
+      (checker as any).forceHangRestart('hang after resume');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(4);
+    });
+
+    it('an intervening session beat resets the counter (a beat proves the restart worked; a later hang is a NEW incident)', () => {
+      const agent = createMockAgent('test-agent');
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      (checker as any).forceHangRestart('hang 1');
+      vi.advanceTimersByTime(20 * 60_000);
+      (checker as any).forceHangRestart('hang 2');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(2);
+
+      // The respawned session lands a real beat AFTER the last hang-restart...
+      vi.advanceTimersByTime(16 * 60_000); // past the 15min post-restart cooldown
+      writeFileSync(join(paths.stateDir, 'heartbeat.json'), JSON.stringify({
+        last_session_heartbeat: new Date(Date.now() - 60_000).toISOString(),
+      }), 'utf-8');
+      (checker as any).checkHangStatus(); // sweep observes the beat → resets the counter
+
+      expect((checker as any).hangConsecutiveRestarts).toBe(0);
+
+      // ...so the next TWO hang-restarts are a fresh incident and both fire (no halt).
+      (checker as any).forceHangRestart('hang 3');
+      vi.advanceTimersByTime(20 * 60_000);
+      (checker as any).forceHangRestart('hang 4');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(4);
+    });
+
+    it('legacy .hang-circuit.json with a restarts array migrates to the consecutive counter (no restart credit lost across the upgrade)', () => {
+      const t = Date.now();
+      writeFileSync(join(paths.stateDir, '.hang-circuit.json'), JSON.stringify({
+        restarts: [t - 50 * 60_000, t - 30 * 60_000, t - 10 * 60_000],
+        haltedAt: null,
+        lastRestartAt: t - 10 * 60_000,
+        lastCheckAt: 0,
+      }), 'utf-8');
+
+      const agent = createMockAgent('test-agent');
+      const tg = createMockTelegramApi();
+      const checker = new FastChecker(agent, paths, '/tmp/framework', { telegramApi: tg, chatId: '999' });
+
+      expect((checker as any).hangConsecutiveRestarts).toBe(3);
+
+      // 3 unanswered restarts already on record → the next request halts, not fires.
+      (checker as any).forceHangRestart('hang 4');
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+    });
+  });
+
   // NOTE (2026-07-13, revised): a "cross-path restart-in-flight lock" describe block
   // used to live here, testing that forceHangRestart/forceContextRestart no-op when
   // agent-manager.ts's manual restartAgent() already holds the lock. Removed — the
