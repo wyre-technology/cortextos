@@ -42,6 +42,16 @@ vi.mock('../../../src/utils/paths.js', () => ({
   resolvePaths: vi.fn().mockReturnValue({ stateDir: '/tmp/test-ctx/state/alice' }),
 }));
 
+// Pid-truth choke point: agent-process records its own pid on every spawn path.
+// Same getter-deferral trick as the fs mock below (factory is hoisted).
+const pidfileMocks = {
+  writeAgentPid: vi.fn(),
+};
+
+vi.mock('../../../src/utils/agent-pidfile.js', () => ({
+  get writeAgentPid() { return pidfileMocks.writeAgentPid; },
+}));
+
 const fsMocks = {
   existsSync: vi.fn().mockReturnValue(false),
   readFileSync: vi.fn(),
@@ -108,6 +118,7 @@ beforeEach(() => {
   fsMocks.appendFileSync.mockReset();
   fsMocks.statSync.mockReset();
   fsMocks.unlinkSync.mockReset();
+  pidfileMocks.writeAgentPid.mockReset();
 });
 
 describe('AgentProcess — #19b restart-time marker (bootstrap-hang expected-beat anchor)', () => {
@@ -535,5 +546,44 @@ describe('AgentProcess — CrashLoopPauser (instar-inspired sliding window)', ()
     }
     // Should be 'crashed' (recovering), NOT 'halted', because daily max is 5
     expect(ap.getStatus().status).not.toBe('halted');
+  });
+});
+
+describe('AgentProcess — pid-truth choke point (every spawn path records its pid; the 8/9-stale-pidfile class)', () => {
+  it('start() records the PTY pid via writeAgentPid', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+
+    expect(pidfileMocks.writeAgentPid).toHaveBeenCalledTimes(1);
+    expect(pidfileMocks.writeAgentPid).toHaveBeenCalledWith(
+      '/tmp/test-ctx/state/alice',
+      'alice',
+      12345,
+      process.pid,
+    );
+  });
+
+  it('sessionRefresh() re-records the NEW pid for the respawned PTY (refresh respawns previously never rewrote agent.pid)', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    await ap.start();
+    pidfileMocks.writeAgentPid.mockReset();
+    mockPty.getPid.mockReturnValue(54321);
+    // Spy stop() (same idiom as the cross-path lock tests above) but keep the REAL
+    // start() — that's the choke point under test. stop() must leave the state a
+    // real stop() would, or start() early-returns 'Already running'.
+    vi.spyOn(ap, 'stop').mockImplementation(async () => {
+      (ap as any).status = 'stopped';
+      (ap as any).pty = null;
+    });
+
+    await ap.sessionRefresh();
+
+    expect(pidfileMocks.writeAgentPid).toHaveBeenCalledTimes(1);
+    expect(pidfileMocks.writeAgentPid).toHaveBeenCalledWith(
+      '/tmp/test-ctx/state/alice',
+      'alice',
+      54321,
+      process.pid,
+    );
   });
 });
