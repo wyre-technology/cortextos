@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateHang, mostRecentDeliveredFireMs } from '../../../src/daemon/hang-detector.js';
+import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs } from '../../../src/daemon/hang-detector.js';
 
 const MIN = 60_000;
 const GRACE = 15 * MIN;
@@ -47,6 +47,47 @@ describe('hang-detector — evaluateHang (fail-safe by construction)', () => {
   it('boundary: session beat exactly at fire time (S == T) is healthy', () => {
     const T = NOW - 20 * MIN;
     expect(evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: T }).hung).toBe(false);
+  });
+});
+
+describe('hang-detector — evaluateBootstrapHang (#19b: restart is an expected-beat anchor too)', () => {
+  it('FIRES on a bootstrap hang: restart past grace, no session beat ever', () => {
+    const R = NOW - 20 * MIN; // restarted 20min ago (> 15min grace)
+    const r = evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: null });
+    expect(r.hung).toBe(true);
+  });
+
+  it('FIRES when the only session beat on record predates the restart (stale carry-over)', () => {
+    const R = NOW - 20 * MIN;
+    const S = R - 5 * MIN; // beat from the PREVIOUS session, before this restart
+    expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: S }).hung).toBe(true);
+  });
+
+  it('does NOT fire within the grace-of-restart window', () => {
+    const R = NOW - 5 * MIN; // only 5min since restart
+    expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: null }).hung).toBe(false);
+  });
+
+  it('does NOT fire once a session beat lands at/after the restart (healthy bootstrap)', () => {
+    const R = NOW - 20 * MIN;
+    const S = R + 2 * MIN; // bootstrap beat landed shortly after restart
+    expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: S }).hung).toBe(false);
+  });
+
+  it('does NOT fire when restart-time is absent (fail-safe: unknown anchor, e.g. deploy-transition before this field existed)', () => {
+    const r = evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: null, lastSessionHeartbeat: null });
+    expect(r.hung).toBe(false);
+    expect(r.reason).toMatch(/fail-safe|no restart/);
+  });
+
+  it('boundary: exactly at grace does NOT fire (strict > N)', () => {
+    const R = NOW - GRACE;
+    expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: null }).hung).toBe(false);
+  });
+
+  it('boundary: session beat exactly at restart time (S == R) is healthy', () => {
+    const R = NOW - 20 * MIN;
+    expect(evaluateBootstrapHang({ now: NOW, graceMs: GRACE, restartAt: R, lastSessionHeartbeat: R }).hung).toBe(false);
   });
 });
 

@@ -37,6 +37,16 @@ export interface HangEvalResult {
   reason: string;
 }
 
+export interface BootstrapHangEvalInput {
+  now: number;
+  /** Grace window N (ms), measured from restart rather than from a cron fire. */
+  graceMs: number;
+  /** When this session was last (re)started (ms), or null if unknown/never recorded. */
+  restartAt: number | null;
+  /** Last genuine session-authored beat (ms), or null if absent. From heartbeat.json. */
+  lastSessionHeartbeat: number | null;
+}
+
 /** Parse an ISO timestamp to epoch ms; null on absent/invalid (fail-safe). */
 function toMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -87,5 +97,42 @@ export function evaluateHang(input: HangEvalInput): HangEvalResult {
   return {
     hung: true,
     reason: `delivered fire ${new Date(T).toISOString()} + ${Math.round((now - T) / 60_000)}m elapsed with no session beat since (last session beat ${new Date(S).toISOString()})`,
+  };
+}
+
+/**
+ * #19b — a RESTART is an expected-beat anchor too, not just a delivered cron fire.
+ *
+ * evaluateHang's fire-anchored sensor has a blind spot: a session that hangs
+ * immediately after a `--continue` restart and never establishes a
+ * last_session_heartbeat baseline reads as S === null forever, which evaluateHang
+ * fail-safes to "deploy-transition, not hung" — indefinitely. That blind spot is
+ * exactly the 2026-07-13 fleet-freeze class (bootstrap-hang right after restart).
+ *
+ * evaluateBootstrapHang closes it with a second, independent anchor: restart-time.
+ * HUNG iff (positive assertion on every input):
+ *   1. a restart-time R is recorded, AND
+ *   2. now - R > grace N, AND
+ *   3. no session beat landed AT OR AFTER R (either no beat ever, or the only beat
+ *      on record predates this restart — a stale carry-over from the prior session).
+ * Any missing/ambiguous input returns hung:false (same fail-safe-toward-not-restarting
+ * governing principle as evaluateHang).
+ */
+export function evaluateBootstrapHang(input: BootstrapHangEvalInput): HangEvalResult {
+  const { now, graceMs, restartAt: R, lastSessionHeartbeat: S } = input;
+
+  if (R === null) return { hung: false, reason: 'no restart-time recorded — fail-safe' };
+  if (now - R <= graceMs) {
+    return { hung: false, reason: `within grace-of-restart (${Math.round((now - R) / 60_000)}m <= ${Math.round(graceMs / 60_000)}m)` };
+  }
+  if (S !== null && S >= R) {
+    return { hung: false, reason: 'bootstrap session beat landed at/after restart — healthy' };
+  }
+  const beatNote = S === null
+    ? 'no session beat since restart'
+    : `last session beat ${new Date(S).toISOString()} predates this restart`;
+  return {
+    hung: true,
+    reason: `restarted ${new Date(R).toISOString()} + ${Math.round((now - R) / 60_000)}m elapsed, ${beatNote}`,
   };
 }
