@@ -134,6 +134,46 @@ describe('context-handoff default-ON (freeze-cure)', () => {
     });
   });
 
+  describe('Tier-3 force-restart consecutive counter (freeze#4 fix, hardened for consistency with the hang breaker)', () => {
+    it('halts on the 3rd consecutive Tier-3 force-restart', () => {
+      const agent = makeCtxAgent();
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      writeConfig({});
+
+      (checker as any).forceContextRestart('reason 1');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+
+      (checker as any).forceContextRestart('reason 2');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(2);
+
+      (checker as any).forceContextRestart('reason 3');
+      // 3rd consecutive restart -> HALT, not another restart.
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(2);
+      expect((checker as any).ctxCircuitBrokenAt).not.toBeNull();
+    });
+
+    it('recovering below the warn threshold resets the counter so a later isolated restart does not halt', async () => {
+      const agent = makeCtxAgent();
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      writeConfig({});
+
+      (checker as any).forceContextRestart('reason 1');
+      (checker as any).forceContextRestart('reason 2');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(2);
+      expect((checker as any).consecutiveCtxRestartsWithoutRecovery).toBe(2);
+
+      // Session genuinely recovers: usage reported comfortably below warn (30%).
+      writeCtxStatus(10);
+      await (checker as any).checkContextStatus();
+      expect((checker as any).consecutiveCtxRestartsWithoutRecovery).toBe(0);
+
+      // A later, isolated Tier-3 restart is restart #1 of a new streak — must not halt.
+      (checker as any).forceContextRestart('reason 3 (isolated, post-recovery)');
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(3);
+      expect((checker as any).ctxCircuitBrokenAt).toBeNull();
+    });
+  });
+
   describe('overflow-banner corroboration guard (D)', () => {
     const BANNER = 'conversation too long, please start compaction';
 

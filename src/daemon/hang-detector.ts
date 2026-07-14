@@ -174,3 +174,23 @@ export function evaluateBootstrapHang(input: BootstrapHangEvalInput): HangEvalRe
     reason: `restarted ${new Date(R).toISOString()} + ${Math.round((now - R) / 60_000)}m elapsed, ${beatNote}`,
   };
 }
+
+/**
+ * Whether a genuine session beat has landed at/after a given restart — the specific
+ * "healthy bootstrap" condition, distinct from evaluateBootstrapHang's other
+ * hung:false outcomes (unknown restart-time, still within grace) which say nothing
+ * about whether a beat has actually occurred yet. Used to reset a restart-loop
+ * counter only on CONFIRMED recovery, never on a merely-inconclusive poll — an
+ * unconditional reset on every hung:false tick would let the counter clear itself
+ * during the post-restart grace window before any beat could plausibly have landed,
+ * defeating the halt-after-N breaker it backs.
+ */
+export function hasBeatSinceRestart(
+  restartAt: number | null,
+  lastSessionHeartbeat: number | null,
+  lastIdleFlagAt?: number | null,
+): boolean {
+  if (restartAt === null) return false;
+  const s = maxBeat(lastSessionHeartbeat, lastIdleFlagAt);
+  return s !== null && s >= restartAt;
+}
