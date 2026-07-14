@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed — `cortextos ecosystem` emits the portable template (idempotent)
+
+- The generator baked machine-specific absolute paths at generate time,
+  clobbering the portable tracked `ecosystem.config.js` on every run
+  (`setup` auto-runs it) and dirtying the checkout; `.gitignore` listed the
+  already-tracked file (inert). All machine-specific resolution — paths,
+  platform, dashboard presence, the Windows npm-shim bypass — now happens at
+  LOAD time inside the emitted JS; only instance/org fallback values bake.
+  Default-options output is byte-identical to the tracked file
+  (drift-guarded by test), the tracked template gains the PM2-supervised
+  dashboard app, and the daemon keeps the storm-breaker `max_restarts: 10`
+  (the tracked template's later, incident-grounded value wins over the
+  generator's stale 50).
+
 ### Fixed — freeze-cure: context-handoff default-ON + fleet-wide bridge wiring
 
 The daemon shipped a full context-handoff mechanism (thresholds, tiers, handoff
