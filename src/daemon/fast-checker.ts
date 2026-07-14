@@ -1573,8 +1573,17 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
     let result: { rotated: boolean; reason: string; from?: string; to?: string };
     try {
+      // force:true — we already have unambiguous LIVE evidence (the stdout.log
+      // signature). rotateOAuth's own needsRotation gate checks the CURRENT
+      // account's CACHED utilization in accounts.json, which nothing keeps live
+      // for the active account (checkUsageApi is CLI-manual-only); those numbers
+      // can sit at stale/zero placeholders even while the account is genuinely
+      // exhausted, silently vetoing rotation despite the live signal. force only
+      // skips that staler gate — the preflight against the candidate account
+      // still runs unconditionally and still validates the new token for real.
       result = await rotateOAuth(this.paths.ctxRoot, this.frameworkRoot, this.agent.getOrg(), {
         reason: `rate-limit-blocked hang restart: ${reason}`,
+        force: true,
       });
     } catch (err) {
       result = { rotated: false, reason: `rotation threw: ${err}` };

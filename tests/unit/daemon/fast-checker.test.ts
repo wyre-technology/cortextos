@@ -1091,6 +1091,11 @@ describe('FastChecker', () => {
 
       expect(rotateOAuth).toHaveBeenCalledWith(paths.ctxRoot, '/tmp/framework', 'test-org', expect.objectContaining({
         reason: expect.stringContaining('bootstrap hang'),
+        // force:true — a live stdout.log signature is unambiguous evidence; rotateOAuth's
+        // own needsRotation gate checks accounts.json's CACHED utilization, which nothing
+        // keeps live for the currently-active account and can sit at stale/zero
+        // placeholders even while genuinely exhausted (analyst-caught, PR #28 review).
+        force: true,
       }));
       expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
       expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
