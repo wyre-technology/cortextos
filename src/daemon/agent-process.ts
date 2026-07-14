@@ -490,6 +490,14 @@ export class AgentProcess {
     return this.config;
   }
 
+  /**
+   * Get the org this agent belongs to (e.g. for oauth.ts's rotateOAuth, which
+   * writes rotated tokens to every agent's .env under orgs/<org>/agents/*).
+   */
+  getOrg(): string {
+    return this.env.org;
+  }
+
   // --- Private methods ---
 
   /**

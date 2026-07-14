@@ -5,6 +5,8 @@ import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
 import { readCrons } from '../bus/crons.js';
 import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs, hasBeatSinceRestart } from './hang-detector.js';
+import { detectRateLimitInLog } from '../pty/rate-limit-detector.js';
+import { rotateOAuth } from '../bus/oauth.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
 import { checkInbox, ackInbox } from '../bus/message.js';
 import { updateApproval } from '../bus/approval.js';
@@ -1454,7 +1456,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     const fireVerdict = evaluateHang({ now, graceMs: 15 * 60_000, deliveredFireAt, lastSessionHeartbeat, lastIdleFlagAt });
     if (fireVerdict.hung) {
       this.log(`Hang detected for ${this.agent.name}: ${fireVerdict.reason}`);
-      this.forceHangRestart(fireVerdict.reason);
+      this.forceHangRestart(fireVerdict.reason).catch(err => this.log(`forceHangRestart failed: ${err}`));
       return;
     }
 
@@ -1487,7 +1489,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     if (!bootVerdict.hung) return;
 
     this.log(`Bootstrap hang detected for ${this.agent.name}: ${bootVerdict.reason}`);
-    this.forceHangRestart(bootVerdict.reason);
+    this.forceHangRestart(bootVerdict.reason).catch(err => this.log(`forceHangRestart failed: ${err}`));
   }
 
   /**
@@ -1496,13 +1498,25 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
    * in a persisted 30min window and HALT (pause + alert) at the cap of 3. A --continue
    * restart re-hangs (proven), so this always goes fresh via hardRestart's .force-fresh.
    */
-  private forceHangRestart(reason: string): void {
+  private async forceHangRestart(reason: string): Promise<void> {
     // NOTE (2026-07-13, revised): the restart-in-flight lock used to be acquired
     // HERE. Moved to sessionRefresh() itself (agent-process.ts) — see the identical
     // note on forceContextRestart above for why (a 4th, previously-missed caller of
     // sessionRefresh — the session-time-cap rollover timer — bypassed this gate
     // entirely and was confirmed as the actual race that hit boss+forge).
     const now = Date.now();
+
+    // Rate-limit-aware restart (freeze#4 Fix 2): a blind restart just re-hits the
+    // SAME exhausted account, producing an unbounded storm — proven: 14 hang-restart
+    // cycles over 4 hours during the fleet-wide weekly-limit exhaustion, because
+    // every restart resumes into the SAME interactive keychain login and re-blocks on
+    // Claude Code's `/rate-limit-options` dialog. Check stdout.log for an Anthropic
+    // rate-limit/weekly-limit signature BEFORE the halt-after-N logic below, and
+    // route to account rotation instead of a blind restart when one is found.
+    if (detectRateLimitInLog(join(this.paths.logDir, 'stdout.log'))) {
+      await this.handleRateLimitedHang(reason);
+      return;
+    }
 
     // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't
     // loop. Consecutive, not windowed — see the field's comment for why a window
@@ -1539,6 +1553,56 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // lock internally.
     hardRestart(this.paths, this.agent.name, `HANG-FORCE-RESTART: ${reason}`);
     this.agent.sessionRefresh().catch(err => this.log(`Hang restart failed: ${err}`));
+  }
+
+  /**
+   * Rate-limit-aware branch of forceHangRestart (freeze#4 Fix 2): a blind restart
+   * resumes into the SAME exhausted account and re-blocks on the same wall, so
+   * instead we rotate to the next healthy account first.
+   *   - Rotation succeeds → restart fresh under the new account. This restart has a
+   *     KNOWN, ADDRESSED cause (the exhausted account was swapped out), not an
+   *     unresolved hang, so it resets the halt-after-N counter rather than counting
+   *     toward it.
+   *   - Rotation fails (no healthy account, preflight rejected, accounts.json
+   *     missing, etc) → halt+alert immediately. Do NOT loop: a blind restart after a
+   *     failed rotation would just re-hit the same exhausted wall again.
+   */
+  private async handleRateLimitedHang(reason: string): Promise<void> {
+    const now = Date.now();
+    this.log(`Rate-limit signature detected in stdout.log for ${this.agent.name} — skipping blind restart, attempting OAuth account rotation. ${reason}`);
+
+    let result: { rotated: boolean; reason: string; from?: string; to?: string };
+    try {
+      result = await rotateOAuth(this.paths.ctxRoot, this.frameworkRoot, this.agent.getOrg(), {
+        reason: `rate-limit-blocked hang restart: ${reason}`,
+      });
+    } catch (err) {
+      result = { rotated: false, reason: `rotation threw: ${err}` };
+    }
+
+    if (!result.rotated) {
+      this.hangHaltedAt = now;
+      this.saveHangCircuit();
+      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — rate-limit detected and OAuth rotation failed (${result.reason}). Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+      this.log(msg);
+      if (this.telegramApi && this.chatId) {
+        this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+      }
+      return;
+    }
+
+    this.consecutiveHangRestartsWithoutBeat = 0;
+    this.hangLastRestartAt = now;
+    this.saveHangCircuit();
+
+    const msg = `Agent ${this.agent.name} was rate-limited (account "${result.from}" exhausted) — rotated to "${result.to}" and restarting fresh.`;
+    this.log(msg);
+    if (this.telegramApi && this.chatId) {
+      this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+    }
+
+    hardRestart(this.paths, this.agent.name, `RATE-LIMIT-ROTATE-RESTART: ${reason}`);
+    this.agent.sessionRefresh().catch(err => this.log(`Rate-limit rotate-restart failed: ${err}`));
   }
 
   /**
