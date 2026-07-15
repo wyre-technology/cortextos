@@ -7,12 +7,21 @@ import { tmpdir } from 'os';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+// Mock the setup-token inference-ping spawn (child_process.spawnSync) —
+// same mocking convention as tests/unit/hooks/hook-crash-alert.test.ts.
+const spawnSyncMock = vi.fn();
+vi.mock('child_process', () => ({
+  spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
+}));
+
 const {
   loadAccounts,
   getActiveAccount,
   checkUsageApi,
   refreshOAuthToken,
   rotateOAuth,
+  isSetupToken,
+  checkSetupTokenLiveness,
   ALERT_5H,
   ALERT_7D,
 } = await import('../../../src/bus/oauth.js');
@@ -57,6 +66,7 @@ function writeStore(store = SAMPLE_STORE) {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'cortextos-oauth-test-'));
   mockFetch.mockReset();
+  spawnSyncMock.mockReset();
 });
 
 afterEach(() => {
@@ -164,6 +174,95 @@ describe('checkUsageApi', () => {
     const call = mockFetch.mock.calls[0];
     expect(call[1].headers.Authorization).toBe('Bearer tok_primary_abc');
     expect(call[1].headers['anthropic-beta']).toBe('oauth-2025-04-20');
+  });
+});
+
+describe('isSetupToken', () => {
+  it('true for sk-ant-oat01- prefixed tokens', () => {
+    expect(isSetupToken('sk-ant-oat01-abc123')).toBe(true);
+  });
+
+  it('false for tokens without the prefix (real OAuth-grant tokens)', () => {
+    expect(isSetupToken('tok_primary_abc')).toBe(false);
+    expect(isSetupToken('sk-ant-api03-something')).toBe(false);
+  });
+});
+
+describe('checkSetupTokenLiveness', () => {
+  const SETUP_TOKEN_STORE = {
+    active: 'primary',
+    accounts: {
+      primary: { ...SAMPLE_STORE.accounts.primary, access_token: 'sk-ant-oat01-primary' },
+      secondary: { ...SAMPLE_STORE.accounts.secondary, access_token: 'sk-ant-oat01-secondary' },
+    },
+    rotation_log: [],
+  };
+
+  it('alive:true on a successful inference ping (exit 0, non-empty stdout)', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+    const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
+    expect(result.alive).toBe(true);
+    expect(result.account).toBe('secondary');
+    expect(result.cached).toBe(false);
+  });
+
+  it('alive:false on a failed ping (non-zero exit)', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: '', stderr: 'auth error' });
+
+    const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
+    expect(result.alive).toBe(false);
+  });
+
+  it('alive:false on empty stdout even with exit 0', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' });
+
+    const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
+    expect(result.alive).toBe(false);
+  });
+
+  it('passes the candidate token via env, not argv (never a CLI-visible secret)', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+    await checkSetupTokenLiveness(tmpDir, 'secondary');
+    const [cmd, args, opts] = spawnSyncMock.mock.calls[0];
+    expect(cmd).toBe('claude');
+    expect(args.join(' ')).not.toContain('sk-ant-oat01-secondary');
+    expect((opts as { env: Record<string, string> }).env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-secondary');
+  });
+
+  it('caches the result within TTL — does not re-spawn', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+    await checkSetupTokenLiveness(tmpDir, 'secondary');
+    const second = await checkSetupTokenLiveness(tmpDir, 'secondary');
+
+    expect(second.cached).toBe(true);
+    expect(second.alive).toBe(true);
+    expect(spawnSyncMock).toHaveBeenCalledOnce();
+  });
+
+  it('force bypasses the cache and re-spawns', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: 'ok', stderr: '' });
+
+    await checkSetupTokenLiveness(tmpDir, 'secondary');
+    await checkSetupTokenLiveness(tmpDir, 'secondary', { force: true });
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('never calls fetch — setup-token path does not touch the usage API', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+    await checkSetupTokenLiveness(tmpDir, 'secondary');
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -316,6 +415,58 @@ describe('rotateOAuth', () => {
     const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme', { force: true });
     expect(result.rotated).toBe(false);
     expect(result.reason).toContain('No alternate accounts');
+  });
+
+  describe('setup-token candidate (the 403-on-checkUsageApi case this branch fixes)', () => {
+    const setupTokenStore = {
+      ...SAMPLE_STORE,
+      accounts: {
+        primary: { ...SAMPLE_STORE.accounts.primary, five_hour_utilization: 0.90 },
+        secondary: { ...SAMPLE_STORE.accounts.secondary, access_token: 'sk-ant-oat01-secondary' },
+      },
+    };
+
+    it('rotates via inference ping, WITHOUT ever calling checkUsageApi/fetch for the candidate', async () => {
+      writeStore(setupTokenStore);
+      spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+      const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
+
+      expect(result.rotated).toBe(true);
+      expect(result.to).toBe('secondary');
+      // The real usage API would have 403'd on this token — proving we never
+      // called it is the actual regression test for the bug this fixes.
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(spawnSyncMock).toHaveBeenCalledOnce();
+
+      const store = loadAccounts(tmpDir)!;
+      expect(store.active).toBe('secondary');
+    });
+
+    it('does not rotate when the inference ping fails (candidate genuinely dead)', async () => {
+      writeStore(setupTokenStore);
+      spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: '', stderr: 'invalid_grant' });
+
+      const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
+
+      expect(result.rotated).toBe(false);
+      expect(result.reason).toContain('Preflight failed');
+      const store = loadAccounts(tmpDir)!;
+      expect(store.active).toBe('primary'); // unchanged
+    });
+
+    it('preserves existing (stale) utilization fields rather than fabricating a number', async () => {
+      writeStore(setupTokenStore);
+      spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+
+      await rotateOAuth(tmpDir, frameworkRoot, 'acme');
+
+      const store = loadAccounts(tmpDir)!;
+      // secondary's utilization in setupTokenStore was 0.1/0.05 (from SAMPLE_STORE) —
+      // must be UNCHANGED, not overwritten with a value the ping can't actually measure.
+      expect(store.accounts.secondary.five_hour_utilization).toBe(0.1);
+      expect(store.accounts.secondary.seven_day_utilization).toBe(0.05);
+    });
   });
 });
 

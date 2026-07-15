@@ -15,6 +15,7 @@
 import { existsSync, readFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { spawnSync } from 'child_process';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
 
 // --- Types ---
@@ -74,6 +75,15 @@ export interface RotateResult {
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
 const ROTATION_LOG_MAX = 50;
 
+// Setup-token liveness ping — much shorter TTL than the usage cache. A
+// rotation storm (multiple agents hitting the same wall near-simultaneously)
+// could otherwise fire a real inference call against the same candidate
+// account once per rotating agent; this caps that to one ping per window.
+const SETUP_TOKEN_LIVENESS_CACHE_TTL_MS = 60 * 1000; // 1 minute
+const SETUP_TOKEN_PING_TIMEOUT_MS = 30 * 1000;
+const SETUP_TOKEN_PING_MODEL = 'claude-haiku-4-5-20251001';
+const SETUP_TOKEN_PING_PROMPT = 'Reply with exactly one word: ok';
+
 // Utilization thresholds for rotation trigger
 const THRESHOLD_5H = 0.85;
 const THRESHOLD_7D = 0.80;
@@ -101,6 +111,10 @@ function usageCachePath(ctxRoot: string): string {
 
 function usageLatestPath(ctxRoot: string): string {
   return join(usageDir(ctxRoot), 'latest.json');
+}
+
+function setupTokenLivenessCachePath(ctxRoot: string): string {
+  return join(oauthDir(ctxRoot), 'setup-token-liveness-cache.json');
 }
 
 function usageDailyPath(ctxRoot: string): string {
@@ -266,6 +280,101 @@ export async function checkUsageApi(
   return { ...snapshot, cached: false };
 }
 
+// --- setup-token liveness (preflight for tokens checkUsageApi can't validate) ---
+
+/**
+ * Setup-tokens (`sk-ant-oat01-` prefix) lack the `user:profile` scope, so
+ * checkUsageApi's call to /api/oauth/usage 403s on every one of them —
+ * rotateOAuth's preflight would always fail for this token type without this
+ * branch. checkUsageApi itself is UNTOUCHED by this file: the real-OAuth-grant
+ * path (tokens WITH the scope) still goes through it exactly as before. This
+ * only applies to the setup-token branch of rotateOAuth's preflight.
+ */
+export function isSetupToken(token: string): boolean {
+  return token.startsWith('sk-ant-oat01-');
+}
+
+export interface SetupTokenLivenessResult {
+  account: string;
+  alive: boolean;
+  cached: boolean;
+  checked_at: string;
+}
+
+interface SetupTokenLivenessCache {
+  [accountName: string]: { alive: boolean; checked_at: number };
+}
+
+function loadLivenessCache(ctxRoot: string): SetupTokenLivenessCache {
+  const path = setupTokenLivenessCachePath(ctxRoot);
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8')) as SetupTokenLivenessCache;
+  } catch {
+    return {};
+  }
+}
+
+function saveLivenessCache(ctxRoot: string, cache: SetupTokenLivenessCache): void {
+  ensureDir(oauthDir(ctxRoot));
+  atomicWriteSync(setupTokenLivenessCachePath(ctxRoot), JSON.stringify(cache, null, 2));
+}
+
+/**
+ * Validate a setup-token candidate via a cheap one-shot inference ping
+ * instead of the scope-gated usage API. Cannot recover real utilization for
+ * this token type (accounts.json's utilization fields stay whatever they
+ * already were — never fabricated) — this only answers "does this token
+ * still authenticate," which is what rotateOAuth's preflight actually needs
+ * to gate on for setup-tokens.
+ *
+ * TTL-cached (1 min, much shorter than checkUsageApi's 3 min) so a rotation
+ * storm across multiple agents hitting the same candidate doesn't fire one
+ * real inference call per agent.
+ */
+export async function checkSetupTokenLiveness(
+  ctxRoot: string,
+  accountName: string,
+  opts: { force?: boolean } = {},
+): Promise<SetupTokenLivenessResult> {
+  if (!opts.force) {
+    const cache = loadLivenessCache(ctxRoot);
+    const entry = cache[accountName];
+    if (entry && Date.now() - entry.checked_at < SETUP_TOKEN_LIVENESS_CACHE_TTL_MS) {
+      return {
+        account: accountName,
+        alive: entry.alive,
+        cached: true,
+        checked_at: new Date(entry.checked_at).toISOString(),
+      };
+    }
+  }
+
+  const store = loadAccounts(ctxRoot);
+  const account = store?.accounts[accountName];
+  if (!account) throw new Error(`Account "${accountName}" not found in accounts.json`);
+
+  const result = spawnSync('claude', ['-p', SETUP_TOKEN_PING_PROMPT, '--model', SETUP_TOKEN_PING_MODEL], {
+    env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: account.access_token },
+    timeout: SETUP_TOKEN_PING_TIMEOUT_MS,
+    encoding: 'utf-8',
+  });
+
+  const alive = result.status === 0 && (result.stdout || '').trim().length > 0;
+  const checkedAt = Date.now();
+
+  const cache = loadLivenessCache(ctxRoot);
+  cache[accountName] = { alive, checked_at: checkedAt };
+  saveLivenessCache(ctxRoot, cache);
+
+  return {
+    account: accountName,
+    alive,
+    cached: false,
+    checked_at: new Date(checkedAt).toISOString(),
+  };
+}
+
 // --- refresh-oauth-token ---
 
 /**
@@ -376,10 +485,31 @@ export async function rotateOAuth(
     nextAccount = refreshed.accounts[nextName];
   }
 
-  // PREFLIGHT: verify next account's token works
+  // PREFLIGHT: verify next account's token works.
+  // Setup-tokens (sk-ant-oat01-) 403 on checkUsageApi's scope-gated usage
+  // endpoint, so they're validated via a one-shot inference ping instead —
+  // see checkSetupTokenLiveness's docblock. Real OAuth-grant tokens (with
+  // the scope) take the EXACT same checkUsageApi path as before this branch
+  // existed — untouched, byte-identical.
   let preflight: CheckUsageResult;
   try {
-    preflight = await checkUsageApi(ctxRoot, { force: true, account: nextName });
+    if (isSetupToken(nextAccount.access_token)) {
+      const liveness = await checkSetupTokenLiveness(ctxRoot, nextName, { force: true });
+      if (!liveness.alive) {
+        throw new Error('setup-token inference ping failed (account unreachable, dead, or revoked)');
+      }
+      // No real utilization signal exists for this token type — preserve
+      // whatever was already cached rather than assert a fabricated number.
+      preflight = {
+        account: nextName,
+        five_hour_utilization: nextAccount.five_hour_utilization,
+        seven_day_utilization: nextAccount.seven_day_utilization,
+        cached: false,
+        fetched_at: liveness.checked_at,
+      };
+    } else {
+      preflight = await checkUsageApi(ctxRoot, { force: true, account: nextName });
+    }
   } catch (err) {
     // Preflight failed — do NOT write .env files
     return {
