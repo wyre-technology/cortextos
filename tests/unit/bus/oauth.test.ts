@@ -497,6 +497,65 @@ describe('rotateOAuth', () => {
     expect(result.reason).toContain('No alternate accounts');
   });
 
+  describe('candidate iteration (multiple alternates, not just candidates[0])', () => {
+    const THREE_ACCOUNT_STORE = {
+      active: 'primary',
+      accounts: {
+        primary: { ...SAMPLE_STORE.accounts.primary, five_hour_utilization: 0.90 },
+        altA: { ...SAMPLE_STORE.accounts.secondary, label: 'Alt A', access_token: 'tok_altA', five_hour_utilization: 0.05 },
+        altB: { ...SAMPLE_STORE.accounts.secondary, label: 'Alt B', access_token: 'tok_altB', five_hour_utilization: 0.20 },
+      },
+      rotation_log: [],
+    };
+
+    it('candidates[0] (lowest utilization) passing preflight yields the same shape as the single-candidate case — no regression', async () => {
+      writeStore(THREE_ACCOUNT_STORE);
+
+      // altA sorts first (lowest util) and its preflight succeeds immediately.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ five_hour_utilization: 0.05, seven_day_utilization: 0.02 }),
+      });
+
+      const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
+
+      expect(result.rotated).toBe(true);
+      expect(result.from).toBe('primary');
+      expect(result.to).toBe('altA');
+      expect(mockFetch).toHaveBeenCalledOnce(); // only the winning candidate was probed
+
+      const store = loadAccounts(tmpDir)!;
+      expect(store.active).toBe('altA');
+      expect(store.rotation_log).toHaveLength(1);
+      expect(store.rotation_log[0].to).toBe('altA');
+    });
+
+    it('falls through to the second candidate when the first (lowest-utilization) one fails preflight', async () => {
+      writeStore(THREE_ACCOUNT_STORE);
+
+      // altA sorts first but its preflight fails (e.g. revoked/broken token).
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: async () => 'Unauthorized',
+      });
+      // altB sorts second and its preflight succeeds.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ five_hour_utilization: 0.20, seven_day_utilization: 0.1 }),
+      });
+
+      const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
+
+      expect(result.rotated).toBe(true);
+      expect(result.to).toBe('altB');
+      expect(mockFetch).toHaveBeenCalledTimes(2); // tried altA, then altB
+
+      const store = loadAccounts(tmpDir)!;
+      expect(store.active).toBe('altB');
+    });
+  });
+
   describe('setup-token candidate (the 403-on-checkUsageApi case this branch fixes)', () => {
     const setupTokenStore = {
       ...SAMPLE_STORE,

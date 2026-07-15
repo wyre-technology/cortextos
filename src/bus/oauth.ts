@@ -550,7 +550,14 @@ export async function rotateOAuth(
     };
   }
 
-  // Find the next account with lowest 5h utilization
+  // Candidates sorted by 5h utilization. For real OAuth-grant tokens this is
+  // a genuine signal (prefer the least-used alternative). For setup-tokens
+  // it is NOT — their utilization fields are always 0.0/stale (no live
+  // signal exists for this token type), so the sort is an arbitrary tie
+  // order, not a real ranking. Either way, the LOOP below (not the sort) is
+  // what actually finds a live account: it tries candidates in this order
+  // and uses the first one that passes preflight, falling through to the
+  // next on failure rather than giving up after a single arbitrary pick.
   const candidates = Object.entries(store.accounts)
     .filter(([name]) => name !== currentName)
     .sort(([, a], [, b]) => a.five_hour_utilization - b.five_hour_utilization);
@@ -559,46 +566,60 @@ export async function rotateOAuth(
     return { rotated: false, reason: 'No alternate accounts available for rotation' };
   }
 
-  let [nextName, nextAccount] = candidates[0];
+  let nextName: string | undefined;
+  let preflight: CheckUsageResult | undefined;
+  const attemptFailures: string[] = [];
 
-  // Refresh next account token if expiring within 2 hours
-  if (nextAccount.expires_at - Date.now() < 2 * 60 * 60 * 1000) {
-    await refreshOAuthToken(ctxRoot, nextName);
-    // Reload after refresh (accounts.json was rewritten)
-    const refreshed = loadAccounts(ctxRoot)!;
-    nextAccount = refreshed.accounts[nextName];
+  for (const [candidateName, candidateAccountInitial] of candidates) {
+    let candidateAccount = candidateAccountInitial;
+
+    // Refresh this candidate's token if expiring within 2 hours.
+    if (candidateAccount.expires_at - Date.now() < 2 * 60 * 60 * 1000) {
+      await refreshOAuthToken(ctxRoot, candidateName);
+      const refreshed = loadAccounts(ctxRoot)!;
+      candidateAccount = refreshed.accounts[candidateName];
+    }
+
+    // PREFLIGHT: verify this candidate's token actually works.
+    // Setup-tokens (sk-ant-oat01-) 403 on checkUsageApi's scope-gated usage
+    // endpoint, so they're validated via a one-shot inference ping instead —
+    // see checkSetupTokenLiveness's docblock. Real OAuth-grant tokens (with
+    // the scope) take the EXACT same checkUsageApi path as always —
+    // untouched, byte-identical.
+    try {
+      if (isSetupToken(candidateAccount.access_token)) {
+        const liveness = await checkSetupTokenLiveness(ctxRoot, candidateName, { force: true });
+        if (!liveness.alive) {
+          throw new Error('setup-token inference ping failed (account unreachable, dead, or revoked)');
+        }
+        // No real utilization signal exists for this token type — preserve
+        // whatever was already cached rather than assert a fabricated number.
+        preflight = {
+          account: candidateName,
+          five_hour_utilization: candidateAccount.five_hour_utilization,
+          seven_day_utilization: candidateAccount.seven_day_utilization,
+          cached: false,
+          fetched_at: liveness.checked_at,
+        };
+      } else {
+        preflight = await checkUsageApi(ctxRoot, { force: true, account: candidateName });
+      }
+      nextName = candidateName;
+      break; // first live candidate wins — stop trying further ones
+    } catch (err) {
+      attemptFailures.push(`"${candidateName}": ${err}`);
+      // fall through to the next candidate
+    }
   }
 
-  // PREFLIGHT: verify next account's token works.
-  // Setup-tokens (sk-ant-oat01-) 403 on checkUsageApi's scope-gated usage
-  // endpoint, so they're validated via a one-shot inference ping instead —
-  // see checkSetupTokenLiveness's docblock. Real OAuth-grant tokens (with
-  // the scope) take the EXACT same checkUsageApi path as before this branch
-  // existed — untouched, byte-identical.
-  let preflight: CheckUsageResult;
-  try {
-    if (isSetupToken(nextAccount.access_token)) {
-      const liveness = await checkSetupTokenLiveness(ctxRoot, nextName, { force: true });
-      if (!liveness.alive) {
-        throw new Error('setup-token inference ping failed (account unreachable, dead, or revoked)');
-      }
-      // No real utilization signal exists for this token type — preserve
-      // whatever was already cached rather than assert a fabricated number.
-      preflight = {
-        account: nextName,
-        five_hour_utilization: nextAccount.five_hour_utilization,
-        seven_day_utilization: nextAccount.seven_day_utilization,
-        cached: false,
-        fetched_at: liveness.checked_at,
-      };
-    } else {
-      preflight = await checkUsageApi(ctxRoot, { force: true, account: nextName });
-    }
-  } catch (err) {
-    // Preflight failed — do NOT write .env files
+  if (!nextName || !preflight) {
+    // Every candidate failed preflight — genuinely exhausted, not a
+    // single-arbitrary-pick false-negative. Surface all attempts so the
+    // caller (and any alert built on the reason string) can see it tried
+    // more than one account before giving up.
     return {
       rotated: false,
-      reason: `Preflight failed for account "${nextName}": ${err}`,
+      reason: `Preflight failed for all ${candidates.length} candidate account(s): ${attemptFailures.join('; ')}`,
     };
   }
 
