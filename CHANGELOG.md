@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Added — SP3b: Slack Socket Mode inbound channel
+
+Agents can now be talked to on Slack, not just Telegram — critical path for
+deploying a Hermes agent for a user whose only channel is Slack. Builds on
+SP3a (outbound-only: `src/slack/api.ts`, `identity.ts`).
+
+- **`src/slack/socket-mode.ts`** (new): `SlackSocketModeClient` — one shared
+  WebSocket connection for the whole daemon (Slack is one app per workspace,
+  not one bot per agent, unlike Telegram's per-agent `TelegramPoller`). Uses
+  Node's native global `WebSocket` (stable since Node 22 — `engines.node`
+  bumped `>=20.0.0` → `>=22.0.0` accordingly, no new runtime dependency
+  added). Acks every `events_api` envelope within Slack's ~3s window
+  (transport requirement, independent of downstream processing). An
+  epoch/generation-counter guard makes stale-connection frames a no-op by
+  construction after a reconnect — a positive invariant rather than relying
+  on teardown-ordering correctness (the classic hand-rolled-reconnect bug
+  class).
+- **`src/slack/dispatcher.ts`** (new): routes one inbound Slack message to
+  every agent whose `slack.json` allows it — channels are N:1 (multiple
+  agents can watch one channel), unlike Telegram's inherent 1:1.
+- **Fail-closed user allowlist**: `slack.json` gains `allowed_users`, keyed
+  on `"<team_id>:<user_id>"` composite identity (not bare `user_id` — Slack
+  user ids are workspace-scoped, not globally unique). Channel membership
+  alone was judged too weak a gate (channels are N-member, membership drifts)
+  — mirrors Telegram's `ALLOWED_USER` fail-closed default. An agent with an
+  empty or missing `allowed_users` accepts messages from no one.
+- **`src/daemon/fast-checker.ts`**: `queueSlackMessage` +
+  `formatSlackTextMessage`, a queue parallel to (not shared with)
+  `queueTelegramMessage` so Slack traffic doesn't drive the Telegram typing
+  indicator. Reuses the existing content-hash `isDuplicate` dedup unmodified.
+- **`src/daemon/agent-manager.ts`**: the org's orchestrator starts the one
+  shared `SlackSocketModeClient` at boot (mirrors the existing org-level
+  activity-channel-poller pattern), gated on `SLACK_APP_TOKEN` +
+  `SLACK_BOT_TOKEN` being present.
+- **`cortextos slack send`** (new, stable command name): what the injected
+  "Reply using:" line invokes. `test-send` is unchanged.
+- Setup runbook: `docs/runbook/sp3b-slack-socket-mode-setup.md`.
+
 ### Fixed — freeze-cure: context-handoff default-ON + fleet-wide bridge wiring
 
 The daemon shipped a full context-handoff mechanism (thresholds, tiers, handoff

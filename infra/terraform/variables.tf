@@ -81,7 +81,16 @@ variable "cortextos_org" {
 variable "node_major_version" {
   type        = number
   description = "Node.js major version installed via NodeSource."
-  default     = 20
+  # Bumped 20 -> 22 alongside SP3b (package.json's engines.node needs the
+  # native WebSocket global, unflagged-stable only from Node 22). The
+  # cloud-init install step only installs-if-missing-or-below-target — it
+  # does NOT upgrade an already-provisioned VM's already-installed Node, so
+  # this default only takes effect on a fresh VM build. It does NOT retroactively
+  # fix the currently-running production VM; confirm and, if needed, manually
+  # upgrade that VM's Node version separately (real tfvars are gitignored, so
+  # whether the live VM already overrides this to 22 could not be confirmed
+  # from this repo alone — analyst review, SP3b).
+  default = 22
 
   validation {
     condition     = contains([18, 20, 22], var.node_major_version)

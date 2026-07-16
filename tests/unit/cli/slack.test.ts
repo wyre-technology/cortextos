@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { runTestSend } from '../../../src/cli/slack';
+import { runTestSend, slackCommand } from '../../../src/cli/slack';
 
 describe('runTestSend', () => {
   let root: string;
@@ -43,5 +43,13 @@ describe('runTestSend', () => {
       api as never,
     );
     expect(api.postMessage).toHaveBeenCalledWith({ channel: 'C1', text: 'plain' });
+  });
+});
+
+describe('slack send subcommand (SP3b reply path)', () => {
+  it('registers a stable "send" subcommand alongside test-send', () => {
+    const names = slackCommand.commands.map((c) => c.name());
+    expect(names).toContain('send');
+    expect(names).toContain('test-send'); // unchanged — send is additive, not a replacement
   });
 });

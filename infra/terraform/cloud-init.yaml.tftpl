@@ -251,6 +251,31 @@ write_files:
       fi
       unset SLACK_BOT_TOKEN
 
+      # ── Slack app-level token (SP3b, Socket Mode) ───────────────
+      # Same shape as SLACK_BOT_TOKEN above — optional, non-fatal if absent.
+      # NOTE: this block only runs on a fresh VM bootstrap (gated by the
+      # cortextos-bootstrap.service unit's ConditionPathExists on
+      # /var/lib/cortextos/.bootstrap-done) or a manually-triggered
+      # re-provision (see sp3b-slack-socket-mode-setup.md's runbook note on
+      # why `az keyvault secret set` alone does NOT reach an already-running
+      # VM — EnvironmentFile=/etc/cortextos.env is read once at
+      # cortextos.service start, there is no periodic KV sync).
+      log "fetching slack-app-token from KV"
+      SLACK_APP_TOKEN=$(az keyvault secret show --vault-name "${key_vault_name}" \
+        --name slack-app-token --query value -o tsv 2>/dev/null || true)
+      if [ -n "$SLACK_APP_TOKEN" ]; then
+        if ! grep -q '^SLACK_APP_TOKEN=' /etc/cortextos.env 2>/dev/null; then
+          echo "SLACK_APP_TOKEN=$SLACK_APP_TOKEN" >> /etc/cortextos.env
+        else
+          sed -i "s|^SLACK_APP_TOKEN=.*|SLACK_APP_TOKEN=$SLACK_APP_TOKEN|" /etc/cortextos.env
+        fi
+        chmod 600 /etc/cortextos.env
+        log "SLACK_APP_TOKEN written to /etc/cortextos.env"
+      else
+        log "slack-app-token not found in KV — SP3b Socket Mode inactive (this is fine)"
+      fi
+      unset SLACK_APP_TOKEN
+
       # ── sentinel ───────────────────────────────────────────────
       touch "$DATA_MOUNT/.bootstrap-done"
       chown cortextos:cortextos "$DATA_MOUNT/.bootstrap-done"

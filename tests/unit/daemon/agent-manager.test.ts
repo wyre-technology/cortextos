@@ -47,6 +47,29 @@ vi.mock('../../../src/telegram/poller.js', () => ({
   },
 }));
 
+// SP3b — controllable via the hoisted flag so a test can make the client's
+// start() reject on demand, to exercise maybeStartSlackSocketMode's
+// self-containment (analyst review: a Socket Mode failure must never
+// propagate up through startAgent()).
+const slackSocketModeControl = vi.hoisted(() => ({ shouldReject: false }));
+vi.mock('../../../src/slack/socket-mode.js', () => ({
+  SlackSocketModeClient: class {
+    onMessage() { /* no-op */ }
+    async start() {
+      if (slackSocketModeControl.shouldReject) {
+        throw new Error('simulated Socket Mode failure');
+      }
+    }
+    stop() { /* no-op */ }
+  },
+}));
+vi.mock('../../../src/slack/api.js', () => ({
+  SlackAPI: class {
+    constructor() { /* no-op */ }
+    async getUserInfo() { return { id: 'U1' }; }
+  },
+}));
+
 const { AgentManager } = await import('../../../src/daemon/agent-manager.js');
 
 describe('AgentManager.discoverAndStart - BUG-028 fix', () => {
@@ -594,5 +617,91 @@ describe('AgentManager.reloadCrons - silent-success bug fix (iter 7)', () => {
     const result = am.reloadCrons('ghost');
     expect(result).toBe(false);
     expect((am as any).cronSchedulers.has('ghost')).toBe(false);
+  });
+});
+
+describe('AgentManager.maybeStartSlackSocketMode — SP3b self-containment (analyst review)', () => {
+  let testDir: string;
+  let ctxRoot: string;
+  let frameworkRoot: string;
+  const originalAppToken = process.env.SLACK_APP_TOKEN;
+  const originalBotToken = process.env.SLACK_BOT_TOKEN;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'cortextos-am-slack-test-'));
+    ctxRoot = join(testDir, 'instance');
+    frameworkRoot = join(testDir, 'framework');
+    mkdirSync(join(ctxRoot, 'config'), { recursive: true });
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme', 'agents', 'boss'), { recursive: true });
+    writeFileSync(
+      join(frameworkRoot, 'orgs', 'acme', 'context.json'),
+      JSON.stringify({ orchestrator: 'boss' }),
+    );
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+    process.env.SLACK_BOT_TOKEN = 'xoxb-test';
+    slackSocketModeControl.shouldReject = false;
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+    if (originalAppToken === undefined) delete process.env.SLACK_APP_TOKEN;
+    else process.env.SLACK_APP_TOKEN = originalAppToken;
+    if (originalBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+    else process.env.SLACK_BOT_TOKEN = originalBotToken;
+  });
+
+  it('a Socket Mode start() failure does not propagate — resolves normally, logs the failure', async () => {
+    slackSocketModeControl.shouldReject = true;
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const logs: string[] = [];
+
+    await expect(
+      (am as any).maybeStartSlackSocketMode('boss', 'acme', (msg: string) => logs.push(msg)),
+    ).resolves.toBeUndefined();
+
+    expect(logs.some((l) => l.includes('Slack Socket Mode failed to start'))).toBe(true);
+    expect(logs.some((l) => l.includes('agent startup unaffected'))).toBe(true);
+    expect((am as any).slackSocketClient).toBeNull(); // never set on failure
+  });
+
+  it('resets slackSocketStarted on failure so a later call can retry', async () => {
+    slackSocketModeControl.shouldReject = true;
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    await (am as any).maybeStartSlackSocketMode('boss', 'acme', () => {});
+    expect((am as any).slackSocketStarted).toBe(false);
+  });
+
+  it('succeeds normally when the client starts cleanly', async () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const logs: string[] = [];
+
+    await (am as any).maybeStartSlackSocketMode('boss', 'acme', (msg: string) => logs.push(msg));
+
+    expect(logs.some((l) => l.includes('Slack Socket Mode connected'))).toBe(true);
+    expect((am as any).slackSocketStarted).toBe(true);
+    expect((am as any).slackSocketClient).not.toBeNull();
+  });
+
+  it('is a no-op for a non-orchestrator agent', async () => {
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme', 'agents', 'dev'), { recursive: true });
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const logs: string[] = [];
+
+    await (am as any).maybeStartSlackSocketMode('dev', 'acme', (msg: string) => logs.push(msg));
+
+    expect(logs).toEqual([]);
+    expect((am as any).slackSocketStarted).toBe(false);
+  });
+
+  it('is a no-op when SLACK_APP_TOKEN is absent', async () => {
+    delete process.env.SLACK_APP_TOKEN;
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    const logs: string[] = [];
+
+    await (am as any).maybeStartSlackSocketMode('boss', 'acme', (msg: string) => logs.push(msg));
+
+    expect(logs).toEqual([]);
+    expect((am as any).slackSocketStarted).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { loadSlackIdentity } from '../../../src/slack/identity';
+import { loadSlackIdentity, isSlackUserAllowed, slackIdentityKey, type SlackConfig } from '../../../src/slack/identity';
 
 function makeAgent(root: string, name: string, slackJson?: object): string {
   const dir = join(root, 'orgs', 'wyre', 'agents', name);
@@ -65,5 +65,46 @@ describe('loadSlackIdentity', () => {
     );
     const id = loadSlackIdentity(root, 'wyre', 'aaron/dev');
     expect(id).toEqual({ username: 'aaron-dev', icon_emoji: ':computer:' });
+  });
+});
+
+describe('slackIdentityKey', () => {
+  it('composes team_id and user_id into a single key', () => {
+    expect(slackIdentityKey('T123', 'U456')).toBe('T123:U456');
+  });
+
+  it('does not collide across teams for the same user_id (the bug the composite key prevents)', () => {
+    expect(slackIdentityKey('T-A', 'U-SAME')).not.toBe(slackIdentityKey('T-B', 'U-SAME'));
+  });
+});
+
+describe('isSlackUserAllowed', () => {
+  const baseConfig: SlackConfig = {
+    display_name: 'test',
+    channels: {},
+    allowed_channels: ['C1'],
+    allowed_users: ['T1:U1', 'T1:U2'],
+  };
+
+  it('true for a team_id+user_id pair in allowed_users', () => {
+    expect(isSlackUserAllowed(baseConfig, 'T1', 'U1')).toBe(true);
+  });
+
+  it('false for a user_id not in allowed_users', () => {
+    expect(isSlackUserAllowed(baseConfig, 'T1', 'U999')).toBe(false);
+  });
+
+  it('false when the user_id matches but the team_id does not (cross-workspace collision guard)', () => {
+    expect(isSlackUserAllowed(baseConfig, 'T-OTHER', 'U1')).toBe(false);
+  });
+
+  it('fail-closed: false when allowed_users is empty', () => {
+    expect(isSlackUserAllowed({ ...baseConfig, allowed_users: [] }, 'T1', 'U1')).toBe(false);
+  });
+
+  it('fail-closed: false when allowed_users is missing entirely', () => {
+    const cfg = { ...baseConfig } as Partial<SlackConfig>;
+    delete cfg.allowed_users;
+    expect(isSlackUserAllowed(cfg as SlackConfig, 'T1', 'U1')).toBe(false);
   });
 });
