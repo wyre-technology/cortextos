@@ -15,7 +15,29 @@
 import { existsSync, readFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { execFile } from 'child_process';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
+
+// Hand-rolled Promise wrapper rather than util.promisify(execFile): Node's
+// built-in execFile carries a promisify.custom symbol that changes resolve
+// shape ({stdout, stderr} object) in a way that's invisible to (and doesn't
+// survive) mocking the child_process module in tests. An explicit wrapper
+// keeps the real callback contract (error, stdout, stderr) directly testable.
+function execFileAsync(
+  file: string,
+  args: string[],
+  options: { env: NodeJS.ProcessEnv; timeout: number; encoding: BufferEncoding },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout: stdout as string, stderr: stderr as string });
+    });
+  });
+}
 
 // --- Types ---
 
@@ -74,6 +96,15 @@ export interface RotateResult {
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
 const ROTATION_LOG_MAX = 50;
 
+// Setup-token liveness ping — much shorter TTL than the usage cache. A
+// rotation storm (multiple agents hitting the same wall near-simultaneously)
+// could otherwise fire a real inference call against the same candidate
+// account once per rotating agent; this caps that to one ping per window.
+const SETUP_TOKEN_LIVENESS_CACHE_TTL_MS = 60 * 1000; // 1 minute
+const SETUP_TOKEN_PING_TIMEOUT_MS = 30 * 1000;
+const SETUP_TOKEN_PING_MODEL = 'claude-haiku-4-5-20251001';
+const SETUP_TOKEN_PING_PROMPT = 'Reply with exactly one word: ok';
+
 // Utilization thresholds for rotation trigger
 const THRESHOLD_5H = 0.85;
 const THRESHOLD_7D = 0.80;
@@ -101,6 +132,10 @@ function usageCachePath(ctxRoot: string): string {
 
 function usageLatestPath(ctxRoot: string): string {
   return join(usageDir(ctxRoot), 'latest.json');
+}
+
+function setupTokenLivenessCachePath(ctxRoot: string): string {
+  return join(oauthDir(ctxRoot), 'setup-token-liveness-cache.json');
 }
 
 function usageDailyPath(ctxRoot: string): string {
@@ -266,6 +301,164 @@ export async function checkUsageApi(
   return { ...snapshot, cached: false };
 }
 
+// --- setup-token liveness (preflight for tokens checkUsageApi can't validate) ---
+
+/**
+ * Setup-tokens (`sk-ant-oat01-` prefix) lack the `user:profile` scope, so
+ * checkUsageApi's call to /api/oauth/usage 403s on every one of them —
+ * rotateOAuth's preflight would always fail for this token type without this
+ * branch. checkUsageApi itself is UNTOUCHED by this file: the real-OAuth-grant
+ * path (tokens WITH the scope) still goes through it exactly as before. This
+ * only applies to the setup-token branch of rotateOAuth's preflight.
+ */
+export function isSetupToken(token: string): boolean {
+  return token.startsWith('sk-ant-oat01-');
+}
+
+export interface SetupTokenLivenessResult {
+  account: string;
+  alive: boolean;
+  cached: boolean;
+  checked_at: string;
+}
+
+interface SetupTokenLivenessCache {
+  [accountName: string]: { alive: boolean; checked_at: number };
+}
+
+function loadLivenessCache(ctxRoot: string): SetupTokenLivenessCache {
+  const path = setupTokenLivenessCachePath(ctxRoot);
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8')) as SetupTokenLivenessCache;
+  } catch {
+    return {};
+  }
+}
+
+function saveLivenessCache(ctxRoot: string, cache: SetupTokenLivenessCache): void {
+  ensureDir(oauthDir(ctxRoot));
+  atomicWriteSync(setupTokenLivenessCachePath(ctxRoot), JSON.stringify(cache, null, 2));
+}
+
+// Common absolute install locations for the `claude` CLI, checked before
+// falling back to a bare PATH lookup. The daemon runs as a single long-lived
+// PM2-managed process — PM2 (and other process managers/launchd/systemd)
+// often start with a PATH assembled BEFORE the user's shell rc files run
+// (nvm, homebrew shellenv, etc.), so `process.env.PATH` inside the daemon can
+// be missing the directory `claude` actually lives in even though it
+// resolves fine in an interactive shell. cortextOS hit and fixed the
+// identical class of bug for the `cortextos` binary in hook-crash-alert.ts
+// (PATH-unaware execFile → silent ENOENT). A bare `spawnSync('claude', ...)`
+// here would fail the same way, except the ENOENT gets swallowed by the
+// generic status!==0 check below and misreported as "account unreachable,
+// dead, or revoked" — a false negative that looks like a real account
+// failure instead of an environment problem.
+const CLAUDE_BINARY_CANDIDATES = [
+  process.env.CLAUDE_CLI_PATH,
+  '/opt/homebrew/bin/claude',
+  '/usr/local/bin/claude',
+  join(homedir(), '.local/bin/claude'),
+  join(homedir(), '.claude/local/claude'),
+].filter((p): p is string => Boolean(p));
+
+let cachedClaudeBinary: string | null = null;
+
+/**
+ * Resolve an absolute, PATH-independent path to the `claude` binary where
+ * possible. Falls back to the bare command name (existing PATH-dependent
+ * behavior) only if none of the known install locations exist, so this is
+ * never worse than before — only better when one of the candidates hits.
+ * Result is cached for the process lifetime (install location doesn't change
+ * mid-run) so repeated preflight calls don't re-stat the filesystem.
+ */
+export function resolveClaudeBinary(): string {
+  if (cachedClaudeBinary) return cachedClaudeBinary;
+  for (const candidate of CLAUDE_BINARY_CANDIDATES) {
+    if (existsSync(candidate)) {
+      cachedClaudeBinary = candidate;
+      return candidate;
+    }
+  }
+  cachedClaudeBinary = 'claude';
+  return cachedClaudeBinary;
+}
+
+/**
+ * Validate a setup-token candidate via a cheap one-shot inference ping
+ * instead of the scope-gated usage API. Cannot recover real utilization for
+ * this token type (accounts.json's utilization fields stay whatever they
+ * already were — never fabricated) — this only answers "does this token
+ * still authenticate," which is what rotateOAuth's preflight actually needs
+ * to gate on for setup-tokens.
+ *
+ * TTL-cached (1 min, much shorter than checkUsageApi's 3 min) so a rotation
+ * storm across multiple agents hitting the same candidate doesn't fire one
+ * real inference call per agent.
+ *
+ * Uses execFile (async, non-blocking), NOT spawnSync: the daemon is a single
+ * long-lived process managing every agent's PTY, Telegram polling, and
+ * hang-detection. A synchronous spawn here blocks that entire process for up
+ * to SETUP_TOKEN_PING_TIMEOUT_MS (30s) per call — precisely during a
+ * rate-limit cascade, the exact scenario this preflight exists to handle.
+ * execFile lets the event loop keep servicing everything else while the
+ * ping is in flight.
+ */
+export async function checkSetupTokenLiveness(
+  ctxRoot: string,
+  accountName: string,
+  opts: { force?: boolean } = {},
+): Promise<SetupTokenLivenessResult> {
+  if (!opts.force) {
+    const cache = loadLivenessCache(ctxRoot);
+    const entry = cache[accountName];
+    if (entry && Date.now() - entry.checked_at < SETUP_TOKEN_LIVENESS_CACHE_TTL_MS) {
+      return {
+        account: accountName,
+        alive: entry.alive,
+        cached: true,
+        checked_at: new Date(entry.checked_at).toISOString(),
+      };
+    }
+  }
+
+  const store = loadAccounts(ctxRoot);
+  const account = store?.accounts[accountName];
+  if (!account) throw new Error(`Account "${accountName}" not found in accounts.json`);
+
+  let alive: boolean;
+  try {
+    const { stdout } = await execFileAsync(
+      resolveClaudeBinary(),
+      ['-p', SETUP_TOKEN_PING_PROMPT, '--model', SETUP_TOKEN_PING_MODEL],
+      {
+        env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: account.access_token },
+        timeout: SETUP_TOKEN_PING_TIMEOUT_MS,
+        encoding: 'utf-8',
+      },
+    );
+    alive = (stdout || '').trim().length > 0;
+  } catch {
+    // Non-zero exit, timeout, or spawn failure (e.g. ENOENT) — all treated as
+    // "not alive." A genuine invocation error (missing binary) and a genuine
+    // dead account both fail closed here; resolveClaudeBinary() minimizes the
+    // former so this mostly reflects the latter.
+    alive = false;
+  }
+  const checkedAt = Date.now();
+
+  const cache = loadLivenessCache(ctxRoot);
+  cache[accountName] = { alive, checked_at: checkedAt };
+  saveLivenessCache(ctxRoot, cache);
+
+  return {
+    account: accountName,
+    alive,
+    cached: false,
+    checked_at: new Date(checkedAt).toISOString(),
+  };
+}
+
 // --- refresh-oauth-token ---
 
 /**
@@ -357,7 +550,14 @@ export async function rotateOAuth(
     };
   }
 
-  // Find the next account with lowest 5h utilization
+  // Candidates sorted by 5h utilization. For real OAuth-grant tokens this is
+  // a genuine signal (prefer the least-used alternative). For setup-tokens
+  // it is NOT — their utilization fields are always 0.0/stale (no live
+  // signal exists for this token type), so the sort is an arbitrary tie
+  // order, not a real ranking. Either way, the LOOP below (not the sort) is
+  // what actually finds a live account: it tries candidates in this order
+  // and uses the first one that passes preflight, falling through to the
+  // next on failure rather than giving up after a single arbitrary pick.
   const candidates = Object.entries(store.accounts)
     .filter(([name]) => name !== currentName)
     .sort(([, a], [, b]) => a.five_hour_utilization - b.five_hour_utilization);
@@ -366,25 +566,60 @@ export async function rotateOAuth(
     return { rotated: false, reason: 'No alternate accounts available for rotation' };
   }
 
-  let [nextName, nextAccount] = candidates[0];
+  let nextName: string | undefined;
+  let preflight: CheckUsageResult | undefined;
+  const attemptFailures: string[] = [];
 
-  // Refresh next account token if expiring within 2 hours
-  if (nextAccount.expires_at - Date.now() < 2 * 60 * 60 * 1000) {
-    await refreshOAuthToken(ctxRoot, nextName);
-    // Reload after refresh (accounts.json was rewritten)
-    const refreshed = loadAccounts(ctxRoot)!;
-    nextAccount = refreshed.accounts[nextName];
+  for (const [candidateName, candidateAccountInitial] of candidates) {
+    let candidateAccount = candidateAccountInitial;
+
+    // Refresh this candidate's token if expiring within 2 hours.
+    if (candidateAccount.expires_at - Date.now() < 2 * 60 * 60 * 1000) {
+      await refreshOAuthToken(ctxRoot, candidateName);
+      const refreshed = loadAccounts(ctxRoot)!;
+      candidateAccount = refreshed.accounts[candidateName];
+    }
+
+    // PREFLIGHT: verify this candidate's token actually works.
+    // Setup-tokens (sk-ant-oat01-) 403 on checkUsageApi's scope-gated usage
+    // endpoint, so they're validated via a one-shot inference ping instead —
+    // see checkSetupTokenLiveness's docblock. Real OAuth-grant tokens (with
+    // the scope) take the EXACT same checkUsageApi path as always —
+    // untouched, byte-identical.
+    try {
+      if (isSetupToken(candidateAccount.access_token)) {
+        const liveness = await checkSetupTokenLiveness(ctxRoot, candidateName, { force: true });
+        if (!liveness.alive) {
+          throw new Error('setup-token inference ping failed (account unreachable, dead, or revoked)');
+        }
+        // No real utilization signal exists for this token type — preserve
+        // whatever was already cached rather than assert a fabricated number.
+        preflight = {
+          account: candidateName,
+          five_hour_utilization: candidateAccount.five_hour_utilization,
+          seven_day_utilization: candidateAccount.seven_day_utilization,
+          cached: false,
+          fetched_at: liveness.checked_at,
+        };
+      } else {
+        preflight = await checkUsageApi(ctxRoot, { force: true, account: candidateName });
+      }
+      nextName = candidateName;
+      break; // first live candidate wins — stop trying further ones
+    } catch (err) {
+      attemptFailures.push(`"${candidateName}": ${err}`);
+      // fall through to the next candidate
+    }
   }
 
-  // PREFLIGHT: verify next account's token works
-  let preflight: CheckUsageResult;
-  try {
-    preflight = await checkUsageApi(ctxRoot, { force: true, account: nextName });
-  } catch (err) {
-    // Preflight failed — do NOT write .env files
+  if (!nextName || !preflight) {
+    // Every candidate failed preflight — genuinely exhausted, not a
+    // single-arbitrary-pick false-negative. Surface all attempts so the
+    // caller (and any alert built on the reason string) can see it tried
+    // more than one account before giving up.
     return {
       rotated: false,
-      reason: `Preflight failed for account "${nextName}": ${err}`,
+      reason: `Preflight failed for all ${candidates.length} candidate account(s): ${attemptFailures.join('; ')}`,
     };
   }
 
