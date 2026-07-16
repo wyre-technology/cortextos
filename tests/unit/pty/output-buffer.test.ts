@@ -114,3 +114,17 @@ describe('OutputBuffer redaction', () => {
     expect(written).not.toContain('[REDACTED_JWT]');
   });
 });
+
+describe('OutputBuffer.hasRateLimitSignature', () => {
+  it('is TRUE when recent output contains a rate-limit signature', () => {
+    const buf = new OutputBuffer(1000);
+    buf.push("You've hit your weekly limit\n");
+    expect(buf.hasRateLimitSignature()).toBe(true);
+  });
+
+  it('is FALSE for ordinary output', () => {
+    const buf = new OutputBuffer(1000);
+    buf.push('build succeeded\n');
+    expect(buf.hasRateLimitSignature()).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import { appendFileSync, renameSync, statSync } from 'fs';
 import { redactSecrets } from './redact.js';
+import { hasRateLimitSignature as checkRateLimitSignature } from './rate-limit-detector.js';
 
 // Dynamic import for strip-ansi (ESM module)
 let stripAnsi: (text: string) => string;
@@ -111,6 +112,16 @@ export class OutputBuffer {
     }
 
     return cleaned.includes(this.bootstrapPattern);
+  }
+
+  /**
+   * Does the recent output show an Anthropic rate-limit / weekly-limit /
+   * overloaded signature? Shared detection logic with the SessionEnd crash-alert
+   * hook's stdout.log scan (src/pty/rate-limit-detector.ts) — same signatures,
+   * one source of truth, whether the caller reads the live buffer or the log file.
+   */
+  hasRateLimitSignature(): boolean {
+    return checkRateLimitSignature(this.getRecent());
   }
 
   /**

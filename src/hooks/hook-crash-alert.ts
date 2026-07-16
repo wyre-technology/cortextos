@@ -18,6 +18,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, mk
 import { join } from 'path';
 import { homedir } from 'os';
 import { execFile } from 'child_process';
+import { detectRateLimitInLog } from '../pty/rate-limit-detector.js';
 
 const DEDUP_WINDOW_MS = 10 * 60 * 1000;         // 10 minutes
 const QUIET_HOUR_START_LA = 22;                 // 22:00 America/Los_Angeles
@@ -46,36 +47,6 @@ function isQuietHoursLA(now: Date): boolean {
   const hour = parseInt(m[1], 10);
   // Window wraps midnight: 22:00-23:59 OR 00:00-06:59
   return hour >= QUIET_HOUR_START_LA || hour < QUIET_HOUR_END_LA;
-}
-
-/**
- * Scan the tail of stdout.log for Anthropic rate-limit or weekly-limit
- * signatures. Mirrors OutputBuffer.hasRateLimitSignature so the hook and the
- * daemon use the same detection logic.
- */
-function detectRateLimitInLog(logPath: string): boolean {
-  try {
-    const size = statSync(logPath).size;
-    const readBytes = Math.min(size, 200 * 1024); // last 200 KB
-    const fd = readFileSync(logPath);
-    const slice = fd.slice(Math.max(0, fd.length - readBytes)).toString('utf-8');
-    const text = slice.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').toLowerCase();
-    return (
-      text.includes('overloaded_error') ||
-      text.includes('rate_limit_error') ||
-      text.includes('rate limit') ||
-      text.includes('rate-limit') ||
-      text.includes('too many requests') ||
-      text.includes('quota exceeded') ||
-      text.includes('usage limit') ||
-      text.includes('weekly limit') ||
-      text.includes('5-hour limit') ||
-      text.includes('5h limit') ||
-      /used \d+% of your/.test(text)
-    );
-  } catch {
-    return false;
-  }
 }
 
 /**
