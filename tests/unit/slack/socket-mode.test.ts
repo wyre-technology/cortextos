@@ -276,4 +276,27 @@ describe('SlackSocketModeClient', () => {
       expect(FakeWebSocket.instances).toHaveLength(1); // no reconnect socket appeared
     });
   });
+
+  describe('WebSocket construction failure (analyst review — Node<22 has no global WebSocket)', () => {
+    it('a throwing WebSocket constructor (e.g. ReferenceError: WebSocket is not defined) does not propagate out of start()', async () => {
+      global.WebSocket = class {
+        constructor() {
+          throw new ReferenceError('WebSocket is not defined');
+        }
+      } as unknown as typeof WebSocket;
+
+      const logs: string[] = [];
+      const client = new SlackSocketModeClient('xapp-1', { log: (m) => logs.push(m) });
+
+      // The whole point: start() must resolve, not reject/throw, even though
+      // the underlying WebSocket constructor is fatal on this runtime.
+      await expect(client.start()).resolves.toBeUndefined();
+      expect(logs.some((l) => l.includes('WebSocket construction failed'))).toBe(true);
+      expect(logs.some((l) => l.includes('Node >=22'))).toBe(true);
+
+      // The failure path scheduled a real reconnect setTimeout — stop() so
+      // it doesn't fire against a later test's global.WebSocket.
+      client.stop();
+    });
+  });
 });

@@ -163,7 +163,22 @@ export class SlackSocketModeClient {
     // than open a socket that would be immediately stale.
     if (myEpoch !== this.epoch || !this.running) return;
 
-    const socket = new WebSocket(url);
+    let socket: WebSocket;
+    try {
+      // `new WebSocket(...)` throws synchronously — most notably a bare
+      // `ReferenceError: WebSocket is not defined` if the runtime predates
+      // Node 22 (analyst review, SP3b: the daemon's actual deployed Node
+      // version isn't guaranteed to match package.json's engines floor).
+      // Uncaught here, that exception propagates out of connect() and up
+      // through start() to whatever awaits it — for the daemon's
+      // orchestrator-only Socket Mode bootstrap, that would otherwise crash
+      // agent startup entirely rather than degrade to "Slack inactive."
+      socket = new WebSocket(url);
+    } catch (err) {
+      this.log(`WebSocket construction failed: ${(err as Error).message} — is this runtime on Node >=22?`);
+      this.scheduleReconnect();
+      return;
+    }
 
     socket.addEventListener('open', () => {
       if (myEpoch !== this.epoch) return;

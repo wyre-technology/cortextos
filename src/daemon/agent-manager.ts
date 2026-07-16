@@ -854,9 +854,21 @@ export class AgentManager {
         .catch((err) => log(`[slack-socket-mode] dispatch error: ${err}`));
     });
 
-    await client.start();
-    this.slackSocketClient = client;
-    log('Slack Socket Mode connected (org-level, orchestrator-owned)');
+    // Self-contained the same way maybeStartActivityChannelPoller isolates
+    // its poller: a Slack Socket Mode failure (a runtime that predates the
+    // Node 22 WebSocket global, an unreachable Slack API, anything
+    // unexpected) must degrade to "Slack inactive," never take down
+    // orchestrator startup (analyst review, SP3b) — startAgent() awaits this
+    // method for every agent, so an uncaught throw here would have blocked
+    // the orchestrator itself from starting.
+    try {
+      await client.start();
+      this.slackSocketClient = client;
+      log('Slack Socket Mode connected (org-level, orchestrator-owned)');
+    } catch (err) {
+      this.slackSocketStarted = false; // allow a future startAgent() call (e.g. a restart) to retry
+      log(`Slack Socket Mode failed to start (Slack inactive, agent startup unaffected): ${err}`);
+    }
   }
 
   /**
