@@ -4,7 +4,7 @@ import { join } from 'path';
 import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
 import { readCrons } from '../bus/crons.js';
-import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs } from './hang-detector.js';
+import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs, hasBeatSinceRestart } from './hang-detector.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
 import { checkInbox, ackInbox } from '../bus/message.js';
 import { updateApproval } from '../bus/approval.js';
@@ -66,7 +66,11 @@ export class FastChecker {
   private ctxLastSessionId: string | null = null; // detects new session → clears stale deadline
   private ctxHandoffLeaseId: string | null = null;
   private ctxHandoffQueuedLogAt: number = 0;
-  private ctxCircuitRestarts: number[] = []; // timestamps of recent context-triggered restarts
+  // 2026-07-14 (freeze#4 fix): was a timestamp array capped by a 15min *window*
+  // (filter(t => now - t < 15min).length >= 3). Hardened for consistency with the
+  // hang breaker below to a persisted *consecutive* counter — see that field's
+  // comment for why a window-based cap can go unreachable.
+  private consecutiveCtxRestartsWithoutRecovery: number = 0;
   private ctxHandoffFires: number[] = [];    // timestamps of recent Tier-2 handoff fires (cooperative-restart loop backstop)
   private ctxCircuitBrokenAt: number | null = null; // when circuit tripped (null = healthy)
   // Persisted to disk so --continue restarts don't reset the circuit breaker
@@ -77,7 +81,17 @@ export class FastChecker {
   // processes no cron fires). Keyed on delivered-fire-without-session-beat, never staleness.
   private hangLastCheckAt: number = 0;        // throttle the hang sweep (runs ~60s, not per 1s poll)
   private hangLastRestartAt: number = 0;      // cooldown: give a fresh session a full grace window to beat
-  private hangRestarts: number[] = [];        // persisted hang-restart window (halt-after-N so auto-heal can't loop)
+  // 2026-07-14 (freeze#4 fix): was `hangRestarts: number[]`, capped by filtering to a
+  // 30min *window* (length>=3). That cap was UNREACHABLE in practice: the 15min
+  // post-restart cooldown above means consecutive hang-restarts always land >=15min
+  // apart, so at most 2 ever fit inside any rolling 30min window — freeze#4 saw 14
+  // back-to-back hang-restart cycles over 4 hours and never tripped. Replaced with a
+  // persisted *consecutive* counter: increments every hang-restart, resets to 0 only
+  // on a CONFIRMED genuine beat since the restart (see hasBeatSinceRestart below),
+  // never on the mere passage of time. Halts at 3 regardless of how far apart the
+  // restarts are, since spacing was never the signal that mattered — the absence of
+  // any intervening recovery is.
+  private consecutiveHangRestartsWithoutBeat: number = 0;
   private hangHaltedAt: number | null = null; // when the hang auto-heal halted (null = healthy)
   private hangCircuitFile: string = '';
 
@@ -1011,7 +1025,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     if (this.ctxCircuitBrokenAt !== null) {
       if (now - this.ctxCircuitBrokenAt >= 30 * 60_000) {
         this.ctxCircuitBrokenAt = null;
-        this.ctxCircuitRestarts = [];
+        this.consecutiveCtxRestartsWithoutRecovery = 0;
         this.ctxHandoffFires = [];
         this.saveCtxCircuit();
         this.log('Context circuit breaker reset after 30min pause');
@@ -1084,6 +1098,17 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
     const effectivePct = pct ?? (exceeds200k ? 101 : null);
     if (effectivePct === null) return;
+
+    // Confirmed recovery: usage has genuinely dropped back to a healthy level (not
+    // just "below handoff", which a still-climbing session passes through on its way
+    // up) — reset the Tier-3 restart-loop counter. Mirrors the hang breaker's
+    // beat-confirmed reset: never clear on the mere passage of time or an
+    // in-between reading, only on positive evidence the restart actually helped.
+    if (effectivePct < warn && this.consecutiveCtxRestartsWithoutRecovery > 0) {
+      this.consecutiveCtxRestartsWithoutRecovery = 0;
+      this.saveCtxCircuit();
+      this.log(`Context restart-loop counter reset for ${this.agent.name} — usage back below warn threshold`);
+    }
 
     // Session-id-independent leaked-lease release (the Claude null-session_id edge).
     // The new-session detection above only releases a leaked lease when the bridge
@@ -1211,19 +1236,21 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // needs to acquire/release anything — this.agent.sessionRefresh() below does it.
     const now = Date.now();
 
-    // Update and check circuit breaker window (persisted to disk — survives --continue restarts)
-    this.ctxCircuitRestarts = this.ctxCircuitRestarts.filter(t => now - t < 15 * 60_000);
-    if (this.ctxCircuitRestarts.length >= 3) {
+    // Update and check circuit breaker (persisted to disk — survives --continue
+    // restarts). Consecutive, not windowed — see the field's comment. Increment-then-
+    // check: this attempt itself counts toward the cap, so the 3rd attempt trips
+    // instead of landing — only 2 restarts ever actually fire before escalation.
+    this.consecutiveCtxRestartsWithoutRecovery += 1;
+    if (this.consecutiveCtxRestartsWithoutRecovery >= 3) {
       this.ctxCircuitBrokenAt = now;
       this.saveCtxCircuit();
-      const msg = `Context circuit breaker TRIPPED for ${this.agent.name}: 3 restarts in 15min. Watchdog paused 30min. Check logs/${this.agent.name}/restarts.log for details.`;
+      const msg = `Context circuit breaker TRIPPED for ${this.agent.name}: 3 consecutive restarts with no recovery in between. Watchdog paused 30min. Check logs/${this.agent.name}/restarts.log for details.`;
       this.log(msg);
       if (this.telegramApi && this.chatId) {
         this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
       }
       return;
     }
-    this.ctxCircuitRestarts.push(now);
     this.saveCtxCircuit();
 
     // If the agent wrote a handoff doc in the last 15 minutes but didn't get to call
@@ -1332,14 +1359,14 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   /**
    * Load circuit breaker state from disk.
    * Persisting this across --continue restarts is critical: without it,
-   * the in-memory ctxCircuitRestarts array resets on every restart, making
-   * the circuit breaker unable to count restarts and stop a restart loop.
+   * the in-memory consecutiveCtxRestartsWithoutRecovery counter resets on every
+   * restart, making the circuit breaker unable to count restarts and stop a restart loop.
    */
   private loadCtxCircuit(): void {
     try {
       if (!existsSync(this.ctxCircuitFile)) return;
       const data = JSON.parse(readFileSync(this.ctxCircuitFile, 'utf-8'));
-      this.ctxCircuitRestarts = Array.isArray(data.restarts) ? data.restarts : [];
+      this.consecutiveCtxRestartsWithoutRecovery = typeof data.consecutiveWithoutRecovery === 'number' ? data.consecutiveWithoutRecovery : 0;
       this.ctxHandoffFires = Array.isArray(data.handoffFires) ? data.handoffFires : [];
       this.ctxCircuitBrokenAt = typeof data.brokenAt === 'number' ? data.brokenAt : null;
     } catch {
@@ -1353,7 +1380,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   private saveCtxCircuit(): void {
     try {
       writeFileSync(this.ctxCircuitFile, JSON.stringify({
-        restarts: this.ctxCircuitRestarts,
+        consecutiveWithoutRecovery: this.consecutiveCtxRestartsWithoutRecovery,
         handoffFires: this.ctxHandoffFires,
         brokenAt: this.ctxCircuitBrokenAt,
       }), 'utf-8');
@@ -1385,7 +1412,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     if (this.hangHaltedAt !== null) {
       if (now - this.hangHaltedAt < 30 * 60_000) return;
       this.hangHaltedAt = null;
-      this.hangRestarts = [];
+      this.consecutiveHangRestartsWithoutBeat = 0;
       this.saveHangCircuit();
       this.log('Hang auto-heal breaker reset after 30min pause');
     }
@@ -1445,6 +1472,18 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     } catch { return; }
 
     const bootVerdict = evaluateBootstrapHang({ now, graceMs: 15 * 60_000, restartAt, lastSessionHeartbeat, lastIdleFlagAt });
+
+    // Confirmed recovery: a genuine beat landed at/after this restart, so the loop
+    // actually broke — reset the halt counter. Gated on hasBeatSinceRestart (not on
+    // bootVerdict.hung being merely false) because "not hung this tick" also covers
+    // fail-safe cases (unknown restart-time, still within grace) that say nothing
+    // about whether a beat has actually occurred yet.
+    if (hasBeatSinceRestart(restartAt, lastSessionHeartbeat, lastIdleFlagAt) && this.consecutiveHangRestartsWithoutBeat > 0) {
+      this.consecutiveHangRestartsWithoutBeat = 0;
+      this.saveHangCircuit();
+      this.log(`Hang-restart loop counter reset for ${this.agent.name} — genuine beat confirmed since last restart`);
+    }
+
     if (!bootVerdict.hung) return;
 
     this.log(`Bootstrap hang detected for ${this.agent.name}: ${bootVerdict.reason}`);
@@ -1465,12 +1504,16 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // entirely and was confirmed as the actual race that hit boss+forge).
     const now = Date.now();
 
-    // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't loop.
-    this.hangRestarts = this.hangRestarts.filter(t => now - t < 30 * 60_000);
-    if (this.hangRestarts.length >= 3) {
+    // Halt-after-N: if restarting isn't clearing the hang, stop and escalate — don't
+    // loop. Consecutive, not windowed — see the field's comment for why a window
+    // couldn't ever reach 3 in practice. Increment-then-check (not check-then-increment):
+    // this restart attempt itself counts toward the cap, so the 3rd attempt halts
+    // instead of landing — only 2 restarts ever actually fire before escalation.
+    this.consecutiveHangRestartsWithoutBeat += 1;
+    if (this.consecutiveHangRestartsWithoutBeat >= 3) {
       this.hangHaltedAt = now;
       this.saveHangCircuit();
-      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 hang-restarts in 30min didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
+      const msg = `Agent ${this.agent.name} HANG auto-heal HALTED — 3 consecutive hang-restarts with no beat in between didn't clear it. Auto-restart paused 30min; needs manual attention (cortextos start ${this.agent.name}).`;
       this.log(msg);
       // Self-escalation: the DAEMON posts to the agent's chat, so this reaches a human
       // even though the frozen session can't post for itself. (analyst's separate
@@ -1480,7 +1523,6 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       }
       return;
     }
-    this.hangRestarts.push(now);
     this.hangLastRestartAt = now;
     this.saveHangCircuit();
 
@@ -1500,8 +1542,8 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
   }
 
   /**
-   * Load persisted hang-restart window (survives --continue restarts, like the ctx
-   * breaker). 2026-07-13: also restores hangLastRestartAt/hangLastCheckAt — a
+   * Load persisted hang-restart consecutive counter (survives --continue restarts,
+   * like the ctx breaker). 2026-07-13: also restores hangLastRestartAt/hangLastCheckAt — a
    * freshly-spawned session's in-memory defaults (0) previously meant zero cooldown,
    * which let a still-live false-positive (see hang-detector.ts's dual-source fix)
    * re-trigger a restart on the new session's very first poll, storming the fleet.
@@ -1510,7 +1552,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     try {
       if (!existsSync(this.hangCircuitFile)) return;
       const data = JSON.parse(readFileSync(this.hangCircuitFile, 'utf-8'));
-      this.hangRestarts = Array.isArray(data.restarts) ? data.restarts : [];
+      this.consecutiveHangRestartsWithoutBeat = typeof data.consecutiveWithoutBeat === 'number' ? data.consecutiveWithoutBeat : 0;
       this.hangHaltedAt = typeof data.haltedAt === 'number' ? data.haltedAt : null;
       this.hangLastRestartAt = typeof data.lastRestartAt === 'number' ? data.lastRestartAt : 0;
       this.hangLastCheckAt = typeof data.lastCheckAt === 'number' ? data.lastCheckAt : 0;
@@ -1519,11 +1561,11 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     }
   }
 
-  /** Persist the hang-restart window after every update. */
+  /** Persist the hang-restart consecutive counter after every update. */
   private saveHangCircuit(): void {
     try {
       writeFileSync(this.hangCircuitFile, JSON.stringify({
-        restarts: this.hangRestarts,
+        consecutiveWithoutBeat: this.consecutiveHangRestartsWithoutBeat,
         haltedAt: this.hangHaltedAt,
         lastRestartAt: this.hangLastRestartAt,
         lastCheckAt: this.hangLastCheckAt,

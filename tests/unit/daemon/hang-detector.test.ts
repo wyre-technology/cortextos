@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs } from '../../../src/daemon/hang-detector.js';
+import { evaluateHang, evaluateBootstrapHang, mostRecentDeliveredFireMs, hasBeatSinceRestart } from '../../../src/daemon/hang-detector.js';
 
 const MIN = 60_000;
 const GRACE = 15 * MIN;
@@ -173,5 +173,38 @@ describe('hang-detector — mostRecentDeliveredFireMs (batching-aware)', () => {
     const T = mostRecentDeliveredFireMs(crons)!;
     const S = NOW - 40 * MIN; // last session beat older than the latest fire
     expect(evaluateHang({ now: NOW, graceMs: GRACE, deliveredFireAt: T, lastSessionHeartbeat: S }).hung).toBe(true);
+  });
+});
+
+describe('hang-detector — hasBeatSinceRestart (restart-loop-counter reset signal)', () => {
+  it('TRUE: a session heartbeat landed at/after the restart', () => {
+    const R = NOW - 20 * MIN;
+    const S = R + 2 * MIN;
+    expect(hasBeatSinceRestart(R, S, null)).toBe(true);
+  });
+
+  it('TRUE: only last_idle.flag (no session-heartbeat) landed at/after the restart', () => {
+    const R = NOW - 20 * MIN;
+    expect(hasBeatSinceRestart(R, null, R + MIN)).toBe(true);
+  });
+
+  it('boundary: beat exactly AT restart time counts (S == R)', () => {
+    const R = NOW - 20 * MIN;
+    expect(hasBeatSinceRestart(R, R, null)).toBe(true);
+  });
+
+  it('FALSE: the only beat on record PREDATES the restart (stale carry-over)', () => {
+    const R = NOW - 20 * MIN;
+    const S = R - 5 * MIN;
+    expect(hasBeatSinceRestart(R, S, null)).toBe(false);
+  });
+
+  it('FALSE: no beat of either kind recorded at all', () => {
+    const R = NOW - 20 * MIN;
+    expect(hasBeatSinceRestart(R, null, null)).toBe(false);
+  });
+
+  it('FALSE: restart-time itself is unknown (fail-safe — never claims recovery on an unknown anchor)', () => {
+    expect(hasBeatSinceRestart(null, NOW, NOW)).toBe(false);
   });
 });

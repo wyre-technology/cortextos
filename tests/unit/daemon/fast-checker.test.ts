@@ -982,6 +982,90 @@ describe('FastChecker', () => {
     });
   });
 
+  describe('checkHangStatus — consecutive-restart halt counter (freeze#4 fix: was N-restarts-in-a-30min-window, unreachable because the 15min post-restart cooldown spaces restarts >15min apart, so at most 2 ever fit in any 30min window)', () => {
+    const GRACE_EXCEEDED_ISO = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+    // Simulates the freeze#4 shape: each round is a FRESH FastChecker (a real daemon
+    // restart constructs a new instance) that finds the persisted cooldown already
+    // expired (>15min since the prior hang-restart) and the agent still hung with no
+    // beat — exactly what 14 back-to-back cycles 15min+ apart looked like in prod.
+    function primeExpiredCooldown() {
+      const circuitPath = join(paths.stateDir, '.hang-circuit.json');
+      const circuit = existsSync(circuitPath) ? JSON.parse(readFileSync(circuitPath, 'utf-8')) : {};
+      writeFileSync(circuitPath, JSON.stringify({ ...circuit, lastRestartAt: Date.now() - 20 * 60_000, lastCheckAt: 0 }), 'utf-8');
+    }
+
+    it('halts on the 3rd consecutive hang-restart with no beat in between, even though every restart is >15min apart (never falls inside one 30min window)', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+      // No heartbeat.json / last_idle.flag at all — never beats, ever.
+
+      // Restart #1
+      let agent = createMockAgent('test-agent');
+      let checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+
+      // Restart #2 — prior cooldown expired, still hung, still no beat.
+      primeExpiredCooldown();
+      agent = createMockAgent('test-agent');
+      checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+
+      // Restart #3 — this is the one the old window-based cap could never reach.
+      primeExpiredCooldown();
+      agent = createMockAgent('test-agent');
+      checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      // Must HALT, not restart a 3rd time.
+      expect(agent.sessionRefresh).not.toHaveBeenCalled();
+      expect((checker as any).hangHaltedAt).not.toBeNull();
+    });
+
+    it('does NOT halt on an isolated hang-restart that follows a genuine beat (counter reset by the recovery, not by a time window)', () => {
+      writeFileSync(join(paths.stateDir, '.restart-time'), GRACE_EXCEEDED_ISO + '\n', 'utf-8');
+
+      // Two restarts with no beat — counter at 2, one away from halting.
+      let agent = createMockAgent('test-agent');
+      let checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      primeExpiredCooldown();
+      agent = createMockAgent('test-agent');
+      checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+
+      // Recovery: cooldown expired AND a genuine session beat lands at/after this restart.
+      primeExpiredCooldown();
+      const restartAt = Date.now() - 20 * 60_000;
+      writeFileSync(join(paths.stateDir, '.restart-time'), new Date(restartAt).toISOString() + '\n', 'utf-8');
+      writeFileSync(join(paths.stateDir, 'heartbeat.json'), JSON.stringify({
+        last_session_heartbeat: new Date(restartAt + 2 * 60_000).toISOString(), // after the restart
+      }), 'utf-8');
+      agent = createMockAgent('test-agent');
+      checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      expect(agent.sessionRefresh).not.toHaveBeenCalled(); // healthy — no restart at all
+
+      const circuitAfterRecovery = JSON.parse(readFileSync(join(paths.stateDir, '.hang-circuit.json'), 'utf-8'));
+      expect(circuitAfterRecovery.consecutiveWithoutBeat).toBe(0);
+
+      // A LATER, isolated hang (fresh restart-time, stale carry-over heartbeat) is
+      // restart #1 of a NEW streak — must NOT halt.
+      primeExpiredCooldown();
+      const laterRestart = Date.now() - 20 * 60_000;
+      writeFileSync(join(paths.stateDir, '.restart-time'), new Date(laterRestart).toISOString() + '\n', 'utf-8');
+      writeFileSync(join(paths.stateDir, 'heartbeat.json'), JSON.stringify({
+        last_session_heartbeat: new Date(laterRestart - 30 * 60_000).toISOString(), // predates this restart
+      }), 'utf-8');
+      agent = createMockAgent('test-agent');
+      checker = new FastChecker(agent, paths, '/tmp/framework');
+      (checker as any).checkHangStatus();
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1); // restarts again — does NOT halt
+      expect((checker as any).hangHaltedAt).toBeNull();
+    });
+  });
+
   // NOTE (2026-07-13, revised): a "cross-path restart-in-flight lock" describe block
   // used to live here, testing that forceHangRestart/forceContextRestart no-op when
   // agent-manager.ts's manual restartAgent() already holds the lock. Removed — the
