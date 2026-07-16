@@ -50,6 +50,29 @@ const testSendCommand = new Command('test-send')
     }
   });
 
+// Stable command name the SP3b injected "Reply using:" line invokes. Shares
+// runTestSend's implementation with test-send (same shape, same identity
+// threading via --as) — this is the one operators/agents should treat as
+// the standing reply path; test-send remains for ad-hoc manual testing.
+const sendCommand = new Command('send')
+  .argument('<channel>', 'Slack channel id (Cxxx) or name (#general)')
+  .argument('<text>', 'Message text')
+  .option('--as <agent>', 'Post under this agent\'s identity (loads slack.json)')
+  .option('--org <org>', 'Org', 'wyre')
+  .description('Send a Slack message (used by the SP3b inbound reply path)')
+  .action(async (channel: string, text: string, options: { as?: string; org: string }) => {
+    const api = new SlackAPI(requireToken());
+    const frameworkRoot =
+      process.env.CTX_FRAMEWORK_ROOT || process.env.CTX_PROJECT_ROOT || process.cwd();
+    try {
+      await runTestSend({ frameworkRoot, org: options.org, agent: options.as, channel, text }, api);
+      console.log('sent');
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
 const discoverChannelsCommand = new Command('discover-channels')
   .description('List Slack channels the bot is a member of (with ids)')
   .action(async () => {
@@ -65,4 +88,5 @@ const discoverChannelsCommand = new Command('discover-channels')
 export const slackCommand = new Command('slack')
   .description('Slack adapter ops')
   .addCommand(testSendCommand)
+  .addCommand(sendCommand)
   .addCommand(discoverChannelsCommand);

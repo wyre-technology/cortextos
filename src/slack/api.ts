@@ -33,6 +33,12 @@ export interface Channel {
   is_member?: boolean;
 }
 
+export interface SlackUserInfo {
+  id: string;
+  name?: string;
+  real_name?: string;
+}
+
 export class SlackAPI {
   constructor(private readonly token: string) {
     if (!token) throw new Error('SlackAPI: token is required');
@@ -57,6 +63,12 @@ export class SlackAPI {
 
   async postMessage(req: PostMessageRequest): Promise<PostMessageResponse> {
     return this.call<PostMessageResponse>('chat.postMessage', req as unknown as Record<string, unknown>);
+  }
+
+  /** Used by SP3b's dispatcher to resolve a display name for the injected header. */
+  async getUserInfo(userId: string): Promise<SlackUserInfo> {
+    const resp = await this.call<{ user: SlackUserInfo }>('users.info', { user: userId });
+    return resp.user;
   }
 
   async listChannels(): Promise<Channel[]> {
