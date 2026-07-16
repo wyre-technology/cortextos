@@ -31,16 +31,48 @@ create a second app.
    - `app_mention`
 6. **Reinstall the app to the workspace.** Required for new scopes to take
    effect — this **re-issues the bot token** (`xoxb-…`) too, not just the new
-   app-level one. Update Key Vault's `slack-bot-token` the same way as SP3a's
-   rotation runbook, not just add the new `slack-app-token`.
-7. **Verify:**
+   app-level one. Both need to land on the VM (step 7 below covers both).
+7. **Verify the KV write:**
 
        az keyvault secret show --vault-name cortextos-prod-kv-d1fd92 \
          --name slack-app-token --query "[name, length(value)]" -o tsv
 
    Expected: `slack-app-token` + a length around 60+.
-8. **Restart the daemon** so it picks up `SLACK_APP_TOKEN` from the refreshed
-   env (same restart step as SP3a's token rotation runbook).
+
+8. **Get it onto the running VM.** `az keyvault secret set` alone does
+   **NOT** reach the running daemon — confirmed from
+   `infra/terraform/cloud-init.yaml.tftpl` + the `cortextos.service` systemd
+   unit: the daemon's `EnvironmentFile=/etc/cortextos.env` is populated by
+   `cortextos-bootstrap.service`, a **oneshot** unit gated by
+   `ConditionPathExists=!/var/lib/cortextos/.bootstrap-done` — it only runs
+   once, on first boot. There is no periodic KV→env sync. (This is also true
+   of `slack-bot-token`'s rotation path in `sp3a-slack-app-setup.md` — that
+   runbook's "update KV then restart" instruction is incomplete as written;
+   `sudo systemctl restart cortextos` alone does not re-fetch KV, since
+   `cortextos.service`'s `Requires=cortextos-bootstrap.service` only ensures
+   the oneshot has run at some point, not that it re-runs.)
+
+   For tonight (VM already bootstrapped, SP3a already live), the working
+   path is to mirror the bootstrap script's own write pattern directly:
+
+       ssh wyre-agents-ssh.wyre.ai
+       sudo bash -c 'grep -q "^SLACK_APP_TOKEN=" /etc/cortextos.env \
+         && sed -i "s|^SLACK_APP_TOKEN=.*|SLACK_APP_TOKEN=<xapp-token>|" /etc/cortextos.env \
+         || echo "SLACK_APP_TOKEN=<xapp-token>" >> /etc/cortextos.env'
+       sudo chmod 600 /etc/cortextos.env
+       # if the reinstall in step 6 issued a new xoxb- bot token, update that line too:
+       sudo bash -c 'sed -i "s|^SLACK_BOT_TOKEN=.*|SLACK_BOT_TOKEN=<new-xoxb-token>|" /etc/cortextos.env'
+       sudo systemctl restart cortextos
+
+   `infra/terraform/cloud-init.yaml.tftpl` now also fetches `slack-app-token`
+   the same way it fetches `slack-bot-token` (symmetric block added
+   alongside this PR), so a **future** VM rebuild or a deliberate bootstrap
+   re-run (`sudo rm /var/lib/cortextos/.bootstrap-done && sudo systemctl
+   start cortextos-bootstrap.service` — note this re-runs the FULL bootstrap
+   sequence, not just the Slack fetch, so prefer the direct env-file edit
+   above for a routine token add/rotation) will pick it up from KV
+   automatically. KV remains the source of truth for disaster recovery even
+   though tonight's immediate path is the direct env-file edit.
 
 ## Per-agent setup (after the app-level steps above)
 
