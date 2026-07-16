@@ -7,12 +7,37 @@ import { tmpdir } from 'os';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Mock the setup-token inference-ping spawn (child_process.spawnSync) —
-// same mocking convention as tests/unit/hooks/hook-crash-alert.test.ts.
-const spawnSyncMock = vi.fn();
+// Mock the setup-token inference-ping spawn (child_process.execFile). The
+// mock must invoke the real (error, stdout, stderr) callback convention —
+// oauth.ts wraps it in its own Promise, not util.promisify, specifically so
+// this stays directly testable (see execFileAsync's docblock).
+const execFileMock = vi.fn();
 vi.mock('child_process', () => ({
-  spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
+  execFile: (...args: unknown[]) => execFileMock(...args),
 }));
+
+function mockExecFileOnce(result: { status: number; stdout: string; stderr: string }) {
+  execFileMock.mockImplementationOnce(
+    (_file: string, _args: string[], _opts: unknown, callback: (err: Error | null, stdout: string, stderr: string) => void) => {
+      if (result.status === 0) {
+        callback(null, result.stdout, result.stderr);
+      } else {
+        const err = new Error(`Command failed with exit code ${result.status}`) as NodeJS.ErrnoException;
+        callback(err, result.stdout, result.stderr);
+      }
+    },
+  );
+}
+
+function mockExecFileEnoentOnce() {
+  execFileMock.mockImplementationOnce(
+    (_file: string, _args: string[], _opts: unknown, callback: (err: NodeJS.ErrnoException) => void) => {
+      const err = new Error('spawn claude ENOENT') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      callback(err);
+    },
+  );
+}
 
 const {
   loadAccounts,
@@ -22,6 +47,7 @@ const {
   rotateOAuth,
   isSetupToken,
   checkSetupTokenLiveness,
+  resolveClaudeBinary,
   ALERT_5H,
   ALERT_7D,
 } = await import('../../../src/bus/oauth.js');
@@ -66,7 +92,7 @@ function writeStore(store = SAMPLE_STORE) {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'cortextos-oauth-test-'));
   mockFetch.mockReset();
-  spawnSyncMock.mockReset();
+  execFileMock.mockReset();
 });
 
 afterEach(() => {
@@ -200,7 +226,7 @@ describe('checkSetupTokenLiveness', () => {
 
   it('alive:true on a successful inference ping (exit 0, non-empty stdout)', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
     const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
     expect(result.alive).toBe(true);
@@ -210,7 +236,7 @@ describe('checkSetupTokenLiveness', () => {
 
   it('alive:false on a failed ping (non-zero exit)', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: '', stderr: 'auth error' });
+    mockExecFileOnce({ status: 1, stdout: '', stderr: 'auth error' });
 
     const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
     expect(result.alive).toBe(false);
@@ -218,51 +244,105 @@ describe('checkSetupTokenLiveness', () => {
 
   it('alive:false on empty stdout even with exit 0', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: '', stderr: '' });
 
+    const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
+    expect(result.alive).toBe(false);
+  });
+
+  it('alive:false on a spawn failure (ENOENT — binary not found), not a thrown exception', async () => {
+    writeStore(SETUP_TOKEN_STORE);
+    mockExecFileEnoentOnce();
+
+    // Regression test for the bug this fix addresses: a PATH/spawn failure
+    // must fail closed into alive:false (matching a genuinely dead account),
+    // not throw and crash the caller — but see the resolveClaudeBinary tests
+    // below for why ENOENT should now be rare in the first place.
     const result = await checkSetupTokenLiveness(tmpDir, 'secondary');
     expect(result.alive).toBe(false);
   });
 
   it('passes the candidate token via env, not argv (never a CLI-visible secret)', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
     await checkSetupTokenLiveness(tmpDir, 'secondary');
-    const [cmd, args, opts] = spawnSyncMock.mock.calls[0];
-    expect(cmd).toBe('claude');
-    expect(args.join(' ')).not.toContain('sk-ant-oat01-secondary');
+    const [cmd, args, opts] = execFileMock.mock.calls[0];
+    expect(typeof cmd).toBe('string');
+    expect((args as string[]).join(' ')).not.toContain('sk-ant-oat01-secondary');
     expect((opts as { env: Record<string, string> }).env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-secondary');
   });
 
   it('caches the result within TTL — does not re-spawn', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
     await checkSetupTokenLiveness(tmpDir, 'secondary');
     const second = await checkSetupTokenLiveness(tmpDir, 'secondary');
 
     expect(second.cached).toBe(true);
     expect(second.alive).toBe(true);
-    expect(spawnSyncMock).toHaveBeenCalledOnce();
+    expect(execFileMock).toHaveBeenCalledOnce();
   });
 
   it('force bypasses the cache and re-spawns', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValue({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
     await checkSetupTokenLiveness(tmpDir, 'secondary');
     await checkSetupTokenLiveness(tmpDir, 'secondary', { force: true });
 
-    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    expect(execFileMock).toHaveBeenCalledTimes(2);
   });
 
   it('never calls fetch — setup-token path does not touch the usage API', async () => {
     writeStore(SETUP_TOKEN_STORE);
-    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+    mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
     await checkSetupTokenLiveness(tmpDir, 'secondary');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not block the event loop — a timer fires while the ping is in flight', async () => {
+    // Regression test for the blocking-daemon bug: spawnSync would stall the
+    // entire single-process daemon for the ping's duration. execFile must
+    // let other event-loop work (Telegram polling, other agents' beats)
+    // proceed while it's in flight. Prove it by racing a setTimeout(0)
+    // against the still-unresolved ping.
+    writeStore(SETUP_TOKEN_STORE);
+    let resolveCallback!: (err: Error | null, stdout: string, stderr: string) => void;
+    execFileMock.mockImplementationOnce((_file, _args, _opts, callback) => {
+      resolveCallback = callback as typeof resolveCallback;
+      // deliberately does not call back synchronously
+    });
+
+    let timerFired = false;
+    const timerPromise = new Promise<void>((resolve) => {
+      setTimeout(() => { timerFired = true; resolve(); }, 0);
+    });
+
+    const livenessPromise = checkSetupTokenLiveness(tmpDir, 'secondary');
+
+    await timerPromise;
+    expect(timerFired).toBe(true); // the timer ran WHILE the ping was still pending
+
+    resolveCallback(null, 'ok', '');
+    const result = await livenessPromise;
+    expect(result.alive).toBe(true);
+  });
+});
+
+describe('resolveClaudeBinary', () => {
+  it('returns a non-empty string (either a resolved absolute path or the bare fallback)', () => {
+    // Environment-dependent (depends on what's actually installed on the
+    // machine running the test), so assert the contract rather than a
+    // specific path: always returns something spawnable, cached across calls.
+    const first = resolveClaudeBinary();
+    const second = resolveClaudeBinary();
+    expect(typeof first).toBe('string');
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toBe(first); // cached — same value every call
   });
 });
 
@@ -428,7 +508,7 @@ describe('rotateOAuth', () => {
 
     it('rotates via inference ping, WITHOUT ever calling checkUsageApi/fetch for the candidate', async () => {
       writeStore(setupTokenStore);
-      spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+      mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
       const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
 
@@ -437,7 +517,7 @@ describe('rotateOAuth', () => {
       // The real usage API would have 403'd on this token — proving we never
       // called it is the actual regression test for the bug this fixes.
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(spawnSyncMock).toHaveBeenCalledOnce();
+      expect(execFileMock).toHaveBeenCalledOnce();
 
       const store = loadAccounts(tmpDir)!;
       expect(store.active).toBe('secondary');
@@ -445,7 +525,7 @@ describe('rotateOAuth', () => {
 
     it('does not rotate when the inference ping fails (candidate genuinely dead)', async () => {
       writeStore(setupTokenStore);
-      spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: '', stderr: 'invalid_grant' });
+      mockExecFileOnce({ status: 1, stdout: '', stderr: 'invalid_grant' });
 
       const result = await rotateOAuth(tmpDir, frameworkRoot, 'acme');
 
@@ -457,7 +537,7 @@ describe('rotateOAuth', () => {
 
     it('preserves existing (stale) utilization fields rather than fabricating a number', async () => {
       writeStore(setupTokenStore);
-      spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: 'ok', stderr: '' });
+      mockExecFileOnce({ status: 0, stdout: 'ok', stderr: '' });
 
       await rotateOAuth(tmpDir, frameworkRoot, 'acme');
 
@@ -467,6 +547,46 @@ describe('rotateOAuth', () => {
       expect(store.accounts.secondary.five_hour_utilization).toBe(0.1);
       expect(store.accounts.secondary.seven_day_utilization).toBe(0.05);
     });
+  });
+});
+
+describe('resolveClaudeBinary — PM2-like stripped-PATH environment', () => {
+  // Proves the actual failure mode analyst flagged: PM2 (and other process
+  // managers/launchd/systemd) often start a daemon with PATH assembled
+  // BEFORE the user's shell rc files run (nvm, homebrew shellenv, etc.), so
+  // `claude` can be missing from PATH even though it resolves fine
+  // interactively. A bare PATH-dependent spawn would ENOENT under that
+  // condition; resolveClaudeBinary must not, because it locates the binary
+  // via existsSync on absolute candidate paths — a check that never
+  // consults process.env.PATH at all.
+  //
+  // vi.resetModules() forces a completely fresh module instance (empty
+  // cachedClaudeBinary) so this exercises real first-resolution behavior
+  // under the stripped env, not a value left over from an earlier test's
+  // full-PATH call.
+  it('still resolves an absolute path when PATH is stripped to a PM2-launchd-style minimal set', async () => {
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = '/usr/bin:/bin'; // no /opt/homebrew/bin, no npm global bin, nothing shell-rc-sourced
+      vi.resetModules();
+      const fresh = await import('../../../src/bus/oauth.js');
+      const resolved = fresh.resolveClaudeBinary();
+
+      // If none of CLAUDE_BINARY_CANDIDATES exist on the machine running
+      // this test, resolveClaudeBinary legitimately falls back to the bare
+      // 'claude' string — that's a real environment gap, not a test
+      // failure. Skip the assertion in that case rather than false-fail.
+      const { existsSync } = await import('fs');
+      const anyCandidateExists =
+        existsSync('/opt/homebrew/bin/claude') || existsSync('/usr/local/bin/claude');
+      if (anyCandidateExists) {
+        expect(resolved).not.toBe('claude'); // resolved to an absolute path, not the PATH-dependent fallback
+        expect(resolved.startsWith('/')).toBe(true);
+      }
+    } finally {
+      process.env.PATH = originalPath;
+      vi.resetModules();
+    }
   });
 });
 

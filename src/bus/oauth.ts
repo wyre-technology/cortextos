@@ -15,8 +15,29 @@
 import { existsSync, readFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { spawnSync } from 'child_process';
+import { execFile } from 'child_process';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
+
+// Hand-rolled Promise wrapper rather than util.promisify(execFile): Node's
+// built-in execFile carries a promisify.custom symbol that changes resolve
+// shape ({stdout, stderr} object) in a way that's invisible to (and doesn't
+// survive) mocking the child_process module in tests. An explicit wrapper
+// keeps the real callback contract (error, stdout, stderr) directly testable.
+function execFileAsync(
+  file: string,
+  args: string[],
+  options: { env: NodeJS.ProcessEnv; timeout: number; encoding: BufferEncoding },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout: stdout as string, stderr: stderr as string });
+    });
+  });
+}
 
 // --- Types ---
 
@@ -320,6 +341,49 @@ function saveLivenessCache(ctxRoot: string, cache: SetupTokenLivenessCache): voi
   atomicWriteSync(setupTokenLivenessCachePath(ctxRoot), JSON.stringify(cache, null, 2));
 }
 
+// Common absolute install locations for the `claude` CLI, checked before
+// falling back to a bare PATH lookup. The daemon runs as a single long-lived
+// PM2-managed process — PM2 (and other process managers/launchd/systemd)
+// often start with a PATH assembled BEFORE the user's shell rc files run
+// (nvm, homebrew shellenv, etc.), so `process.env.PATH` inside the daemon can
+// be missing the directory `claude` actually lives in even though it
+// resolves fine in an interactive shell. cortextOS hit and fixed the
+// identical class of bug for the `cortextos` binary in hook-crash-alert.ts
+// (PATH-unaware execFile → silent ENOENT). A bare `spawnSync('claude', ...)`
+// here would fail the same way, except the ENOENT gets swallowed by the
+// generic status!==0 check below and misreported as "account unreachable,
+// dead, or revoked" — a false negative that looks like a real account
+// failure instead of an environment problem.
+const CLAUDE_BINARY_CANDIDATES = [
+  process.env.CLAUDE_CLI_PATH,
+  '/opt/homebrew/bin/claude',
+  '/usr/local/bin/claude',
+  join(homedir(), '.local/bin/claude'),
+  join(homedir(), '.claude/local/claude'),
+].filter((p): p is string => Boolean(p));
+
+let cachedClaudeBinary: string | null = null;
+
+/**
+ * Resolve an absolute, PATH-independent path to the `claude` binary where
+ * possible. Falls back to the bare command name (existing PATH-dependent
+ * behavior) only if none of the known install locations exist, so this is
+ * never worse than before — only better when one of the candidates hits.
+ * Result is cached for the process lifetime (install location doesn't change
+ * mid-run) so repeated preflight calls don't re-stat the filesystem.
+ */
+export function resolveClaudeBinary(): string {
+  if (cachedClaudeBinary) return cachedClaudeBinary;
+  for (const candidate of CLAUDE_BINARY_CANDIDATES) {
+    if (existsSync(candidate)) {
+      cachedClaudeBinary = candidate;
+      return candidate;
+    }
+  }
+  cachedClaudeBinary = 'claude';
+  return cachedClaudeBinary;
+}
+
 /**
  * Validate a setup-token candidate via a cheap one-shot inference ping
  * instead of the scope-gated usage API. Cannot recover real utilization for
@@ -331,6 +395,14 @@ function saveLivenessCache(ctxRoot: string, cache: SetupTokenLivenessCache): voi
  * TTL-cached (1 min, much shorter than checkUsageApi's 3 min) so a rotation
  * storm across multiple agents hitting the same candidate doesn't fire one
  * real inference call per agent.
+ *
+ * Uses execFile (async, non-blocking), NOT spawnSync: the daemon is a single
+ * long-lived process managing every agent's PTY, Telegram polling, and
+ * hang-detection. A synchronous spawn here blocks that entire process for up
+ * to SETUP_TOKEN_PING_TIMEOUT_MS (30s) per call — precisely during a
+ * rate-limit cascade, the exact scenario this preflight exists to handle.
+ * execFile lets the event loop keep servicing everything else while the
+ * ping is in flight.
  */
 export async function checkSetupTokenLiveness(
   ctxRoot: string,
@@ -354,13 +426,25 @@ export async function checkSetupTokenLiveness(
   const account = store?.accounts[accountName];
   if (!account) throw new Error(`Account "${accountName}" not found in accounts.json`);
 
-  const result = spawnSync('claude', ['-p', SETUP_TOKEN_PING_PROMPT, '--model', SETUP_TOKEN_PING_MODEL], {
-    env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: account.access_token },
-    timeout: SETUP_TOKEN_PING_TIMEOUT_MS,
-    encoding: 'utf-8',
-  });
-
-  const alive = result.status === 0 && (result.stdout || '').trim().length > 0;
+  let alive: boolean;
+  try {
+    const { stdout } = await execFileAsync(
+      resolveClaudeBinary(),
+      ['-p', SETUP_TOKEN_PING_PROMPT, '--model', SETUP_TOKEN_PING_MODEL],
+      {
+        env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: account.access_token },
+        timeout: SETUP_TOKEN_PING_TIMEOUT_MS,
+        encoding: 'utf-8',
+      },
+    );
+    alive = (stdout || '').trim().length > 0;
+  } catch {
+    // Non-zero exit, timeout, or spawn failure (e.g. ENOENT) — all treated as
+    // "not alive." A genuine invocation error (missing binary) and a genuine
+    // dead account both fail closed here; resolveClaudeBinary() minimizes the
+    // former so this mostly reflects the latter.
+    alive = false;
+  }
   const checkedAt = Date.now();
 
   const cache = loadLivenessCache(ctxRoot);
