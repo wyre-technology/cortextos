@@ -20,6 +20,7 @@ import { addCron, removeCron, readCrons, updateCron as updateCronDef, getCronByN
 import { nextFireFromCron } from '../daemon/cron-scheduler.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
 import { checkUsageApi, refreshOAuthToken, rotateOAuth, loadAccounts, ALERT_5H, ALERT_7D } from '../bus/oauth.js';
+import { mintInstallationToken } from '../bus/github-app.js';
 import { resolvePaths } from '../utils/paths.js';
 import { resolveEnv } from '../utils/env.js';
 import { IPCClient } from '../daemon/ipc-server.js';
@@ -2552,6 +2553,33 @@ busCommand
         console.log(`Reason: ${result.reason}`);
       } else {
         console.log(`No rotation needed: ${result.reason}`);
+      }
+    } catch (err) {
+      console.error(`Error: ${err}`);
+      process.exit(1);
+    }
+  });
+
+busCommand
+  .command('gh-app-token')
+  .description('Mint a fresh ~1h GitHub App installation token (replaces the shared personal PAT for gh CLI calls). Requires GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY in env (e.g. via cortex-secret run --context conduit).')
+  .option('--org <login>', 'Org the App is installed on', 'wyre-technology')
+  .option('--json', 'Output the full result as JSON instead of just the token')
+  .action(async (opts: { org: string; json?: boolean }) => {
+    const appId = process.env.GITHUB_APP_ID;
+    const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+    if (!appId || !privateKey) {
+      console.error('GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY must be set (e.g. cortex-secret run --context conduit -- cortextos bus gh-app-token)');
+      process.exit(1);
+    }
+    try {
+      const result = await mintInstallationToken(appId, privateKey, opts.org);
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        // Token only on stdout so `GH_TOKEN=$(cortextos bus gh-app-token)` just works.
+        console.log(result.token);
+        console.error(`Expires: ${result.expires_at} (org: ${result.org}, installation: ${result.installation_id})`);
       }
     } catch (err) {
       console.error(`Error: ${err}`);
