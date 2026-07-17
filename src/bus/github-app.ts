@@ -13,6 +13,27 @@ export interface MintTokenResult {
   installation_id: number;
 }
 
+/**
+ * A pipe/capture ($(...), file redirect) is never a TTY, so this only
+ * blocks the token from landing directly in a visible terminal/session
+ * transcript when the command is run bare — it never affects the
+ * intended `GH_TOKEN=$(cortextos bus gh-app-token)` usage.
+ */
+export function shouldRefuseInteractivePrint(isStdoutTTY: boolean, force: boolean): boolean {
+  return isStdoutTTY && !force;
+}
+
+/**
+ * Metadata-only view of a mint result, safe for --json output. --json is
+ * commonly captured into logs/CI artifacts (unlike plain-mode stdout,
+ * which is meant for immediate single-use `$(...)` capture), so it must
+ * never include the raw token.
+ */
+export function redactForJson(result: MintTokenResult): Omit<MintTokenResult, 'token'> {
+  const { expires_at, org, installation_id } = result;
+  return { expires_at, org, installation_id };
+}
+
 function b64url(input: string): string {
   return Buffer.from(input)
     .toString('base64')

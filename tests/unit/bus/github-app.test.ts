@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-const { signAppJwt, findInstallation, mintInstallationToken } = await import('../../../src/bus/github-app.js');
+const { signAppJwt, findInstallation, mintInstallationToken, shouldRefuseInteractivePrint, redactForJson } = await import('../../../src/bus/github-app.js');
 
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const TEST_KEY = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
@@ -56,6 +56,40 @@ describe('findInstallation', () => {
   it('throws with the response body on a non-ok GitHub response', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ message: 'Bad credentials' }, false, 401));
     await expect(findInstallation('fake-jwt', 'wyre-technology')).rejects.toThrow(/401/);
+  });
+});
+
+describe('shouldRefuseInteractivePrint', () => {
+  it('refuses when stdout is a TTY and --force was not passed', () => {
+    expect(shouldRefuseInteractivePrint(true, false)).toBe(true);
+  });
+
+  it('allows when --force overrides an interactive TTY', () => {
+    expect(shouldRefuseInteractivePrint(true, true)).toBe(false);
+  });
+
+  it('allows when stdout is piped/captured (not a TTY), regardless of --force', () => {
+    expect(shouldRefuseInteractivePrint(false, false)).toBe(false);
+    expect(shouldRefuseInteractivePrint(false, true)).toBe(false);
+  });
+});
+
+describe('redactForJson', () => {
+  it('never includes the raw token, even via key enumeration', () => {
+    const result = {
+      token: 'ghs_super_secret_value',
+      expires_at: '2026-07-17T23:00:00Z',
+      org: 'wyre-technology',
+      installation_id: 147038752,
+    };
+    const redacted = redactForJson(result);
+    expect(redacted).toEqual({
+      expires_at: '2026-07-17T23:00:00Z',
+      org: 'wyre-technology',
+      installation_id: 147038752,
+    });
+    expect(Object.keys(redacted)).not.toContain('token');
+    expect(JSON.stringify(redacted)).not.toContain('ghs_super_secret_value');
   });
 });
 
