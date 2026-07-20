@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Fixed — `bus complete-task` / `update-task` uncaught-exception crash
+
+An agent hit this live: `cortextos bus complete-task <id> --result "..."`
+and `cortextos bus update-task <id> <status>` crashed on a task ID that
+didn't resolve (`findTaskFile` returns `null`) — an uncaught exception
+past the commander action handler, printing a raw Node stack dump that
+ends in a `Node.js vX.Y.Z` trailer line. Piped through `tail` (as the
+reporting agent had done while diagnosing), only that trailer survived,
+reading as a mysterious bare crash.
+
+- **`src/cli/bus.ts`**: wrapped both actions' calls (`completeTask` /
+  `updateTask`) in try/catch, mirroring the pattern `claim-task`'s action
+  already used — `console.error(err.message); process.exit(1)` instead of
+  letting the throw become an uncaught exception. `completeTask`/
+  `updateTask` themselves were already correct (throwing on a genuinely
+  missing task is the right behavior) — the gap was purely at the CLI
+  layer not catching it.
+- **`bus/complete-task.sh`**: separately found and fixed while
+  investigating — the wrapper only ever read `$2` as a bare positional
+  result value, so `complete-task.sh <id> --result "<text>"` (the form
+  every agent bootstrap doc teaches) set `RESULT="--result"` and silently
+  dropped the real text (landed in `$3`, never read), storing the literal
+  string `"--result"` as the completion result. Fixed by forwarding all
+  args after `<id>` to the CLI as-is — it already accepts both the
+  positional and `--result`-flag forms.
+- Regression tests: `tests/integration/bus-task-error-handling-cli.test.ts`
+  (drives the compiled CLI as a subprocess against a nonexistent task ID,
+  asserts a clean one-line stderr message with no `Node.js v` trailer or
+  stack frame, and that the happy path still works) and
+  `tests/integration/bus-complete-task-wrapper.test.ts` (drives the bash
+  wrapper directly, both invocation forms).
+
 ### Added — SP3b: Slack Socket Mode inbound channel
 
 Agents can now be talked to on Slack, not just Telegram — critical path for
