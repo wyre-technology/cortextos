@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed — agents fail to spawn with `posix_spawnp failed` (node-pty spawn-helper lost `+x`)
+
+Whole fleet presented as "cortext crashing": the daemon stayed `online` but
+every agent looped `[<agent>] Failed to start: Error: posix_spawnp failed.`
+(hang-detect → auto-restart fresh → fail again). Root cause was **not**
+memory/disk/process-limits (all investigated, all red herrings — the box was
+also disk-full and swap-maxed at the time, which masked the real issue). The
+daemon spawns agents through a PTY (`node-pty`), and node-pty `posix_spawn`s
+its `prebuilds/darwin-arm64/spawn-helper` binary. That helper was the correct
+arm64 architecture but had lost its execute bit (`-rw-------`), so the OS
+refused to run it on every spawn. Isolated by: `child_process.spawn('claude')`
+and Python `forkpty` both succeeded while node-pty spawns failed 100% —
+pointing squarely at node-pty's helper. Likely stripped when the prebuild was
+re-extracted by a reinstall / node upgrade (box was on node v26.4.0).
+
+- **`package.json`**: added a `postinstall` that re-applies
+  `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper`, so a future
+  reinstall or node upgrade can't silently re-break agent spawning. The live
+  box was recovered by applying the same `chmod` by hand, then
+  `pm2 restart cortextos-daemon` (all agents reached "Bootstrap complete").
+
 ### Fixed — `bus complete-task` / `update-task` uncaught-exception crash
 
 An agent hit this live: `cortextos bus complete-task <id> --result "..."`
