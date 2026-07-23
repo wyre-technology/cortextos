@@ -11,14 +11,14 @@
 #
 # The planted leak is generated in a temp dir at runtime — never committed —
 # because a committed file carrying the operator path would itself trip the
-# tree scan. The operator username is split ("cortex""tos") so THIS test file
+# tree scan. The operator username is split ("asa""chs") so THIS test file
 # carries no operator-path literal.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 GUARD=".github/scripts/leak-guard.sh"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-U="cortex""tos"
+U="asa""chs"
 fails=0
 
 cat > "$TMP/planted.md" <<EOF

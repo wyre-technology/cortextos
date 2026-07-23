@@ -30,7 +30,7 @@ report() { printf '::error file=%s::LEAK-GUARD: %s\n' "$1" "$2" >&2; printf '  %
 #    the public framework. Match the KNOWN operator identities specifically so
 #    generic example paths (/Users/foo, /home/victim, /Users/.../) do not FP.
 #    Extend OPERATOR_USERS as needed; this is the exact leaked-path class.
-OPERATOR_USERS='cortextos'
+OPERATOR_USERS='asachs'
 HOME_PATH_RE="(/Users/(${OPERATOR_USERS})/|/home/(${OPERATOR_USERS})/)"
 
 # 2. Fleet-roster + cron-schedule TABLE shape — the phase-report leak. A line
