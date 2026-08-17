@@ -241,7 +241,8 @@ busCommand
   .argument('[status]', 'New status (pending, in_progress, completed, blocked, cancelled) — optional when --assignee/--project is given')
   .option('--assignee <name>', 'Reroute the task to a different agent')
   .option('--project <name>', 'Change the task\'s project')
-  .action((id: string, status: string | undefined, opts: { assignee?: string; project?: string }) => {
+  .option('--agent <name>', 'Agent performing the update, recorded in the audit log (defaults to CTX_AGENT_NAME)')
+  .action((id: string, status: string | undefined, opts: { assignee?: string; project?: string; agent?: string }) => {
     if (status === undefined && opts.assignee === undefined && opts.project === undefined) {
       console.error('Nothing to update — pass a status, --assignee, and/or --project');
       process.exit(1);
@@ -255,6 +256,16 @@ busCommand
     }
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    // Mirrors claim-task: explicit override, env fallback, hard failure when
+    // neither is present. The abort is load-bearing — an empty agent value
+    // widens rather than narrows elsewhere in this CLI, and defaulting here
+    // would write a borrowed or empty identity into an append-only audit log
+    // as though it were an observation.
+    const actor = opts.agent || env.agentName;
+    if (!actor) {
+      console.error('ERROR: --agent or CTX_AGENT_NAME required');
+      process.exit(1);
+    }
 
     // Guard: block review/completion when deliverables are required but missing.
     // Checks both ready_for_review (approval workflow) and completed (vanilla upstream)
@@ -268,7 +279,7 @@ busCommand
     }
 
     try {
-      updateTask(paths, id, status as TaskStatus | undefined, { assignee: opts.assignee, project: opts.project });
+      updateTask(paths, id, status as TaskStatus | undefined, { assignee: opts.assignee, project: opts.project, actor });
       if (status !== undefined && opts.assignee === undefined && opts.project === undefined) {
         // Preserve the original status-only message verbatim — scripts/
         // dashboards may already parse it.
